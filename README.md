@@ -4,9 +4,6 @@
   <img src="Bot GAP/assets/banner.jpg" alt="Banner" width="100%">
 </p>
 
-<p align="center">
-  <img src="Bot GAP/assets/logo.jpg" alt="Logo" width="150">
-</p>
 ---
 
 A feature-rich Discord bot built with Python that tracks user activity, rewards XP, levels users up, and assigns roles automatically.
