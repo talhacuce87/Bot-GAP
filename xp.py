@@ -5,13 +5,6 @@ from pathlib import Path
 
 import discord
 from discord.ext import commands, tasks
-import random
-import sqlite3
-import time
-from pathlib import Path
-
-import discord
-from discord.ext import commands, tasks
 
 from xproles import XPRoleManager
 
@@ -21,7 +14,8 @@ DATABASE_PATH = Path(__file__).with_name("xp_system.db")
 MESSAGE_XP_MIN = 3
 MESSAGE_XP_MAX = 8
 MESSAGE_COOLDOWN_SECONDS = 20
-VOICE_XP_PER_MINUTE = 5
+VOICE_XP_INTERVAL_MINUTES = 2
+VOICE_XP_PER_INTERVAL = 1
 
 
 class XPTrackerCog(commands.Cog):
@@ -300,6 +294,10 @@ class XPTrackerCog(commands.Cog):
 		if message.author.bot or message.guild is None:
 			return
 
+		context = await self.bot.get_context(message)
+		if context.valid:
+			return
+
 		self.add_message_count(message.guild.id, message.author.id)
 
 		if self.can_gain_message_xp(message.guild.id, message.author.id):
@@ -307,8 +305,6 @@ class XPTrackerCog(commands.Cog):
 			self.add_text_xp(message.guild.id, message.author.id, earned_xp)
 			if isinstance(message.author, discord.Member):
 				await self.sync_xp_role(message.author)
-
-		await self.bot.process_commands(message)
 
 	@commands.Cog.listener()
 	async def on_voice_state_update(
@@ -331,7 +327,7 @@ class XPTrackerCog(commands.Cog):
 		if was_in_voice and not is_now_in_voice:
 			self.end_voice_session(member.guild.id, member.id)
 
-	@tasks.loop(minutes=1)
+	@tasks.loop(minutes=VOICE_XP_INTERVAL_MINUTES)
 	async def voice_xp_loop(self) -> None:
 		for guild in self.bot.guilds:
 			for voice_channel in guild.voice_channels:
@@ -341,7 +337,7 @@ class XPTrackerCog(commands.Cog):
 					continue
 
 				for member in valid_members:
-					self.add_voice_xp(guild.id, member.id, VOICE_XP_PER_MINUTE)
+					self.add_voice_xp(guild.id, member.id, VOICE_XP_PER_INTERVAL)
 					await self.sync_xp_role(member)
 
 	@voice_xp_loop.before_loop

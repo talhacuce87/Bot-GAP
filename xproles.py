@@ -24,6 +24,13 @@ class XPRoleManager:
 	def __init__(self, role_rewards: dict[int, int] | None = None) -> None:
 		self.role_rewards = role_rewards or ROLE_REWARDS
 
+	@staticmethod
+	def sanitize_role_name(role_name: str) -> str:
+		for separator in (" - ", " – ", " — "):
+			if separator in role_name:
+				return role_name.split(separator, maxsplit=1)[0].strip()
+		return role_name.strip()
+
 	def get_progress_data(self, total_xp: int) -> tuple[int, int, int, int, float]:
 		thresholds = sorted(self.role_rewards)
 		current_level = 1
@@ -65,9 +72,9 @@ class XPRoleManager:
 	def get_display_role(self, member: discord.Member, total_xp: int) -> str:
 		target_role = self.get_target_role(member, total_xp)
 		if target_role is not None:
-			return target_role.name
+			return self.sanitize_role_name(target_role.name)
 
-		visible_roles = [role.name for role in reversed(member.roles) if role.name != "@everyone"]
+		visible_roles = [self.sanitize_role_name(role.name) for role in reversed(member.roles) if role.name != "@everyone"]
 		if not visible_roles:
 			return "Tiny Gapper"
 		return visible_roles[0]
