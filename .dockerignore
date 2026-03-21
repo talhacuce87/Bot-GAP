@@ -2,12 +2,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.db
-*.sqlite3
 .env
 .env.*
 .git
 .gitignore
-assets/
-# Uncomment below if you want to ignore VSCode settings
-#.vscode/
+data/

@@ -46,9 +46,9 @@ Thumbs.db
 logs/
 *.log
 
-# SQLite databases
-*.db
-xp_system.db
+# SQLite databases (persist data/ dir structure but not the DB itself)
+data/*.db
+data/*.sqlite3
 
 # Compiled Python
 *.pyc

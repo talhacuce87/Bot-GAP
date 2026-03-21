@@ -6,9 +6,5 @@ services:
     restart: always
     env_file:
       - .env
-    # Uncomment if you need to map a port (for webhooks or health checks)
-    # ports:
-    #   - "8080:8080"
-    # Uncomment if you want to persist data
-    # volumes:
-    #   - ./data:/app/data
+    volumes:
+      - ./data:/app/data

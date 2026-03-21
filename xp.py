@@ -9,7 +9,7 @@ from discord.ext import commands, tasks
 from xproles import XPRoleManager
 
 
-DATABASE_PATH = Path(__file__).with_name("xp_system.db")
+DATABASE_PATH = Path(__file__).resolve().parent / "data" / "xp_system.db"
 
 MESSAGE_XP_MIN = 3
 MESSAGE_XP_MAX = 8
@@ -34,6 +34,7 @@ class XPTrackerCog(commands.Cog):
 		return connection
 
 	def setup_database(self) -> None:
+		DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 		with self.get_connection() as connection:
 			connection.execute(
 				"""
@@ -219,6 +220,11 @@ class XPTrackerCog(commands.Cog):
 			return False
 
 		self.message_cooldowns[cooldown_key] = current_time
+
+		if len(self.message_cooldowns) > 10_000:
+			cutoff = current_time - MESSAGE_COOLDOWN_SECONDS
+			self.message_cooldowns = {k: v for k, v in self.message_cooldowns.items() if v > cutoff}
+
 		return True
 
 	@staticmethod
@@ -311,15 +317,7 @@ class XPTrackerCog(commands.Cog):
 				if stats is None or stats["active_voice_started_at"] is None:
 					continue
 
-				with self.get_connection() as connection:
-					connection.execute(
-						"""
-						UPDATE user_xp
-						SET active_voice_started_at = NULL
-						WHERE guild_id = ? AND user_id = ?
-						""",
-						(guild.id, member.id),
-					)
+				self.end_voice_session(guild.id, member.id)
 
 	def get_progress_data(self, total_xp: int) -> tuple[int, int, int, int, float]:
 		return self.role_manager.get_progress_data(total_xp)
