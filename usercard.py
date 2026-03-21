@@ -115,7 +115,9 @@ class UserCardCog(commands.Cog):
 	def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 		assets_dir = Path(__file__).resolve().parent / "assets" / "fonts"
 		font_candidates = []
-		# 1. Project font (absolute path)
+		# 1. Project fonts (absolute path, bold variant first if requested)
+		if bold:
+			font_candidates.append(str(assets_dir / "DejaVuSans-Bold.ttf"))
 		font_candidates.append(str(assets_dir / "DejaVuSans.ttf"))
 		# 2. Common Linux fonts
 		if bold:
