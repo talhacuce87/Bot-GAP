@@ -113,14 +113,24 @@ class UserCardCog(commands.Cog):
 	@staticmethod
 	def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 		font_candidates = []
+		# 1. Project font (DejaVuSans)
+		if bold:
+			font_candidates.append("assets/fonts/DejaVuSans.ttf")  # DejaVuSans is semi-bold by default
+		else:
+			font_candidates.append("assets/fonts/DejaVuSans.ttf")
+		# 2. Common Linux fonts
+		if bold:
+			font_candidates.append("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+		font_candidates.append("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+		# 3. Windows fonts (as fallback)
 		if bold:
 			font_candidates.extend([
-				r"C:\Windows\Fonts\arialbd.ttf",
-				r"C:\Windows\Fonts\segoeuib.ttf",
+				r"C:\\Windows\\Fonts\\arialbd.ttf",
+				r"C:\\Windows\\Fonts\\segoeuib.ttf",
 			])
 		font_candidates.extend([
-			r"C:\Windows\Fonts\arial.ttf",
-			r"C:\Windows\Fonts\segoeui.ttf",
+			r"C:\\Windows\\Fonts\\arial.ttf",
+			r"C:\\Windows\\Fonts\\segoeui.ttf",
 		])
 
 		for font_path in font_candidates:
@@ -128,7 +138,7 @@ class UserCardCog(commands.Cog):
 				return ImageFont.truetype(font_path, size)
 			except OSError:
 				continue
-
+		# 4. Default PIL font (ugly, but always available)
 		return ImageFont.load_default()
 
 	@staticmethod
