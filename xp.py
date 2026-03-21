@@ -23,7 +23,6 @@ class XPTrackerCog(commands.Cog):
 		self.bot = bot
 		self.role_manager = XPRoleManager()
 		self.message_cooldowns: dict[tuple[int, int], float] = {}
-		self.voice_join_times: dict[tuple[int, int], float] = {}
 		self.setup_database()
 
 	def cog_unload(self) -> None:
@@ -44,6 +43,7 @@ class XPTrackerCog(commands.Cog):
 					text_xp INTEGER NOT NULL DEFAULT 0,
 					voice_xp INTEGER NOT NULL DEFAULT 0,
 					voice_seconds INTEGER NOT NULL DEFAULT 0,
+					active_voice_started_at REAL,
 					message_count INTEGER NOT NULL DEFAULT 0,
 					PRIMARY KEY (guild_id, user_id)
 				)
@@ -60,6 +60,11 @@ class XPTrackerCog(commands.Cog):
 					"ALTER TABLE user_xp ADD COLUMN voice_seconds INTEGER NOT NULL DEFAULT 0"
 				)
 
+			if "active_voice_started_at" not in columns:
+				connection.execute(
+					"ALTER TABLE user_xp ADD COLUMN active_voice_started_at REAL"
+				)
+
 			if "message_count" not in columns:
 				connection.execute(
 					"ALTER TABLE user_xp ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0"
@@ -70,9 +75,9 @@ class XPTrackerCog(commands.Cog):
 			connection.execute(
 				"""
 				INSERT OR IGNORE INTO user_xp (
-					guild_id, user_id, text_xp, voice_xp, voice_seconds, message_count
+					guild_id, user_id, text_xp, voice_xp, voice_seconds, active_voice_started_at, message_count
 				)
-				VALUES (?, ?, 0, 0, 0, 0)
+				VALUES (?, ?, 0, 0, 0, NULL, 0)
 				""",
 				(guild_id, user_id),
 			)
@@ -140,6 +145,7 @@ class XPTrackerCog(commands.Cog):
 					text_xp,
 					voice_xp,
 					voice_seconds,
+					active_voice_started_at,
 					message_count,
 					(text_xp + voice_xp) AS total_xp
 				FROM user_xp
@@ -228,28 +234,69 @@ class XPTrackerCog(commands.Cog):
 	def is_in_voice(state: discord.VoiceState | None) -> bool:
 		return state is not None and state.channel is not None
 
-	def start_voice_session(self, guild_id: int, user_id: int) -> None:
-		self.voice_join_times.setdefault((guild_id, user_id), time.time())
+	def start_voice_session(self, guild_id: int, user_id: int, started_at: float | None = None) -> None:
+		self.ensure_user(guild_id, user_id)
+		started_at = started_at or time.time()
+		with self.get_connection() as connection:
+			current_started_at = connection.execute(
+				"""
+				SELECT active_voice_started_at
+				FROM user_xp
+				WHERE guild_id = ? AND user_id = ?
+				""",
+				(guild_id, user_id),
+			).fetchone()
+
+			if current_started_at is not None and current_started_at[0] is not None:
+				return
+
+			connection.execute(
+				"""
+				UPDATE user_xp
+				SET active_voice_started_at = ?
+				WHERE guild_id = ? AND user_id = ?
+				""",
+				(float(started_at), guild_id, user_id),
+			)
 
 	def end_voice_session(self, guild_id: int, user_id: int) -> None:
-		started_at = self.voice_join_times.pop((guild_id, user_id), None)
+		stats = self.get_user_stats(guild_id, user_id)
+		started_at = None if stats is None else stats["active_voice_started_at"]
 		if started_at is None:
 			return
 
 		elapsed_seconds = max(0, int(time.time() - started_at))
-		self.add_voice_seconds(guild_id, user_id, elapsed_seconds)
+		with self.get_connection() as connection:
+			connection.execute(
+				"""
+				UPDATE user_xp
+				SET voice_seconds = voice_seconds + ?,
+					active_voice_started_at = NULL
+				WHERE guild_id = ? AND user_id = ?
+				""",
+				(elapsed_seconds, guild_id, user_id),
+			)
 
 	def get_live_voice_seconds(self, guild_id: int, user_id: int, stored_seconds: int) -> int:
-		started_at = self.voice_join_times.get((guild_id, user_id))
+		stats = self.get_user_stats(guild_id, user_id)
+		started_at = None if stats is None else stats["active_voice_started_at"]
 		if started_at is None:
 			return stored_seconds
 		return stored_seconds + max(0, int(time.time() - started_at))
 
 	@staticmethod
 	def format_duration(total_seconds: int) -> str:
+		total_seconds = max(0, int(total_seconds))
 		hours, remainder = divmod(total_seconds, 3600)
 		minutes, seconds = divmod(remainder, 60)
-		return f"{hours}s {minutes}dk {seconds}sn"
+
+		parts = []
+		if hours > 0:
+			parts.append(f"{hours}sa")
+		if minutes > 0 or hours > 0:
+			parts.append(f"{minutes}dk")
+		parts.append(f"{seconds}sn")
+		return " ".join(parts)
 
 	def restore_active_voice_sessions(self) -> None:
 		for guild in self.bot.guilds:
@@ -258,6 +305,21 @@ class XPTrackerCog(commands.Cog):
 					continue
 				if member.voice is not None and member.voice.channel is not None:
 					self.start_voice_session(guild.id, member.id)
+					continue
+
+				stats = self.get_user_stats(guild.id, member.id)
+				if stats is None or stats["active_voice_started_at"] is None:
+					continue
+
+				with self.get_connection() as connection:
+					connection.execute(
+						"""
+						UPDATE user_xp
+						SET active_voice_started_at = NULL
+						WHERE guild_id = ? AND user_id = ?
+						""",
+						(guild.id, member.id),
+					)
 
 	def get_progress_data(self, total_xp: int) -> tuple[int, int, int, int, float]:
 		return self.role_manager.get_progress_data(total_xp)
@@ -362,7 +424,7 @@ class XPTrackerCog(commands.Cog):
 		embed.add_field(name="Ses XP", value=str(voice_xp), inline=True)
 		embed.add_field(name="Toplam XP", value=str(total_xp), inline=False)
 		embed.add_field(name="Toplam Mesaj", value=str(stats["message_count"]), inline=True)
-		embed.add_field(name="Ses Süresi", value=self.format_duration(live_voice_seconds), inline=False)
+		embed.add_field(name="Sunucudaki Toplam Ses Süresi", value=self.format_duration(live_voice_seconds), inline=False)
 		await ctx.send(embed=embed)
 
 	@commands.command(name="ses")
@@ -373,7 +435,7 @@ class XPTrackerCog(commands.Cog):
 
 		_, _, _, voice_seconds = self.get_user_xp(ctx.guild.id, ctx.author.id)
 		live_voice_seconds = self.get_live_voice_seconds(ctx.guild.id, ctx.author.id, voice_seconds)
-		await ctx.send(f"Toplam ses süren: {self.format_duration(live_voice_seconds)}")
+		await ctx.send(f"Bu sunucudaki toplam ses süren: {self.format_duration(live_voice_seconds)}")
 
 	@commands.command(name="topxp")
 	async def topxp_command(self, ctx: commands.Context) -> None:
