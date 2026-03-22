@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from leaderboard import LeaderboardCog
 from usercard import UserCardCog
 from xp import XPTrackerCog
 
@@ -90,6 +91,7 @@ class GapBot(commands.Bot):
 	async def setup_hook(self) -> None:
 		await self.add_cog(XPTrackerCog(self))
 		await self.add_cog(UserCardCog(self))
+		await self.add_cog(LeaderboardCog(self))
 
 
 def main() -> None:
