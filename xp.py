@@ -7,6 +7,7 @@ from pathlib import Path
 import discord
 from discord.ext import commands, tasks
 
+from rolescard import build_roles_card
 from xproles import XPRoleManager
 
 
@@ -543,6 +544,41 @@ class XPTrackerCog(commands.Cog):
 			color=discord.Color.gold(),
 		)
 		await ctx.send(embed=embed)
+
+	@commands.command(name="roles", aliases=["roller"])
+	async def roles_command(self, ctx: commands.Context, member: discord.Member | None = None) -> None:
+		if ctx.guild is None:
+			await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+			return
+
+		target = member or ctx.author
+		if not isinstance(target, discord.Member):
+			await ctx.send("Kullanıcı bilgisi alınamadı.")
+			return
+
+		self.ensure_user(ctx.guild.id, target.id)
+		_, _, total_xp, _ = self.get_user_xp(ctx.guild.id, target.id)
+
+		async with ctx.typing():
+			try:
+				buffer = await build_roles_card(
+					ctx.guild,
+					self.role_manager.role_rewards,
+					total_xp,
+					target.display_name,
+				)
+			except Exception as error:
+				await ctx.send(f"Rol kartı oluşturulamadı: {error}")
+				return
+
+		await ctx.send(file=discord.File(buffer, filename=f"roles-{target.id}.png"))
+
+	@roles_command.error
+	async def roles_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+		if isinstance(error, commands.BadArgument):
+			await ctx.send("Kullanım: !roles [@kullanici]")
+			return
+		raise error
 
 	@commands.command(name="streak")
 	async def streak_command(self, ctx: commands.Context) -> None:
