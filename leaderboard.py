@@ -1,3 +1,13 @@
+"""
+leaderboard.py — !liderlik komutu için Pillow tabanlı sıralama kartı.
+
+İlk 10 kullanıcıyı, XP'lerini, seviyelerini ve avatarlarını
+tek bir görselde gösterir.
+"""
+
+from __future__ import annotations
+
+import asyncio
 import io
 from pathlib import Path
 
@@ -5,183 +15,216 @@ import discord
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+import database as dbmod
 from xp import XPTrackerCog
+from usercard import _load_font
 
+# ---------------------------------------------------------------------------
+# Boyutlar
+# ---------------------------------------------------------------------------
 
-CARD_WIDTH = 860
-ROW_HEIGHT = 100
-HEADER_HEIGHT = 80
-AVATAR_RADIUS = 36
-BAR_HEIGHT = 10
+CARD_W = 860
+CARD_H = 100          # Her satır yüksekliği
+HEADER_H = 80
+AVATAR_R = 36         # Yarıçap
+ROW_PADDING = 16
+BAR_H = 10
 
-MEDAL_COLORS = ["#FFD700", "#C0C0C0", "#CD7F32"]
+MEDAL_COLORS = ["#FFD700", "#C0C0C0", "#CD7F32"]  # Altın, gümüş, bronz
 
-BACKGROUND = "#0A1424"
-ROW_ODD = (11, 22, 44, 200)
+BG_COLOR = "#0A1424"
+ROW_ODD  = (11, 22, 44, 200)
 ROW_EVEN = (8, 16, 34, 200)
-OUTLINE = "#233252"
-ACCENT = "#58E1C1"
-TEXT_PRIMARY = "#F5F7FB"
+OUTLINE  = "#233252"
+ACCENT   = "#58E1C1"
+TEXT_PRIMARY   = "#F5F7FB"
 TEXT_SECONDARY = "#8EA0BC"
-BAR_BACKGROUND = "#17233D"
+BAR_BG   = "#17233D"
 BAR_FILL = "#47D7C3"
+SHADOW   = "#050C1A"
 
 
-def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-	assets_dir = Path(__file__).resolve().parent / "assets" / "fonts"
-	font_candidates = []
-	if bold:
-		font_candidates.append(str(assets_dir / "DejaVuSans-Bold.ttf"))
-	font_candidates.append(str(assets_dir / "DejaVuSans.ttf"))
-	if bold:
-		font_candidates.extend([
-			r"C:\Windows\Fonts\arialbd.ttf",
-			r"C:\Windows\Fonts\segoeuib.ttf",
-		])
-	font_candidates.extend([
-		r"C:\Windows\Fonts\arial.ttf",
-		r"C:\Windows\Fonts\segoeui.ttf",
-	])
+# ---------------------------------------------------------------------------
+# Yardımcı
+# ---------------------------------------------------------------------------
 
-	for font_path in font_candidates:
-		try:
-			return ImageFont.truetype(font_path, size)
-		except OSError:
-			continue
-
-	return ImageFont.load_default()
+def _hex_rgba(color: str, alpha: int = 255) -> tuple[int, int, int, int]:
+    c = color.lstrip("#")
+    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16), alpha
 
 
-async def fetch_avatar(member: discord.Member | None, size: int = 72) -> Image.Image | None:
-	if member is None:
-		return None
+async def _fetch_avatar_small(member: discord.Member | None, size: int = 72) -> Image.Image | None:
+    if member is None:
+        return None
+    try:
+        data = await member.display_avatar.replace(size=128, format="png").read()
+        img = Image.open(io.BytesIO(data)).convert("RGBA")
+        img = ImageOps.fit(img, (size, size), centering=(0.5, 0.5))
+        mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+        img.putalpha(mask)
+        return img
+    except Exception:
+        return None
 
-	try:
-		avatar_bytes = await member.display_avatar.replace(size=128, format="png").read()
-		avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
-		avatar = ImageOps.fit(avatar, (size, size), centering=(0.5, 0.5))
-		mask = Image.new("L", (size, size), 0)
-		ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
-		avatar.putalpha(mask)
-		return avatar
-	except Exception:
-		return None
 
+# ---------------------------------------------------------------------------
+# Kart üretici
+# ---------------------------------------------------------------------------
 
 async def build_leaderboard_card(
-	guild: discord.Guild,
-	rows: list,
-	xp_tracker: XPTrackerCog,
+    guild: discord.Guild,
+    rows: list,
+    xp_tracker: XPTrackerCog,
 ) -> io.BytesIO:
-	total_height = HEADER_HEIGHT + len(rows) * ROW_HEIGHT + 20
-	canvas = Image.new("RGBA", (CARD_WIDTH, total_height), BACKGROUND)
-	draw = ImageDraw.Draw(canvas)
+    count = len(rows)
+    total_h = HEADER_H + count * CARD_H + 20
 
-	for y in range(total_height):
-		ratio = y / max(1, total_height - 1)
-		red = int(10 + ratio * 6)
-		green = int(20 + ratio * 8)
-		blue = int(36 + ratio * 15)
-		draw.line([(0, y), (CARD_WIDTH, y)], fill=(red, green, blue, 255))
+    canvas = Image.new("RGBA", (CARD_W, total_h), BG_COLOR)
+    draw = ImageDraw.Draw(canvas)
 
-	title_font = load_font(32, bold=True)
-	subtitle_font = load_font(16)
-	draw.text((CARD_WIDTH // 2, 24), "XP Siralamasi", font=title_font, fill=TEXT_PRIMARY, anchor="mm")
-	draw.text((CARD_WIDTH // 2, 58), guild.name, font=subtitle_font, fill=TEXT_SECONDARY, anchor="mm")
-	draw.line([(30, HEADER_HEIGHT - 4), (CARD_WIDTH - 30, HEADER_HEIGHT - 4)], fill=OUTLINE, width=2)
+    # Hafif gradient arka plan
+    for y in range(total_h):
+        t = y / max(1, total_h - 1)
+        r = int(10 + t * 6)
+        g = int(20 + t * 8)
+        b = int(36 + t * 15)
+        draw.line([(0, y), (CARD_W, y)], fill=(r, g, b, 255))
 
-	rank_font = load_font(22, bold=True)
-	name_font = load_font(20, bold=True)
-	xp_font = load_font(17)
-	level_font = load_font(14)
+    # Başlık
+    f_title = _load_font(32, bold=True)
+    f_sub   = _load_font(16)
+    draw.text((CARD_W // 2, 24), "🏆  XP Sıralaması", font=f_title,
+              fill=TEXT_PRIMARY, anchor="mm")
+    draw.text((CARD_W // 2, 58), guild.name, font=f_sub,
+              fill=TEXT_SECONDARY, anchor="mm")
+    draw.line([(30, HEADER_H - 4), (CARD_W - 30, HEADER_H - 4)],
+              fill=OUTLINE, width=2)
 
-	members = [guild.get_member(row["user_id"]) for row in rows]
-	avatars = [await fetch_avatar(member, size=AVATAR_RADIUS * 2) for member in members]
+    f_rank  = _load_font(22, bold=True)
+    f_name  = _load_font(20, bold=True)
+    f_xp    = _load_font(17)
+    f_level = _load_font(14)
 
-	for index, (row, member, avatar) in enumerate(zip(rows, members, avatars), start=1):
-		y_start = HEADER_HEIGHT + (index - 1) * ROW_HEIGHT
-		y_end = y_start + ROW_HEIGHT
-		row_fill = ROW_ODD if index % 2 == 1 else ROW_EVEN
-		draw.rounded_rectangle(
-			(10, y_start + 4, CARD_WIDTH - 10, y_end - 4),
-			radius=14,
-			fill=row_fill,
-			outline=OUTLINE,
-			width=1,
-		)
+    # Avatar'ları paralel çek
+    members = [guild.get_member(row["user_id"]) for row in rows]
+    avatars = await asyncio.gather(*[_fetch_avatar_small(m, size=AVATAR_R * 2) for m in members])
 
-		cursor_x = 26
-		rank_label = ["1", "2", "3"][index - 1] if index <= 3 else str(index)
-		rank_color = MEDAL_COLORS[index - 1] if index <= 3 else TEXT_SECONDARY
-		draw.text((cursor_x + 24, y_start + ROW_HEIGHT // 2), rank_label, font=rank_font, fill=rank_color, anchor="mm")
-		cursor_x += 52
+    for i, (row, member, avatar) in enumerate(zip(rows, members, avatars)):
+        y0 = HEADER_H + i * CARD_H
+        y1 = y0 + CARD_H
 
-		if avatar is not None:
-			avatar_x = cursor_x
-			avatar_y = y_start + ROW_HEIGHT // 2 - AVATAR_RADIUS
-			canvas.paste(avatar, (avatar_x, avatar_y), avatar)
-			draw.ellipse(
-				(avatar_x - 2, avatar_y - 2, avatar_x + AVATAR_RADIUS * 2 + 2, avatar_y + AVATAR_RADIUS * 2 + 2),
-				outline=ACCENT,
-				width=2,
-			)
-		cursor_x += AVATAR_RADIUS * 2 + 12
+        # Satır arka planı
+        row_color = ROW_ODD if i % 2 == 0 else ROW_EVEN
+        draw.rounded_rectangle(
+            (10, y0 + 4, CARD_W - 10, y1 - 4),
+            radius=14, fill=row_color, outline=OUTLINE, width=1,
+        )
 
-		member_name = member.display_name if member is not None else f"Kullanici {row['user_id']}"
-		if len(member_name) > 22:
-			member_name = member_name[:21] + "..."
+        cx = 26  # sol kenar imleci
 
-		total_xp = int(row["total_xp"])
-		level, _, _, _, progress_ratio = xp_tracker.get_progress_data(total_xp)
+        # Sıra numarası / madalya
+        rank_num = i + 1
+        if rank_num <= 3:
+            rank_str = ["🥇", "🥈", "🥉"][rank_num - 1]
+        else:
+            rank_str = str(rank_num)
 
-		draw.text((cursor_x + 2, y_start + ROW_HEIGHT // 2 - 14), member_name, font=name_font, fill=TEXT_PRIMARY, anchor="lm")
-		draw.text((cursor_x + 2, y_start + ROW_HEIGHT // 2 + 10), f"Seviye {level}", font=level_font, fill=ACCENT, anchor="lm")
+        draw.text((cx + 24, y0 + CARD_H // 2), rank_str, font=f_rank,
+                  fill=MEDAL_COLORS[i] if i < 3 else TEXT_SECONDARY, anchor="mm")
+        cx += 52
 
-		bar_x0 = CARD_WIDTH - 160
-		bar_x1 = CARD_WIDTH - 24
-		bar_y0 = y_start + ROW_HEIGHT - 28
-		bar_y1 = bar_y0 + BAR_HEIGHT
-		bar_radius = BAR_HEIGHT // 2
-		draw.rounded_rectangle((bar_x0, bar_y0, bar_x1, bar_y1), radius=bar_radius, fill=BAR_BACKGROUND)
-		fill_width = max(bar_radius * 2, int((bar_x1 - bar_x0) * progress_ratio))
-		draw.rounded_rectangle((bar_x0, bar_y0, bar_x0 + fill_width, bar_y1), radius=bar_radius, fill=BAR_FILL)
+        # Avatar
+        if avatar:
+            ax = cx
+            ay = y0 + CARD_H // 2 - AVATAR_R
+            canvas.paste(avatar, (ax, ay), avatar)
+            # Halka
+            draw.ellipse(
+                (ax - 2, ay - 2, ax + AVATAR_R * 2 + 2, ay + AVATAR_R * 2 + 2),
+                outline=ACCENT, width=2,
+            )
+        cx += AVATAR_R * 2 + 12
 
-		draw.text((CARD_WIDTH - 24, y_start + ROW_HEIGHT // 2 - 10), f"{total_xp:,} XP", font=xp_font, fill=TEXT_PRIMARY, anchor="rm")
+        # İsim + level
+        name = member.display_name if member else f"Kullanıcı {row['user_id']}"
+        if len(name) > 22:
+            name = name[:21] + "…"
 
-	draw.rounded_rectangle((4, 4, CARD_WIDTH - 4, total_height - 4), radius=20, outline=OUTLINE, width=2)
+        total_xp = int(row["total_xp"])
+        level, *_ = xp_tracker.get_progress_data(total_xp)
 
-	buffer = io.BytesIO()
-	canvas.save(buffer, format="PNG")
-	buffer.seek(0)
-	return buffer
+        draw.text((cx + 2, y0 + CARD_H // 2 - 14), name, font=f_name,
+                  fill=TEXT_PRIMARY, anchor="lm")
+        draw.text((cx + 2, y0 + CARD_H // 2 + 10), f"Seviye {level}",
+                  font=f_level, fill=ACCENT, anchor="lm")
 
+        # Sağ: XP + mini bar
+        xp_str = f"{total_xp:,} XP"
+        xp_x = CARD_W - 24
+
+        # Mini progress bar
+        _, _, floor, ceiling, ratio = xp_tracker.get_progress_data(total_xp)
+        bar_x0 = CARD_W - 160
+        bar_x1 = CARD_W - 24
+        bar_y0 = y0 + CARD_H - 28
+        bar_y1 = bar_y0 + BAR_H
+        bar_r  = BAR_H // 2
+
+        draw.rounded_rectangle((bar_x0, bar_y0, bar_x1, bar_y1),
+                                radius=bar_r, fill=BAR_BG)
+        fill_w = max(bar_r * 2, int((bar_x1 - bar_x0) * ratio))
+        draw.rounded_rectangle(
+            (bar_x0, bar_y0, bar_x0 + fill_w, bar_y1),
+            radius=bar_r, fill=BAR_FILL,
+        )
+
+        draw.text((xp_x, y0 + CARD_H // 2 - 10), xp_str, font=f_xp,
+                  fill=TEXT_PRIMARY, anchor="rm")
+
+    # Dış çerçeve
+    draw.rounded_rectangle((4, 4, CARD_W - 4, total_h - 4),
+                            radius=20, outline=OUTLINE, width=2)
+
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+# ---------------------------------------------------------------------------
+# Cog
+# ---------------------------------------------------------------------------
 
 class LeaderboardCog(commands.Cog):
-	def __init__(self, bot: commands.Bot) -> None:
-		self.bot = bot
+    def __init__(self, bot: commands.Bot) -> None:
+        self.bot = bot
 
-	def get_xp_tracker(self) -> XPTrackerCog:
-		xp_tracker = self.bot.get_cog("XPTrackerCog")
-		if not isinstance(xp_tracker, XPTrackerCog):
-			raise RuntimeError("XP sistemi yuklenemedi.")
-		return xp_tracker
+    def _get_xp_tracker(self) -> XPTrackerCog:
+        cog = self.bot.get_cog("XPTrackerCog")
+        if not isinstance(cog, XPTrackerCog):
+            raise RuntimeError("XP sistemi yüklenemedi.")
+        return cog
 
-	@commands.command(name="liderlik", aliases=["lb", "top"])
-	async def leaderboard_command(self, ctx: commands.Context) -> None:
-		if ctx.guild is None:
-			await ctx.send("Bu komut sadece sunucuda kullanilabilir.")
-			return
+    @commands.command(name="liderlik", aliases=["lb", "top"])
+    async def liderlik_command(self, ctx: commands.Context) -> None:
+        """Görsel XP sıralama tablosunu gösterir."""
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
 
-		rows = self.get_xp_tracker().get_leaderboard(ctx.guild.id, limit=10)
-		if not rows:
-			await ctx.send("Henuz XP verisi yok.")
-			return
+        rows = await dbmod.get_leaderboard(ctx.guild.id, limit=10)
+        if not rows:
+            await ctx.send("Henüz XP verisi yok.")
+            return
 
-		async with ctx.typing():
-			try:
-				buffer = await build_leaderboard_card(ctx.guild, rows, self.get_xp_tracker())
-			except Exception as error:
-				await ctx.send(f"Siralama karti olusturulamadi: {error}")
-				return
+        xp_tracker = self._get_xp_tracker()
 
-		await ctx.send(file=discord.File(buffer, filename="liderlik.png"))
+        async with ctx.typing():
+            try:
+                buf = await build_leaderboard_card(ctx.guild, rows, xp_tracker)
+            except Exception as err:
+                await ctx.send(f"❌ Sıralama kartı oluşturulamadı: {err}")
+                return
+
+        await ctx.send(file=discord.File(buf, filename="liderlik.png"))

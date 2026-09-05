@@ -1,694 +1,623 @@
-import datetime
+"""
+xp.py — XP sistemi: mesaj/ses XP, streak, boost, admin komutları.
+
+Tüm DB işlemleri database.py üzerinden geçer; bu cog sadece
+Discord event'lerini ve komutları yönetir.
+"""
+
+from __future__ import annotations
+
+import asyncio
 import random
-import sqlite3
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import discord
 from discord.ext import commands, tasks
 
-from rolescard import build_roles_card
+import database as db
 from xproles import XPRoleManager
 
+if TYPE_CHECKING:
+    pass
 
-DATABASE_PATH = Path(__file__).resolve().parent / "data" / "xp_system.db"
+# ---------------------------------------------------------------------------
+# Sabitler
+# ---------------------------------------------------------------------------
 
-MESSAGE_XP_MIN = 1
-MESSAGE_XP_MAX = 2
-MESSAGE_COOLDOWN_SECONDS = 60
+MESSAGE_XP_MIN = 3
+MESSAGE_XP_MAX = 8
+MESSAGE_COOLDOWN_SECONDS = 20
+
 VOICE_XP_INTERVAL_MINUTES = 2
 VOICE_XP_PER_INTERVAL = 1
+
+# Streak bonusu: her streak günü için +% bonus (max %50)
 STREAK_BONUS_PER_DAY = 0.02
 STREAK_BONUS_MAX = 0.50
 
+# Streak ödülleri: {gün: bonus_xp}
 STREAK_MILESTONES: dict[int, int] = {
-	7: 50,
-	14: 120,
-	30: 300,
-	60: 700,
-	100: 1500,
+    7:  50,
+    14: 120,
+    30: 300,
+    60: 700,
+    100: 1500,
 }
 
+FEATURE_REQUESTS_PATH = Path(__file__).resolve().parent / "data" / "features.txt"
+
+
+# ---------------------------------------------------------------------------
+# Yardımcı fonksiyonlar
+# ---------------------------------------------------------------------------
+
+def format_duration(total_seconds: int) -> str:
+    total_seconds = max(0, int(total_seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours}sa")
+    if minutes or hours:
+        parts.append(f"{minutes}dk")
+    parts.append(f"{seconds}sn")
+    return " ".join(parts)
+
+
+def streak_multiplier(streak_days: int) -> float:
+    bonus = min(streak_days * STREAK_BONUS_PER_DAY, STREAK_BONUS_MAX)
+    return round(1.0 + bonus, 4)
+
+
+# ---------------------------------------------------------------------------
+# Cog
+# ---------------------------------------------------------------------------
 
 class XPTrackerCog(commands.Cog):
-	def __init__(self, bot: commands.Bot) -> None:
-		self.bot = bot
-		self.role_manager = XPRoleManager()
-		self.message_cooldowns: dict[tuple[int, int], float] = {}
-		self.setup_database()
-
-	def cog_unload(self) -> None:
-		self.voice_xp_loop.cancel()
-
-	def get_connection(self) -> sqlite3.Connection:
-		connection = sqlite3.connect(DATABASE_PATH)
-		connection.row_factory = sqlite3.Row
-		return connection
-
-	def setup_database(self) -> None:
-		DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-		with self.get_connection() as connection:
-			connection.execute(
-				"""
-				CREATE TABLE IF NOT EXISTS user_xp (
-					guild_id INTEGER NOT NULL,
-					user_id INTEGER NOT NULL,
-					text_xp INTEGER NOT NULL DEFAULT 0,
-					voice_xp INTEGER NOT NULL DEFAULT 0,
-					voice_seconds INTEGER NOT NULL DEFAULT 0,
-					active_voice_started_at REAL,
-					message_count INTEGER NOT NULL DEFAULT 0,
-					streak_days INTEGER NOT NULL DEFAULT 0,
-					last_message_date TEXT,
-					PRIMARY KEY (guild_id, user_id)
-				)
-				"""
-			)
-
-			columns = {
-				row["name"]
-				for row in connection.execute("PRAGMA table_info(user_xp)").fetchall()
-			}
-
-			if "voice_seconds" not in columns:
-				connection.execute(
-					"ALTER TABLE user_xp ADD COLUMN voice_seconds INTEGER NOT NULL DEFAULT 0"
-				)
-
-			if "active_voice_started_at" not in columns:
-				connection.execute(
-					"ALTER TABLE user_xp ADD COLUMN active_voice_started_at REAL"
-				)
-
-			if "message_count" not in columns:
-				connection.execute(
-					"ALTER TABLE user_xp ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0"
-				)
-
-			if "streak_days" not in columns:
-				connection.execute(
-					"ALTER TABLE user_xp ADD COLUMN streak_days INTEGER NOT NULL DEFAULT 0"
-				)
-
-			if "last_message_date" not in columns:
-				connection.execute(
-					"ALTER TABLE user_xp ADD COLUMN last_message_date TEXT"
-				)
-
-	def ensure_user(self, guild_id: int, user_id: int) -> None:
-		with self.get_connection() as connection:
-			connection.execute(
-				"""
-				INSERT OR IGNORE INTO user_xp (
-					guild_id, user_id, text_xp, voice_xp, voice_seconds, active_voice_started_at, message_count, streak_days, last_message_date
-				)
-				VALUES (?, ?, 0, 0, 0, NULL, 0, 0, NULL)
-				""",
-				(guild_id, user_id),
-			)
-
-	@staticmethod
-	def streak_multiplier(streak_days: int) -> float:
-		bonus = min(streak_days * STREAK_BONUS_PER_DAY, STREAK_BONUS_MAX)
-		return round(1.0 + bonus, 4)
-
-	def add_text_xp(self, guild_id: int, user_id: int, amount: int) -> None:
-		self.ensure_user(guild_id, user_id)
-		with self.get_connection() as connection:
-			connection.execute(
-				"""
-				UPDATE user_xp
-				SET text_xp = text_xp + ?
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(amount, guild_id, user_id),
-			)
-
-	def add_voice_xp(self, guild_id: int, user_id: int, amount: int) -> None:
-		self.ensure_user(guild_id, user_id)
-		with self.get_connection() as connection:
-			connection.execute(
-				"""
-				UPDATE user_xp
-				SET voice_xp = voice_xp + ?
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(amount, guild_id, user_id),
-			)
-
-	def set_xp(self, guild_id: int, user_id: int, text_xp: int, voice_xp: int) -> None:
-		self.ensure_user(guild_id, user_id)
-		with self.get_connection() as connection:
-			connection.execute(
-				"""
-				UPDATE user_xp
-				SET text_xp = ?, voice_xp = ?
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(max(0, text_xp), max(0, voice_xp), guild_id, user_id),
-			)
-
-	def add_voice_seconds(self, guild_id: int, user_id: int, amount: int) -> None:
-		if amount <= 0:
-			return
-
-		self.ensure_user(guild_id, user_id)
-		with self.get_connection() as connection:
-			connection.execute(
-				"""
-				UPDATE user_xp
-				SET voice_seconds = voice_seconds + ?
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(amount, guild_id, user_id),
-			)
-
-	def add_message_count(self, guild_id: int, user_id: int, amount: int = 1) -> None:
-		if amount <= 0:
-			return
-
-		self.ensure_user(guild_id, user_id)
-		with self.get_connection() as connection:
-			connection.execute(
-				"""
-				UPDATE user_xp
-				SET message_count = message_count + ?
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(amount, guild_id, user_id),
-			)
-
-	def get_user_stats(self, guild_id: int, user_id: int) -> sqlite3.Row | None:
-		self.ensure_user(guild_id, user_id)
-		with self.get_connection() as connection:
-			return connection.execute(
-				"""
-				SELECT
-					text_xp,
-					voice_xp,
-					voice_seconds,
-					active_voice_started_at,
-					message_count,
-					streak_days,
-					last_message_date,
-					(text_xp + voice_xp) AS total_xp
-				FROM user_xp
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(guild_id, user_id),
-			).fetchone()
-
-	def update_streak(self, guild_id: int, user_id: int) -> tuple[int, bool]:
-		stats = self.get_user_stats(guild_id, user_id)
-		if stats is None:
-			return 1, True
-
-		today = datetime.date.today().isoformat()
-		last_message_date = stats["last_message_date"]
-		streak_days = int(stats["streak_days"])
-
-		if last_message_date == today:
-			return streak_days, False
-
-		yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
-		new_streak = streak_days + 1 if last_message_date == yesterday else 1
-
-		with self.get_connection() as connection:
-			connection.execute(
-				"""
-				UPDATE user_xp
-				SET streak_days = ?, last_message_date = ?
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(new_streak, today, guild_id, user_id),
-			)
-
-		return new_streak, True
-
-	def get_user_xp(self, guild_id: int, user_id: int) -> tuple[int, int, int, int]:
-		row = self.get_user_stats(guild_id, user_id)
-
-		if row is None:
-			return 0, 0, 0, 0
-
-		return row["text_xp"], row["voice_xp"], row["total_xp"], row["voice_seconds"]
-
-	def get_leaderboard(self, guild_id: int, limit: int = 10) -> list[sqlite3.Row]:
-		with self.get_connection() as connection:
-			return connection.execute(
-				"""
-				SELECT user_id, text_xp, voice_xp, voice_seconds, message_count, (text_xp + voice_xp) AS total_xp
-				FROM user_xp
-				WHERE guild_id = ?
-				ORDER BY total_xp DESC, voice_xp DESC, text_xp DESC
-				LIMIT ?
-				""",
-				(guild_id, limit),
-			).fetchall()
-
-	def get_user_rank(self, guild_id: int, user_id: int) -> int:
-		stats = self.get_user_stats(guild_id, user_id)
-		if stats is None:
-			return 0
-
-		with self.get_connection() as connection:
-			higher_count = connection.execute(
-				"""
-				SELECT COUNT(*)
-				FROM user_xp
-				WHERE guild_id = ?
-				AND (
-					(text_xp + voice_xp) > ?
-					OR ((text_xp + voice_xp) = ? AND voice_xp > ?)
-					OR ((text_xp + voice_xp) = ? AND voice_xp = ? AND text_xp > ?)
-					OR ((text_xp + voice_xp) = ? AND voice_xp = ? AND text_xp = ? AND user_id < ?)
-				)
-				""",
-				(
-					guild_id,
-					stats["total_xp"],
-					stats["total_xp"],
-					stats["voice_xp"],
-					stats["total_xp"],
-					stats["voice_xp"],
-					stats["text_xp"],
-					stats["total_xp"],
-					stats["voice_xp"],
-					stats["text_xp"],
-					user_id,
-				),
-			).fetchone()[0]
-
-		return int(higher_count) + 1
-
-	def can_gain_message_xp(self, guild_id: int, user_id: int) -> bool:
-		current_time = time.time()
-		cooldown_key = (guild_id, user_id)
-		last_time = self.message_cooldowns.get(cooldown_key, 0)
-
-		if current_time - last_time < MESSAGE_COOLDOWN_SECONDS:
-			return False
-
-		self.message_cooldowns[cooldown_key] = current_time
-
-		if len(self.message_cooldowns) > 10_000:
-			cutoff = current_time - MESSAGE_COOLDOWN_SECONDS
-			self.message_cooldowns = {k: v for k, v in self.message_cooldowns.items() if v > cutoff}
-
-		return True
-
-	@staticmethod
-	def is_valid_voice_member(member: discord.Member) -> bool:
-		voice_state = member.voice
-		if member.bot or voice_state is None or voice_state.channel is None:
-			return False
-		if voice_state.self_deaf or voice_state.deaf:
-			return False
-		return True
-
-	@staticmethod
-	def is_in_voice(state: discord.VoiceState | None) -> bool:
-		return state is not None and state.channel is not None
-
-	def start_voice_session(self, guild_id: int, user_id: int, started_at: float | None = None) -> None:
-		self.ensure_user(guild_id, user_id)
-		started_at = started_at or time.time()
-		with self.get_connection() as connection:
-			current_started_at = connection.execute(
-				"""
-				SELECT active_voice_started_at
-				FROM user_xp
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(guild_id, user_id),
-			).fetchone()
-
-			if current_started_at is not None and current_started_at[0] is not None:
-				return
-
-			connection.execute(
-				"""
-				UPDATE user_xp
-				SET active_voice_started_at = ?
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(float(started_at), guild_id, user_id),
-			)
-
-	def end_voice_session(self, guild_id: int, user_id: int) -> None:
-		stats = self.get_user_stats(guild_id, user_id)
-		started_at = None if stats is None else stats["active_voice_started_at"]
-		if started_at is None:
-			return
-
-		elapsed_seconds = max(0, int(time.time() - started_at))
-		with self.get_connection() as connection:
-			connection.execute(
-				"""
-				UPDATE user_xp
-				SET voice_seconds = voice_seconds + ?,
-					active_voice_started_at = NULL
-				WHERE guild_id = ? AND user_id = ?
-				""",
-				(elapsed_seconds, guild_id, user_id),
-			)
-
-	def get_live_voice_seconds(self, guild_id: int, user_id: int, stored_seconds: int) -> int:
-		stats = self.get_user_stats(guild_id, user_id)
-		started_at = None if stats is None else stats["active_voice_started_at"]
-		if started_at is None:
-			return stored_seconds
-		return stored_seconds + max(0, int(time.time() - started_at))
-
-	@staticmethod
-	def format_duration(total_seconds: int) -> str:
-		total_seconds = max(0, int(total_seconds))
-		hours, remainder = divmod(total_seconds, 3600)
-		minutes, seconds = divmod(remainder, 60)
-
-		parts = []
-		if hours > 0:
-			parts.append(f"{hours}sa")
-		if minutes > 0 or hours > 0:
-			parts.append(f"{minutes}dk")
-		parts.append(f"{seconds}sn")
-		return " ".join(parts)
-
-	def restore_active_voice_sessions(self) -> None:
-		for guild in self.bot.guilds:
-			for member in guild.members:
-				if member.bot:
-					continue
-				if member.voice is not None and member.voice.channel is not None:
-					self.start_voice_session(guild.id, member.id)
-					continue
-
-				stats = self.get_user_stats(guild.id, member.id)
-				if stats is None or stats["active_voice_started_at"] is None:
-					continue
-
-				self.end_voice_session(guild.id, member.id)
-
-	def get_progress_data(self, total_xp: int) -> tuple[int, int, int, int, float]:
-		return self.role_manager.get_progress_data(total_xp)
-
-	def get_managed_role_ids(self) -> set[int]:
-		return self.role_manager.get_managed_role_ids()
-
-	def get_target_role(self, member: discord.Member) -> discord.Role | None:
-		_, _, total_xp, _ = self.get_user_xp(member.guild.id, member.id)
-		return self.role_manager.get_target_role(member, total_xp)
-
-	def get_display_role(self, member: discord.Member) -> str:
-		_, _, total_xp, _ = self.get_user_xp(member.guild.id, member.id)
-		return self.role_manager.get_display_role(member, total_xp)
-
-	async def sync_xp_role(self, member: discord.Member) -> None:
-		_, _, total_xp, _ = self.get_user_xp(member.guild.id, member.id)
-		await self.role_manager.sync_member_role(member, total_xp)
-
-	@commands.Cog.listener()
-	async def on_ready(self) -> None:
-		self.restore_active_voice_sessions()
-		if not self.voice_xp_loop.is_running():
-			self.voice_xp_loop.start()
-		print(f"Bot aktif: {self.bot.user}")
-
-	@commands.Cog.listener()
-	async def on_member_join(self, member: discord.Member) -> None:
-		self.ensure_user(member.guild.id, member.id)
-		await self.sync_xp_role(member)
-
-	@commands.Cog.listener()
-	async def on_message(self, message: discord.Message) -> None:
-		if message.author.bot or message.guild is None:
-			return
-
-		context = await self.bot.get_context(message)
-		if context.valid:
-			return
-
-		self.add_message_count(message.guild.id, message.author.id)
-		streak_days, is_first_message_today = self.update_streak(message.guild.id, message.author.id)
-
-		if self.can_gain_message_xp(message.guild.id, message.author.id):
-			base_xp = random.randint(MESSAGE_XP_MIN, MESSAGE_XP_MAX)
-			earned_xp = max(1, round(base_xp * self.streak_multiplier(streak_days)))
-			self.add_text_xp(message.guild.id, message.author.id, earned_xp)
-			if isinstance(message.author, discord.Member):
-				await self.sync_xp_role(message.author)
-
-		if is_first_message_today and streak_days in STREAK_MILESTONES:
-			bonus_xp = STREAK_MILESTONES[streak_days]
-			self.add_text_xp(message.guild.id, message.author.id, bonus_xp)
-			try:
-				await message.channel.send(
-					f"{message.author.mention} {streak_days} gunluk seri yapti ve {bonus_xp} bonus XP kazandi!",
-					delete_after=15,
-				)
-			except discord.HTTPException:
-				pass
-
-	@commands.Cog.listener()
-	async def on_voice_state_update(
-		self,
-		member: discord.Member,
-		before: discord.VoiceState,
-		after: discord.VoiceState,
-	) -> None:
-		if member.bot or member.guild is None:
-			return
-
-		was_in_voice = self.is_in_voice(before)
-		is_now_in_voice = self.is_in_voice(after)
-
-		if not was_in_voice and is_now_in_voice:
-			self.ensure_user(member.guild.id, member.id)
-			self.start_voice_session(member.guild.id, member.id)
-			return
-
-		if was_in_voice and not is_now_in_voice:
-			self.end_voice_session(member.guild.id, member.id)
-
-	@tasks.loop(minutes=VOICE_XP_INTERVAL_MINUTES)
-	async def voice_xp_loop(self) -> None:
-		for guild in self.bot.guilds:
-			for voice_channel in guild.voice_channels:
-				valid_members = [member for member in voice_channel.members if self.is_valid_voice_member(member)]
-
-				if len(valid_members) < 2:
-					continue
-
-				for member in valid_members:
-					self.add_voice_xp(guild.id, member.id, VOICE_XP_PER_INTERVAL)
-					await self.sync_xp_role(member)
-
-	@voice_xp_loop.before_loop
-	async def before_voice_xp_loop(self) -> None:
-		await self.bot.wait_until_ready()
-
-	@commands.command(name="xp")
-	async def xp_command(self, ctx: commands.Context) -> None:
-		if ctx.guild is None:
-			await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-			return
-
-		stats = self.get_user_stats(ctx.guild.id, ctx.author.id)
-		if stats is None:
-			await ctx.send("Kullanıcı verisi bulunamadı.")
-			return
-
-		text_xp, voice_xp, total_xp, voice_seconds = self.get_user_xp(ctx.guild.id, ctx.author.id)
-		live_voice_seconds = self.get_live_voice_seconds(ctx.guild.id, ctx.author.id, voice_seconds)
-		streak_days = int(stats["streak_days"])
-		streak_multiplier = self.streak_multiplier(streak_days)
-		embed = discord.Embed(title="XP Durumun", color=discord.Color.blurple())
-		embed.add_field(name="Mesaj XP", value=str(text_xp), inline=True)
-		embed.add_field(name="Ses XP", value=str(voice_xp), inline=True)
-		embed.add_field(name="Toplam XP", value=str(total_xp), inline=False)
-		embed.add_field(name="Toplam Mesaj", value=str(stats["message_count"]), inline=True)
-		embed.add_field(name="Sunucudaki Toplam Ses Süresi", value=self.format_duration(live_voice_seconds), inline=False)
-		embed.add_field(name="Seri", value=f"{streak_days} gun (x{streak_multiplier:.2f})", inline=False)
-		await ctx.send(embed=embed)
-
-	@commands.command(name="ses")
-	async def ses_command(self, ctx: commands.Context) -> None:
-		if ctx.guild is None:
-			await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-			return
-
-		_, _, _, voice_seconds = self.get_user_xp(ctx.guild.id, ctx.author.id)
-		live_voice_seconds = self.get_live_voice_seconds(ctx.guild.id, ctx.author.id, voice_seconds)
-		await ctx.send(f"Bu sunucudaki toplam ses süren: {self.format_duration(live_voice_seconds)}")
-
-	@commands.command(name="topxp")
-	async def topxp_command(self, ctx: commands.Context) -> None:
-		if ctx.guild is None:
-			await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-			return
-
-		rows = self.get_leaderboard(ctx.guild.id)
-		if not rows:
-			await ctx.send("Henüz XP verisi yok.")
-			return
-
-		lines = []
-		for index, row in enumerate(rows, start=1):
-			member = ctx.guild.get_member(row["user_id"])
-			member_name = member.display_name if member else f"Kullanıcı {row['user_id']}"
-			lines.append(f"{index}. {member_name} — {row['total_xp']} XP")
-
-		embed = discord.Embed(
-			title="XP Sıralaması",
-			description="\n".join(lines),
-			color=discord.Color.gold(),
-		)
-		await ctx.send(embed=embed)
-
-	@commands.command(name="roles", aliases=["roller"])
-	async def roles_command(self, ctx: commands.Context, member: discord.Member | None = None) -> None:
-		if ctx.guild is None:
-			await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-			return
-
-		target = member or ctx.author
-		if not isinstance(target, discord.Member):
-			await ctx.send("Kullanıcı bilgisi alınamadı.")
-			return
-
-		self.ensure_user(ctx.guild.id, target.id)
-		_, _, total_xp, _ = self.get_user_xp(ctx.guild.id, target.id)
-
-		async with ctx.typing():
-			try:
-				buffer = await build_roles_card(
-					ctx.guild,
-					self.role_manager.role_rewards,
-					total_xp,
-					target.display_name,
-				)
-			except Exception as error:
-				await ctx.send(f"Rol kartı oluşturulamadı: {error}")
-				return
-
-		await ctx.send(file=discord.File(buffer, filename=f"roles-{target.id}.png"))
-
-	@roles_command.error
-	async def roles_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-		if isinstance(error, commands.BadArgument):
-			await ctx.send("Kullanım: !roles [@kullanici]")
-			return
-		raise error
-
-	@commands.command(name="streak")
-	async def streak_command(self, ctx: commands.Context) -> None:
-		if ctx.guild is None:
-			await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-			return
-
-		stats = self.get_user_stats(ctx.guild.id, ctx.author.id)
-		streak_days = 0 if stats is None else int(stats["streak_days"])
-		multiplier = self.streak_multiplier(streak_days)
-		next_milestone = next((day for day in sorted(STREAK_MILESTONES) if day > streak_days), None)
-
-		if next_milestone is None:
-			next_reward_text = "Tum streak odullerini aldin."
-		else:
-			next_reward_text = f"Sonraki odul: {next_milestone}. gun (+{STREAK_MILESTONES[next_milestone]} XP)"
-
-		await ctx.send(
-			f"{ctx.author.display_name} icin streak: {streak_days} gun. XP carpani x{multiplier:.2f}. {next_reward_text}"
-		)
-
-	@commands.command(name="xpsenkronize")
-	@commands.has_permissions(administrator=True)
-	async def xpsenkronize_command(self, ctx: commands.Context) -> None:
-		if ctx.guild is None:
-			await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-			return
-
-		count = 0
-		for member in ctx.guild.members:
-			if member.bot:
-				continue
-			self.ensure_user(ctx.guild.id, member.id)
-			await self.sync_xp_role(member)
-			count += 1
-
-		await ctx.send(f"XP rol kontrolü tamamlandı. Kontrol edilen üye: {count}")
-
-	@xpsenkronize_command.error
-	async def xpsenkronize_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-		if isinstance(error, commands.MissingPermissions):
-			await ctx.send("Bu komut için yönetici yetkisi gerekli.")
-			return
-		raise error
-
-	@commands.command(name="xpayarla")
-	@commands.has_permissions(administrator=True)
-	async def xpayarla_command(
-		self,
-		ctx: commands.Context,
-		member: discord.Member,
-		total_xp: int,
-	) -> None:
-		if ctx.guild is None:
-			await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-			return
-
-		if total_xp < 0:
-			await ctx.send("XP 0'dan küçük olamaz.")
-			return
-
-		text_xp = total_xp // 2
-		voice_xp = total_xp - text_xp
-		self.set_xp(ctx.guild.id, member.id, text_xp, voice_xp)
-		await self.sync_xp_role(member)
-		await ctx.send(
-			f"{member.display_name} kullanıcısının toplam XP'si {total_xp:,} olarak ayarlandı."
-		)
-
-	@xpayarla_command.error
-	async def xpayarla_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-		if isinstance(error, commands.MissingPermissions):
-			await ctx.send("Bu komut için yönetici yetkisi gerekli.")
-			return
-		if isinstance(error, commands.BadArgument):
-			await ctx.send("Kullanım: !xpayarla @kullanici <miktar>")
-			return
-		raise error
-
-	@commands.command(name="xpekle")
-	@commands.has_permissions(administrator=True)
-	async def xpekle_command(
-		self,
-		ctx: commands.Context,
-		member: discord.Member,
-		amount: int,
-	) -> None:
-		if ctx.guild is None:
-			await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-			return
-
-		stats = self.get_user_stats(ctx.guild.id, member.id)
-		current_total = 0 if stats is None else int(stats["total_xp"])
-		new_total = max(0, current_total + amount)
-		text_xp = new_total // 2
-		voice_xp = new_total - text_xp
-		self.set_xp(ctx.guild.id, member.id, text_xp, voice_xp)
-		await self.sync_xp_role(member)
-
-		verb = "eklendi" if amount >= 0 else "cikarildi"
-		await ctx.send(
-			f"{member.display_name} kullanicisinin XP'si guncellendi. {abs(amount):,} XP {verb}. Yeni toplam: {new_total:,}"
-		)
-
-	@xpekle_command.error
-	async def xpekle_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-		if isinstance(error, commands.MissingPermissions):
-			await ctx.send("Bu komut için yönetici yetkisi gerekli.")
-			return
-		if isinstance(error, commands.BadArgument):
-			await ctx.send("Kullanım: !xpekle @kullanici <miktar>")
-			return
-		raise error
+    def __init__(self, bot: commands.Bot) -> None:
+        self.bot = bot
+        self.role_manager = XPRoleManager()
+        # Cooldown: (guild_id, user_id) → unix timestamp
+        self._cooldowns: dict[tuple[int, int], float] = {}
+        self._feature_lock = asyncio.Lock()
+
+    async def cog_load(self) -> None:
+        await db.init_db()
+        FEATURE_REQUESTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        FEATURE_REQUESTS_PATH.touch(exist_ok=True)
+
+    def cog_unload(self) -> None:
+        self.voice_xp_loop.cancel()
+
+    # ------------------------------------------------------------------
+    # Cooldown
+    # ------------------------------------------------------------------
+
+    def _check_cooldown(self, guild_id: int, user_id: int) -> bool:
+        """True döner ve cooldown'ı yenilerse XP kazanılabilir."""
+        now = time.time()
+        key = (guild_id, user_id)
+        if now - self._cooldowns.get(key, 0) < MESSAGE_COOLDOWN_SECONDS:
+            return False
+        self._cooldowns[key] = now
+        # Bellek temizliği
+        if len(self._cooldowns) > 10_000:
+            cutoff = now - MESSAGE_COOLDOWN_SECONDS
+            self._cooldowns = {k: v for k, v in self._cooldowns.items() if v > cutoff}
+        return True
+
+    @staticmethod
+    def _build_feature_entry(message: discord.Message, request: str) -> str:
+        timestamp = discord.utils.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        channel = getattr(message.channel, "name", str(message.channel.id))
+        author = getattr(message.author, "display_name", str(message.author))
+        return (
+            f"[{timestamp}] "
+            f"guild={message.guild.id} channel=#{channel} "
+            f"user={author} ({message.author.id}) :: {request.strip()}\n"
+        )
+
+    @staticmethod
+    def _append_feature_entry(entry: str) -> None:
+        with FEATURE_REQUESTS_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(entry)
+
+    # ------------------------------------------------------------------
+    # Ses yardımcıları
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_valid_voice_member(member: discord.Member) -> bool:
+        vs = member.voice
+        if member.bot or vs is None or vs.channel is None:
+            return False
+        return not (vs.self_deaf or vs.deaf)
+
+    # ------------------------------------------------------------------
+    # Senkronizasyon
+    # ------------------------------------------------------------------
+
+    async def _sync_role(self, member: discord.Member) -> None:
+        row = await db.get_user_row(member.guild.id, member.id)
+        total_xp = int(row["total_xp"]) if row else 0
+        await self.role_manager.sync_member_role(member, total_xp)
+
+    # ------------------------------------------------------------------
+    # Public API (usercard.py ve leaderboard.py bunları kullanır)
+    # ------------------------------------------------------------------
+
+    async def get_user_stats(self, guild_id: int, user_id: int):
+        return await db.get_user_row(guild_id, user_id)
+
+    async def get_user_rank(self, guild_id: int, user_id: int) -> int:
+        return await db.get_user_rank(guild_id, user_id)
+
+    async def get_leaderboard(self, guild_id: int, limit: int = 10):
+        return await db.get_leaderboard(guild_id, limit)
+
+    def get_progress_data(self, total_xp: int) -> tuple[int, int, int, int, float]:
+        return self.role_manager.get_progress_data(total_xp)
+
+    def get_target_role(self, member: discord.Member, total_xp: int) -> discord.Role | None:
+        return self.role_manager.get_target_role(member, total_xp)
+
+    def get_display_role(self, member: discord.Member, total_xp: int) -> str:
+        return self.role_manager.get_display_role(member, total_xp)
+
+    @staticmethod
+    def format_duration(seconds: int) -> str:
+        return format_duration(seconds)
+
+    def get_live_voice_seconds(
+        self,
+        guild_id: int,
+        user_id: int,
+        stored_seconds: int,
+        started_at: float | None,
+    ) -> int:
+        if started_at is None:
+            return stored_seconds
+        return stored_seconds + max(0, int(time.time() - started_at))
+
+    async def ensure_user(self, guild_id: int, user_id: int) -> None:
+        await db.ensure_user(guild_id, user_id)
+
+    # ------------------------------------------------------------------
+    # Event: hazır
+    # ------------------------------------------------------------------
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        await self._restore_voice_sessions()
+        if not self.voice_xp_loop.is_running():
+            self.voice_xp_loop.start()
+        print(f"[XP] Bot aktif: {self.bot.user}")
+
+    async def _restore_voice_sessions(self) -> None:
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                if member.bot:
+                    continue
+                if member.voice and member.voice.channel:
+                    await db.start_voice_session(guild.id, member.id)
+                else:
+                    await db.end_voice_session(guild.id, member.id)
+
+    # ------------------------------------------------------------------
+    # Event: üye katılımı
+    # ------------------------------------------------------------------
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member) -> None:
+        await db.ensure_user(member.guild.id, member.id)
+        await self._sync_role(member)
+
+    # ------------------------------------------------------------------
+    # Event: mesaj
+    # ------------------------------------------------------------------
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        if message.author.bot or message.guild is None:
+            return
+
+        ctx = await self.bot.get_context(message)
+        guild_id = message.guild.id
+        user_id = message.author.id
+
+        # Günlük seri, normal mesaj ve komut mesajlarında da ilerler.
+        streak, is_first_today = await db.update_streak(guild_id, user_id)
+
+        # Streak milestone bildirimi
+        if is_first_today and streak in STREAK_MILESTONES:
+            bonus = STREAK_MILESTONES[streak]
+            await db.add_text_xp(guild_id, user_id, bonus)
+            try:
+                await message.channel.send(
+                    f"🔥 {message.author.mention} **{streak} günlük seri!** "
+                    f"+{bonus} bonus XP kazandın!",
+                    delete_after=15,
+                )
+            except discord.HTTPException:
+                pass
+
+        if ctx.valid:
+            return
+
+        await db.add_message_count(guild_id, user_id)
+
+        if self._check_cooldown(guild_id, user_id):
+            base_xp = random.randint(MESSAGE_XP_MIN, MESSAGE_XP_MAX)
+
+            # Boost çarpanı
+            boost = await db.get_active_multiplier(guild_id, user_id)
+
+            # Streak çarpanı
+            s_mult = streak_multiplier(streak)
+
+            earned = max(1, round(base_xp * boost * s_mult))
+            await db.add_text_xp(guild_id, user_id, earned)
+
+            if isinstance(message.author, discord.Member):
+                await self._sync_role(message.author)
+
+    # ------------------------------------------------------------------
+    # Event: ses durumu
+    # ------------------------------------------------------------------
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ) -> None:
+        if member.bot or member.guild is None:
+            return
+
+        was_in = before.channel is not None
+        is_in = after.channel is not None
+
+        if not was_in and is_in:
+            await db.ensure_user(member.guild.id, member.id)
+            await db.start_voice_session(member.guild.id, member.id)
+        elif was_in and not is_in:
+            await db.end_voice_session(member.guild.id, member.id)
+
+    # ------------------------------------------------------------------
+    # Periyodik ses XP
+    # ------------------------------------------------------------------
+
+    @tasks.loop(minutes=VOICE_XP_INTERVAL_MINUTES)
+    async def voice_xp_loop(self) -> None:
+        for guild in self.bot.guilds:
+            for channel in guild.voice_channels:
+                valid = [m for m in channel.members if self._is_valid_voice_member(m)]
+                if len(valid) < 2:
+                    continue
+                for member in valid:
+                    boost = await db.get_active_multiplier(guild.id, member.id)
+                    earned = max(1, round(VOICE_XP_PER_INTERVAL * boost))
+                    await db.add_voice_xp(guild.id, member.id, earned)
+                    await self._sync_role(member)
+                    await asyncio.sleep(0)  # Rate limit dostu
+
+    @voice_xp_loop.before_loop
+    async def _before_voice_loop(self) -> None:
+        await self.bot.wait_until_ready()
+
+    # ==================================================================
+    # KOMUTLAR
+    # ==================================================================
+
+    # ------------------------------------------------------------------
+    # !xp
+    # ------------------------------------------------------------------
+
+    @commands.command(name="xp")
+    async def xp_command(self, ctx: commands.Context) -> None:
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        row = await db.get_user_row(ctx.guild.id, ctx.author.id)
+        if row is None:
+            await ctx.send("Kullanıcı verisi bulunamadı.")
+            return
+
+        live_seconds = self.get_live_voice_seconds(
+            ctx.guild.id, ctx.author.id,
+            int(row["voice_seconds"]),
+            row["active_voice_started_at"],
+        )
+
+        boost = float(row["xp_boost_multiplier"])
+        boost_expires = row["xp_boost_expires_at"]
+        boost_str = ""
+        if boost > 1.0 and boost_expires:
+            remaining = max(0, int(boost_expires - time.time()))
+            h, r = divmod(remaining, 3600)
+            m, s = divmod(r, 60)
+            boost_str = f"\n⚡ Aktif boost: **{boost}x** — {h}sa {m}dk {s}sn kaldı"
+
+        streak = int(row["streak_days"])
+        s_mult = streak_multiplier(streak)
+        total_xp = int(row["total_xp"])
+        current_role = self.get_display_role(ctx.author, total_xp)
+        next_role_name, next_role_xp = self.role_manager.get_next_role_info(ctx.author, total_xp)
+
+        if next_role_xp is None:
+            next_role_value = "Maksimum role ulaştın."
+        else:
+            remaining = max(0, next_role_xp - total_xp)
+            label = next_role_name or f"{next_role_xp:,} XP rolü"
+            next_role_value = f"{label} için **{remaining:,} XP** kaldı"
+
+        embed = discord.Embed(title="📊 XP Durumun", color=discord.Color.blurple())
+        embed.add_field(name="Mesaj XP", value=f"{int(row['text_xp']):,}", inline=True)
+        embed.add_field(name="Ses XP", value=f"{int(row['voice_xp']):,}", inline=True)
+        embed.add_field(name="Toplam XP", value=f"{total_xp:,}", inline=False)
+        embed.add_field(name="Mevcut Rol", value=current_role, inline=True)
+        embed.add_field(name="Sonraki Rol", value=next_role_value, inline=False)
+        embed.add_field(name="Toplam Mesaj", value=f"{int(row['message_count']):,}", inline=True)
+        embed.add_field(name="Ses Süresi", value=format_duration(live_seconds), inline=True)
+        embed.add_field(
+            name="🔥 Seri",
+            value=f"{streak} gün (x{s_mult:.2f} çarpan)",
+            inline=False,
+        )
+        if boost_str:
+            embed.description = boost_str
+        await ctx.send(embed=embed)
+
+    # ------------------------------------------------------------------
+    # !ses
+    # ------------------------------------------------------------------
+
+    @commands.command(name="ses")
+    async def ses_command(self, ctx: commands.Context) -> None:
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        row = await db.get_user_row(ctx.guild.id, ctx.author.id)
+        if row is None:
+            await ctx.send("Kullanıcı verisi bulunamadı.")
+            return
+
+        live = self.get_live_voice_seconds(
+            ctx.guild.id, ctx.author.id,
+            int(row["voice_seconds"]),
+            row["active_voice_started_at"],
+        )
+        await ctx.send(f"🔊 Bu sunucudaki toplam ses süren: **{format_duration(live)}**")
+
+    # ------------------------------------------------------------------
+    # !topxp
+    # ------------------------------------------------------------------
+
+    @commands.command(name="topxp")
+    async def topxp_command(self, ctx: commands.Context) -> None:
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        rows = await db.get_leaderboard(ctx.guild.id)
+        if not rows:
+            await ctx.send("Henüz XP verisi yok.")
+            return
+
+        lines: list[str] = []
+        for i, row in enumerate(rows, 1):
+            member = ctx.guild.get_member(row["user_id"])
+            name = member.display_name if member else f"Kullanıcı {row['user_id']}"
+            lines.append(f"**{i}.** {name} — {int(row['total_xp']):,} XP")
+
+        embed = discord.Embed(
+            title="🏆 XP Sıralaması",
+            description="\n".join(lines),
+            color=discord.Color.gold(),
+        )
+        await ctx.send(embed=embed)
+
+    # ------------------------------------------------------------------
+    # !streak
+    # ------------------------------------------------------------------
+
+    @commands.command(name="streak")
+    async def streak_command(self, ctx: commands.Context) -> None:
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        row = await db.get_user_row(ctx.guild.id, ctx.author.id)
+        streak = int(row["streak_days"]) if row else 0
+        mult = streak_multiplier(streak)
+
+        next_milestone = next(
+            (d for d in sorted(STREAK_MILESTONES) if d > streak), None
+        )
+        milestone_str = (
+            f"\nSonraki ödül: **{next_milestone}. gün** (+{STREAK_MILESTONES[next_milestone]} XP)"
+            if next_milestone else "\n🎉 Tüm streak ödüllerini aldın!"
+        )
+
+        await ctx.send(
+            f"🔥 **{ctx.author.display_name}** — **{streak} günlük seri!**\n"
+            f"XP çarpanın: **x{mult:.2f}**{milestone_str}"
+        )
+
+    # ------------------------------------------------------------------
+    # !feature
+    # ------------------------------------------------------------------
+
+    @commands.command(name="feature")
+    async def feature_command(self, ctx: commands.Context, *, request: str | None = None) -> None:
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        if request is None or not request.strip():
+            await ctx.send("❌ Kullanım: `!feature <istek>`")
+            return
+
+        entry = self._build_feature_entry(ctx.message, request)
+        async with self._feature_lock:
+            await asyncio.to_thread(self._append_feature_entry, entry)
+
+        await ctx.send("✅ Feature isteğin kaydedildi.")
+
+    # ------------------------------------------------------------------
+    # !xpsenkronize (admin)
+    # ------------------------------------------------------------------
+
+    @commands.command(name="xpsenkronize")
+    @commands.has_permissions(administrator=True)
+    async def xpsenkronize_command(self, ctx: commands.Context) -> None:
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        count = 0
+        for member in ctx.guild.members:
+            if member.bot:
+                continue
+            await db.ensure_user(ctx.guild.id, member.id)
+            await self._sync_role(member)
+            await asyncio.sleep(0)
+            count += 1
+
+        await ctx.send(f"✅ XP rol kontrolü tamamlandı. Kontrol edilen üye: **{count}**")
+
+    @xpsenkronize_command.error
+    async def _xpsenkronize_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
+        else:
+            raise error
+
+    # ------------------------------------------------------------------
+    # !xpayarla (admin) — kullanıcının XP'sini doğrudan ayarla
+    # ------------------------------------------------------------------
+
+    @commands.command(name="xpayarla")
+    @commands.has_permissions(administrator=True)
+    async def xpayarla_command(
+        self,
+        ctx: commands.Context,
+        member: discord.Member,
+        total_xp: int,
+    ) -> None:
+        """Kullanıcının toplam XP'sini ayarlar. Ses/metin oranı yarı yarıya bölünür."""
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        if total_xp < 0:
+            await ctx.send("❌ XP 0'dan küçük olamaz.")
+            return
+
+        half = total_xp // 2
+        await db.set_xp(ctx.guild.id, member.id, text_xp=half, voice_xp=total_xp - half)
+        await self._sync_role(member)
+        await ctx.send(
+            f"✅ **{member.display_name}** kullanıcısının XP'si **{total_xp:,}** olarak ayarlandı."
+        )
+
+    @xpayarla_command.error
+    async def _xpayarla_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send("❌ Kullanım: `!xpayarla @kullanıcı <miktar>`")
+        else:
+            raise error
+
+    # ------------------------------------------------------------------
+    # !xpekle (admin) — mevcut XP'ye ekle
+    # ------------------------------------------------------------------
+
+    @commands.command(name="xpekle")
+    @commands.has_permissions(administrator=True)
+    async def xpekle_command(
+        self,
+        ctx: commands.Context,
+        member: discord.Member,
+        amount: int,
+    ) -> None:
+        """Kullanıcıya XP ekler (negatif değer XP çıkarır)."""
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        row = await db.get_user_row(ctx.guild.id, member.id)
+        current = int(row["total_xp"]) if row else 0
+        new_total = max(0, current + amount)
+        half = new_total // 2
+        await db.set_xp(ctx.guild.id, member.id, text_xp=half, voice_xp=new_total - half)
+        await self._sync_role(member)
+
+        verb = "eklendi" if amount >= 0 else "çıkarıldı"
+        await ctx.send(
+            f"✅ **{member.display_name}** kullanıcısına **{abs(amount):,} XP** {verb}. "
+            f"Yeni toplam: **{new_total:,} XP**"
+        )
+
+    @xpekle_command.error
+    async def _xpekle_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send("❌ Kullanım: `!xpekle @kullanıcı <miktar>`")
+        else:
+            raise error
+
+    # ------------------------------------------------------------------
+    # !boost (admin) — XP boost ver
+    # ------------------------------------------------------------------
+
+    @commands.command(name="boost")
+    @commands.has_permissions(administrator=True)
+    async def boost_command(
+        self,
+        ctx: commands.Context,
+        member: discord.Member,
+        multiplier: float,
+        hours: float = 1.0,
+    ) -> None:
+        """
+        Kullanıcıya XP boost uygular.
+        Örnek: !boost @kullanıcı 2.0 24   → 24 saat boyunca 2x XP
+        """
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        if multiplier < 1.0 or multiplier > 10.0:
+            await ctx.send("❌ Çarpan 1.0 ile 10.0 arasında olmalı.")
+            return
+
+        if hours <= 0 or hours > 720:
+            await ctx.send("❌ Süre 0-720 saat arasında olmalı.")
+            return
+
+        duration = int(hours * 3600)
+        await db.set_boost(ctx.guild.id, member.id, multiplier, duration)
+
+        h = int(hours)
+        m = int((hours - h) * 60)
+        await ctx.send(
+            f"⚡ **{member.display_name}** kullanıcısına **{multiplier}x XP boost** uygulandı! "
+            f"Süre: **{h}sa {m}dk**"
+        )
+
+    @boost_command.error
+    async def _boost_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send("❌ Kullanım: `!boost @kullanıcı <çarpan> [saat]`")
+        else:
+            raise error
