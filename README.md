@@ -42,6 +42,7 @@ Bot-GAP/
 ├── bestfriend.py        # !bf ses çifti takibi ve kart üretimi
 ├── rolescard.py         # XP rol haritası kart tasarımı
 ├── font_utils.py        # Font/glif temizleme ve emoji fallback yardımcıları
+├── info.py              # !yardim, !yenilikler (changelog) ve ping komutları
 ├── xp.py                # XP olayları, ses döngüleri ve komutlar
 ├── xproles.py           # Seviye eşikleri ve rol yönetimi
 ├── database.py          # Merkezi asenkron SQLite veritabanı
@@ -101,16 +102,19 @@ docker compose up -d --build
 ## 📌 Commands
 
 ### 👥 Kullanıcı Komutları
+* `!yardim` (alias: `!help`, `!komutlar`) → Tüm bot komutlarını ve açıklamalarını kategorize edilmiş embed olarak listeler.
+* `!yenilikler` (alias: `!changelog`, `!surum`, `!guncelleme`) → Son deploy ve güncellemede gelen tüm yeni özellikleri gösterir.
 * `!kart [@kullanıcı]` → Seviye, XP ve istatistik kartını görsel olarak gösterir.
 * `!liderlik` (alias: `!lb`, `!top`) → Sunucu içi ilk 10 XP sıralama kartını oluşturur.
 * `!roller` (alias: `!roles`, `!xproller`) → Seviye rol yol haritasını görsel kart olarak gösterir.
 * `!bf [@kullanıcı]` → En çok vakit geçirilen ses partnerini ve 100 saatlik Best Friend durumunu gösterir.
 * `!xp` → Detaylı metin tabanlı XP ve rol durumu embed'i gönderir.
-* `!ses` → Toplam ses kanalı süresini bildirir.
 * `!streak` → Günlük seri ve aktif çarpan durumunu görüntüler.
 * `!feature <istek>` → Bot geliştiricisine özellik önerisi kaydeder.
+* `!ping` → Bot gecikme ve WebSocket ping süresini ölçer.
 
 ### 🛡️ Yönetici Komutları
+* `!yedekle` (alias: `!backup`) → Veritabanının anlık yedeğini güvenle alır.
 * `!xpayarla @kullanıcı <miktar>` → Kullanıcının toplam XP'sini doğrudan ayarlar.
 * `!xpekle @kullanıcı <miktar>` → Kullanıcıya XP ekler veya çıkarır.
 * `!boost @kullanıcı <çarpan> [saat]` → Süreli XP boost çarpanı uygular.

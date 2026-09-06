@@ -676,3 +676,25 @@ class XPTrackerCog(commands.Cog):
             await ctx.send("❌ Kullanım: `!boost @kullanıcı <çarpan> [saat]`")
         else:
             raise error
+
+    # ------------------------------------------------------------------
+    # !yedekle (admin) — Veritabanı yedeği al
+    # ------------------------------------------------------------------
+
+    @commands.command(name="yedekle", aliases=["backup"])
+    @commands.has_permissions(administrator=True)
+    async def backup_command(self, ctx: commands.Context) -> None:
+        """Veritabanının anlık yedeğini alır (admin)."""
+        backup_path = await db.backup_db()
+        if backup_path:
+            await ctx.send(f"✅ Veritabanı yedeği başarıyla oluşturuldu:\n`{backup_path}`")
+        else:
+            await ctx.send("❌ Yedek alınırken bir hata oluştu.")
+
+    @backup_command.error
+    async def _backup_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
+        else:
+            raise error
+

@@ -18,6 +18,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from bestfriend import BestFriendCog
+from info import InfoCog
 from leaderboard import LeaderboardCog
 from usercard import UserCardCog
 from xp import XPTrackerCog
@@ -111,13 +112,14 @@ class GapBot(commands.Bot):
         await self.add_cog(BestFriendCog(self))
         await self.add_cog(UserCardCog(self))
         await self.add_cog(LeaderboardCog(self))
+        await self.add_cog(InfoCog(self))
 
 
 def main() -> None:
     lock = SingleInstanceLock(LOCK_PATH)
     lock.acquire()
     _validate()
-    bot = GapBot(command_prefix=PREFIX, intents=_intents())
+    bot = GapBot(command_prefix=PREFIX, intents=_intents(), help_command=None)
     try:
         bot.run(TOKEN)
     finally:
