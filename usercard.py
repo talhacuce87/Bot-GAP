@@ -17,6 +17,7 @@ from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 import database as dbmod
+from font_utils import clean_display_name, clean_text
 from xp import XPTrackerCog
 from xproles import ROLE_REWARDS
 
@@ -199,12 +200,33 @@ class UserCardCog(commands.Cog):
     ) -> None:
         draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=2)
 
-    @staticmethod
-    def _theme(role_id: int | None) -> dict[str, object]:
+    def _theme(self, role_id: int | None, total_xp: int = 0) -> dict[str, object]:
         theme = DEFAULT_THEME.copy()
-        if role_id is not None:
-            theme.update(ROLE_THEMES.get(role_id, {}))
+        if role_id is not None and role_id in ROLE_THEMES:
+            theme.update(ROLE_THEMES[role_id])
+            return theme
+
+        # Rol ID sunucuda bulunamadıysa XP eşiğine göre tema belirle
+        try:
+            tier_threshold = self._get_xp_tracker().role_manager.get_tier_threshold(total_xp)
+            tier_role_id = ROLE_REWARDS.get(tier_threshold)
+            if tier_role_id and tier_role_id in ROLE_THEMES:
+                theme.update(ROLE_THEMES[tier_role_id])
+        except Exception:
+            pass
+
         return theme
+
+    @staticmethod
+    def _format_voice_compact(seconds: int) -> str:
+        total_seconds = max(0, int(seconds))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        if hours >= 1000:
+            return f"{hours:,} saat"
+        if hours:
+            return f"{hours}sa {minutes}dk"
+        return f"{minutes}dk"
 
     @staticmethod
     def _paste_glow(card: Image.Image, center: tuple[int, int], radius: int, color: str, alpha: int) -> None:
@@ -218,13 +240,20 @@ class UserCardCog(commands.Cog):
 
     @staticmethod
     async def _fetch_avatar(member: discord.Member) -> Image.Image:
-        data = await member.display_avatar.replace(size=256, format="png").read()
-        avatar = Image.open(io.BytesIO(data)).convert("RGBA")
-        avatar = ImageOps.fit(avatar, (AVATAR_SIZE, AVATAR_SIZE), centering=(0.5, 0.5))
-        mask = Image.new("L", (AVATAR_SIZE, AVATAR_SIZE), 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, AVATAR_SIZE, AVATAR_SIZE), fill=255)
-        avatar.putalpha(mask)
-        return avatar
+        try:
+            data = await member.display_avatar.replace(size=256, format="png").read()
+            avatar = Image.open(io.BytesIO(data)).convert("RGBA")
+            avatar = ImageOps.fit(avatar, (AVATAR_SIZE, AVATAR_SIZE), centering=(0.5, 0.5))
+            mask = Image.new("L", (AVATAR_SIZE, AVATAR_SIZE), 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, AVATAR_SIZE, AVATAR_SIZE), fill=255)
+            avatar.putalpha(mask)
+            return avatar
+        except Exception:
+            placeholder = Image.new("RGBA", (AVATAR_SIZE, AVATAR_SIZE), (24, 36, 58, 255))
+            mask = Image.new("L", (AVATAR_SIZE, AVATAR_SIZE), 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, AVATAR_SIZE, AVATAR_SIZE), fill=255)
+            placeholder.putalpha(mask)
+            return placeholder
 
     @staticmethod
     def _h_gradient(width: int, height: int, start: str, end: str) -> Image.Image:
@@ -303,7 +332,7 @@ class UserCardCog(commands.Cog):
         level, next_level, floor, ceiling, ratio = xp.get_progress_data(total_xp)
         display_role = xp.get_display_role(member, total_xp)
         target_role = xp.get_target_role(member, total_xp)
-        theme = self._theme(None if target_role is None else target_role.id)
+        theme = self._theme(None if target_role is None else target_role.id, total_xp=total_xp)
 
         card = self._build_background(theme)
         avatar = await self._fetch_avatar(member)
@@ -317,8 +346,8 @@ class UserCardCog(commands.Cog):
         )
 
         # Fontlar (cache'den)
-        f_name     = _load_font(46, bold=True)
-        f_user     = _load_font(24)
+        f_name     = _load_font(44, bold=True)
+        f_user     = _load_font(23)
         f_label    = _load_font(19)
         f_value    = _load_font(31, bold=True)
         f_rank     = _load_font(42, bold=True)
@@ -332,9 +361,12 @@ class UserCardCog(commands.Cog):
         tm = str(theme["text_muted"])
         ac = str(theme["accent"])
 
-        name_str = self._fit_text(draw, member.display_name, f_name, 430)
+        safe_display = clean_display_name(member, fallback="Kullanıcı")
+        safe_username = clean_text(member.name) or "user"
+
+        name_str = self._fit_text(draw, safe_display, f_name, 430)
         dt(draw, (286, 92), name_str, f_name, tp, sh)
-        user_str = self._fit_text(draw, f"@{member.name}", f_user, 280)
+        user_str = self._fit_text(draw, f"@{safe_username}", f_user, 280)
         dt(draw, (289, 144), user_str, f_user, ts, sh)
 
         dt(draw, (292, 206), "Current Role", f_label, tm, sh)
@@ -348,8 +380,9 @@ class UserCardCog(commands.Cog):
         dt(draw, (292, 374), f"{int(row['message_count']):,}", f_value, tp, sh)
 
         dt(draw, (552, 338), "Total Voice Time", f_label, tm, sh)
-        voice_str = self._fit_text(draw, xp.format_duration(live_voice), f_value, 190)
-        dt(draw, (552, 374), voice_str, f_value, tp, sh)
+        voice_str = self._format_voice_compact(live_voice)
+        f_voice = self._fitted_font(draw, voice_str, 31, 200, 20, bold=True)
+        dt(draw, (552, 374), voice_str, f_voice, tp, sh)
 
         dt(draw, (886, 96), "RANK", f_label, tm, sh, anchor="mm")
         dt(draw, RANK_CENTER, str(rank), f_rank, tp, sh, anchor="mm")

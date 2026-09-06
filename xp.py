@@ -90,6 +90,7 @@ class XPTrackerCog(commands.Cog):
 
     def cog_unload(self) -> None:
         self.voice_xp_loop.cancel()
+        self.daily_backup_loop.cancel()
 
     # ------------------------------------------------------------------
     # Cooldown
@@ -132,6 +133,8 @@ class XPTrackerCog(commands.Cog):
     def _is_valid_voice_member(member: discord.Member) -> bool:
         vs = member.voice
         if member.bot or vs is None or vs.channel is None:
+            return False
+        if member.guild and member.guild.afk_channel and vs.channel.id == member.guild.afk_channel.id:
             return False
         return not (vs.self_deaf or vs.deaf)
 
@@ -193,14 +196,24 @@ class XPTrackerCog(commands.Cog):
         await self._restore_voice_sessions()
         if not self.voice_xp_loop.is_running():
             self.voice_xp_loop.start()
+        if not self.daily_backup_loop.is_running():
+            self.daily_backup_loop.start()
+        backup_path = await db.backup_db()
+        if backup_path:
+            print(f"[DB] Başlangıç veritabanı yedeği alındı: {backup_path}")
         print(f"[XP] Bot aktif: {self.bot.user}")
 
     async def _restore_voice_sessions(self) -> None:
         for guild in self.bot.guilds:
+            afk_id = guild.afk_channel.id if guild.afk_channel else None
             for member in guild.members:
                 if member.bot:
                     continue
-                if member.voice and member.voice.channel:
+                if (
+                    member.voice
+                    and member.voice.channel
+                    and (afk_id is None or member.voice.channel.id != afk_id)
+                ):
                     await db.start_voice_session(guild.id, member.id)
                 else:
                     await db.end_voice_session(guild.id, member.id)
@@ -258,10 +271,38 @@ class XPTrackerCog(commands.Cog):
             s_mult = streak_multiplier(streak)
 
             earned = max(1, round(base_xp * boost * s_mult))
+
+            # Seviye atlama kontrolü için önceki XP
+            old_row = await db.get_user_row(guild_id, user_id)
+            old_xp = int(old_row["total_xp"]) if old_row else 0
+            old_level, _, _, _, _ = self.role_manager.get_progress_data(old_xp)
+
             await db.add_text_xp(guild_id, user_id, earned)
 
             if isinstance(message.author, discord.Member):
                 await self._sync_role(message.author)
+
+                new_xp = old_xp + earned
+                new_level, _, _, _, _ = self.role_manager.get_progress_data(new_xp)
+                if new_level > old_level:
+                    role_name = self.get_display_role(message.author, new_xp)
+                    embed = discord.Embed(
+                        title="🎉 Seviye Atladın!",
+                        description=(
+                            f"Tebrikler {message.author.mention}! "
+                            f"**Seviye {new_level}** ({role_name}) derecesine ulaştın! 🚀"
+                        ),
+                        color=discord.Color.from_rgb(0, 212, 255),
+                    )
+                    try:
+                        avatar_url = message.author.display_avatar.url
+                        embed.set_thumbnail(url=avatar_url)
+                    except Exception:
+                        pass
+                    try:
+                        await message.channel.send(embed=embed)
+                    except (discord.HTTPException, discord.Forbidden):
+                        pass
 
     # ------------------------------------------------------------------
     # Event: ses durumu
@@ -277,8 +318,9 @@ class XPTrackerCog(commands.Cog):
         if member.bot or member.guild is None:
             return
 
-        was_in = before.channel is not None
-        is_in = after.channel is not None
+        afk_id = member.guild.afk_channel.id if member.guild.afk_channel else None
+        was_in = before.channel is not None and (afk_id is None or before.channel.id != afk_id)
+        is_in = after.channel is not None and (afk_id is None or after.channel.id != afk_id)
 
         if not was_in and is_in:
             await db.ensure_user(member.guild.id, member.id)
@@ -293,7 +335,10 @@ class XPTrackerCog(commands.Cog):
     @tasks.loop(minutes=VOICE_XP_INTERVAL_MINUTES)
     async def voice_xp_loop(self) -> None:
         for guild in self.bot.guilds:
+            afk_id = guild.afk_channel.id if guild.afk_channel else None
             for channel in guild.voice_channels:
+                if afk_id is not None and channel.id == afk_id:
+                    continue
                 valid = [m for m in channel.members if self._is_valid_voice_member(m)]
                 if len(valid) < 2:
                     continue
@@ -306,6 +351,16 @@ class XPTrackerCog(commands.Cog):
 
     @voice_xp_loop.before_loop
     async def _before_voice_loop(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(hours=24)
+    async def daily_backup_loop(self) -> None:
+        backup_path = await db.backup_db()
+        if backup_path:
+            print(f"[DB] Günlük otomatik yedek alındı: {backup_path}")
+
+    @daily_backup_loop.before_loop
+    async def _before_backup_loop(self) -> None:
         await self.bot.wait_until_ready()
 
     # ==================================================================

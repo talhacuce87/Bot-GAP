@@ -32,6 +32,28 @@ ROLE_REWARDS: dict[int, int] = {
     1000000: 1545814125958144010,
 }
 
+DEFAULT_ROLE_NAMES: dict[int, str] = {
+    0:       "Tiny Gapper",
+    150:     "Starter Gapper",
+    400:     "Rookie Gapper",
+    800:     "Mini Gapper",
+    1400:    "Junior Gapper",
+    2300:    "Skilled Gapper",
+    3500:    "Advanced Gapper",
+    5200:    "Pro Gapper",
+    7600:    "Elite Gapper",
+    10500:   "Epic Gapper",
+    14500:   "Mythic Gapper",
+    19500:   "Legendary Gapper",
+    25500:   "Godlike Gapper",
+    32500:   "Immortal Gapper",
+    40000:   "Master Gapper",
+    100000:  "The GAP V",
+    250000:  "The GAP X",
+    500000:  "The GAP Zenith",
+    1000000: "The GAP Legend",
+}
+
 _SORTED_THRESHOLDS: list[int] = sorted(ROLE_REWARDS)
 
 
@@ -54,6 +76,16 @@ class XPRoleManager:
 
     def get_managed_role_ids(self) -> set[int]:
         return set(self.role_rewards.values())
+
+    def get_tier_threshold(self, total_xp: int) -> int:
+        """Kullanıcının toplam XP'sine göre hak kazandığı en yüksek eşiği döner."""
+        current = self._sorted[0]
+        for req in self._sorted:
+            if total_xp >= req:
+                current = req
+            else:
+                break
+        return current
 
     # ------------------------------------------------------------------
     # İlerleme
@@ -102,13 +134,19 @@ class XPRoleManager:
             for r in reversed(member.roles)
             if r.name != "@everyone"
         ]
-        return visible[0] if visible else "Tiny Gapper"
+        if visible:
+            return visible[0]
+        tier = self.get_tier_threshold(total_xp)
+        return DEFAULT_ROLE_NAMES.get(tier, "Tiny Gapper")
 
     def get_next_role_info(self, member: discord.Member, total_xp: int) -> tuple[str | None, int | None]:
         for req, role_id in sorted(self.role_rewards.items()):
             if total_xp < req:
                 role = member.guild.get_role(role_id)
-                role_name = self.sanitize_role_name(role.name) if role is not None else None
+                if role is not None:
+                    role_name = self.sanitize_role_name(role.name)
+                else:
+                    role_name = DEFAULT_ROLE_NAMES.get(req, f"{req:,} XP Rolü")
                 return role_name, req
         return None, None
 

@@ -5,7 +5,8 @@ from pathlib import Path
 import discord
 from PIL import Image, ImageDraw, ImageFont
 
-from xproles import XPRoleManager
+from font_utils import clean_text
+from xproles import DEFAULT_ROLE_NAMES, XPRoleManager
 
 
 CARD_WIDTH = 1180
@@ -65,8 +66,10 @@ def draw_text(
 	fill: str,
 	shadow_fill: str = "#08101A",
 	anchor: str | None = None,
+	with_shadow: bool = True,
 ) -> None:
-	draw.text((position[0] + 2, position[1] + 2), text, font=font, fill=shadow_fill, anchor=anchor)
+	if with_shadow:
+		draw.text((position[0] + 1, position[1] + 1), text, font=font, fill=shadow_fill, anchor=anchor)
 	draw.text(position, text, font=font, fill=fill, anchor=anchor)
 
 
@@ -117,10 +120,20 @@ def get_role_entries(guild: discord.Guild, role_rewards: dict[int, int]) -> list
 	entries: list[dict[str, object]] = []
 	for level, (required_xp, role_id) in enumerate(sorted(role_rewards.items()), start=1):
 		role = guild.get_role(role_id)
-		role_name = f"Rol {role_id}" if role is None else XPRoleManager.sanitize_role_name(role.name)
-		role_color = "#6A86A9"
-		if role is not None and role.color.value:
-			role_color = str(role.color)
+		if role is not None:
+			role_name = XPRoleManager.sanitize_role_name(role.name)
+			role_name = clean_text(role_name) or DEFAULT_ROLE_NAMES.get(required_xp, f"Rol {level}")
+		else:
+			role_name = DEFAULT_ROLE_NAMES.get(required_xp, f"Rol {level}")
+
+		role_color = "#4ABDA8"
+		if role is not None:
+			c = getattr(role, "color", None)
+			if isinstance(c, discord.Color) and c.value:
+				role_color = str(c)
+			elif isinstance(c, str) and c.startswith("#"):
+				role_color = c
+
 		entries.append({
 			"level": level,
 			"required_xp": required_xp,
@@ -154,9 +167,9 @@ def draw_summary_box(
 ) -> None:
 	draw.rounded_rectangle(box, radius=22, fill=PANEL_FILL, outline=PANEL_OUTLINE, width=2)
 	draw.rounded_rectangle((box[0] + 14, box[1] + 14, box[0] + 72, box[1] + 72), radius=18, fill=accent_color)
-	draw.text((box[0] + 28, box[1] + 26), label[:1], font=load_font(28, bold=True), fill="#09131F")
-	draw_text(draw, (box[0] + 92, box[1] + 28), label, label_font, TEXT_MUTED)
-	draw_text(draw, (box[0] + 92, box[1] + 68), value, value_font, TEXT_PRIMARY)
+	draw.text((box[0] + 43, box[1] + 43), label[:1], font=load_font(28, bold=True), fill="#09131F", anchor="mm")
+	draw_text(draw, (box[0] + 90, box[1] + 28), label, label_font, TEXT_MUTED)
+	draw_text(draw, (box[0] + 90, box[1] + 62), value, value_font, TEXT_PRIMARY)
 
 
 async def build_roles_card(
@@ -175,26 +188,29 @@ async def build_roles_card(
 
 	draw.rounded_rectangle((14, 14, CARD_WIDTH - 14, card_height - 14), radius=34, fill=(7, 12, 22, 80), outline=PANEL_OUTLINE, width=2)
 
-	title_font = load_font(40, bold=True)
-	subtitle_font = load_font(18)
-	summary_label_font = load_font(16)
-	summary_value_font = load_font(25, bold=True)
-	row_role_font = load_font(24, bold=True)
-	row_meta_font = load_font(16)
-	row_xp_font = load_font(23, bold=True)
-	level_font = load_font(14, bold=True)
+	title_font = load_font(38, bold=True)
+	subtitle_font = load_font(17)
+	summary_label_font = load_font(15)
+	summary_value_font = load_font(23, bold=True)
+	row_role_font = load_font(19, bold=True)
+	row_meta_font = load_font(14)
+	row_xp_font = load_font(20, bold=True)
+	level_font = load_font(18, bold=True)
 
 	current_entry, next_entry = get_progress_summary(entries, total_xp)
-	current_role_name = "Henuz rol yok" if current_entry is None else str(current_entry["role_name"])
+	current_role_name = "Henüz rol yok" if current_entry is None else str(current_entry["role_name"])
 	if next_entry is None:
-		next_role_text = "Tum roller acildi"
+		next_role_text = "Tüm roller açıldı"
 	else:
 		remaining_xp = max(0, int(next_entry["required_xp"]) - total_xp)
-		next_role_text = f"{next_entry['role_name']} • {remaining_xp:,} XP kaldi"
+		next_role_text = f"{next_entry['role_name']} • {remaining_xp:,} XP kaldı"
 
-	draw_text(draw, (PADDING, 34), "XP Rol Haritasi", title_font, TEXT_PRIMARY)
-	draw_text(draw, (PADDING, 86), guild.name, subtitle_font, TEXT_SECONDARY)
-	draw_text(draw, (CARD_WIDTH - PADDING, 44), member_name, subtitle_font, TEXT_SECONDARY, anchor="ra")
+	safe_member_name = clean_text(member_name) or "Kullanıcı"
+	safe_guild_name = clean_text(guild.name) or "Sunucu"
+
+	draw_text(draw, (PADDING, 34), "XP Rol Haritası", title_font, TEXT_PRIMARY)
+	draw_text(draw, (PADDING, 86), safe_guild_name, subtitle_font, TEXT_SECONDARY)
+	draw_text(draw, (CARD_WIDTH - PADDING, 44), safe_member_name, subtitle_font, TEXT_SECONDARY, anchor="ra")
 	draw_text(draw, (CARD_WIDTH - PADDING, 80), f"Toplam XP: {total_xp:,}", load_font(24, bold=True), ACCENT, anchor="ra")
 
 	summary_top = HEADER_HEIGHT
@@ -202,11 +218,11 @@ async def build_roles_card(
 	for index, (label, value, color) in enumerate((
 		("Toplam XP", f"{total_xp:,}", "#62E1C2"),
 		("Aktif Rol", current_role_name, "#7DA9FF"),
-		("Siradaki Hedef", next_role_text, "#F0C96B"),
+		("Sıradaki Hedef", next_role_text, "#F0C96B"),
 	)):
 		x1 = PADDING + index * (box_width + COLUMN_GAP)
 		x2 = x1 + box_width
-		draw_summary_box(draw, (x1, summary_top, x2, summary_top + 106), label, fit_text(draw, value, summary_value_font, box_width - 122), color, summary_value_font, summary_label_font)
+		draw_summary_box(draw, (x1, summary_top, x2, summary_top + 104), label, fit_text(draw, value, summary_value_font, box_width - 110), color, summary_value_font, summary_label_font)
 
 	body_top = HEADER_HEIGHT + SUMMARY_HEIGHT
 	column_width = (CARD_WIDTH - PADDING * 2 - COLUMN_GAP) // 2
@@ -225,33 +241,35 @@ async def build_roles_card(
 
 		fill = CURRENT_FILL if is_current else UNLOCKED_FILL if is_unlocked else LOCKED_FILL
 		outline = CURRENT_OUTLINE if is_current else UNLOCKED_OUTLINE if is_unlocked else LOCKED_OUTLINE
-		draw.rounded_rectangle((x1, y1, x2, y2), radius=22, fill=fill, outline=outline, width=2)
+		draw.rounded_rectangle((x1, y1, x2, y2), radius=20, fill=fill, outline=outline, width=2)
 
 		badge_color = str(entry["role_color"])
-		draw.rounded_rectangle((x1 + 14, y1 + 14, x1 + 74, y1 + 74), radius=18, fill=badge_color, outline="#E8F1FF", width=2)
-		draw_text(draw, (x1 + 44, y1 + 34), f"L{entry['level']}", level_font, "#08131E", anchor="mm")
+		draw.rounded_rectangle((x1 + 12, y1 + 14, x1 + 68, y1 + 70), radius=16, fill=badge_color, outline="#E8F1FF", width=2)
+		draw.text((x1 + 40, y1 + 42), f"L{entry['level']}", font=level_font, fill="#08131E", anchor="mm")
 
-		role_name = fit_text(draw, str(entry["role_name"]), row_role_font, column_width - 240)
-		draw_text(draw, (x1 + 94, y1 + 18), role_name, row_role_font, TEXT_PRIMARY)
+		# Rol adı genişliği sağdaki XP sütunuyla çakışmayacak şekilde hesaplanır
+		max_role_width = column_width - 245
+		role_name = fit_text(draw, str(entry["role_name"]), row_role_font, max_role_width)
+		draw_text(draw, (x1 + 82, y1 + 20), role_name, row_role_font, TEXT_PRIMARY)
 
 		status_parts = []
 		if is_current:
-			status_parts.append("su anki rol")
+			status_parts.append("şu anki rol")
 		elif is_unlocked:
-			status_parts.append("acildi")
+			status_parts.append("açıldı")
 		else:
 			status_parts.append("kilitli")
 		if not bool(entry["exists"]):
 			status_parts.append("sunucuda yok")
-		draw_text(draw, (x1 + 94, y1 + 54), " • ".join(status_parts), row_meta_font, TEXT_MUTED)
+		draw_text(draw, (x1 + 82, y1 + 50), " • ".join(status_parts), row_meta_font, TEXT_MUTED)
 
-		draw_text(draw, (x2 - 20, y1 + 30), f"{required_xp:,} XP", row_xp_font, ACCENT if is_unlocked else TEXT_PRIMARY, anchor="ra")
+		draw_text(draw, (x2 - 18, y1 + 22), f"{required_xp:,} XP", row_xp_font, ACCENT if is_unlocked else TEXT_PRIMARY, anchor="ra")
 		if not is_unlocked and current_entry is not None:
 			remaining_xp = max(0, required_xp - total_xp)
-			meta_text = f"{remaining_xp:,} XP kaldi"
+			meta_text = f"{remaining_xp:,} XP kaldı"
 		else:
-			meta_text = "hazir"
-		draw_text(draw, (x2 - 20, y1 + 58), meta_text, row_meta_font, TEXT_SECONDARY, anchor="ra")
+			meta_text = "hazır" if is_unlocked else ""
+		draw_text(draw, (x2 - 18, y1 + 50), meta_text, row_meta_font, TEXT_SECONDARY, anchor="ra")
 
 	buffer = io.BytesIO()
 	card.save(buffer, format="PNG")

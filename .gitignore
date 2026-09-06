@@ -48,7 +48,10 @@ logs/
 
 # SQLite databases (persist data/ dir structure but not the DB itself)
 data/*.db
+data/**/*.db
 data/*.sqlite3
+data/backups/
+.botgap.lock
 
 # Compiled Python
 *.pyc

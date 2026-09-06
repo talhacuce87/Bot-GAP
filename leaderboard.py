@@ -1,8 +1,8 @@
 """
-leaderboard.py — !liderlik komutu için Pillow tabanlı sıralama kartı.
+leaderboard.py — !liderlik ve !roller komutları için Pillow tabanlı görsel kartlar.
 
 İlk 10 kullanıcıyı, XP'lerini, seviyelerini ve avatarlarını
-tek bir görselde gösterir.
+tek bir görselde gösterir; ayrıca rol haritası kartını sunar.
 """
 
 from __future__ import annotations
@@ -16,26 +16,25 @@ from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 import database as dbmod
-from xp import XPTrackerCog
+from font_utils import clean_display_name, clean_text
 from usercard import _load_font
+from xp import XPTrackerCog
 
 # ---------------------------------------------------------------------------
 # Boyutlar
 # ---------------------------------------------------------------------------
 
 CARD_W = 860
-CARD_H = 100          # Her satır yüksekliği
-HEADER_H = 80
-AVATAR_R = 36         # Yarıçap
+CARD_H = 96           # Her satır yüksekliği
+HEADER_H = 86
+AVATAR_R = 34         # Yarıçap
 ROW_PADDING = 16
 BAR_H = 10
 
-MEDAL_COLORS = ["#FFD700", "#C0C0C0", "#CD7F32"]  # Altın, gümüş, bronz
-
-BG_COLOR = "#0A1424"
-ROW_ODD  = (11, 22, 44, 200)
-ROW_EVEN = (8, 16, 34, 200)
-OUTLINE  = "#233252"
+BG_COLOR = "#08101E"
+ROW_ODD  = (12, 22, 42, 210)
+ROW_EVEN = (8, 16, 32, 210)
+OUTLINE  = "#20324F"
 ACCENT   = "#58E1C1"
 TEXT_PRIMARY   = "#F5F7FB"
 TEXT_SECONDARY = "#8EA0BC"
@@ -45,7 +44,7 @@ SHADOW   = "#050C1A"
 
 
 # ---------------------------------------------------------------------------
-# Yardımcı
+# Yardımcılar
 # ---------------------------------------------------------------------------
 
 def _hex_rgba(color: str, alpha: int = 255) -> tuple[int, int, int, int]:
@@ -53,7 +52,7 @@ def _hex_rgba(color: str, alpha: int = 255) -> tuple[int, int, int, int]:
     return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16), alpha
 
 
-async def _fetch_avatar_small(member: discord.Member | None, size: int = 72) -> Image.Image | None:
+async def _fetch_avatar_small(member: discord.Member | None, size: int = 68) -> Image.Image | None:
     if member is None:
         return None
     try:
@@ -68,6 +67,32 @@ async def _fetch_avatar_small(member: discord.Member | None, size: int = 72) -> 
         return None
 
 
+def _draw_rank_badge(
+    draw: ImageDraw.ImageDraw,
+    center: tuple[int, int],
+    rank: int,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+) -> None:
+    cx, cy = center
+    r = 18
+    if rank == 1:
+        # 1. sıra: Parlak altın madalya
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(235, 185, 45), outline=(255, 230, 120), width=2)
+        draw.text((cx, cy), "1", font=font, fill="#1A1202", anchor="mm")
+    elif rank == 2:
+        # 2. sıra: Gümüş madalya
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(185, 195, 210), outline=(230, 240, 255), width=2)
+        draw.text((cx, cy), "2", font=font, fill="#121824", anchor="mm")
+    elif rank == 3:
+        # 3. sıra: Bronz madalya
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(195, 125, 65), outline=(245, 175, 120), width=2)
+        draw.text((cx, cy), "3", font=font, fill="#1E0C04", anchor="mm")
+    else:
+        # 4-10 arası: Koyu halka rozet
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(18, 28, 48), outline=(38, 56, 85), width=1)
+        draw.text((cx, cy), str(rank), font=font, fill="#8EA0BC", anchor="mm")
+
+
 # ---------------------------------------------------------------------------
 # Kart üretici
 # ---------------------------------------------------------------------------
@@ -78,33 +103,35 @@ async def build_leaderboard_card(
     xp_tracker: XPTrackerCog,
 ) -> io.BytesIO:
     count = len(rows)
-    total_h = HEADER_H + count * CARD_H + 20
+    total_h = HEADER_H + count * CARD_H + 24
 
     canvas = Image.new("RGBA", (CARD_W, total_h), BG_COLOR)
     draw = ImageDraw.Draw(canvas)
 
-    # Hafif gradient arka plan
+    # Hafif degrade arka plan
     for y in range(total_h):
         t = y / max(1, total_h - 1)
-        r = int(10 + t * 6)
-        g = int(20 + t * 8)
-        b = int(36 + t * 15)
+        r = int(8 + t * 8)
+        g = int(16 + t * 10)
+        b = int(30 + t * 18)
         draw.line([(0, y), (CARD_W, y)], fill=(r, g, b, 255))
 
-    # Başlık
-    f_title = _load_font(32, bold=True)
-    f_sub   = _load_font(16)
-    draw.text((CARD_W // 2, 24), "🏆  XP Sıralaması", font=f_title,
+    # Başlık & Sunucu
+    f_title = _load_font(28, bold=True)
+    f_sub   = _load_font(15)
+    safe_guild_name = clean_text(guild.name) or "Sunucu Sıralaması"
+
+    draw.text((CARD_W // 2, 28), "XP SIRALAMASI", font=f_title,
               fill=TEXT_PRIMARY, anchor="mm")
-    draw.text((CARD_W // 2, 58), guild.name, font=f_sub,
+    draw.text((CARD_W // 2, 58), safe_guild_name, font=f_sub,
               fill=TEXT_SECONDARY, anchor="mm")
-    draw.line([(30, HEADER_H - 4), (CARD_W - 30, HEADER_H - 4)],
+    draw.line([(32, HEADER_H - 4), (CARD_W - 32, HEADER_H - 4)],
               fill=OUTLINE, width=2)
 
-    f_rank  = _load_font(22, bold=True)
-    f_name  = _load_font(20, bold=True)
-    f_xp    = _load_font(17)
-    f_level = _load_font(14)
+    f_rank_bold = _load_font(17, bold=True)
+    f_name      = _load_font(19, bold=True)
+    f_xp        = _load_font(16, bold=True)
+    f_level     = _load_font(13)
 
     # Avatar'ları paralel çek
     members = [guild.get_member(row["user_id"]) for row in rows]
@@ -117,57 +144,61 @@ async def build_leaderboard_card(
         # Satır arka planı
         row_color = ROW_ODD if i % 2 == 0 else ROW_EVEN
         draw.rounded_rectangle(
-            (10, y0 + 4, CARD_W - 10, y1 - 4),
+            (14, y0 + 4, CARD_W - 14, y1 - 4),
             radius=14, fill=row_color, outline=OUTLINE, width=1,
         )
 
-        cx = 26  # sol kenar imleci
+        cx = 32
 
-        # Sıra numarası / madalya
+        # Sıra numarası / vektörel madalya
         rank_num = i + 1
-        if rank_num <= 3:
-            rank_str = ["🥇", "🥈", "🥉"][rank_num - 1]
-        else:
-            rank_str = str(rank_num)
+        _draw_rank_badge(draw, (cx + 18, y0 + CARD_H // 2), rank_num, f_rank_bold)
+        cx += 48
 
-        draw.text((cx + 24, y0 + CARD_H // 2), rank_str, font=f_rank,
-                  fill=MEDAL_COLORS[i] if i < 3 else TEXT_SECONDARY, anchor="mm")
-        cx += 52
+        # İsim belirleme (avatar fallback'te ilk harf için de lazım)
+        safe_name = clean_display_name(member, fallback=f"Kullanıcı {str(row['user_id'])[-4:]}")
 
-        # Avatar
+        # Avatar veya Yedek Baş Harf Halkası
+        ax = cx
+        ay = y0 + CARD_H // 2 - AVATAR_R
         if avatar:
-            ax = cx
-            ay = y0 + CARD_H // 2 - AVATAR_R
             canvas.paste(avatar, (ax, ay), avatar)
-            # Halka
             draw.ellipse(
                 (ax - 2, ay - 2, ax + AVATAR_R * 2 + 2, ay + AVATAR_R * 2 + 2),
                 outline=ACCENT, width=2,
             )
-        cx += AVATAR_R * 2 + 12
+        else:
+            initial = (safe_name[:1] or "?").upper()
+            draw.ellipse(
+                (ax, ay, ax + AVATAR_R * 2, ay + AVATAR_R * 2),
+                fill=(24, 38, 62), outline=ACCENT, width=2,
+            )
+            f_init = _load_font(20, bold=True)
+            draw.text((ax + AVATAR_R, ay + AVATAR_R), initial, font=f_init, fill=TEXT_PRIMARY, anchor="mm")
 
-        # İsim + level
-        name = member.display_name if member else f"Kullanıcı {row['user_id']}"
-        if len(name) > 22:
-            name = name[:21] + "…"
+        cx += AVATAR_R * 2 + 14
+
+        # İsim + Level
+        if len(safe_name) > 22:
+            safe_name = safe_name[:21] + "…"
 
         total_xp = int(row["total_xp"])
         level, *_ = xp_tracker.get_progress_data(total_xp)
 
-        draw.text((cx + 2, y0 + CARD_H // 2 - 14), name, font=f_name,
+        draw.text((cx + 2, y0 + CARD_H // 2 - 14), safe_name, font=f_name,
                   fill=TEXT_PRIMARY, anchor="lm")
-        draw.text((cx + 2, y0 + CARD_H // 2 + 10), f"Seviye {level}",
+        draw.text((cx + 2, y0 + CARD_H // 2 + 12), f"Seviye {level}",
                   font=f_level, fill=ACCENT, anchor="lm")
 
         # Sağ: XP + mini bar
         xp_str = f"{total_xp:,} XP"
-        xp_x = CARD_W - 24
+        xp_x = CARD_W - 28
 
         # Mini progress bar
         _, _, floor, ceiling, ratio = xp_tracker.get_progress_data(total_xp)
         bar_x0 = CARD_W - 160
-        bar_x1 = CARD_W - 24
-        bar_y0 = y0 + CARD_H - 28
+        bar_x1 = CARD_W - 28
+        bar_y0 = y0 + CARD_H - 26
         bar_y1 = bar_y0 + BAR_H
         bar_r  = BAR_H // 2
 
@@ -179,12 +210,12 @@ async def build_leaderboard_card(
             radius=bar_r, fill=BAR_FILL,
         )
 
-        draw.text((xp_x, y0 + CARD_H // 2 - 10), xp_str, font=f_xp,
+        draw.text((xp_x, y0 + CARD_H // 2 - 12), xp_str, font=f_xp,
                   fill=TEXT_PRIMARY, anchor="rm")
 
     # Dış çerçeve
-    draw.rounded_rectangle((4, 4, CARD_W - 4, total_h - 4),
-                            radius=20, outline=OUTLINE, width=2)
+    draw.rounded_rectangle((8, 8, CARD_W - 8, total_h - 8),
+                            radius=18, outline=OUTLINE, width=2)
 
     buf = io.BytesIO()
     canvas.save(buf, format="PNG")
@@ -228,3 +259,36 @@ class LeaderboardCog(commands.Cog):
                 return
 
         await ctx.send(file=discord.File(buf, filename="liderlik.png"))
+
+    @commands.command(name="roller", aliases=["roles", "xproller"])
+    async def roles_command(self, ctx: commands.Context, member: discord.Member | None = None) -> None:
+        """Sunucunun XP rol haritasını görsel kart olarak gösterir."""
+        if ctx.guild is None:
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        target = member or ctx.author
+        if not isinstance(target, discord.Member):
+            await ctx.send("Kullanıcı bilgisi alınamadı.")
+            return
+
+        await dbmod.ensure_user(ctx.guild.id, target.id)
+        row = await dbmod.get_user_row(ctx.guild.id, target.id)
+        total_xp = int(row["total_xp"]) if row else 0
+
+        from rolescard import build_roles_card
+        from xproles import ROLE_REWARDS
+
+        async with ctx.typing():
+            try:
+                buf = await build_roles_card(
+                    ctx.guild,
+                    ROLE_REWARDS,
+                    total_xp,
+                    target.display_name,
+                )
+            except Exception as err:
+                await ctx.send(f"❌ Rol kartı oluşturulamadı: {err}")
+                return
+
+        await ctx.send(file=discord.File(buf, filename=f"roles-{target.id}.png"))

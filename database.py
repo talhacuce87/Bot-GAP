@@ -463,3 +463,30 @@ async def get_leaderboard(guild_id: int, limit: int = 10) -> list[aiosqlite.Row]
             (guild_id, limit),
         ) as cur:
             return await cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Otomatik Yedekleme
+# ---------------------------------------------------------------------------
+
+BACKUP_DIR = Path(__file__).resolve().parent / "data" / "backups"
+
+
+async def backup_db() -> str | None:
+    """Veritabanının tarihli bir yedeğini data/backups/ altına oluşturur."""
+    if not DATABASE_PATH.exists():
+        return None
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    import datetime
+    import shutil
+
+    today_str = datetime.datetime.now().strftime("%Y%m%d")
+    backup_file = BACKUP_DIR / f"xp_system_{today_str}.db"
+    try:
+        async with _db() as source:
+            await source.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        shutil.copy2(DATABASE_PATH, backup_file)
+        return str(backup_file)
+    except Exception as err:
+        print(f"[Backup] Hata: {err}")
+        return None
