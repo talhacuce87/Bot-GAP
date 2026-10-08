@@ -13,7 +13,7 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.2.0"
+BOT_VERSION = "2.3.0"
 LAST_DEPLOY_DATE = "8 Ekim 2026"
 
 # Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
@@ -183,45 +183,51 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "Bu deploy ile XP sistemine adil oyun koruması, şeffaf yönetici işlemleri "
-                "ve kalıcı kayıt altyapısı geldi."
+                "Bu sürümle Bot-GAP artık sohbet edebiliyor ve onaylı kanallardaki "
+                "konuşmaları hatırlayabiliyor."
             ),
             color=discord.Color.from_rgb(98, 225, 194),
         )
 
         embed.add_field(
-            name="🛡️ Adil Oyun Koruması",
+            name="💬 Botla Sohbet",
             value=(
-                "• XP kazanımları artık kayıt altında; makro, spam ve alt hesapla XP kasma "
-                "girişimleri otomatik tespit edilip yetkililere bildirilir.\n"
-                "• Mesaj içerikleri **saklanmaz**; yalnızca zaman, kanal ve XP bilgisi tutulur."
+                "• Beni etiketle (`@Bot-GAP selam`), mesajıma yanıt ver ya da `!ai <mesaj>` yaz.\n"
+                "• \"Kim en yüksek seviyede?\", \"Seviyem kaç?\", \"Best friend'im kim?\" gibi "
+                "soruları tahmin etmeden, gerçek XP verisinden cevaplarım."
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="📝 Şeffaf Yönetici İşlemleri",
+            name="🧠 Hafıza",
             value=(
-                "• `!xpekle`, `!xpayarla` ve `!boost` artık **sebep yazılmadan çalışmaz**.\n"
-                "• Her işlemde XP'nin önceki/sonraki değeri ve sebep kanalda gösterilir, "
-                "kim yaptıysa kalıcı olarak kayda geçer."
+                "• `!hatirla <konu>` — Hafızası açık kanallarda geçmiş konuşmaları arar.\n"
+                "• `!hafizaekle <bilgi>` — Kendin hakkında bir şeyi hatırlamamı iste; "
+                "`!hafizam` ile gör, `!unut <id>` ile sil.\n"
+                "• `!ani <metin>` / `!anilar` — Sunucunun ortak anılarını kaydet ve listele."
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="⌨️ Komut İyileştirmeleri",
+            name="🔒 Gizlilik",
             value=(
-                "• Komutlar artık büyük/küçük harf duyarsız: `!LB`, `!Kart`, `!XP` de çalışır."
+                "• Mesajlar yalnızca yöneticilerin **açıkça hafızasını açtığı** kanallarda, "
+                "sınırlı bir süre saklanır. DM'ler saklanmaz.\n"
+                "• E-posta, telefon, şifre gibi bilgiler kaydedilmeden önce gizlenir; "
+                "sildiğin mesaj hafızadan da silinir.\n"
+                "• `!aigizlilik kapat` ile mesajlarının kaydedilmesini kapatabilir, "
+                "`!unuttur` ile tüm kayıtlarını silebilirsin."
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="🔧 Altyapı",
+            name="ℹ️ Bilmen Gerekenler",
             value=(
-                "• Bot logları artık kalıcı tutuluyor; yeniden başlatma ve güncellemelerde kaybolmuyor.\n"
-                "• Hata takibi iyileştirildi, sorunlar daha hızlı tespit edilip giderilebilecek."
+                "• Ücretsiz yapay zekâ kotası sınırlı; günlük ve kişisel limitler var (`!aidurum`).\n"
+                "• Yapay zekâ hata yapabilir. Ayrıntılar ve tüm komutlar: `!aiyardim`"
             ),
             inline=False,
         )
