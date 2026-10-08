@@ -75,6 +75,9 @@ class ProviderChain:
         max_tokens: int | None = None,
         on_attempt: AttemptHook | None = None,
         attempt_gate: Any = None,  # sağlayıcı bazlı bütçe kapısı kullanılır
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: Any = None,
+        fallback_messages: Any = None,
     ) -> ChatResult:
         last_error: ProviderError | None = None
         skipped: list[ProviderError] = []
@@ -98,7 +101,10 @@ class ProviderChain:
             if last_error is not None:
                 log.warning("Sağlayıcı değiştiriliyor → %s (önceki hata: %s)", client.label, last_error.code)
             try:
-                result = await client.chat(messages, max_tokens=max_tokens, on_attempt=hook, attempt_gate=gate)
+                result = await client.chat(
+                    messages, max_tokens=max_tokens, on_attempt=hook, attempt_gate=gate,
+                    tools=tools, tool_executor=tool_executor, fallback_messages=fallback_messages,
+                )
             except ContextLengthError:
                 raise
             except ProviderError as err:

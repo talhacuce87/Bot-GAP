@@ -27,7 +27,8 @@ from ai.persona import PersonaStore
 from ai.retrieval import RetrievalResult, Retriever, parse_time_filter
 from ai.stats import StatsService
 from ai.storage import AIStorage
-from ai.textutil import fold
+from ai.textutil import fold, truncate
+from ai.tools import execute_tool, source_links, tool_specs
 
 log = logging.getLogger("gap.ai.orchestrator")
 
@@ -121,6 +122,7 @@ class AIRequest:
     member_count: int | None = None
     discord_info: list[str] = field(default_factory=list)  # uygulamanın topladığı sunucu bilgisi
     web_available: bool = False
+    tool_context: Any = None  # ai.tools.ToolContext; verilirse model araç çağırabilir
     now: float = field(default_factory=time.time)
 
 
@@ -134,6 +136,8 @@ class AIResponse:
     candidate_ids: list[int] = field(default_factory=list)
     web_sources: list[tuple[str, str]] = field(default_factory=list)
     search_queries: list[str] = field(default_factory=list)
+    private: bool = False       # yalnızca soran kişiye gösterilmeli (Google Search sonuçları)
+    tools_used: list[str] = field(default_factory=list)
 
 
 class Orchestrator:
@@ -151,7 +155,9 @@ class Orchestrator:
         name_for: Callable[[int, int, str | None], str] | None = None,
         channel_name_for: Callable[[int, int], str] | None = None,
         cache: ConversationCache | None = None,
+        web_client: Any = None,
     ) -> None:
+        self.web_client = web_client
         self.cfg = cfg
         self.client = client
         self.budget = budget
@@ -226,28 +232,18 @@ class Orchestrator:
         # Geçmiş arama yalnızca geçmişe dönük sorularda yapılır; aksi halde ilgisiz kelime
         # eşleşmeleri modele "kanıt" gibi gider ve uydurmaya yol açar.
         historical = is_historical(question) or parse_time_filter(question, req.now).since is not None
+        tool_ctx = req.tool_context if self.cfg.tools_enabled else None
 
         recent: list[tuple[int | None, ChatLine]] = []
         user_mems: list[str] = []
         episodes: list[str] = []
-        server_data: list[str] = []
-        retrieval: RetrievalResult | None = None
         try:
             recent = await self._recent(req)
             if self.memory is not None and self.cfg.memory_enabled:
                 user_mems, episodes = await self.memory.for_context(
                     req.guild_id, req.user_id, req.allowed_channels, self.cfg.memory_context_limit
                 )
-            if self.stats is not None:
-                server_data = await self.stats.gather(req.guild_id, req.user_id, req.question, req.bot_id)
-            server_data = [*req.discord_info, *server_data]
-            if self.retriever is not None and req.allowed_channels and historical:
-                retrieval = await self.retriever.search(
-                    req.guild_id, question, req.allowed_channels, now=req.now, bot_id=req.bot_id,
-                    exclude_ids={req.message_id} if req.message_id else (),
-                )
         except Exception:
-            # Bağlam toplanamazsa yine de sade bir cevap verilebilir; durumu logla.
             log.exception("AI bağlamı toplanırken hata (guild=%s)", req.guild_id)
 
         builder = ContextBuilder(
@@ -255,33 +251,61 @@ class Orchestrator:
             name_for=lambda uid, fb: self._name_for(req.guild_id, uid, fb),
             channel_name_for=lambda cid: self._channel_name_for(req.guild_id, cid),
         )
-        passages = []
-        if retrieval:
-            for p in retrieval.passages:
-                p.messages = [replace(m, content=self._render(req.guild_id, m.content)) for m in p.messages]
-                passages.append(p)
-        # Aynı mesaj hem kanıtta hem son konuşmada tekrarlanmasın; kanıt kopyası kalır.
-        evidence_ids = {m.message_id for p in passages for m in p.messages}
-        recent_lines = [line for mid, line in recent if mid is None or mid not in evidence_ids]
-        inp = ContextInput(
-            question=rendered_q,
-            speaker_name=req.speaker_name,
-            guild_name=req.guild_name,
-            channel_name=req.channel_name,
-            now=req.now,
-            persona=self.persona.get(req.guild_id),
-            recent=recent_lines,
-            reply_to=req.reply_to,
-            user_memories=user_mems,
-            episodic_memories=episodes,
-            server_data=server_data,
-            passages=passages,
-            historical=historical,
-            member_count=req.member_count,
-            channel_memory=req.channel_indexed if self.storage is not None else None,
-            web_available=req.web_available,
-        )
-        built = builder.build(inp)
+
+        def make_input(*, server_data: list[str], passages: list, tools_mode: bool) -> ContextInput:
+            evidence_ids = {m.message_id for p in passages for m in p.messages}
+            return ContextInput(
+                question=rendered_q, speaker_name=req.speaker_name, guild_name=req.guild_name,
+                channel_name=req.channel_name, now=req.now, persona=self.persona.get(req.guild_id),
+                recent=[line for mid, line in recent if mid is None or mid not in evidence_ids],
+                reply_to=req.reply_to, user_memories=user_mems, episodic_memories=episodes,
+                server_data=server_data, passages=passages, historical=historical and not tools_mode,
+                member_count=req.member_count,
+                channel_memory=req.channel_indexed if self.storage is not None else None,
+                web_available=req.web_available, tools_mode=tools_mode,
+            )
+
+        # Araç desteklemeyen modeller için: veriyi uygulama önceden toplar (bir kez, gerekirse).
+        prefetch: dict[str, Any] = {}
+
+        async def build_prefetch() -> BuiltContext:
+            if "built" not in prefetch:
+                server_data: list[str] = []
+                passages = []
+                try:
+                    if self.stats is not None:
+                        server_data = await self.stats.gather(req.guild_id, req.user_id, req.question, req.bot_id)
+                    server_data = [*req.discord_info, *server_data]
+                    if self.retriever is not None and req.allowed_channels and historical:
+                        retrieval = await self.retriever.search(
+                            req.guild_id, question, req.allowed_channels, now=req.now, bot_id=req.bot_id,
+                            exclude_ids={req.message_id} if req.message_id else (),
+                        )
+                        for p in retrieval.passages:
+                            p.messages = [replace(m, content=self._render(req.guild_id, m.content)) for m in p.messages]
+                            passages.append(p)
+                except Exception:
+                    log.exception("AI ön-bağlamı toplanırken hata (guild=%s)", req.guild_id)
+                prefetch["server_data"] = server_data
+                prefetch["input"] = make_input(server_data=server_data, passages=passages, tools_mode=False)
+                prefetch["built"] = builder.build(prefetch["input"])
+            return prefetch["built"]
+
+        async def fallback_messages():
+            return (await build_prefetch()).messages
+
+        if tool_ctx is not None:
+            inp = make_input(server_data=[], passages=[], tools_mode=True)
+            built = builder.build(inp)
+            tools = tool_specs(tool_ctx)
+
+            async def executor(name, args):
+                return await execute_tool(tool_ctx, name, args)
+        else:
+            built = await build_prefetch()
+            inp = prefetch["input"]
+            tools = None
+            executor = None
         if built.dropped:
             log.info("Bağlam bütçesi nedeniyle düşenler: %s (~%d token)", built.dropped, built.approx_tokens)
 
@@ -290,21 +314,30 @@ class Orchestrator:
                 req.guild_id, req.user_id, model, error_code, tin, tout, provider=provider, cost_usd=cost
             )
 
+        async def call(messages):
+            kwargs: dict[str, Any] = {"on_attempt": on_attempt, "attempt_gate": self.budget.attempt_gate}
+            if tools:
+                kwargs.update(tools=tools, tool_executor=executor, fallback_messages=fallback_messages)
+            return await self.client.chat(messages, **kwargs)
+
         try:
             try:
-                result = await self.client.chat(
-                    built.messages, on_attempt=on_attempt, attempt_gate=self.budget.attempt_gate
-                )
+                result = await call(built.messages)
             except ContextLengthError:
                 if not await self.budget.attempt_gate():
                     raise
                 built = builder.build(inp, token_budget=max(300, self.token_budget() // 2))
                 log.info("Bağlam sınırı aşıldı, yarı bütçeyle tekrar deneniyor (~%d token)", built.approx_tokens)
-                result = await self.client.chat(
-                    built.messages, on_attempt=on_attempt, attempt_gate=self.budget.attempt_gate
-                )
+                result = await call(built.messages)
         except ProviderError as err:
             log.warning("AI yanıtı üretilemedi: %s", err.code)
+            server_data = prefetch.get("server_data")
+            if server_data is None and self.stats is not None:
+                try:
+                    server_data = [*req.discord_info,
+                                   *await self.stats.gather(req.guild_id, req.user_id, req.question, req.bot_id)]
+                except Exception:
+                    server_data = []
             if server_data:
                 text = "🤖 Yapay zekâ şu an cevap veremiyor ama veritabanından bakabildim:\n" + "\n".join(
                     f"• {line}" for line in server_data
@@ -312,15 +345,27 @@ class Orchestrator:
                 return AIResponse(clean_model_output(text), ok=False, error_code=err.code)
             return AIResponse(err.user_message, ok=False, error_code=err.code)
 
+        if result.web_query:
+            # Model internette aramaya karar verdi: Google Search ile cevapla, kişiye özel ilet.
+            if self.web_client is None:
+                return AIResponse("İnternet araması bu botta kapalı.", ok=False, error_code="web_unavailable")
+            log.info("Model web_search çağırdı: %r", truncate(result.web_query, 120))
+            return await self._web_answer(req, question, self.web_client, query_hint=result.web_query)
+
         text = clean_model_output(result.text)
-        sources = self._sources(req, built) if historical else []
+        if tool_ctx is not None and tool_ctx.passages:
+            sources = source_links(tool_ctx, MAX_SOURCE_LINKS)
+        elif "built" in prefetch and historical:
+            sources = self._sources(req, prefetch["built"])
+        else:
+            sources = []
 
         self.cache.add(req.guild_id, req.channel_id,
                        ChatLine(req.speaker_name, rendered_q, req.now), req.message_id, req.user_id)
         self.cache.add(req.guild_id, req.channel_id, ChatLine("Bot-GAP", text, time.time(), is_bot=True))
 
-        candidate_ids: list[int] = []
-        if self.memory is not None and self.cfg.memory_enabled and req.message_id:
+        candidate_ids: list[int] = list(tool_ctx.candidate_ids) if tool_ctx is not None else []
+        if self.memory is not None and self.cfg.memory_enabled and req.message_id and not candidate_ids:
             try:
                 candidate_ids = await self.memory.capture_candidates(
                     req.guild_id, req.user_id, req.channel_id, req.message_id, question,
@@ -329,7 +374,8 @@ class Orchestrator:
             except Exception:
                 log.exception("Aday hafıza çıkarılamadı")
 
-        return AIResponse(text, ok=True, sources=sources, model=result.model, candidate_ids=candidate_ids)
+        return AIResponse(text, ok=True, sources=sources, model=result.model, candidate_ids=candidate_ids,
+                          tools_used=list(result.tools_used))
 
     def _sources(self, req: AIRequest, built: BuiltContext) -> list[str]:
         links: list[str] = []
@@ -348,59 +394,65 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     async def answer_web(self, req: AIRequest, google: Any) -> AIResponse:
-        """
-        Google Search açık cevap. Google koşulları gereği sonuç yalnızca soran kişiye
-        gösterilmeli ve saklanmamalıdır: konuşma önbelleğine ve hafızaya YAZILMAZ.
-        """
+        """/ara: doğrudan internet araması (bütçe slotu dahil)."""
         question = clean_user_input(req.question, req.bot_id, self.cfg.max_input_chars)
         if not question:
             return AIResponse("Ne aramamı istersin? `/ara <soru>`", ok=False, error_code="empty_input")
+        try:
+            async with self.budget.slot(req.guild_id, req.channel_id, req.user_id, channel_cooldown=req.channel_cooldown):
+                return await self._web_answer(req, question, google)
+        except BudgetError as err:
+            return AIResponse(err.user_message, ok=False, error_code=err.code)
+
+    async def _web_answer(self, req: AIRequest, question: str, google: Any, query_hint: str | None = None) -> AIResponse:
+        """
+        Google Search açık cevap. Google koşulları gereği sonuç yalnızca soran kişiye
+        gösterilmeli ve saklanmamalıdır: konuşma önbelleğine ve hafızaya YAZILMAZ (private=True).
+        """
         if not (self.budget.provider_has_room("google") and self.budget.provider_has_room("google_search")):
             return AIResponse("Bugünlük internet arama bütçesi doldu, yarın tekrar dene. 🙏", ok=False,
                               error_code="search_budget")
+        recent = []
         try:
-            async with self.budget.slot(req.guild_id, req.channel_id, req.user_id, channel_cooldown=req.channel_cooldown):
-                recent = []
-                try:
-                    recent = [line for _, line in await self._recent(req)][-8:]
-                except Exception:
-                    log.exception("Web araması için son konuşma okunamadı")
-                inp = ContextInput(
-                    question=self._render(req.guild_id, question),
-                    speaker_name=req.speaker_name, guild_name=req.guild_name, channel_name=req.channel_name,
-                    now=req.now, persona=self.persona.get(req.guild_id), recent=recent,
-                    server_data=list(req.discord_info), member_count=req.member_count,
-                    web_mode=True, web_available=True,
-                )
-                built = ContextBuilder(
-                    self.token_budget(),
-                    name_for=lambda uid, fb: self._name_for(req.guild_id, uid, fb),
-                    channel_name_for=lambda cid: self._channel_name_for(req.guild_id, cid),
-                ).build(inp)
+            recent = [line for _, line in await self._recent(req)][-8:]
+        except Exception:
+            log.exception("Web araması için son konuşma okunamadı")
+        q = self._render(req.guild_id, question)
+        if query_hint and fold(query_hint) not in fold(q):
+            q += f"\n(Arama önerisi: {query_hint})"
+        inp = ContextInput(
+            question=q, speaker_name=req.speaker_name, guild_name=req.guild_name, channel_name=req.channel_name,
+            now=req.now, persona=self.persona.get(req.guild_id), recent=recent,
+            server_data=list(req.discord_info), member_count=req.member_count,
+            web_mode=True, web_available=True,
+        )
+        built = ContextBuilder(
+            self.token_budget(),
+            name_for=lambda uid, fb: self._name_for(req.guild_id, uid, fb),
+            channel_name_for=lambda cid: self._channel_name_for(req.guild_id, cid),
+        ).build(inp)
 
-                async def on_attempt(model, error_code, tin, tout, *, cost=None):
-                    await self.budget.record_attempt(
-                        req.guild_id, req.user_id, model, error_code, tin, tout, provider="google", cost_usd=cost
-                    )
+        async def on_attempt(model, error_code, tin, tout, *, cost=None):
+            await self.budget.record_attempt(
+                req.guild_id, req.user_id, model, error_code, tin, tout, provider="google", cost_usd=cost
+            )
 
-                try:
-                    answer = await google.web_chat(built.messages, on_attempt=on_attempt)
-                except ProviderError as err:
-                    log.warning("İnternet araması başarısız: %s", err.code)
-                    return AIResponse(err.user_message, ok=False, error_code=err.code)
-
-                per_query = self.cfg.google_search_price_per_1000 / 1000
-                for _ in answer.queries:  # her Google araması ayrı ücretlendirilir
-                    await self.budget.record_attempt(
-                        req.guild_id, req.user_id, answer.model, None, None, None,
-                        provider="google_search", cost_usd=per_query,
-                    )
-                return AIResponse(
-                    clean_model_output(answer.text), ok=True, model=answer.model,
-                    web_sources=answer.sources[:5], search_queries=answer.queries[:5],
-                )
-        except BudgetError as err:
+        try:
+            answer = await google.web_chat(built.messages, on_attempt=on_attempt)
+        except ProviderError as err:
+            log.warning("İnternet araması başarısız: %s", err.code)
             return AIResponse(err.user_message, ok=False, error_code=err.code)
+
+        per_query = self.cfg.google_search_price_per_1000 / 1000
+        for _ in answer.queries:  # her Google araması ayrı ücretlendirilir
+            await self.budget.record_attempt(
+                req.guild_id, req.user_id, answer.model, None, None, None,
+                provider="google_search", cost_usd=per_query,
+            )
+        return AIResponse(
+            clean_model_output(answer.text), ok=True, model=answer.model, private=True,
+            web_sources=answer.sources[:5], search_queries=answer.queries[:5],
+        )
 
     async def recall(self, guild_id: int, query: str, allowed_channels: set[int], bot_id: int | None) -> RetrievalResult | None:
         if self.retriever is None or not allowed_channels:

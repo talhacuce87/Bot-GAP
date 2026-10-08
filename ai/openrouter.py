@@ -22,7 +22,7 @@ import logging
 import random
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from email.utils import parsedate_to_datetime
 from typing import Any, Awaitable, Callable
 
@@ -36,6 +36,7 @@ PROVIDER_NAME = "openrouter"
 MODEL_METADATA_TTL_SECONDS = 6 * 3600
 KEY_STATUS_TTL_SECONDS = 300
 AUTH_CIRCUIT_SECONDS = 1800
+MAX_TOOL_ROUNDS = 4
 UPSTREAM_COOLDOWN_SECONDS = 120.0
 UPSTREAM_COOLDOWN_MAX_SECONDS = 900.0
 BACKOFF_BASE_SECONDS = 1.5
@@ -152,6 +153,7 @@ class ModelInfo:
     context_length: int | None
     pricing: dict[str, str] = field(default_factory=dict)
     reasoning_mandatory: bool = False
+    supports_tools: bool = False
 
     @property
     def is_free(self) -> bool:
@@ -168,6 +170,10 @@ class ChatResult:
     finish_reason: str | None
     attempts: int
     cost: float | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    assistant_message: dict[str, Any] | None = None
+    web_query: str | None = None       # model web_search aracını çağırdı
+    tools_used: tuple[str, ...] = ()
 
 
 AttemptHook = Callable[..., Awaitable[None]]
@@ -321,6 +327,10 @@ class OpenRouterClient:
             self._paid_detected = True
             log.error("OpenRouter ücret raporladı (%.6f) model=%s — sağlayıcı kapatıldı", cost, model)
 
+    def supports_tools(self, model: str) -> bool:
+        info = self._models.get(model)
+        return bool(info and info.supports_tools)
+
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key()}"}
 
@@ -368,6 +378,7 @@ class OpenRouterClient:
                         context_length=item.get("context_length"),
                         pricing=dict(item.get("pricing") or {}),
                         reasoning_mandatory=bool((item.get("reasoning") or {}).get("mandatory")),
+                        supports_tools="tools" in (item.get("supported_parameters") or []),
                     )
             self._models = found
             self._models_fetched_at = self._clock()
@@ -427,7 +438,15 @@ class OpenRouterClient:
         max_tokens: int | None = None,
         on_attempt: AttemptHook | None = None,
         attempt_gate: AttemptGate | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: Any = None,
+        fallback_messages: Any = None,
     ) -> ChatResult:
+        """
+        tools + tool_executor verilirse ve model destekliyorsa araç döngüsü çalışır.
+        Desteklemeyen modellerde fallback_messages (async callable) ile üretilen,
+        verisi önceden toplanmış mesajlar kullanılır.
+        """
         reason = self.circuit_reason()
         if reason:
             err = CircuitOpenError(reason)
@@ -459,9 +478,13 @@ class OpenRouterClient:
                 log.warning("%s yedek modele geçiliyor: %s → %s (%s)", self.label, models[index - 1], model,
                             last_error.code if last_error else "?")
             try:
-                result = await self._chat_with_retries(
-                    model, messages, max_tokens or self._default_max_tokens(),
-                    deadline, on_attempt, attempt_gate,
+                use_tools = bool(tools and tool_executor and self.supports_tools(model))
+                model_messages = messages
+                if not use_tools and fallback_messages is not None:
+                    model_messages = await fallback_messages()
+                result = await self._run_with_tools(
+                    model, model_messages, max_tokens or self._default_max_tokens(), deadline,
+                    on_attempt, attempt_gate, tools if use_tools else None, tool_executor,
                 )
                 self.last_error = None
                 self.last_model_used = result.model
@@ -487,14 +510,51 @@ class OpenRouterClient:
         now = self._clock()
         return {m: round(t - now) for m, t in self._model_cooldown_until.items() if t > now}
 
-    async def _chat_with_retries(
+    async def _run_with_tools(
         self,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         max_tokens: int,
         deadline: float,
         on_attempt: AttemptHook | None,
         attempt_gate: AttemptGate | None,
+        tools: list[dict[str, Any]] | None,
+        tool_executor: Any,
+    ) -> ChatResult:
+        msgs = list(messages)
+        used: list[str] = []
+        rounds = 0
+        while True:
+            tool_choice = "none" if tools and rounds >= MAX_TOOL_ROUNDS else "auto"
+            result = await self._chat_with_retries(
+                model, msgs, max_tokens, deadline, on_attempt, attempt_gate, tools=tools, tool_choice=tool_choice,
+            )
+            if not result.tool_calls or tool_executor is None:
+                return replace(result, tools_used=tuple(used))
+            rounds += 1
+            # Asistan mesajı olduğu gibi geri gönderilir (Gemini 3 thought_signature korunmalı).
+            msgs.append(result.assistant_message or {"role": "assistant", "tool_calls": result.tool_calls})
+            for call in result.tool_calls:
+                fn = call.get("function") or {}
+                name = str(fn.get("name") or "")
+                used.append(name)
+                outcome = await tool_executor(name, fn.get("arguments"))
+                if outcome.web_query:
+                    return replace(result, text="", tool_calls=None, web_query=outcome.web_query, tools_used=tuple(used))
+                msgs.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": outcome.text})
+            if attempt_gate is not None and not await attempt_gate():
+                raise BudgetDeniedError("araç turu için bütçe kalmadı")
+
+    async def _chat_with_retries(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        deadline: float,
+        on_attempt: AttemptHook | None,
+        attempt_gate: AttemptGate | None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str = "auto",
     ) -> ChatResult:
         attempt = 0
         while True:
@@ -510,7 +570,10 @@ class OpenRouterClient:
                 err.attempts = attempt - 1  # type: ignore[attr-defined]
                 raise err
             try:
-                result = await self._chat_once(model, messages, max_tokens, min(remaining, self.cfg.request_timeout_seconds))
+                result = await self._chat_once(
+                    model, messages, max_tokens, min(remaining, self.cfg.request_timeout_seconds),
+                    tools=tools, tool_choice=tool_choice,
+                )
             except ProviderError as err:
                 if on_attempt is not None:
                     await on_attempt(model, err.code, None, None)
@@ -535,11 +598,7 @@ class OpenRouterClient:
                 continue
             if on_attempt is not None:
                 await on_attempt(result.model, None, result.input_tokens, result.output_tokens, cost=result.cost)
-            return ChatResult(
-                text=result.text, model=result.model, requested_model=model,
-                input_tokens=result.input_tokens, output_tokens=result.output_tokens,
-                finish_reason=result.finish_reason, attempts=attempt, cost=result.cost,
-            )
+            return replace(result, requested_model=model, attempts=attempt)
 
     def _backoff(self, attempt: int) -> float:
         base = min(BACKOFF_CAP_SECONDS, BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)))
@@ -573,12 +632,18 @@ class OpenRouterClient:
         messages: list[dict[str, str]],
         max_tokens: int,
         timeout: float,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str = "auto",
     ) -> ChatResult:
         started = self._clock()
+        payload = self._payload(model, messages, max_tokens)
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
         try:
             resp = await self._client.post(
                 "/chat/completions",
-                json=self._payload(model, messages, max_tokens),
+                json=payload,
                 headers=self._auth_headers(),
                 timeout=httpx.Timeout(timeout, connect=min(10.0, timeout)),
             )
@@ -622,6 +687,19 @@ class OpenRouterClient:
             finish_reason, f" ~${cost:.5f}" if cost else "",
         )
         self._on_cost(cost, used_model)
+
+        tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+        if isinstance(tool_calls, list) and tool_calls:
+            assistant = dict(message)
+            assistant["role"] = "assistant"
+            log.info("%s araç çağrısı istedi: %s", self.label,
+                     ", ".join(str((c.get("function") or {}).get("name")) for c in tool_calls if isinstance(c, dict)))
+            return ChatResult(
+                text=text, model=used_model, requested_model=model,
+                input_tokens=usage.get("prompt_tokens"), output_tokens=usage.get("completion_tokens"),
+                finish_reason=finish_reason, attempts=1, cost=cost,
+                tool_calls=[c for c in tool_calls if isinstance(c, dict)], assistant_message=assistant,
+            )
 
         if not text:
             raise EmptyResponseError(f"boş içerik (finish={finish_reason})", status=status)

@@ -144,6 +144,16 @@ class MemoryService:
                 ids.append(mem_id)
         return ids
 
+    async def add_candidate_note(self, guild_id: int, user_id: int, content: str) -> int:
+        """Model tarafından önerilen, kullanıcının açıkça istemediği bilgi: yalnızca aday."""
+        content = _validate_content(content)
+        mem_id, _ = await self.storage.add_memory(
+            guild_id=guild_id, user_id=user_id, scope="user", memory_type="note", content=content,
+            source="extracted", status="candidate", confidence=0.5, created_by=user_id,
+            expires_at=time.time() + self.candidate_retention_days * 86400,
+        )
+        return mem_id
+
     async def confirm(self, guild_id: int, user_id: int, memory_id: int) -> Memory:
         mem = await self.storage.get_memory(memory_id)
         if mem is None or mem.guild_id != guild_id or mem.user_id != user_id or mem.status == "revoked":

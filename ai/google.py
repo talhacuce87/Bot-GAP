@@ -177,6 +177,9 @@ class GoogleAIClient(OpenRouterClient):
     async def key_status(self) -> dict[str, Any] | None:
         return None
 
+    def supports_tools(self, model: str) -> bool:
+        return model.lower().startswith("gemini")
+
     # --- Model listesi ----------------------------------------------------
 
     async def refresh_models(self, force: bool = False) -> bool:

@@ -37,6 +37,7 @@ from ai.retrieval import TR_TZ, Retriever
 from ai.stats import StatsService
 from ai.storage import AIStorage
 from ai.textutil import collapse_ws, truncate
+from ai.tools import ToolContext
 
 log = logging.getLogger("gap.ai")
 
@@ -135,6 +136,7 @@ class AICog(commands.Cog, name="AICog"):
             stats=self._build_stats(),
             name_for=self._display_name,
             channel_name_for=self._channel_name,
+            web_client=self.google_client if self.cfg.web_search_available else None,
         )
         if not self.cfg.providers:
             log.warning("AI_ENABLED=true fakat ne GOOGLE_AI_API_KEY ne OPENROUTER_API_KEY var — AI yanıtları devre dışı")
@@ -444,7 +446,36 @@ class AICog(commands.Cog, name="AICog"):
             member_count=getattr(guild, "member_count", None),
             discord_info=self._discord_info(guild, author, text),
             web_available=self.google_client is not None and self.cfg.web_search_available,
+            tool_context=self._tool_context(guild, channel, author, text, message_id, allowed),
         )
+
+    def _tool_context(
+        self, guild: discord.Guild, channel: Any, author: Any, text: str, message_id: int | None, allowed: set[int],
+    ) -> ToolContext | None:
+        if not self.cfg.tools_enabled or self.orchestrator is None:
+            return None
+        orch = self.orchestrator
+        return ToolContext(
+            guild=guild, requester=author, channel=channel, question=text,
+            bot_id=self.bot.user.id if self.bot.user else None,
+            allowed_channels=allowed, channel_indexed=self.is_indexed(guild.id, channel.id),
+            message_id=message_id, member_info=self._member_info,
+            name_for=lambda uid, fb: self._display_name(guild.id, uid, fb),
+            channel_name_for=lambda cid: self._channel_name(guild.id, cid),
+            stats=orch.stats, retriever=orch.retriever,
+            memory=orch.memory if self.cfg.memory_enabled else None,
+            web_available=self.google_client is not None and self.cfg.web_search_available,
+        )
+
+    async def _deliver_private(self, author: Any, resp: AIResponse) -> bool:
+        """Google Search sonuçlarını yalnızca soran kişiye (DM) gönderir. Başarılıysa True."""
+        try:
+            dm = await author.create_dm()
+            for part in split_message(self._format_web(resp)):
+                await dm.send(part, allowed_mentions=NO_MENTIONS, suppress_embeds=True)
+            return True
+        except (discord.HTTPException, AttributeError):
+            return False
 
     def _discord_info(self, guild: discord.Guild, author: Any, text: str) -> list[str]:
         if not self.cfg.discord_info_enabled:
@@ -504,6 +535,14 @@ class AICog(commands.Cog, name="AICog"):
         reply_msg = ref.resolved if ref and isinstance(ref.resolved, discord.Message) else None
         req = self._build_request(message.guild, message.channel, message.author, message.content, message.id, reply_msg)
         resp = await self._generate(req, message.channel)
+        if resp.private:
+            # Google kuralı: arama sonucu yalnızca soran kişiye gösterilir → DM.
+            if await self._deliver_private(message.author, resp):
+                await self._safe_reply(message, "🌐 İnternette araştırdım; Google kuralları gereği cevabı sana DM'den gönderdim. 📬")
+            else:
+                await self._safe_reply(message, "🌐 İnternette araştırdım ama DM'lerin kapalı olduğu için cevabı "
+                                                "gönderemedim. `/ara <soru>` ile sorarsan sana gizli mesaj olarak gelir.")
+            return
         await self._safe_reply(message, self._format_response(resp))
 
     async def _safe_reply(self, message: discord.Message, text: str) -> None:
@@ -570,6 +609,19 @@ class AICog(commands.Cog, name="AICog"):
             ctx.message.id if ctx.interaction is None else None, reply_msg,
         )
         resp = await self._generate(req, ctx.channel)
+        if resp.private:
+            if ctx.interaction is not None:
+                # İlk takip mesajı ertelenmiş (herkese açık) yanıtın yerine geçer ve gizli olamaz;
+                # bu yüzden önce kısa bir not, sonra cevap ayrı gizli mesaj olarak gönderilir.
+                await ctx.send("🌐 İnternette araştırdım; Google kuralları gereği cevap yalnızca sana görünür.")
+                for part in split_message(self._format_web(resp)):
+                    await ctx.send(part, ephemeral=True, allowed_mentions=NO_MENTIONS, suppress_embeds=True)
+            elif await self._deliver_private(ctx.author, resp):
+                await ctx.message.add_reaction("📬")
+            else:
+                await ctx.send("🌐 Cevap internet aramasıyla hazırlandı ama DM'lerin kapalı; `/ara` ile dene.",
+                               delete_after=30)
+            return
         await self._ctx_send(ctx, self._format_response(resp))
 
     @commands.hybrid_command(name="ara", aliases=["internet", "web", "arastir", "araştır"],
@@ -838,8 +890,10 @@ class AICog(commands.Cog, name="AICog"):
             "• `!ai <mesaj>` — doğrudan soru sor\n"
             "• \"Kim en yüksek seviyede?\", \"seviyem kaç?\", \"best friend'im kim?\" gibi soruları "
             "gerçek veritabanından cevaplarım.\n"
-            "• Sunucu bilgisi, roller, kanallar, seste kimler var, \"@üye kim?\" gibi soruları Discord'dan bakarak cevaplarım.\n"
-            "• `/ara <soru>` — Google'da araştırır; cevap **yalnızca sana** görünür (`!ara` ile DM'den gelir)."
+            "• Ne istediğini doğal dille yaz; gerekirse sunucu/rol/kanal/ses bilgisine, istatistiklere, geçmiş "
+            "sohbetlere bakar ya da internette ararım.\n"
+            "• İnternetten gelen cevaplar Google kuralları gereği **yalnızca sana** gösterilir (DM veya gizli mesaj). "
+            "Doğrudan aramak için: `/ara <soru>`"
         ), inline=False)
         embed.add_field(name="🧠 Hafıza", value=(
             "• `!hatirla <konu>` — hafızası açık kanallarda geçmiş konuşmaları arar (kota harcamaz)\n"

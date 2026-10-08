@@ -197,6 +197,7 @@ yüklenmez; bot eskisi gibi çalışır.
 | Google AI Studio (Gemini API) sağlayıcısı, sağlayıcı zinciri, günlük istek + USD sınırı | ✅ |
 | İnternet araması `/ara` (Google Search, cevap yalnızca soran kişiye) | ✅ |
 | Discord bilgisi: sunucu, roller, rol üyeleri, kanallar, seste kimler var, üye profili | ✅ |
+| Araç çağırma (function calling): model doğal dilden hangi veriye bakacağına / internette aramaya kendisi karar verir | ✅ |
 | Embedding/semantik arama, LLM ile hafıza özetleme, sunucu başına model seçimi | ⏳ planlanan |
 | Sesli kanal / görsel girdi | ❌ kapsam dışı |
 
@@ -282,6 +283,22 @@ modellerine düşülür. Faturalandırması açık bir projenin anahtarıyla **h
 - Google hataları: dakikalık 429 → `retryDelay` kadar bekleyip tekrar (30 sn'den uzunsa yedeğe geçer);
   günlük kota 429 → model 15 dk soğumaya alınır; geçersiz anahtar → Google 30 dk devre dışı.
 
+### Araçlar (function calling)
+
+Gemini kullanılırken model, kullanıcının doğal dildeki isteğine göre hangi aracı çağıracağına kendisi karar
+verir; uygulama aracı çalıştırıp sonucu modele verir (en fazla 4 tur, her tur bütçeden düşer):
+
+| Araç | Ne yapar |
+|---|---|
+| `get_server_info`, `list_roles`, `get_role_members`, `list_channels`, `get_voice_activity`, `get_member_profile` | Discord bilgisi (yalnızca soranın görebildiği) |
+| `get_leaderboard`, `get_member_stats`, `get_best_friend` | XP/seviye/streak/ses/Best Friend (salt-okunur) |
+| `search_chat_history` | Hafızası açık, yetkili kanallarda geçmiş arama (kaynak linkleriyle) |
+| `save_user_memory` | Kullanıcı açıkça "hatırla/not al" dediyse kaydeder; aksi halde yalnızca aday |
+| `web_search` | Google Search; cevap kişiye özel iletilir (etiketlemede DM + kanala kısa not, `/ai`'de gizli mesaj) |
+
+Araç desteklemeyen modellere (OpenRouter ücretsiz yedekleri) düşülürse eski yöntem kullanılır: uygulama soruya
+göre veriyi önceden toplayıp verir. `AI_TOOLS_ENABLED=false` ile araçlar kapatılabilir.
+
 ### İnternet araması (`/ara`) ve Discord bilgisi
 
 - **`/ara <soru>`** (veya `!ara <soru>`): Gemini, Google Search ile araştırıp cevaplar. Google'ın
@@ -289,7 +306,8 @@ modellerine düşülür. Faturalandırması açık bir projenin anahtarıyla **h
   kişiye**, arama önerileriyle birlikte gösterilmesini ve saklanmamasını şart koşar. Bu yüzden: slash komutunda
   cevap gizli (ephemeral) mesaj olarak, prefix komutunda DM ile gelir; herkese açık kanala yazılmaz, hafızaya
   ve konuşma önbelleğine kaydedilmez. Kaynak linkleri ve "Google'da ara" linkleri cevabın altına eklenir.
-  Etiketleyerek yapılan normal sohbette internet yoktur; bot `/ara`'yı önerir.
+  Etiketleyerek yapılan sohbette model gerekirse `web_search` aracını kendisi çağırır; sonuç DM ile gelir, kanala
+  yalnızca kısa bir not yazılır.
 - Ücret: ayda 5000 arama ücretsiz (Gemini 3.x ortak), sonrası $14 / 1000 arama; bir cevapta birden fazla arama
   olabilir. Bot her aramayı `GOOGLE_AI_SEARCH_PRICE_PER_1000` ile Google'ın USD sınırına ekler (ücretsiz kotayı
   bilemediği için temkinli). Ayrıca günlük arama sınırı: `GOOGLE_AI_DAILY_SEARCH_BUDGET` (varsayılan 100).
@@ -313,7 +331,8 @@ modellerine düşülür. Faturalandırması açık bir projenin anahtarıyla **h
 | `AI_PROVIDER_ORDER` | `google,openrouter` | Sağlayıcı sırası |
 | `AI_WEB_SEARCH_ENABLED` | `true` | `/ara` internet araması (Google anahtarı gerekir) |
 | `GOOGLE_AI_DAILY_SEARCH_BUDGET` / `GOOGLE_AI_SEARCH_PRICE_PER_1000` | `100` / `14` | Günlük arama sınırı ve arama başı maliyet tahmini |
-| `AI_DISCORD_INFO_ENABLED` | `true` | Sunucu/rol/kanal/ses/üye bilgisini modele ver |
+| `AI_DISCORD_INFO_ENABLED` | `true` | Sunucu/rol/kanal/ses/üye bilgisini modele ver (ön-toplama yolu) |
+| `AI_TOOLS_ENABLED` | `true` | Modelin araç çağırmasına izin ver (Gemini) |
 | `OPENROUTER_API_KEY` | – | OpenRouter anahtarı (loglanmaz) |
 | `OPENROUTER_MODEL` | `google/gemma-4-31b-it:free` | Birincil model |
 | `OPENROUTER_FALLBACK_MODEL` | – | Virgülle ayrılmış yedek modeller, sırayla (sadece ücretsizler) |

@@ -113,6 +113,7 @@ class AIConfig:
     google_search_price_per_1000: float = 14.0
     provider_order: str = "google,openrouter"
     discord_info_enabled: bool = True
+    tools_enabled: bool = True
 
     db_path: Path = PROJECT_ROOT / "data" / "ai_memory.db"
     backup_dir: Path = PROJECT_ROOT / "data" / "backups"
@@ -195,6 +196,7 @@ def load_config() -> AIConfig:
         google_daily_search_budget=_int("GOOGLE_AI_DAILY_SEARCH_BUDGET", 100, 0, 100_000),
         google_search_price_per_1000=_float("GOOGLE_AI_SEARCH_PRICE_PER_1000", 14.0, 0.0, 1000.0),
         discord_info_enabled=_bool("AI_DISCORD_INFO_ENABLED", True),
+        tools_enabled=_bool("AI_TOOLS_ENABLED", True),
         **_paths(),
     )
 

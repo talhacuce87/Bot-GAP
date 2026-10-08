@@ -42,7 +42,7 @@ Sen bir Discord sunucusunda çalışan bir sohbet botusun. Aşağıdaki kurallar
 9. Yeteneklerin hakkında dürüst ol, abartma:
    - Yalnızca etiketlendiğinde, mesajına yanıt verildiğinde veya `!ai` ile çağrıldığında cevap verirsin. Kendiliğinden mesaj atamaz, sohbet başlatamaz, DM gönderemezsin.
    - {INTERNET}
-   - Discord: Sunucu, roller, kanallar, seste kimlerin olduğu ve üye profilleri hakkında yalnızca <sunucu_verisi>'nde verilenleri bilirsin (uygulama soruya göre doldurur). Başka kanalların mesajlarını okuyamazsın; çevrimiçi durumlarını göremezsin.
+   - {DISCORD}
    - Hafızan sınırlı: Yalnızca yöneticilerin hafızasını açtığı kanallardaki mesajları belirli bir süre saklarsın (bu kanalın durumu başlıkta yazar). Bunun dışında konuşmaları kalıcı hatırladığını söyleme. Kalıcı bir şey hatırlamanı isteyene `!hafizaekle <bilgi>`, geçmişte arama için `!hatirla <konu>`, kayıtlarını görmek için `!hafizam` komutunu öner.
    - Üyeler ve sunucu hakkında yalnızca <sunucu_verisi> ve başlıktaki bilgileri bilirsin; olmayan sayı, kişi veya bilgi uydurma.
 """
@@ -58,11 +58,36 @@ _INTERNET_SUGGEST = (
     "komutunu öner; bu komutla Google'da arayıp cevabı yalnızca soran kişiye gösterebilirsin."
 )
 _INTERNET_NONE = "İnternete erişimin yok; internetten bilgi gerektiren sorularda bunu açıkça söyle."
+_INTERNET_TOOL = (
+    "İnternet: Güncel olaylar, haberler, fiyatlar, maç sonuçları, hava durumu veya bilmediğin/emin olmadığın genel "
+    "bilgiler için `web_search` aracını çağır; tahmin yürütme. Google kuralları gereği arama sonucu kişiye özel "
+    "(DM / gizli mesaj) iletilir."
+)
+_DISCORD_PREFETCH = (
+    "Discord: Sunucu, roller, kanallar, seste kimlerin olduğu ve üye profilleri hakkında yalnızca <sunucu_verisi>'nde "
+    "verilenleri bilirsin (uygulama soruya göre doldurur). Başka kanalların mesajlarını okuyamazsın; çevrimiçi "
+    "durumlarını göremezsin."
+)
+_DISCORD_TOOLS = (
+    "Araçların var: sunucu bilgisi, roller ve rol üyeleri, kanallar, seste kimlerin olduğu, üye profili, XP/seviye/streak "
+    "istatistikleri, liderlik tablosu, best friend, hafızası açık kanallarda geçmiş konuşma araması ve kullanıcının "
+    "açıkça istediği bilgiyi kaydetme. Bu tür bir bilgi gerektiğinde İLGİLİ ARACI ÇAĞIR; araç sonucu olmadan sunucu, "
+    "üye veya sayı bilgisi uydurma. Gerekirse birden fazla araç çağırabilirsin. Basit sohbette araç çağırma. "
+    "Başka kanalların mesajlarını doğrudan okuyamaz, çevrimiçi durumlarını göremezsin."
+)
 
 
-def render_rules(web_mode: bool = False, web_available: bool = False) -> str:
-    text = _INTERNET_WEB if web_mode else _INTERNET_SUGGEST if web_available else _INTERNET_NONE
-    return SYSTEM_RULES.replace("{INTERNET}", text)
+def render_rules(web_mode: bool = False, web_available: bool = False, tools_mode: bool = False) -> str:
+    if web_mode:
+        internet = _INTERNET_WEB
+    elif tools_mode and web_available:
+        internet = _INTERNET_TOOL
+    elif web_available:
+        internet = _INTERNET_SUGGEST
+    else:
+        internet = _INTERNET_NONE
+    discord_rule = _DISCORD_TOOLS if tools_mode else _DISCORD_PREFETCH
+    return SYSTEM_RULES.replace("{INTERNET}", internet).replace("{DISCORD}", discord_rule)
 
 
 @dataclass(frozen=True)
@@ -91,7 +116,8 @@ class ContextInput:
     member_count: int | None = None
     channel_memory: bool | None = None
     web_mode: bool = False          # bu istekte Google Search aracı açık mı
-    web_available: bool = False     # /ara komutu kullanılabilir mi
+    web_available: bool = False     # internet araması kullanılabilir mi
+    tools_mode: bool = False        # model araç (function) çağırabilir mi
 
 
 @dataclass
@@ -134,7 +160,7 @@ class ContextBuilder:
 
     def build(self, inp: ContextInput, token_budget: int | None = None) -> BuiltContext:
         budget = token_budget or self.token_budget
-        system = f"{render_rules(inp.web_mode, inp.web_available)}\n<persona>\n{inp.persona}\n</persona>"
+        system = f"{render_rules(inp.web_mode, inp.web_available, inp.tools_mode)}\n<persona>\n{inp.persona}\n</persona>"
         local_now = dt.datetime.fromtimestamp(inp.now, TR_TZ).strftime("%d.%m.%Y %H:%M")
         header = (
             f"Sunucu: {neutralize_untrusted(inp.guild_name)}"
