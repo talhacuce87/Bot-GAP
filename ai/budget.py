@@ -134,7 +134,8 @@ class RequestBudget:
         now = self._clock()
         if not any(self.provider_has_room(p, reserve=self._pending) for p in self.providers):
             raise BudgetError("daily_budget", "Bugünlük yapay zekâ istek bütçesi doldu, yarın (UTC 00:00 sonrası) tekrar dene. 🙏")
-        if self._day_user.get((guild_id, user_id), 0) >= self.cfg.user_daily_request_limit:
+        limit = self.cfg.user_daily_request_limit
+        if limit > 0 and self._day_user.get((guild_id, user_id), 0) >= limit:
             raise BudgetError("user_daily", "Bugünlük kişisel yapay zekâ sınırına ulaştın; herkese sıra gelsin diye böyle. Yarın görüşürüz!")
         if (guild_id, user_id) in self._in_flight:
             raise BudgetError("user_in_flight", "Önceki sorunu hâlâ düşünüyorum, bir saniye. ⏳")

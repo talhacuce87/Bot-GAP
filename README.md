@@ -309,7 +309,7 @@ modellerine düşülür. Faturalandırması açık bir projenin anahtarıyla **h
 | `AI_MESSAGE_RETENTION_DAYS` | `30` | Mesaj saklama (sunucu bazında `!aiayar saklama`) |
 | `AI_CANDIDATE_RETENTION_DAYS` | `14` | Onaylanmamış aday hafıza ömrü |
 | `AI_DAILY_REQUEST_BUDGET` | `35` | OpenRouter günlük istek (UTC; her HTTP denemesi sayılır) |
-| `AI_USER_DAILY_REQUEST_LIMIT` | `10` | Kişi başı günlük istek (tüm sağlayıcılar toplamı) |
+| `AI_USER_DAILY_REQUEST_LIMIT` | `0` | Kişi başı günlük başarılı cevap sınırı (0 = sınırsız; maliyeti sağlayıcı bütçeleri korur) |
 | `AI_CHANNEL_COOLDOWN_SECONDS` / `AI_USER_COOLDOWN_SECONDS` | `15` / `30` | Cooldown'lar |
 | `AI_RECENT_CONTEXT_MESSAGES` | `25` | Kısa süreli bağlam penceresi |
 | `AI_SEARCH_RESULTS` / `AI_FINAL_PASSAGES` / `AI_NEIGHBOR_MESSAGES` | `10` / `5` / `2` | RAG sınırları |

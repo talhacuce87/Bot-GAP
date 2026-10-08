@@ -257,3 +257,12 @@ async def test_user_limit_counts_only_successful_replies(storage):
     b2 = RequestBudget(cfg, storage, clock=Clock())
     await b2.load()
     assert b2.user_used_today(1, 5) == 2 and b2.provider_used("openrouter") == 7
+
+
+async def test_user_limit_zero_means_unlimited():
+    b = RequestBudget(make_cfg(daily_request_budget=1000, user_daily_request_limit=0), None, clock=Clock())
+    for _ in range(200):
+        await b.record_attempt(1, 5, "m", None, 1, 1)
+    b.check(1, 10, 5)  # sınır yok
+    from ai.config import AIConfig
+    assert AIConfig().user_daily_request_limit == 0

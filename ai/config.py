@@ -81,7 +81,7 @@ class AIConfig:
     max_message_chars: int = 2000
 
     daily_request_budget: int = 35
-    user_daily_request_limit: int = 10
+    user_daily_request_limit: int = 0  # 0 = sınırsız
     channel_cooldown_seconds: int = 15
     user_cooldown_seconds: int = 30
 
@@ -160,7 +160,7 @@ def load_config() -> AIConfig:
         message_retention_days=_int("AI_MESSAGE_RETENTION_DAYS", 30, 1, 3650),
         candidate_retention_days=_int("AI_CANDIDATE_RETENTION_DAYS", 14, 1, 365),
         daily_request_budget=_int("AI_DAILY_REQUEST_BUDGET", 35, 0, 100_000),
-        user_daily_request_limit=_int("AI_USER_DAILY_REQUEST_LIMIT", 10, 1, 100_000),
+        user_daily_request_limit=_int("AI_USER_DAILY_REQUEST_LIMIT", 0, 0, 100_000),
         channel_cooldown_seconds=_int("AI_CHANNEL_COOLDOWN_SECONDS", 15, 0, 3600),
         user_cooldown_seconds=_int("AI_USER_COOLDOWN_SECONDS", 30, 0, 3600),
         recent_context_messages=_int("AI_RECENT_CONTEXT_MESSAGES", 25, 0, 100),

@@ -226,7 +226,7 @@ class InfoCog(commands.Cog):
         embed.add_field(
             name="ℹ️ Bilmen Gerekenler",
             value=(
-                "• Ücretsiz yapay zekâ kotası sınırlı; günlük ve kişisel limitler var (`!aidurum`).\n"
+                "• Yapay zekâ kullanımının günlük sınırları var (`!aidurum`).\n"
                 "• Yapay zekâ hata yapabilir. Ayrıntılar ve tüm komutlar: `!aiyardim`"
             ),
             inline=False,

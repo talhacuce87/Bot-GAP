@@ -762,7 +762,7 @@ class AICog(commands.Cog, name="AICog"):
         ), inline=False)
         embed.add_field(name="⚠️ Sınırlar", value=(
             "• Geçmiş araması kelime eşleşmesiyle çalışır; farklı ifade edilmiş konuşmaları kaçırabilir.\n"
-            "• Ücretsiz model kotası sınırlıdır; günlük ve kişisel limitler vardır.\n"
+            "• Yapay zekâ kullanımının günlük sınırları vardır (`!aidurum`).\n"
             "• Yapay zekâ hata yapabilir; kayıtta bulamadığı şeyi uydurmaması istenir ama garanti değildir."
         ), inline=False)
         await ctx.send(embed=embed, allowed_mentions=NO_MENTIONS)
@@ -783,8 +783,9 @@ class AICog(commands.Cog, name="AICog"):
         ]
         lines += self._provider_lines()
         if guild_id is not None:
-            lines.append(f"**Senin bugünkü kullanımın:** {self.budget.user_used_today(guild_id, ctx.author.id)}"
-                         f"/{self.cfg.user_daily_request_limit}")
+            limit = self.cfg.user_daily_request_limit
+            lines.append(f"**Senin bugünkü cevapların:** {self.budget.user_used_today(guild_id, ctx.author.id)}"
+                         + (f"/{limit}" if limit > 0 else " (kişisel sınır yok)"))
         key = await self.provider.key_status() if self.provider else None
         free = (key or {}).get("free_model_daily_requests")
         if isinstance(free, dict) and free.get("limit") is not None:
