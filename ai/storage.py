@@ -66,7 +66,7 @@ class Memory:
 class UsageSummary:
     per_provider: dict[str, int] = field(default_factory=dict)
     cost_per_provider: dict[str, float] = field(default_factory=dict)
-    per_user: dict[tuple[int, int], int] = field(default_factory=dict)
+    per_user: dict[tuple[int, int], int] = field(default_factory=dict)  # yalnızca başarılı cevaplar
 
     @property
     def total(self) -> int:
@@ -741,19 +741,21 @@ class AIStorage:
         async def op(c):
             async with c.execute(
                 """
-                SELECT provider, guild_id, user_id, SUM(request_count), SUM(COALESCE(approximate_cost_usd, 0))
+                SELECT provider, guild_id, user_id, SUM(request_count), SUM(COALESCE(approximate_cost_usd, 0)),
+                       SUM(CASE WHEN error_code IS NULL THEN request_count ELSE 0 END)
                 FROM ai_usage WHERE day = ? GROUP BY provider, guild_id, user_id
                 """,
                 (day,),
             ) as cur:
                 rows = await cur.fetchall()
             summary = UsageSummary()
-            for provider, gid, uid, count, cost in rows:
+            for provider, gid, uid, count, cost, ok_count in rows:
                 count = int(count or 0)
                 summary.per_provider[provider] = summary.per_provider.get(provider, 0) + count
                 summary.cost_per_provider[provider] = summary.cost_per_provider.get(provider, 0.0) + float(cost or 0)
-                if gid is not None and uid is not None:
-                    summary.per_user[(gid, uid)] = summary.per_user.get((gid, uid), 0) + count
+                # Kişisel sınır yalnızca başarılı cevapları sayar; sağlayıcı hataları kullanıcıdan düşmez.
+                if gid is not None and uid is not None and ok_count:
+                    summary.per_user[(gid, uid)] = summary.per_user.get((gid, uid), 0) + int(ok_count)
             return summary
         return await self._run(op)
 

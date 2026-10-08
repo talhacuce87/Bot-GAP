@@ -239,3 +239,21 @@ def test_authorized_source_channels():
     assert 4 not in authorized_source_channels(guild, member, secret, indexed)
     # İndekslenmeyen kanal dönmez
     assert authorized_source_channels(guild, member, public, set()) == set()
+
+
+async def test_user_limit_counts_only_successful_replies(storage):
+    cfg = make_cfg(daily_request_budget=100, user_daily_request_limit=2)
+    b = RequestBudget(cfg, storage, clock=Clock())
+    for _ in range(5):  # sağlayıcı hataları (ör. 429 yeniden denemeleri)
+        await b.record_attempt(1, 5, "m", "rate_limited", None, None)
+    b.check(1, 10, 5)  # kullanıcı hâlâ sorabilir
+    assert b.provider_used("openrouter") == 5  # ama sağlayıcı bütçesinden düştü
+    await b.record_attempt(1, 5, "m", None, 1, 1)
+    await b.record_attempt(1, 5, "m", None, 1, 1)
+    with pytest.raises(BudgetError) as exc:
+        b.check(1, 10, 5)
+    assert exc.value.code == "user_daily"
+    # Yeniden başlatmada da aynı kural
+    b2 = RequestBudget(cfg, storage, clock=Clock())
+    await b2.load()
+    assert b2.user_used_today(1, 5) == 2 and b2.provider_used("openrouter") == 7

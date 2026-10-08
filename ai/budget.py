@@ -205,7 +205,9 @@ class RequestBudget:
         self._day_provider[provider] = self._day_provider.get(provider, 0) + 1
         if cost_usd:
             self._day_cost[provider] = self._day_cost.get(provider, 0.0) + cost_usd
-        if guild_id is not None and user_id is not None:
+        # Sağlayıcı bütçesi her denemeyi sayar (maliyet koruması); kişisel sınır ise yalnızca
+        # başarılı cevapları — yeniden denemeler ve sağlayıcı hataları kullanıcının hakkından düşmez.
+        if guild_id is not None and user_id is not None and error_code is None:
             key = (guild_id, user_id)
             self._day_user[key] = self._day_user.get(key, 0) + 1
         if self.storage is not None:

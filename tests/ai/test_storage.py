@@ -207,7 +207,7 @@ async def test_usage_counts(storage):
     assert summary.total == 3
     assert summary.per_provider == {"openrouter": 2, "google": 1}
     assert summary.cost_per_provider["google"] == pytest.approx(0.0012)
-    assert summary.per_user == {(1, 5): 3}
+    assert summary.per_user == {(1, 5): 2}  # rate_limited denemesi kişisel sayaca girmez
 
 
 async def test_backup_uses_online_api(storage, tmp_path):
