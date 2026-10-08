@@ -9,7 +9,8 @@ import pytest
 from ai.openrouter import (
     AuthError, BudgetDeniedError, CircuitOpenError, ContextLengthError, EmptyResponseError,
     MalformedResponseError, OpenRouterClient, PaidModelBlockedError,
-    ProviderTimeoutError, ProviderUnavailableError, QuotaExhaustedError, RateLimitedError, pricing_is_free,
+    ProviderTimeoutError, ProviderUnavailableError, QuotaExhaustedError, RateLimitedError,
+    looks_like_leaked_reasoning, pricing_is_free, strip_reasoning,
 )
 from tests.ai.conftest import make_cfg
 
@@ -93,7 +94,7 @@ async def test_success_and_payload():
     assert payload["model"] == "test/model:free"
     assert payload["max_tokens"] == 350
     assert payload["provider"] == {"max_price": {"prompt": 0, "completion": 0}}
-    assert payload["reasoning"]["exclude"] is True
+    assert payload["reasoning"] == {"enabled": False}  # sohbet için akıl yürütme kapalı
     await client.aclose()
 
 
@@ -290,3 +291,54 @@ async def test_model_metadata_cached():
     await client.chat(MSGS)
     assert server.models_calls == 1
     assert client.model_info("test/model:free").context_length == 8000
+
+
+LEAK = """Here's a thinking process:
+
+Analyze User Input:
+Server: GAP | Channel: #bot-komut | Time: 08.10.2026 20:35 (TSİ)
+Speaking user: peaZ
+User message: "selam"
+Identify Key Elements from the Prompt/System:"""
+
+
+def test_leak_detection_and_think_stripping():
+    assert looks_like_leaked_reasoning(LEAK)
+    assert looks_like_leaked_reasoning("Okay, so the user is greeting me. I should reply.")
+    assert looks_like_leaked_reasoning("Selam! <kullanici_mesaji> falan")
+    assert not looks_like_leaked_reasoning("Selam peaZ! Nasılsın? 😄")
+    assert not looks_like_leaked_reasoning("Kullanıcı adın çok havalı bu arada")
+    assert strip_reasoning("<think>uzun düşünme</think>\nSelam!") == "Selam!"
+    assert strip_reasoning("Selam! <think>yarım kalan düşünme") == "Selam!"
+
+
+async def test_leaked_reasoning_never_returned_and_retried():
+    server = Server([
+        httpx.Response(200, json=ok_body(text=LEAK)),
+        httpx.Response(200, json=ok_body(text="<think>hmm</think>Selam peaZ! 👋")),
+    ])
+    client, _ = make_client(server)
+    res = await client.chat(MSGS)
+    assert res.text == "Selam peaZ! 👋" and res.attempts == 2
+
+
+async def test_leaked_reasoning_exhausts_to_error_not_text():
+    server = Server([httpx.Response(200, json=ok_body(text=LEAK)) for _ in range(3)])
+    client, _ = make_client(server)
+    with pytest.raises(EmptyResponseError):
+        await client.chat(MSGS)
+
+
+async def test_reasoning_not_disabled_for_mandatory_models():
+    models = [{"id": "test/model:free", "pricing": FREE, "context_length": 8000, "reasoning": {"mandatory": True}}]
+    server = Server([httpx.Response(200, json=ok_body())], models=models)
+    client, _ = make_client(server)
+    await client.chat(MSGS)
+    assert "reasoning" not in server.chat_calls[0]
+
+
+async def test_reasoning_effort_override():
+    server = Server([httpx.Response(200, json=ok_body())])
+    client, _ = make_client(server, reasoning_effort="low")
+    await client.chat(MSGS)
+    assert server.chat_calls[0]["reasoning"] == {"effort": "low", "exclude": True}

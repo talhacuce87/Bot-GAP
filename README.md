@@ -230,16 +230,19 @@ flowchart LR
    ```env
    AI_ENABLED=true
    OPENROUTER_API_KEY=sk-or-v1-...
-   OPENROUTER_MODEL=openrouter/free
+   OPENROUTER_MODEL=google/gemma-4-31b-it:free
+   OPENROUTER_FALLBACK_MODEL=openrouter/free
    ```
 3. `docker compose up -d --build` (veya `pip install -r requirements.txt && python Main.py`).
 4. Sunucuda bir yönetici hafızayı açmak istediği kanalda: `!aiayar kanal ekle` — bot kanala bir
    bilgilendirme mesajı bırakır.
 5. `!aidurum` ile modeli ve kotayı kontrol et.
 
-**Ücretsiz model seçimi:** Varsayılan `openrouter/free`, OpenRouter'ın ücretsiz modeller arasında
-yönlendirme yapan uç noktasıdır. Bunun yerine `:free` sonekli belirli bir model (ör.
-`google/gemma-4-31b-it:free`) yazılabilir. Bot açılışta ve 6 saatte bir `/api/v1/models` üzerinden
+**Ücretsiz model seçimi:** Varsayılan `google/gemma-4-31b-it:free` (akıl yürütmesi varsayılan kapalı,
+Türkçesi iyi). `openrouter/free` her istekte rastgele bir ücretsiz modele yönlendirir; bunların çoğu
+"reasoning" modelidir ve bazıları düşünme metnini cevaba sızdırır, bu yüzden yalnızca yedek olarak
+önerilir. Bot akıl yürütmeyi varsayılan olarak kapatır (`AI_REASONING_EFFORT=none`), `<think>` bloklarını
+siler ve düşünme metni gibi görünen cevapları kullanıcıya göndermeden yeniden dener. Bot açılışta ve 6 saatte bir `/api/v1/models` üzerinden
 fiyatı doğrular; fiyatı `0` olmayan (değişken fiyatlı `openrouter/auto` dahil) model
 `AI_ALLOW_PAID_MODELS=true` olmadıkça **asla** çağrılmaz. İsteklere ayrıca
 `provider.max_price = 0` eklenir ve yanıtta ücret raporlanırsa sağlayıcı kapatılır.
@@ -254,7 +257,7 @@ fiyatı doğrular; fiyatı `0` olmayan (değişken fiyatlı `openrouter/auto` da
 |---|---|---|
 | `AI_ENABLED` | `false` | Eklentiyi aç/kapat |
 | `OPENROUTER_API_KEY` | – | OpenRouter anahtarı (loglanmaz) |
-| `OPENROUTER_MODEL` | `openrouter/free` | Birincil model |
+| `OPENROUTER_MODEL` | `google/gemma-4-31b-it:free` | Birincil model |
 | `OPENROUTER_FALLBACK_MODEL` | – | Yedek model (sadece ücretsizse) |
 | `AI_ALLOW_PAID_MODELS` | `false` | Ücretli modellere izin |
 | `AI_ENFORCE_ZERO_PRICE` | `true` | İsteğe `provider.max_price=0` ekle |
@@ -263,7 +266,7 @@ fiyatı doğrular; fiyatı `0` olmayan (değişken fiyatlı `openrouter/auto` da
 | `AI_MAX_CONCURRENT_REQUESTS` / `AI_MAX_QUEUE_SIZE` | `1` / `4` | Eşzamanlılık ve bekleme kuyruğu |
 | `AI_REQUEST_TIMEOUT_SECONDS` / `AI_TOTAL_DEADLINE_SECONDS` | `45` / `90` | Deneme ve toplam süre sınırı |
 | `AI_MAX_RETRIES` / `AI_MAX_RETRY_WAIT_SECONDS` | `2` / `30` | Yeniden deneme sayısı ve en uzun bekleme |
-| `AI_REASONING_EFFORT` | `low` | Akıl yürütme modelleri için (boş = gönderme) |
+| `AI_REASONING_EFFORT` | `none` | `none` = akıl yürütme kapalı (önerilen); `low`/`medium`/`high` = açık ama gizli; boş = parametre gönderme |
 | `AI_RESPONSE_MODE` | `mention` | `mention` veya `command` (sadece `!ai`) |
 | `AI_MEMORY_ENABLED` | `true` | Uzun süreli hafıza |
 | `AI_INDEXING_DEFAULT` | `false` | `true` → tüm metin kanalları varsayılan indekslenir (önerilmez) |
@@ -326,7 +329,7 @@ kullanılamazsa bu veriler doğrudan gösterilir.
 | "yapılandırma hatası… devre dışı" | Anahtar 401/403 aldı; 30 dk sonra veya yeniden başlatınca tekrar denenir. Anahtarı kontrol et |
 | "ücretsiz olarak doğrulanamadı" | Model ücretli, değişken fiyatlı veya listede yok; `:free` model seç |
 | "Bugünlük … kota doldu" | Yerel bütçe veya OpenRouter günlük ücretsiz kotası; UTC gece yarısı sıfırlanır |
-| "Model boş yanıt döndü" | Bazı akıl yürütme modelleri token'ı düşünmeye harcar; `AI_MAX_OUTPUT_TOKENS`'ı artır veya başka model seç |
+| "Model boş yanıt döndü" | Model düşünmeye token harcadı veya düşünme metni sızdırdı (log: "düşünme metnini cevaba sızdırdı"). `AI_REASONING_EFFORT=none` olduğundan ve `OPENROUTER_MODEL`'in `openrouter/free` olmadığından emin ol |
 | Sürekli 404 / "No endpoints" | Model kaldırılmış olabilir; ya da `AI_ENFORCE_ZERO_PRICE=false` dene |
 | `!hatirla` sonuç vermiyor | Kanal indekslenmiyor (`!aidurum`) veya farklı kelimelerle konuşulmuş |
 | AI DB hatası (`!aiayar`) | Bot sadece sohbet modunda çalışır; `data/` izinlerini ve disk alanını kontrol et |

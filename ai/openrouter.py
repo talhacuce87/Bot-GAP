@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -143,6 +144,7 @@ class ModelInfo:
     id: str
     context_length: int | None
     pricing: dict[str, str] = field(default_factory=dict)
+    reasoning_mandatory: bool = False
 
     @property
     def is_free(self) -> bool:
@@ -204,6 +206,32 @@ def _parse_reset_epoch(value: str | None) -> float | None:
     except ValueError:
         return None
     return raw / 1000.0 if raw > 1e11 else raw
+
+
+_THINK_BLOCK_RE = re.compile(r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<(think|thinking|reasoning)>", re.IGNORECASE)
+_LEAK_START_RE = re.compile(
+    r"^\W*(here'?s a thinking process|thinking process|my thought process|let me think|"
+    r"analy[sz]e (the )?user('s)? (input|request|message)|okay,? (so )?the user|the user (said|is asking|wants)|"
+    r"düşünme süreci|kullanıcı(nın)? (mesajı|isteği)n?[ıi] analiz)",
+    re.IGNORECASE,
+)
+_LEAK_MARKERS = ("<sunucu_verisi>", "<gecmis_kanitlar>", "<kullanici_mesaji>", "Identify Key Elements", "Rule 1:")
+
+
+def strip_reasoning(text: str) -> str:
+    """<think>…</think> bloklarını siler; kapanmamış bir blok varsa geri kalanı düşünmedir."""
+    text = _THINK_BLOCK_RE.sub("", text)
+    m = _THINK_OPEN_RE.search(text)
+    if m:
+        text = text[: m.start()]
+    return text.strip()
+
+
+def looks_like_leaked_reasoning(text: str) -> bool:
+    """Modelin iç düşünmesini veya prompt'u cevap olarak döndürdüğüne dair belirgin işaretler."""
+    head = text[:300]
+    return bool(_LEAK_START_RE.search(head)) or any(marker in text for marker in _LEAK_MARKERS)
 
 
 def _is_context_length(message: str) -> bool:
@@ -300,6 +328,7 @@ class OpenRouterClient:
                         id=item["id"],
                         context_length=item.get("context_length"),
                         pricing=dict(item.get("pricing") or {}),
+                        reasoning_mandatory=bool((item.get("reasoning") or {}).get("mandatory")),
                     )
             self._models = found
             self._models_fetched_at = self._clock()
@@ -463,9 +492,16 @@ class OpenRouterClient:
             "max_tokens": max_tokens,
             "temperature": self.cfg.temperature,
         }
-        if self.cfg.reasoning_effort in {"minimal", "low", "medium", "high"}:
-            # Akıl yürütme metni yanıta eklenmesin; desteklemeyen modeller yok sayar.
-            payload["reasoning"] = {"effort": self.cfg.reasoning_effort, "exclude": True}
+        effort = self.cfg.reasoning_effort
+        info = self._models.get(model)
+        if effort == "none":
+            # Sohbet botu için akıl yürütme kapalı: aksi halde düşünme tokenları max_tokens
+            # bütçesini tüketir ve bazı modeller düşünme metnini cevaba sızdırır.
+            # Akıl yürütmesi zorunlu modellerde kapatma isteği reddedileceği için gönderilmez.
+            if not (info and info.reasoning_mandatory):
+                payload["reasoning"] = {"enabled": False}
+        elif effort in {"minimal", "low", "medium", "high"}:
+            payload["reasoning"] = {"effort": effort, "exclude": True}
         if self.cfg.enforce_zero_price and not self.cfg.allow_paid_models:
             # Sağlayıcı yönlendirmesinde ücretli uç noktaları sert biçimde dışla.
             payload["provider"] = {"max_price": {"prompt": 0, "completion": 0}}
@@ -512,7 +548,7 @@ class OpenRouterClient:
         content = message.get("content") if isinstance(message, dict) else None
         if isinstance(content, list):  # bazı modeller parça listesi döndürür
             content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
-        text = (content or "").strip() if isinstance(content, str) else ""
+        text = strip_reasoning((content or "") if isinstance(content, str) else "")
         finish_reason = choice.get("finish_reason")
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
         used_model = str(body.get("model") or model)
@@ -533,6 +569,10 @@ class OpenRouterClient:
 
         if not text:
             raise EmptyResponseError(f"boş içerik (finish={finish_reason})", status=status)
+        if looks_like_leaked_reasoning(text):
+            # Düşünme metni cevap alanına sızmış; kullanıcıya gönderme, yeniden dene.
+            log.warning("Model düşünme metnini cevaba sızdırdı (model=%s finish=%s), atlandı", used_model, finish_reason)
+            raise EmptyResponseError("cevapta akıl yürütme metni", status=status)
 
         return ChatResult(
             text=text, model=used_model, requested_model=model,

@@ -52,7 +52,7 @@ def _str(name: str, default: str) -> str:
 class AIConfig:
     enabled: bool = False
     api_key: str = field(default="", repr=False)
-    model: str = "openrouter/free"
+    model: str = "google/gemma-4-31b-it:free"
     fallback_model: str = ""
     allow_paid_models: bool = False
     enforce_zero_price: bool = True
@@ -68,7 +68,7 @@ class AIConfig:
     total_deadline_seconds: float = 90.0
     max_retries: int = 2
     max_retry_wait_seconds: float = 30.0
-    reasoning_effort: str = "low"
+    reasoning_effort: str = "none"
     temperature: float = 0.8
 
     response_mode: str = "mention"  # mention | command
@@ -111,7 +111,7 @@ def load_config() -> AIConfig:
     return AIConfig(
         enabled=_bool("AI_ENABLED", False),
         api_key=(os.getenv("OPENROUTER_API_KEY") or "").strip(),
-        model=_str("OPENROUTER_MODEL", "openrouter/free"),
+        model=_str("OPENROUTER_MODEL", "google/gemma-4-31b-it:free"),
         fallback_model=(os.getenv("OPENROUTER_FALLBACK_MODEL") or "").strip(),
         allow_paid_models=_bool("AI_ALLOW_PAID_MODELS", False),
         enforce_zero_price=_bool("AI_ENFORCE_ZERO_PRICE", True),
@@ -124,7 +124,7 @@ def load_config() -> AIConfig:
         total_deadline_seconds=_float("AI_TOTAL_DEADLINE_SECONDS", 90.0, 10.0, 300.0),
         max_retries=_int("AI_MAX_RETRIES", 2, 0, 5),
         max_retry_wait_seconds=_float("AI_MAX_RETRY_WAIT_SECONDS", 30.0, 1.0, 120.0),
-        reasoning_effort=(os.getenv("AI_REASONING_EFFORT", "low") or "").strip().lower(),
+        reasoning_effort=(os.getenv("AI_REASONING_EFFORT", "none") or "").strip().lower(),
         temperature=_float("AI_TEMPERATURE", 0.8, 0.0, 2.0),
         response_mode=mode,
         max_input_chars=_int("AI_MAX_INPUT_CHARS", 1500, 100, 4000),
