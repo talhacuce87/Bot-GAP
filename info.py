@@ -4,17 +4,68 @@ info.py — Komut rehberi, deploy notları (changelog) ve bot durum komutları.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 import time
+from pathlib import Path
+
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.1.0"
-LAST_DEPLOY_DATE = "6 Eylül 2026"
+BOT_VERSION = "2.2.0"
+LAST_DEPLOY_DATE = "8 Ekim 2026"
+
+# Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
+ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "0") or 0)
+ANNOUNCED_VERSION_PATH = Path(__file__).resolve().parent / "data" / "announced_version.txt"
+
+log = logging.getLogger("gap.info")
 
 
 class InfoCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self._announce_checked = False
+
+    # ------------------------------------------------------------------
+    # Otomatik sürüm duyurusu
+    # ------------------------------------------------------------------
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        # on_ready yeniden bağlanmalarda da tetiklenir; süreç başına bir kez kontrol et.
+        if self._announce_checked:
+            return
+        self._announce_checked = True
+        await self._announce_new_version()
+
+    async def _announce_new_version(self) -> None:
+        if not ANNOUNCE_CHANNEL_ID:
+            return
+
+        try:
+            last = ANNOUNCED_VERSION_PATH.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            last = ""
+        if last == BOT_VERSION:
+            return
+
+        channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
+        if not isinstance(channel, discord.abc.Messageable):
+            log.warning("Duyuru kanalı bulunamadı: %s", ANNOUNCE_CHANNEL_ID)
+            return
+
+        try:
+            await channel.send(embed=self._build_changelog_embed())
+        except discord.HTTPException as err:
+            log.warning("Sürüm duyurusu gönderilemedi: %s", err)
+            return
+
+        # Sadece başarılı gönderimden sonra yaz; hata olursa bir sonraki açılışta tekrar denenir.
+        ANNOUNCED_VERSION_PATH.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(ANNOUNCED_VERSION_PATH.write_text, BOT_VERSION, "utf-8")
+        log.info("v%s güncelleme notları #%s kanalına duyuruldu", BOT_VERSION, channel)
 
     @commands.command(name="yardim", aliases=["help", "komutlar", "commands"])
     async def help_command(self, ctx: commands.Context) -> None:
@@ -68,11 +119,23 @@ class InfoCog(commands.Cog):
             embed.add_field(
                 name="⚙️ Yönetici Komutları (Admin)",
                 value=(
-                    "• `!xpekle @üye <miktar>` — Kullanıcıya XP ekler veya çıkarır\n"
-                    "• `!xpayarla @üye <miktar>` — Kullanıcının toplam XP'sini doğrudan belirler\n"
-                    "• `!boost @üye <çarpan> [saat]` — Belirtilen süre için geçici XP boost tanımlar\n"
+                    "• `!xpekle @üye <miktar> <sebep>` — Kullanıcıya XP ekler veya çıkarır\n"
+                    "• `!xpayarla @üye <miktar> <sebep>` — Kullanıcının toplam XP'sini doğrudan belirler\n"
+                    "• `!boost @üye <çarpan> [saat] <sebep>` — Belirtilen süre için geçici XP boost tanımlar\n"
+                    "• *XP komutlarında sebep zorunludur; tüm işlemler kayıt altına alınır*\n"
                     "• `!xpsenkronize` — Sunucu üyelerinin XP rollerini kontrol edip eşitler\n"
                     "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır"
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="🕵️ Denetim & Hile Analizi (Admin)",
+                value=(
+                    "• `!supheli [gün]` — Tüm üyeleri tarar, şüphe skoruna göre sıralar\n"
+                    "• `!analiz @üye [gün]` — Üyenin XP kaynakları, mesaj/ses davranışı ve ses partnerleri\n"
+                    "• `!eskianaliz` — Kayıt öncesi toplam verilerden alt hesap/anormal XP taraması\n"
+                    "• `!olaylar @üye [adet]` — Üyenin son olay kayıtları\n"
+                    "• `!adminlog [gün]` — XP/boost admin işlemleri ve yetkisiz denemeler"
                 ),
                 inline=False,
             )
@@ -91,64 +154,52 @@ class InfoCog(commands.Cog):
     @commands.command(name="yenilikler", aliases=["changelog", "guncelleme", "surum", "updates", "yenilik"])
     async def changelog_command(self, ctx: commands.Context) -> None:
         """Son deployda gelen yenilikleri ve özellikleri listeler."""
+        await ctx.send(embed=self._build_changelog_embed())
+
+    def _build_changelog_embed(self) -> discord.Embed:
         embed = discord.Embed(
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "Bu deploy ile botun tüm görsel kart altyapısı yenilendi, güvenlik mekanizmaları "
-                "ve otomatik yedekleme sistemleri devreye alındı."
+                "Bu deploy ile XP sistemine adil oyun koruması, şeffaf yönetici işlemleri "
+                "ve kalıcı kayıt altyapısı geldi."
             ),
             color=discord.Color.from_rgb(98, 225, 194),
         )
 
         embed.add_field(
-            name="🎨 Yenilenen Görsel Kart Tasarımları",
+            name="🛡️ Adil Oyun Koruması",
             value=(
-                "• **`!roller`**: Rozetlerdeki gölge titremesi (çift çizim blur) giderildi, "
-                "seviye metinleri kusursuz ortalandı ve 1M XP taşma sınırları çözüldü.\n"
-                "• **`!kart`**: Ses kutusundaki taşma dinamik küçülen fontlarla çözüldü, "
-                "rol bulunamadığında XP kademesine göre tema fallback desteği eklendi.\n"
-                "• **`!bf`**: Başlık çizgisi çakışması ve kullanıcı adı taşmaları düzeltildi, "
-                "100 saat hedefli estetik ilerleme çubuğu konumlandırıldı."
+                "• XP kazanımları artık kayıt altında; makro, spam ve alt hesapla XP kasma "
+                "girişimleri otomatik tespit edilip yetkililere bildirilir.\n"
+                "• Mesaj içerikleri **saklanmaz**; yalnızca zaman, kanal ve XP bilgisi tutulur."
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="🥇 Vektörel Madalyalar & Glif Temizleyici",
+            name="📝 Şeffaf Yönetici İşlemleri",
             value=(
-                "• **`!liderlik`**: Kırık emoji tofu kutuları (`[]`) yerine Pillow ile "
-                "özel parlak Altın, Gümüş ve Bronz madalyalar çizildi.\n"
-                "• **Font Koruması**: Kullanıcı adlarındaki emojiler temizlenirken "
-                "tüm Türkçe karakterler (ç, ğ, ı, ö, ş, ü) eksiksiz korunur."
+                "• `!xpekle`, `!xpayarla` ve `!boost` artık **sebep yazılmadan çalışmaz**.\n"
+                "• Her işlemde XP'nin önceki/sonraki değeri ve sebep kanalda gösterilir, "
+                "kim yaptıysa kalıcı olarak kayda geçer."
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="🛑 AFK Ses Kanalı Koruması",
+            name="⌨️ Komut İyileştirmeleri",
             value=(
-                "• AFK ses kanalında bulunan kullanıcıların haksız ses XP'si veya Best Friend "
-                "süresi kazanması engellendi. Normal odalara geçildiğinde sayım otomatik devam eder."
+                "• Komutlar artık büyük/küçük harf duyarsız: `!LB`, `!Kart`, `!XP` de çalışır."
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="🎉 Seviye Atlama Kutlaması",
+            name="🔧 Altyapı",
             value=(
-                "• Mesaj atarak yeni bir XP seviyesi kazanan üyeler için kanala otomatik "
-                "avatar içeren şık tebrik kutlama mesajı gönderilir."
-            ),
-            inline=False,
-        )
-
-        embed.add_field(
-            name="🛡️ Otomatik Veritabanı Yedeği",
-            value=(
-                "• SQLite WAL checkpoint ile bot başlangıcında ve her 24 saatte bir "
-                "`data/backups/` altına güvenli tarihli otomatik yedek oluşturulur.\n"
-                "• Yöneticiler `!yedekle` komutuyla diledikleri an manuel yedek alabilir."
+                "• Bot logları artık kalıcı tutuluyor; yeniden başlatma ve güncellemelerde kaybolmuyor.\n"
+                "• Hata takibi iyileştirildi, sorunlar daha hızlı tespit edilip giderilebilecek."
             ),
             inline=False,
         )
@@ -160,7 +211,7 @@ class InfoCog(commands.Cog):
             except Exception:
                 pass
 
-        await ctx.send(embed=embed)
+        return embed
 
     @commands.command(name="ping", aliases=["gecikme"])
     async def ping_command(self, ctx: commands.Context) -> None:

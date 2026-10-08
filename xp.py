@@ -8,6 +8,7 @@ Discord event'lerini ve komutları yönetir.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import time
 from pathlib import Path
@@ -16,11 +17,14 @@ from typing import TYPE_CHECKING
 import discord
 from discord.ext import commands, tasks
 
+import activitylog
 import database as db
 from xproles import XPRoleManager
 
 if TYPE_CHECKING:
     pass
+
+log = logging.getLogger("gap.xp")
 
 # ---------------------------------------------------------------------------
 # Sabitler
@@ -45,6 +49,9 @@ STREAK_MILESTONES: dict[int, int] = {
     60: 700,
     100: 1500,
 }
+
+# Admin XP komutlarında zorunlu sebep açıklamasının en kısa uzunluğu
+ADMIN_REASON_MIN_LENGTH = 5
 
 FEATURE_REQUESTS_PATH = Path(__file__).resolve().parent / "data" / "features.txt"
 
@@ -142,6 +149,45 @@ class XPTrackerCog(commands.Cog):
     # Senkronizasyon
     # ------------------------------------------------------------------
 
+    def _audit_admin(
+        self,
+        ctx: commands.Context,
+        event: str,
+        target: discord.Member | None = None,
+        amount: int | None = None,
+        **meta,
+    ) -> None:
+        """Admin işlemini olay kaydına, log dosyasına ve log kanalına yazar."""
+        target_id = target.id if target else ctx.author.id
+        activitylog.record(
+            event, ctx.guild.id, target_id,
+            channel_id=ctx.channel.id, amount=amount, actor_id=ctx.author.id, **meta,
+        )
+        target_txt = f" → {target} ({target.id})" if target else ""
+        log.info("ADMIN %s: %s (%s)%s amount=%s %s", event, ctx.author, ctx.author.id, target_txt, amount, meta)
+        details = "\n".join(f"**{k}:** {v}" for k, v in meta.items())
+        self.bot.dispatch(
+            "gap_alert",
+            ctx.guild,
+            f"🛡️ Admin işlemi: {event}",
+            f"**Yapan:** {ctx.author.mention} (`{ctx.author.id}`)\n"
+            + (f"**Hedef:** {target.mention} (`{target.id}`)\n" if target else "")
+            + (f"**Miktar:** {amount:+,}\n" if amount is not None else "")
+            + details,
+        )
+
+    @staticmethod
+    async def _require_reason(ctx: commands.Context, reason: str | None, usage: str) -> str | None:
+        """Sebep yoksa veya çok kısaysa kullanıcıyı uyarır ve None döner."""
+        reason = (reason or "").strip()
+        if len(reason) < ADMIN_REASON_MIN_LENGTH:
+            await ctx.send(
+                f"❌ Bu işlem için sebep yazmak zorunlu (en az {ADMIN_REASON_MIN_LENGTH} karakter).\n"
+                f"Kullanım: `{usage}`"
+            )
+            return None
+        return reason[:300]
+
     async def _sync_role(self, member: discord.Member) -> None:
         row = await db.get_user_row(member.guild.id, member.id)
         total_xp = int(row["total_xp"]) if row else 0
@@ -200,8 +246,8 @@ class XPTrackerCog(commands.Cog):
             self.daily_backup_loop.start()
         backup_path = await db.backup_db()
         if backup_path:
-            print(f"[DB] Başlangıç veritabanı yedeği alındı: {backup_path}")
-        print(f"[XP] Bot aktif: {self.bot.user}")
+            log.info("Başlangıç veritabanı yedeği alındı: %s", backup_path)
+        log.info("XP sistemi aktif: %s", self.bot.user)
 
     async def _restore_voice_sessions(self) -> None:
         for guild in self.bot.guilds:
@@ -247,6 +293,11 @@ class XPTrackerCog(commands.Cog):
         if is_first_today and streak in STREAK_MILESTONES:
             bonus = STREAK_MILESTONES[streak]
             await db.add_text_xp(guild_id, user_id, bonus)
+            activitylog.record(
+                "xp_streak_bonus", guild_id, user_id,
+                channel_id=message.channel.id, amount=bonus, streak=streak,
+            )
+            log.info("Streak ödülü: %s (%s) %d gün +%d XP", message.author, user_id, streak, bonus)
             try:
                 await message.channel.send(
                     f"🔥 {message.author.mention} **{streak} günlük seri!** "
@@ -278,6 +329,11 @@ class XPTrackerCog(commands.Cog):
             old_level, _, _, _, _ = self.role_manager.get_progress_data(old_xp)
 
             await db.add_text_xp(guild_id, user_id, earned)
+            activitylog.record(
+                "xp_message", guild_id, user_id,
+                channel_id=message.channel.id, amount=earned,
+                base=base_xp, boost=boost if boost != 1.0 else None, streak_mult=s_mult,
+            )
 
             if isinstance(message.author, discord.Member):
                 await self._sync_role(message.author)
@@ -285,6 +341,11 @@ class XPTrackerCog(commands.Cog):
                 new_xp = old_xp + earned
                 new_level, _, _, _, _ = self.role_manager.get_progress_data(new_xp)
                 if new_level > old_level:
+                    activitylog.record(
+                        "level_up", guild_id, user_id,
+                        channel_id=message.channel.id, old=old_level, new=new_level, total_xp=new_xp,
+                    )
+                    log.info("Seviye atladı: %s (%s) %d → %d", message.author, user_id, old_level, new_level)
                     role_name = self.get_display_role(message.author, new_xp)
                     embed = discord.Embed(
                         title="🎉 Seviye Atladın!",
@@ -346,6 +407,16 @@ class XPTrackerCog(commands.Cog):
                     boost = await db.get_active_multiplier(guild.id, member.id)
                     earned = max(1, round(VOICE_XP_PER_INTERVAL * boost))
                     await db.add_voice_xp(guild.id, member.id, earned)
+                    activitylog.record(
+                        "xp_voice", guild.id, member.id,
+                        channel_id=channel.id, amount=earned,
+                        mute=(member.voice.self_mute or member.voice.mute) or None,
+                        stream=member.voice.self_stream or None,
+                        video=member.voice.self_video or None,
+                        boost=boost if boost != 1.0 else None,
+                        peers=[m.id for m in valid if m.id != member.id],
+                        bots=[m.id for m in channel.members if m.bot] or None,
+                    )
                     await self._sync_role(member)
                     await asyncio.sleep(0)  # Rate limit dostu
 
@@ -357,7 +428,7 @@ class XPTrackerCog(commands.Cog):
     async def daily_backup_loop(self) -> None:
         backup_path = await db.backup_db()
         if backup_path:
-            print(f"[DB] Günlük otomatik yedek alındı: {backup_path}")
+            log.info("Günlük otomatik yedek alındı: %s", backup_path)
 
     @daily_backup_loop.before_loop
     async def _before_backup_loop(self) -> None:
@@ -544,6 +615,7 @@ class XPTrackerCog(commands.Cog):
             await asyncio.sleep(0)
             count += 1
 
+        self._audit_admin(ctx, "admin_sync", checked=count)
         await ctx.send(f"✅ XP rol kontrolü tamamlandı. Kontrol edilen üye: **{count}**")
 
     @xpsenkronize_command.error
@@ -564,21 +636,34 @@ class XPTrackerCog(commands.Cog):
         ctx: commands.Context,
         member: discord.Member,
         total_xp: int,
+        *,
+        reason: str | None = None,
     ) -> None:
         """Kullanıcının toplam XP'sini ayarlar. Ses/metin oranı yarı yarıya bölünür."""
         if ctx.guild is None:
             await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
             return
 
+        reason = await self._require_reason(ctx, reason, "!xpayarla @kullanıcı <miktar> <sebep>")
+        if reason is None:
+            return
+
         if total_xp < 0:
             await ctx.send("❌ XP 0'dan küçük olamaz.")
             return
 
+        row = await db.get_user_row(ctx.guild.id, member.id)
+        before = int(row["total_xp"]) if row else 0
         half = total_xp // 2
         await db.set_xp(ctx.guild.id, member.id, text_xp=half, voice_xp=total_xp - half)
+        self._audit_admin(
+            ctx, "admin_xp_set", member,
+            amount=total_xp - before, before=before, after=total_xp, sebep=reason,
+        )
         await self._sync_role(member)
         await ctx.send(
-            f"✅ **{member.display_name}** kullanıcısının XP'si **{total_xp:,}** olarak ayarlandı."
+            f"✅ **{member.display_name}** kullanıcısının XP'si **{before:,}** → **{total_xp:,}** olarak ayarlandı.\n"
+            f"📝 Sebep: {reason}"
         )
 
     @xpayarla_command.error
@@ -586,7 +671,7 @@ class XPTrackerCog(commands.Cog):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Kullanım: `!xpayarla @kullanıcı <miktar>`")
+            await ctx.send("❌ Kullanım: `!xpayarla @kullanıcı <miktar> <sebep>`")
         else:
             raise error
 
@@ -601,10 +686,16 @@ class XPTrackerCog(commands.Cog):
         ctx: commands.Context,
         member: discord.Member,
         amount: int,
+        *,
+        reason: str | None = None,
     ) -> None:
         """Kullanıcıya XP ekler (negatif değer XP çıkarır)."""
         if ctx.guild is None:
             await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+            return
+
+        reason = await self._require_reason(ctx, reason, "!xpekle @kullanıcı <miktar> <sebep>")
+        if reason is None:
             return
 
         row = await db.get_user_row(ctx.guild.id, member.id)
@@ -612,12 +703,17 @@ class XPTrackerCog(commands.Cog):
         new_total = max(0, current + amount)
         half = new_total // 2
         await db.set_xp(ctx.guild.id, member.id, text_xp=half, voice_xp=new_total - half)
+        self._audit_admin(
+            ctx, "admin_xp_add", member,
+            amount=new_total - current, before=current, after=new_total, sebep=reason,
+        )
         await self._sync_role(member)
 
         verb = "eklendi" if amount >= 0 else "çıkarıldı"
         await ctx.send(
             f"✅ **{member.display_name}** kullanıcısına **{abs(amount):,} XP** {verb}. "
-            f"Yeni toplam: **{new_total:,} XP**"
+            f"Yeni toplam: **{new_total:,} XP**\n"
+            f"📝 Sebep: {reason}"
         )
 
     @xpekle_command.error
@@ -625,7 +721,7 @@ class XPTrackerCog(commands.Cog):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Kullanım: `!xpekle @kullanıcı <miktar>`")
+            await ctx.send("❌ Kullanım: `!xpekle @kullanıcı <miktar> <sebep>`")
         else:
             raise error
 
@@ -640,15 +736,24 @@ class XPTrackerCog(commands.Cog):
         ctx: commands.Context,
         member: discord.Member,
         multiplier: float,
-        hours: float = 1.0,
+        hours: float | None = None,
+        *,
+        reason: str | None = None,
     ) -> None:
         """
-        Kullanıcıya XP boost uygular.
-        Örnek: !boost @kullanıcı 2.0 24   → 24 saat boyunca 2x XP
+        Kullanıcıya XP boost uygular. Saat verilmezse 1 saattir.
+        Örnek: !boost @kullanıcı 2.0 24 etkinlik ödülü  → 24 saat boyunca 2x XP
         """
         if ctx.guild is None:
             await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
             return
+
+        reason = await self._require_reason(ctx, reason, "!boost @kullanıcı <çarpan> [saat] <sebep>")
+        if reason is None:
+            return
+
+        if hours is None:
+            hours = 1.0
 
         if multiplier < 1.0 or multiplier > 10.0:
             await ctx.send("❌ Çarpan 1.0 ile 10.0 arasında olmalı.")
@@ -660,12 +765,14 @@ class XPTrackerCog(commands.Cog):
 
         duration = int(hours * 3600)
         await db.set_boost(ctx.guild.id, member.id, multiplier, duration)
+        self._audit_admin(ctx, "admin_boost", member, multiplier=multiplier, hours=hours, sebep=reason)
 
         h = int(hours)
         m = int((hours - h) * 60)
         await ctx.send(
             f"⚡ **{member.display_name}** kullanıcısına **{multiplier}x XP boost** uygulandı! "
-            f"Süre: **{h}sa {m}dk**"
+            f"Süre: **{h}sa {m}dk**\n"
+            f"📝 Sebep: {reason}"
         )
 
     @boost_command.error
@@ -673,7 +780,7 @@ class XPTrackerCog(commands.Cog):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Kullanım: `!boost @kullanıcı <çarpan> [saat]`")
+            await ctx.send("❌ Kullanım: `!boost @kullanıcı <çarpan> [saat] <sebep>`")
         else:
             raise error
 
@@ -686,6 +793,7 @@ class XPTrackerCog(commands.Cog):
     async def backup_command(self, ctx: commands.Context) -> None:
         """Veritabanının anlık yedeğini alır (admin)."""
         backup_path = await db.backup_db()
+        self._audit_admin(ctx, "admin_backup", path=backup_path)
         if backup_path:
             await ctx.send(f"✅ Veritabanı yedeği başarıyla oluşturuldu:\n`{backup_path}`")
         else:

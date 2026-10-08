@@ -6,10 +6,13 @@ Yüklenecek cog'lar:
     - BestFriendCog  (bestfriend.py)
   - UserCardCog    (usercard.py)
   - LeaderboardCog (leaderboard.py)
+  - InfoCog        (info.py)
+  - AuditCog       (audit.py) — olay kaydı, hile tespiti, analiz komutları
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -17,6 +20,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+import activitylog
+from audit import AuditCog
 from bestfriend import BestFriendCog
 from info import InfoCog
 from leaderboard import LeaderboardCog
@@ -113,15 +118,27 @@ class GapBot(commands.Bot):
         await self.add_cog(UserCardCog(self))
         await self.add_cog(LeaderboardCog(self))
         await self.add_cog(InfoCog(self))
+        await self.add_cog(AuditCog(self))
+
+    async def close(self) -> None:
+        await activitylog.stop()
+        await super().close()
 
 
 def main() -> None:
+    activitylog.setup_logging()
     lock = SingleInstanceLock(LOCK_PATH)
     lock.acquire()
     _validate()
-    bot = GapBot(command_prefix=PREFIX, intents=_intents(), help_command=None)
+    bot = GapBot(
+        command_prefix=PREFIX,
+        intents=_intents(),
+        help_command=None,
+        case_insensitive=True,
+    )
     try:
-        bot.run(TOKEN)
+        # log_handler=None: discord.py kendi handler'ını kurmasın, setup_logging'deki kullanılsın
+        bot.run(TOKEN, log_handler=None)
     finally:
         lock.release()
 
@@ -130,4 +147,4 @@ if __name__ == "__main__":
     try:
         main()
     except BotAlreadyRunningError as err:
-        print(err)
+        logging.getLogger("gap").error("%s", err)

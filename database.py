@@ -8,12 +8,15 @@ event loop'uyla tam uyumludur.
 
 from __future__ import annotations
 
+import logging
 import time
 from itertools import combinations
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
+
+log = logging.getLogger("gap.db")
 
 DATABASE_PATH = Path(__file__).resolve().parent / "data" / "xp_system.db"
 
@@ -59,6 +62,27 @@ CREATE INDEX IF NOT EXISTS idx_voice_pair_lookup
 
 CREATE INDEX IF NOT EXISTS idx_voice_pair_seconds
     ON voice_pair_stats (guild_id, shared_seconds DESC);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL    NOT NULL,
+    guild_id    INTEGER,
+    user_id     INTEGER,
+    event       TEXT    NOT NULL,
+    channel_id  INTEGER,
+    amount      INTEGER,
+    actor_id    INTEGER,
+    meta        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_user_ts
+    ON activity_log (guild_id, user_id, ts);
+
+CREATE INDEX IF NOT EXISTS idx_activity_event_ts
+    ON activity_log (guild_id, event, ts);
+
+CREATE INDEX IF NOT EXISTS idx_activity_ts
+    ON activity_log (ts);
 """
 
 _MIGRATIONS: list[str] = [
@@ -466,6 +490,100 @@ async def get_leaderboard(guild_id: int, limit: int = 10) -> list[aiosqlite.Row]
 
 
 # ---------------------------------------------------------------------------
+# Olay kaydı (activity_log)
+# ---------------------------------------------------------------------------
+
+async def insert_activity_rows(rows: list[tuple[Any, ...]]) -> None:
+    async with _db() as db:
+        await db.executemany(
+            """
+            INSERT INTO activity_log
+                (ts, guild_id, user_id, event, channel_id, amount, actor_id, meta)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        await db.commit()
+
+
+async def delete_activity_before(cutoff_ts: float) -> int:
+    async with _db() as db:
+        cur = await db.execute("DELETE FROM activity_log WHERE ts < ?", (cutoff_ts,))
+        await db.commit()
+        return cur.rowcount or 0
+
+
+async def get_user_events(
+    guild_id: int,
+    user_id: int,
+    since_ts: float,
+    events: tuple[str, ...] | None = None,
+    limit: int | None = None,
+    newest_first: bool = False,
+) -> list[aiosqlite.Row]:
+    sql = "SELECT * FROM activity_log WHERE guild_id = ? AND user_id = ? AND ts >= ?"
+    params: list[Any] = [guild_id, user_id, since_ts]
+    if events:
+        sql += f" AND event IN ({','.join('?' * len(events))})"
+        params.extend(events)
+    sql += " ORDER BY ts DESC" if newest_first else " ORDER BY ts ASC"
+    if limit:
+        sql += " LIMIT ?"
+        params.append(limit)
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(sql, params) as cur:
+            return await cur.fetchall()
+
+
+async def get_guild_events(
+    guild_id: int,
+    since_ts: float,
+    events: tuple[str, ...],
+) -> list[aiosqlite.Row]:
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"""
+            SELECT * FROM activity_log
+            WHERE guild_id = ? AND ts >= ? AND event IN ({','.join('?' * len(events))})
+            ORDER BY ts ASC
+            """,
+            (guild_id, since_ts, *events),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def get_all_user_rows(guild_id: int) -> list[aiosqlite.Row]:
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM user_xp WHERE guild_id = ?", (guild_id,)) as cur:
+            return await cur.fetchall()
+
+
+async def get_all_pairs(guild_id: int) -> list[aiosqlite.Row]:
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM voice_pair_stats WHERE guild_id = ?", (guild_id,)) as cur:
+            return await cur.fetchall()
+
+
+async def get_admin_events(guild_id: int, since_ts: float, limit: int = 25) -> list[aiosqlite.Row]:
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT * FROM activity_log
+            WHERE guild_id = ? AND ts >= ? AND event LIKE 'admin_%'
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (guild_id, since_ts, limit),
+        ) as cur:
+            return await cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
 # Otomatik Yedekleme
 # ---------------------------------------------------------------------------
 
@@ -488,5 +606,5 @@ async def backup_db() -> str | None:
         shutil.copy2(DATABASE_PATH, backup_file)
         return str(backup_file)
     except Exception as err:
-        print(f"[Backup] Hata: {err}")
+        log.error("Yedek alınamadı: %s", err)
         return None

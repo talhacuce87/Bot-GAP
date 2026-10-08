@@ -7,7 +7,13 @@ ağ işlemleri xp.py'de kalır.
 
 from __future__ import annotations
 
+import logging
+
 import discord
+
+import activitylog
+
+log = logging.getLogger("gap.roles")
 
 # XP eşiği → Discord rol ID
 ROLE_REWARDS: dict[int, int] = {
@@ -169,11 +175,19 @@ class XPRoleManager:
         if to_remove:
             try:
                 await member.remove_roles(*to_remove, reason="XP rol senkronizasyonu")
+                activitylog.record(
+                    "role_remove", member.guild.id, member.id,
+                    roles=[r.name for r in to_remove], total_xp=total_xp,
+                )
             except discord.Forbidden:
-                pass
+                log.warning("Rol kaldırılamadı (yetki yok): %s → %s", member, [r.name for r in to_remove])
 
         if target and target not in member.roles and target < bot_top:
             try:
                 await member.add_roles(target, reason="XP rol ödülü")
+                activitylog.record(
+                    "role_add", member.guild.id, member.id, role=target.name, total_xp=total_xp,
+                )
+                log.info("Rol verildi: %s (%s) → %s", member, member.id, target.name)
             except discord.Forbidden:
-                pass
+                log.warning("Rol verilemedi (yetki yok): %s → %s", member, target.name)
