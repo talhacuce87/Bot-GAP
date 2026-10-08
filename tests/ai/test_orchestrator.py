@@ -185,3 +185,32 @@ async def test_injection_in_indexed_message_stays_data(storage, tmp_path):
     resp = await orch.answer(req("valorant hakkında ne demişti"))
     assert server.last_user.count("</gecmis_kanitlar>") == 1
     assert "@everyone" not in resp.text
+
+
+async def test_non_historical_question_skips_retrieval(storage, tmp_path):
+    """Canlı hata (2026-10-08): 'kimleri tanıyorsun bu sunucuda' ilgisiz bir mesajı kanıt gibi çekti."""
+    await add_msg(storage, "sunucuda aktif üye sayısı 172 online 34", channel=11, ts=time.time() - 86400 * 3)
+    server = Server()
+    orch, _ = build(storage, tmp_path, server)
+    resp = await orch.answer(req("başka kimleri tanıyorsun bu sunucuda", allowed={10, 11}, member_count=55))
+    assert "172" not in server.last_user and "<gecmis_kanitlar>" not in server.last_user
+    assert "(55 üye)" in server.last_user and "bu kanalda hafıza: açık" in server.last_user
+    assert resp.sources == []
+
+
+async def test_capability_rules_in_system_prompt(storage, tmp_path):
+    server = Server()
+    orch, _ = build(storage, tmp_path, server)
+    await orch.answer(req("sohbet başlatabilir misin"))
+    system = server.prompts[-1][0]["content"]
+    assert "sohbet başlatamaz" in system and "İnternete erişimin yok" in system and "!hafizaekle" in system
+
+
+async def test_evidence_labels_stripped_from_answer(storage, tmp_path):
+    await add_msg(storage, "valorant turnuvası cumartesi", channel=10, ts=time.time() - 3600)
+    server = Server(httpx.Response(200, json={"model": "m", "choices": [{"message": {
+        "content": "[K1] Turnuva cumartesi [K1, K2] demiştin."}}]}))
+    orch, _ = build(storage, tmp_path, server)
+    resp = await orch.answer(req("valorant turnuvası ne zaman demişti"))
+    assert "[K" not in resp.text and resp.text.startswith("Turnuva cumartesi")
+    assert resp.sources

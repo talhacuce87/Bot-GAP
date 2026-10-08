@@ -24,7 +24,7 @@ from ai.guard import clean_model_output, clean_user_input, jump_url, render_ment
 from ai.memory import MemoryService
 from ai.openrouter import ContextLengthError, ProviderError
 from ai.persona import PersonaStore
-from ai.retrieval import RetrievalResult, Retriever
+from ai.retrieval import RetrievalResult, Retriever, parse_time_filter
 from ai.stats import StatsService
 from ai.storage import AIStorage
 from ai.textutil import fold
@@ -32,7 +32,8 @@ from ai.textutil import fold
 log = logging.getLogger("gap.ai.orchestrator")
 
 _HISTORY_CUES = re.compile(
-    r"hatirl|demisti|dememis|konusmustuk|konustugumuz|konusmus|bahsetmis|soylemisti|yazmisti|"
+    r"hatirl|demisti|dememis|konusmustuk|konustugumuz|konustuk|konusmus|bahsetmis|bahsetti|soylemisti|yazmisti|"
+    r"ne dedi|kim dedi|ne yazdi|"
     r"daha once|gecen sefer|gecen hafta|gecen ay|\bdun\b|ne zaman|kim (?:demisti|soylemisti|yazmisti)|"
     r"planimiz|ne planla"
 )
@@ -117,6 +118,7 @@ class AIRequest:
     message_id: int | None = None
     reply_to: ChatLine | None = None
     channel_cooldown: int | None = None
+    member_count: int | None = None
     now: float = field(default_factory=time.time)
 
 
@@ -217,7 +219,9 @@ class Orchestrator:
 
     async def _answer_in_slot(self, req: AIRequest, question: str) -> AIResponse:
         rendered_q = self._render(req.guild_id, question)
-        historical = is_historical(question)
+        # Geçmiş arama yalnızca geçmişe dönük sorularda yapılır; aksi halde ilgisiz kelime
+        # eşleşmeleri modele "kanıt" gibi gider ve uydurmaya yol açar.
+        historical = is_historical(question) or parse_time_filter(question, req.now).since is not None
 
         recent: list[tuple[int | None, ChatLine]] = []
         user_mems: list[str] = []
@@ -232,12 +236,11 @@ class Orchestrator:
                 )
             if self.stats is not None:
                 server_data = await self.stats.gather(req.guild_id, req.user_id, req.question, req.bot_id)
-            if self.retriever is not None and req.allowed_channels:
+            if self.retriever is not None and req.allowed_channels and historical:
                 retrieval = await self.retriever.search(
                     req.guild_id, question, req.allowed_channels, now=req.now, bot_id=req.bot_id,
                     exclude_ids={req.message_id} if req.message_id else (),
                 )
-                historical = historical or retrieval.time_filter.since is not None
         except Exception:
             # Bağlam toplanamazsa yine de sade bir cevap verilebilir; durumu logla.
             log.exception("AI bağlamı toplanırken hata (guild=%s)", req.guild_id)
@@ -269,6 +272,8 @@ class Orchestrator:
             server_data=server_data,
             passages=passages,
             historical=historical,
+            member_count=req.member_count,
+            channel_memory=req.channel_indexed if self.storage is not None else None,
         )
         built = builder.build(inp)
         if built.dropped:

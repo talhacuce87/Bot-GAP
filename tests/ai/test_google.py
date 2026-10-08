@@ -69,8 +69,8 @@ def gclient(server, **kw):
 
 def test_reasoning_effort_mapping():
     assert reasoning_effort_for("gemini-2.5-flash-lite", "auto") == "none"
-    assert reasoning_effort_for("gemini-3.8-flash", "auto") == "minimal"
-    assert reasoning_effort_for("gemini-3.1-flash-lite", "auto") == "minimal"
+    assert reasoning_effort_for("gemini-3.8-flash", "auto") == "low"
+    assert reasoning_effort_for("gemini-3.1-flash-lite", "auto") == "low"
     assert reasoning_effort_for("gemma-4-31b-it", "auto") is None
     assert reasoning_effort_for("gemini-3.8-flash", "low") == "low"
     assert reasoning_effort_for("gemini-3.8-flash", "off") is None
@@ -105,7 +105,7 @@ async def test_success_payload_auth_and_cost():
     assert res.text == "Merhaba!"
     p = server.calls[0]
     assert p["model"] == "gemini-3.8-flash" and p["max_tokens"] == 800
-    assert p["reasoning_effort"] == "minimal"
+    assert p["reasoning_effort"] == "low"
     assert "provider" not in p and "reasoning" not in p
     assert [m["role"] for m in p["messages"]] == ["system", "user"]
     assert all(a == "Bearer g-key" for a in server.auth)
@@ -282,3 +282,27 @@ async def test_upstream_rate_limit_on_google_is_not_upstream_flagged():
     with pytest.raises(RateLimitedError):
         await client.chat(MSGS)
     assert sleeps == [] and client.cooling_models() == {}  # 200 sn > bekleme sınırı → hemen vazgeç
+
+
+async def test_rejected_thinking_level_escalates_and_is_remembered():
+    reject = lambda lvl: g_err(400, "INVALID_ARGUMENT",
+                               f"Thinking level {lvl} is not supported for this model. Please retry with other thinking level.")
+    server = Server(reject("LOW"), reject("MEDIUM"), g_ok(), g_ok())
+    client, sleeps = gclient(server)
+    res = await client.chat(MSGS)
+    assert res.text == "Merhaba!"
+    efforts = [c.get("reasoning_effort") for c in server.calls]
+    assert efforts == ["low", "medium", None]
+    # Sonraki istek doğrudan çalışan ayarla gider, tekrar reddedilmez
+    await client.chat(MSGS)
+    assert "reasoning_effort" not in server.calls[-1] and len(server.calls) == 4
+
+
+async def test_real_minimal_rejection_message():
+    """Canlı log (2026-10-08): gemini-3.8-flash 'minimal'i reddetti."""
+    server = Server(g_err(400, "INVALID_ARGUMENT",
+                          "Thinking level MINIMAL is not supported for this model. Please retry with other thinking level."),
+                    g_ok())
+    client, _ = gclient(server, google_reasoning_effort="minimal")
+    assert (await client.chat(MSGS)).text == "Merhaba!"
+    assert [c.get("reasoning_effort") for c in server.calls] == ["minimal", "low"]

@@ -180,7 +180,26 @@ class AICog(commands.Cog, name="AICog"):
         def name_for(user_id: int) -> str:
             return self._display_name(None, user_id, None)
 
-        return StatsService(level_for=level_for, name_for=name_for, bestfriend_threshold_seconds=threshold)
+        def member_info(guild_id: int, user_id: int) -> list[str]:
+            """Discord'da üyelerin zaten görebildiği profil bilgisi (katılma, hesap yaşı, roller)."""
+            guild = self.bot.get_guild(guild_id)
+            member = guild.get_member(user_id) if guild else None
+            if member is None:
+                return ["Etiketlenen kişi şu an sunucuda bulunamadı (ayrılmış olabilir)."]
+            fmt = lambda d: d.astimezone(TR_TZ).strftime("%d.%m.%Y") if d else "?"
+            roles = [r.name for r in reversed(getattr(member, "roles", [])) if not r.is_default()][:6]
+            return [
+                f"{member.display_name} (kullanıcı adı: {member.name}"
+                + (", bir bot hesabı" if member.bot else "")
+                + f"): sunucuya {fmt(member.joined_at)} tarihinde katıldı, Discord hesabı {fmt(member.created_at)}"
+                + " tarihinde açılmış"
+                + (f"; rolleri: {', '.join(roles)}" if roles else "; özel rolü yok")
+                + "."
+            ]
+
+        return StatsService(
+            level_for=level_for, name_for=name_for, bestfriend_threshold_seconds=threshold, member_info=member_info,
+        )
 
     # ------------------------------------------------------------------
     # Ayarlar
@@ -420,6 +439,7 @@ class AICog(commands.Cog, name="AICog"):
             bot_id=self.bot.user.id if self.bot.user else None,
             message_id=message_id, reply_to=reply_line,
             channel_cooldown=self.channel_cooldown(guild.id),
+            member_count=getattr(guild, "member_count", None),
         )
 
     def _format_response(self, resp: AIResponse) -> str:

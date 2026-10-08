@@ -26,6 +26,10 @@ from typing import Any
 
 import httpx
 
+# Model bir düşünme seviyesini reddederse sırayla denenecek bir sonraki değer (None = parametreyi gönderme).
+_EFFORT_ESCALATION: dict[str | None, str | None] = {"none": "minimal", "minimal": "low", "low": "medium", "medium": None}
+_THINKING_REJECTED_RE = re.compile(r"thinking (level|budget)|reasoning[_ ]effort", re.IGNORECASE)
+
 from ai.openrouter import (
     AUTH_CIRCUIT_SECONDS, MODEL_METADATA_TTL_SECONDS, AuthError, ContextLengthError, ModelInfo,
     ModelUnavailableError, OpenRouterClient, PaymentRequiredError, ProviderError, ProviderTimeoutError,
@@ -54,7 +58,8 @@ def next_pacific_midnight(now: float | None = None) -> float:
 def reasoning_effort_for(model: str, configured: str) -> str | None:
     """
     Gönderilecek reasoning_effort değeri (None = gönderme).
-    auto: Gemini 2.5 → "none" (düşünme kapalı); Gemini 3+ düşünme kapatılamaz → "minimal";
+    auto: Gemini 2.5 → "none" (düşünme kapalı); Gemini 3+ düşünme kapatılamaz → "low"
+    (bazı 3.x modelleri "minimal"i reddeder; canlı doğrulandı: gemini-3.8-flash);
     Gemma ve diğerleri → gönderilmez.
     """
     if configured and configured != "auto":
@@ -63,7 +68,7 @@ def reasoning_effort_for(model: str, configured: str) -> str | None:
     if m.startswith("gemini-2.5"):
         return "none"
     if re.match(r"gemini-([3-9]|\d{2,})", m):
-        return "minimal"
+        return "low"
     return None
 
 
@@ -80,6 +85,12 @@ def merge_system_into_user(messages: list[dict[str, str]]) -> list[dict[str, str
     return [{"role": "user", "content": system}, *rest]
 
 
+class ThinkingLevelRejectedError(ProviderError):
+    """Model istenen düşünme seviyesini reddetti; seviye yükseltildi, hemen tekrar denenebilir."""
+    code = "thinking_level"
+    retryable = True
+
+
 class GoogleAIClient(OpenRouterClient):
     provider_name = "google"
     label = "Google AI"
@@ -88,6 +99,13 @@ class GoogleAIClient(OpenRouterClient):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._available_models: set[str] = set()
+        # Modelin reddettiği düşünme seviyesinden sonra öğrenilen değer (süreç boyunca hatırlanır).
+        self._effort_override: dict[str, str | None] = {}
+
+    def _effort(self, model: str) -> str | None:
+        if model in self._effort_override:
+            return self._effort_override[model]
+        return reasoning_effort_for(model, self.cfg.google_reasoning_effort)
 
     # --- Kancalar ---------------------------------------------------------
 
@@ -169,9 +187,10 @@ class GoogleAIClient(OpenRouterClient):
             "max_tokens": max_tokens,
             "temperature": self.cfg.temperature,
         }
-        effort = reasoning_effort_for(model, self.cfg.google_reasoning_effort)
+        effort = self._effort(model)
         if effort:
             payload["reasoning_effort"] = effort
+        self._last_payload_model = model
         return payload
 
     def _raise_for_error(self, resp: httpx.Response, status: int, error_obj: Any) -> None:
@@ -210,6 +229,14 @@ class GoogleAIClient(OpenRouterClient):
                 # Model başına günlük kota: Pasifik gece yarısına kadar bu modeli soğut (yedekler denenebilir).
                 raise RateLimitedError(detail, status=status, retry_after=next_pacific_midnight(now) - now, upstream=True)
             raise RateLimitedError(detail, status=status, retry_after=retry_after, upstream=False)
+        if status == 400 and _THINKING_REJECTED_RE.search(message) and "not supported" in low:
+            model = getattr(self, "_last_payload_model", self.cfg.google_model)
+            current = self._effort(model)
+            nxt = _EFFORT_ESCALATION.get(current)
+            if current is not None:
+                self._effort_override[model] = nxt
+                log.warning("%s düşünme seviyesi %r desteklenmiyor → %r ile tekrar denenecek", model, current, nxt)
+                raise ThinkingLevelRejectedError(detail, status=status)
         if status in (408, 504) or g_status == "DEADLINE_EXCEEDED":
             raise ProviderTimeoutError(detail, status=status)
         if status >= 500:

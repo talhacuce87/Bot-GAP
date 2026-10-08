@@ -34,6 +34,8 @@ _INTENTS: dict[str, re.Pattern[str]] = {
     "user_xp": re.compile(r"\b(?:seviye(?:m|si|n)?|level(?:im|i|in)?|xp(?:'?(?:im|si|in))?|kacinci(?:yim|sin|siyim)?|rank)\b"),
     "streak": re.compile(r"\b(?:streak\w*|seri(?:m|si|n)?)\b"),
     "bestfriend": re.compile(r"best ?friend|\bbf\b|en yakin arkadas|en cok kiminle"),
+    # Yalnızca soruda bir üye etiketi varsa anlamlı (aşağıda kontrol edilir).
+    "member": re.compile(r"\bkim\b|kimdir|kim bu|bu kim|tanir mis|taniyor mus|hakkinda|nesi|ne zamandir"),
 }
 _MENTION_RE = re.compile(r"<@!?(\d+)>")
 
@@ -69,7 +71,9 @@ class StatsService:
         name_for: Callable[[int], str],
         db_module: Any = xpdb,
         bestfriend_threshold_seconds: int = 100 * 3600,
+        member_info: Callable[[int, int], list[str]] | None = None,
     ) -> None:
+        self._member_info = member_info
         self._level_for = level_for
         self._name_for = name_for
         self._db = db_module
@@ -133,15 +137,25 @@ class StatsService:
 
     async def gather(self, guild_id: int, requester_id: int, question: str, bot_id: int | None) -> list[str]:
         intents = detect_intents(question)
-        if not intents:
-            return []
         target = requester_id
+        mentioned = False
         for m in _MENTION_RE.finditer(question):
             if int(m.group(1)) != bot_id:
                 target = int(m.group(1))
+                mentioned = True
                 break
+        # Üye profili yalnızca "@x kim?" gibi genel sorularda; başka bir istatistik soruluyorsa gereksiz.
+        if "member" in intents and (not mentioned or len(intents) > 1):
+            intents.remove("member")
+        if not intents:
+            return []
         lines: list[str] = []
         try:
+            if "member" in intents and self._member_info is not None:
+                # Discord'da herkesin görebildiği profil bilgisi + seviye.
+                lines += self._member_info(guild_id, target)
+                if "user_xp" not in intents:
+                    lines += await self.user_lines(guild_id, target, streak=False, xp=True)
             if "leaderboard" in intents:
                 lines += await self.leaderboard_lines(guild_id)
             # "en çok xp kimde?" gibi sorularda soranın kendi satırı gereksiz.

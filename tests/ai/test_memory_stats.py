@@ -100,10 +100,11 @@ async def test_plan_capture_revoked_on_source_delete(storage):
 
 
 def test_detect_intents():
-    assert detect_intents("Kim en yüksek seviyede?") == ["leaderboard"]
+    assert detect_intents("Kim en yüksek seviyede?")[0] == "leaderboard"
+    assert "member" in detect_intents("<@5> bu adam kim")
     assert "user_xp" in detect_intents("seviyem kaç")
     assert detect_intents("streak durumum nasıl") == ["streak"]
-    assert detect_intents("<@5> best friend'i kim") == ["bestfriend"]
+    assert detect_intents("<@5> best friend'i kim")[0] == "bestfriend"
     assert detect_intents("bugün hava nasıl") == []
 
 
@@ -148,3 +149,23 @@ async def test_stats_user_and_bestfriend_readonly(xp_db):
     lines = await _stats().gather(1, 100, "best friend'im kim", bot_id=1)
     assert "veli" in lines[0] and "2sa 0dk" in lines[0] and "henüz ulaşmadı" in lines[0]
     assert await _count_rows() == before
+
+
+async def test_member_info_only_with_mention(xp_db):
+    calls = []
+
+    def member_info(gid, uid):
+        calls.append(uid)
+        return [f"üye {uid}: sunucuya 01.01.2025 tarihinde katıldı; roller: Usta"]
+
+    svc = StatsService(level_for=lambda xp: xp // 100, name_for=lambda uid: {100: "ali"}.get(uid, "?"),
+                       member_info=member_info)
+    lines = await svc.gather(1, 200, "<@1> <@100> bu adam kim", bot_id=1)
+    assert calls == [100]
+    assert "katıldı" in lines[0] and "Seviye 6" in lines[1]
+    # Başka bir istatistik soruluyorsa profil eklenmez
+    calls.clear()
+    lines = await svc.gather(1, 200, "<@100> best friend'i kim", bot_id=1)
+    assert calls == [] and "en çok ses" in lines[0]
+    # Etiket yoksa ("kimleri tanıyorsun") üye bilgisi verilmez
+    assert await svc.gather(1, 200, "başka kimleri tanıyorsun", bot_id=1) == []

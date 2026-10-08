@@ -101,6 +101,7 @@ def clean_model_output(text: str, max_chars: int = 1900) -> str:
     # allowed_mentions zaten kapalı; bu ek bir katman. Sıfır genişlikli boşlukla kır.
     text = _MASS_MENTION_RE.sub(lambda m: "@​" + m.group(1), text)
     text = re.sub(r"<@[!&]?\d+>", "", text)  # modelin ürettiği ham mention'lar
+    text = re.sub(r"\s*\[K\d+(?:\s*,\s*K?\d+)*\]", "", text)  # iç kanıt etiketleri; linkler ayrıca eklenir
     return truncate(text.strip(), max_chars)
 
 

@@ -357,3 +357,20 @@ async def test_google_primary_end_to_end_and_status(tmp_path):
         assert "OpenRouter" in status
     finally:
         await bot.remove_cog("AICog")
+
+
+async def test_who_is_member_uses_real_profile(env, monkeypatch):
+    import datetime as dt
+    from types import SimpleNamespace as NS
+
+    target = make_member(env.guild, name="KAKA LEİTE")
+    target.joined_at = dt.datetime(2025, 3, 1, tzinfo=dt.timezone.utc)
+    target.roles = [NS(name="@everyone", is_default=lambda: True), NS(name="Efsane", is_default=lambda: False)]
+    env.guild.member_count = 172
+    monkeypatch.setattr(env.bot, "get_guild", lambda gid: env.guild if gid == env.guild.id else None)
+    msg = make_message(env.guild, env.channel, env.user, f"<@{BOT_ID}> <@{target.id}> bu adam kim",
+                       mentions=[BOT_MENTION, target])
+    await env.cog.on_message(msg)
+    prompt = env.server.calls[-1]["messages"][1]["content"]
+    assert "<sunucu_verisi>" in prompt and "01.03.2025 tarihinde katıldı" in prompt and "Efsane" in prompt
+    assert "(172 üye)" in prompt
