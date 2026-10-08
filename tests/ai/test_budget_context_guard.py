@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from ai.budget import BudgetError, RequestBudget
-from ai.context import SYSTEM_RULES, ChatLine, ContextBuilder, ContextInput
+from ai.context import ChatLine, ContextBuilder, ContextInput, render_rules
 from ai.guard import (
     authorized_source_channels, clean_model_output, clean_user_input, find_sensitive, neutralize_untrusted,
     redact_sensitive, render_mentions,
@@ -140,7 +140,7 @@ def test_context_structure_and_injection_neutralized():
     )
     built = ContextBuilder(3000).build(inp)
     system, user = built.messages[0]["content"], built.messages[1]["content"]
-    assert system.startswith(SYSTEM_RULES) and "persona metni" in system
+    assert system.startswith(render_rules()) and "persona metni" in system and "{INTERNET}" not in system
     # Kullanıcı metni sınırlayıcı etiket üretememeli
     assert user.count("<kullanici_mesaji>") == 1 and user.count("</kullanici_mesaji>") == 1
     assert user.count("<sunucu_verisi>") == 1 and user.count("<gecmis_kanitlar>") == 1
@@ -165,7 +165,7 @@ def test_context_budget_drops_low_priority_first():
 def test_context_historical_prioritizes_evidence():
     recent = [ChatLine(f"u{i}", "x" * 300, float(i)) for i in range(30)]
     passages = [_passage(10, i, "kanit") for i in range(3)]
-    built = ContextBuilder(900).build(_input(recent=recent, passages=passages, historical=True))
+    built = ContextBuilder(1400).build(_input(recent=recent, passages=passages, historical=True))
     assert len(built.used_passages) == 3
     assert "[K1]" in built.messages[1]["content"]
 

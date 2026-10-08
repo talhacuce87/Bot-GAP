@@ -203,7 +203,7 @@ async def test_capability_rules_in_system_prompt(storage, tmp_path):
     orch, _ = build(storage, tmp_path, server)
     await orch.answer(req("sohbet başlatabilir misin"))
     system = server.prompts[-1][0]["content"]
-    assert "sohbet başlatamaz" in system and "İnternete erişimin yok" in system and "!hafizaekle" in system
+    assert "sohbet başlatamaz" in system and "nternete erişimin yok" in system and "!hafizaekle" in system
 
 
 async def test_evidence_labels_stripped_from_answer(storage, tmp_path):

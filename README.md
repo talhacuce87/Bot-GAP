@@ -195,6 +195,8 @@ yüklenmez; bot eskisi gibi çalışır.
 | Günlük/kişisel bütçe, cooldown, eşzamanlılık + sınırlı kuyruk | ✅ |
 | Slash komutları (hybrid) | ✅ kod hazır, `AI_SLASH_SYNC=true` ile kaydedilir |
 | Google AI Studio (Gemini API) sağlayıcısı, sağlayıcı zinciri, günlük istek + USD sınırı | ✅ |
+| İnternet araması `/ara` (Google Search, cevap yalnızca soran kişiye) | ✅ |
+| Discord bilgisi: sunucu, roller, rol üyeleri, kanallar, seste kimler var, üye profili | ✅ |
 | Embedding/semantik arama, LLM ile hafıza özetleme, sunucu başına model seçimi | ⏳ planlanan |
 | Sesli kanal / görsel girdi | ❌ kapsam dışı |
 
@@ -280,6 +282,23 @@ modellerine düşülür. Faturalandırması açık bir projenin anahtarıyla **h
 - Google hataları: dakikalık 429 → `retryDelay` kadar bekleyip tekrar (30 sn'den uzunsa yedeğe geçer);
   günlük kota 429 → model 15 dk soğumaya alınır; geçersiz anahtar → Google 30 dk devre dışı.
 
+### İnternet araması (`/ara`) ve Discord bilgisi
+
+- **`/ara <soru>`** (veya `!ara <soru>`): Gemini, Google Search ile araştırıp cevaplar. Google'ın
+  [Gemini API koşulları](https://ai.google.dev/gemini-api/terms) arama sonuçlarının **yalnızca soruyu soran
+  kişiye**, arama önerileriyle birlikte gösterilmesini ve saklanmamasını şart koşar. Bu yüzden: slash komutunda
+  cevap gizli (ephemeral) mesaj olarak, prefix komutunda DM ile gelir; herkese açık kanala yazılmaz, hafızaya
+  ve konuşma önbelleğine kaydedilmez. Kaynak linkleri ve "Google'da ara" linkleri cevabın altına eklenir.
+  Etiketleyerek yapılan normal sohbette internet yoktur; bot `/ara`'yı önerir.
+- Ücret: ayda 5000 arama ücretsiz (Gemini 3.x ortak), sonrası $14 / 1000 arama; bir cevapta birden fazla arama
+  olabilir. Bot her aramayı `GOOGLE_AI_SEARCH_PRICE_PER_1000` ile Google'ın USD sınırına ekler (ücretsiz kotayı
+  bilemediği için temkinli). Ayrıca günlük arama sınırı: `GOOGLE_AI_DAILY_SEARCH_BUDGET` (varsayılan 100).
+- Slash komutunun Discord'da görünmesi için `AI_SLASH_SYNC=true` ile bir kez başlatmak gerekir.
+- **Discord bilgisi** (`AI_DISCORD_INFO_ENABLED`): Soru sunucu bilgisi, roller/rol üyeleri, kanallar, seste kimlerin
+  olduğu veya bir üyenin kim olduğu ile ilgiliyse uygulama bu bilgiyi Discord önbelleğinden toplayıp modele verir.
+  Yalnızca soran kişinin Discord'da zaten görebildiği bilgiler kullanılır; mesaj içerikleri buradan okunmaz.
+  Çevrimiçi üye sayısı, botta Presence Intent olmadığı için bilinemez.
+
 ### Ortam değişkenleri
 
 | Değişken | Varsayılan | Açıklama |
@@ -292,6 +311,9 @@ modellerine düşülür. Faturalandırması açık bir projenin anahtarıyla **h
 | `GOOGLE_AI_MAX_OUTPUT_TOKENS` | `800` | Google yanıt sınırı (düşünme dahil) |
 | `GOOGLE_AI_REASONING_EFFORT` | `auto` | `auto` / `none` / `minimal` / `low` … / `off` (gönderme) |
 | `AI_PROVIDER_ORDER` | `google,openrouter` | Sağlayıcı sırası |
+| `AI_WEB_SEARCH_ENABLED` | `true` | `/ara` internet araması (Google anahtarı gerekir) |
+| `GOOGLE_AI_DAILY_SEARCH_BUDGET` / `GOOGLE_AI_SEARCH_PRICE_PER_1000` | `100` / `14` | Günlük arama sınırı ve arama başı maliyet tahmini |
+| `AI_DISCORD_INFO_ENABLED` | `true` | Sunucu/rol/kanal/ses/üye bilgisini modele ver |
 | `OPENROUTER_API_KEY` | – | OpenRouter anahtarı (loglanmaz) |
 | `OPENROUTER_MODEL` | `google/gemma-4-31b-it:free` | Birincil model |
 | `OPENROUTER_FALLBACK_MODEL` | – | Virgülle ayrılmış yedek modeller, sırayla (sadece ücretsizler) |
@@ -318,7 +340,7 @@ modellerine düşülür. Faturalandırması açık bir projenin anahtarıyla **h
 
 ### Komutlar
 
-Kullanıcı: `@Bot-GAP <mesaj>` · `!ai <mesaj>` · `!hatirla <konu>` (LLM kotası harcamaz) ·
+Kullanıcı: `@Bot-GAP <mesaj>` · `!ai <mesaj>` · `/ara <soru>` / `!ara <soru>` (internet, yalnızca sana) · `!hatirla <konu>` (LLM kotası harcamaz) ·
 `!hafizam` (DM) · `!hafizaekle <bilgi>` · `!onayla <id>` · `!unut <id>` · `!unuttur [onay]` ·
 `!aigizlilik [ac|kapat]` · `!ani <metin> [@üyeler]` · `!anilar` · `!aiyardim` · `!aidurum`
 

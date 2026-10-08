@@ -117,6 +117,7 @@ class InfoCog(commands.Cog):
                 value=(
                     "• `@Bot-GAP <mesaj>` veya `!ai <mesaj>` — Botla sohbet et\n"
                     "• `!hatirla <konu>` — Kayıtlı sohbet geçmişinde ara\n"
+                    "• `/ara <soru>` veya `!ara <soru>` — İnternette araştır (cevap yalnızca sana)\n"
                     "• `!hafizam` / `!hafizaekle` / `!unut <id>` / `!unuttur` — Hafızanı yönet\n"
                     "• `!aiyardim` — Yetenekler, sınırlar ve gizlilik • `!aidurum` — Durum ve kota"
                 ),

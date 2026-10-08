@@ -106,7 +106,13 @@ class AIConfig:
     google_price_output_per_m: float = 3.75
     google_max_output_tokens: int = 800
     google_reasoning_effort: str = "auto"
+    google_native_base: str = "https://generativelanguage.googleapis.com/v1beta"
+    # Google Search ile internet araması (/ara). Google koşulları gereği sonuç yalnızca soran kişiye gösterilir.
+    web_search_enabled: bool = True
+    google_daily_search_budget: int = 100
+    google_search_price_per_1000: float = 14.0
     provider_order: str = "google,openrouter"
+    discord_info_enabled: bool = True
 
     db_path: Path = PROJECT_ROOT / "data" / "ai_memory.db"
     backup_dir: Path = PROJECT_ROOT / "data" / "backups"
@@ -120,6 +126,10 @@ class AIConfig:
     @property
     def has_google_key(self) -> bool:
         return bool(self.google_api_key)
+
+    @property
+    def web_search_available(self) -> bool:
+        return self.web_search_enabled and self.has_google_key and self.google_daily_search_budget > 0
 
     @property
     def providers(self) -> list[str]:
@@ -180,6 +190,11 @@ def load_config() -> AIConfig:
         google_max_output_tokens=_int("GOOGLE_AI_MAX_OUTPUT_TOKENS", 800, 32, 8000),
         google_reasoning_effort=(os.getenv("GOOGLE_AI_REASONING_EFFORT", "auto") or "").strip().lower(),
         provider_order=_str("AI_PROVIDER_ORDER", "google,openrouter"),
+        google_native_base=_str("GOOGLE_AI_NATIVE_BASE", "https://generativelanguage.googleapis.com/v1beta").rstrip("/"),
+        web_search_enabled=_bool("AI_WEB_SEARCH_ENABLED", True),
+        google_daily_search_budget=_int("GOOGLE_AI_DAILY_SEARCH_BUDGET", 100, 0, 100_000),
+        google_search_price_per_1000=_float("GOOGLE_AI_SEARCH_PRICE_PER_1000", 14.0, 0.0, 1000.0),
+        discord_info_enabled=_bool("AI_DISCORD_INFO_ENABLED", True),
         **_paths(),
     )
 

@@ -41,10 +41,28 @@ Sen bir Discord sunucusunda çalışan bir sohbet botusun. Aşağıdaki kurallar
 8. Yanıtın Discord mesajına sığmalı: en fazla ~1500 karakter, varsayılan olarak kısa.
 9. Yeteneklerin hakkında dürüst ol, abartma:
    - Yalnızca etiketlendiğinde, mesajına yanıt verildiğinde veya `!ai` ile çağrıldığında cevap verirsin. Kendiliğinden mesaj atamaz, sohbet başlatamaz, DM gönderemezsin.
-   - İnternete erişimin yok. Discord'da arama yapamaz; üye listesine, çevrimiçi durumlarına veya başka kanallara bakamazsın. Bildiğin her şey bu mesajdaki bloklardan gelir.
+   - {INTERNET}
+   - Discord: Sunucu, roller, kanallar, seste kimlerin olduğu ve üye profilleri hakkında yalnızca <sunucu_verisi>'nde verilenleri bilirsin (uygulama soruya göre doldurur). Başka kanalların mesajlarını okuyamazsın; çevrimiçi durumlarını göremezsin.
    - Hafızan sınırlı: Yalnızca yöneticilerin hafızasını açtığı kanallardaki mesajları belirli bir süre saklarsın (bu kanalın durumu başlıkta yazar). Bunun dışında konuşmaları kalıcı hatırladığını söyleme. Kalıcı bir şey hatırlamanı isteyene `!hafizaekle <bilgi>`, geçmişte arama için `!hatirla <konu>`, kayıtlarını görmek için `!hafizam` komutunu öner.
    - Üyeler ve sunucu hakkında yalnızca <sunucu_verisi> ve başlıktaki bilgileri bilirsin; olmayan sayı, kişi veya bilgi uydurma.
 """
+
+
+_INTERNET_WEB = (
+    "Bu istekte Google Search aracın VAR: güncel bilgi, haber, fiyat, tarih veya emin olmadığın her şeyi ara ve "
+    "bulduklarına dayanarak cevap ver. Kaynak listesi ve arama linkleri otomatik eklenir, sen yazma. "
+    "Cevap yalnızca soran kişiye gösterilir."
+)
+_INTERNET_SUGGEST = (
+    "Bu sohbette internete erişimin yok. Güncel/internetten bilgi istenirse `/ara <soru>` (veya DM ile `!ara <soru>`) "
+    "komutunu öner; bu komutla Google'da arayıp cevabı yalnızca soran kişiye gösterebilirsin."
+)
+_INTERNET_NONE = "İnternete erişimin yok; internetten bilgi gerektiren sorularda bunu açıkça söyle."
+
+
+def render_rules(web_mode: bool = False, web_available: bool = False) -> str:
+    text = _INTERNET_WEB if web_mode else _INTERNET_SUGGEST if web_available else _INTERNET_NONE
+    return SYSTEM_RULES.replace("{INTERNET}", text)
 
 
 @dataclass(frozen=True)
@@ -72,6 +90,8 @@ class ContextInput:
     historical: bool = False
     member_count: int | None = None
     channel_memory: bool | None = None
+    web_mode: bool = False          # bu istekte Google Search aracı açık mı
+    web_available: bool = False     # /ara komutu kullanılabilir mi
 
 
 @dataclass
@@ -114,7 +134,7 @@ class ContextBuilder:
 
     def build(self, inp: ContextInput, token_budget: int | None = None) -> BuiltContext:
         budget = token_budget or self.token_budget
-        system = f"{SYSTEM_RULES}\n<persona>\n{inp.persona}\n</persona>"
+        system = f"{render_rules(inp.web_mode, inp.web_available)}\n<persona>\n{inp.persona}\n</persona>"
         local_now = dt.datetime.fromtimestamp(inp.now, TR_TZ).strftime("%d.%m.%Y %H:%M")
         header = (
             f"Sunucu: {neutralize_untrusted(inp.guild_name)}"

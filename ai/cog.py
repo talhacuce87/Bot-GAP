@@ -23,6 +23,7 @@ import discord
 from discord.ext import commands, tasks
 
 from ai.budget import RequestBudget
+from ai.discordinfo import gather_discord_info
 from ai.config import AIConfig
 from ai.context import ChatLine
 from ai.guard import authorized_source_channels, jump_url, redact_sensitive, render_mentions
@@ -164,6 +165,23 @@ class AICog(commands.Cog, name="AICog"):
             except Exception:
                 log.exception("AI veritabanı kapatılamadı")
 
+    def _member_info(self, guild_id: int, user_id: int) -> list[str]:
+        """Discord'da üyelerin zaten görebildiği profil bilgisi (katılma, hesap yaşı, roller)."""
+        guild = self.bot.get_guild(guild_id)
+        member = guild.get_member(user_id) if guild else None
+        if member is None:
+            return ["Etiketlenen kişi şu an sunucuda bulunamadı (ayrılmış olabilir)."]
+        fmt = lambda d: d.astimezone(TR_TZ).strftime("%d.%m.%Y") if d else "?"  # noqa: E731
+        roles = [r.name for r in reversed(getattr(member, "roles", [])) if not r.is_default()][:6]
+        return [
+            f"{member.display_name} (kullanıcı adı: {member.name}"
+            + (", bir bot hesabı" if member.bot else "")
+            + f"): sunucuya {fmt(member.joined_at)} tarihinde katıldı, Discord hesabı {fmt(member.created_at)}"
+            + " tarihinde açılmış"
+            + (f"; rolleri: {', '.join(roles)}" if roles else "; özel rolü yok")
+            + "."
+        ]
+
     def _build_stats(self) -> StatsService | None:
         try:
             import bestfriend
@@ -180,25 +198,9 @@ class AICog(commands.Cog, name="AICog"):
         def name_for(user_id: int) -> str:
             return self._display_name(None, user_id, None)
 
-        def member_info(guild_id: int, user_id: int) -> list[str]:
-            """Discord'da üyelerin zaten görebildiği profil bilgisi (katılma, hesap yaşı, roller)."""
-            guild = self.bot.get_guild(guild_id)
-            member = guild.get_member(user_id) if guild else None
-            if member is None:
-                return ["Etiketlenen kişi şu an sunucuda bulunamadı (ayrılmış olabilir)."]
-            fmt = lambda d: d.astimezone(TR_TZ).strftime("%d.%m.%Y") if d else "?"
-            roles = [r.name for r in reversed(getattr(member, "roles", [])) if not r.is_default()][:6]
-            return [
-                f"{member.display_name} (kullanıcı adı: {member.name}"
-                + (", bir bot hesabı" if member.bot else "")
-                + f"): sunucuya {fmt(member.joined_at)} tarihinde katıldı, Discord hesabı {fmt(member.created_at)}"
-                + " tarihinde açılmış"
-                + (f"; rolleri: {', '.join(roles)}" if roles else "; özel rolü yok")
-                + "."
-            ]
-
         return StatsService(
-            level_for=level_for, name_for=name_for, bestfriend_threshold_seconds=threshold, member_info=member_info,
+            level_for=level_for, name_for=name_for, bestfriend_threshold_seconds=threshold,
+            member_info=self._member_info,
         )
 
     # ------------------------------------------------------------------
@@ -440,7 +442,39 @@ class AICog(commands.Cog, name="AICog"):
             message_id=message_id, reply_to=reply_line,
             channel_cooldown=self.channel_cooldown(guild.id),
             member_count=getattr(guild, "member_count", None),
+            discord_info=self._discord_info(guild, author, text),
+            web_available=self.google_client is not None and self.cfg.web_search_available,
         )
+
+    def _discord_info(self, guild: discord.Guild, author: Any, text: str) -> list[str]:
+        if not self.cfg.discord_info_enabled:
+            return []
+        try:
+            return gather_discord_info(
+                guild, author, text, self.bot.user.id if self.bot.user else None, self._member_info,
+            )
+        except Exception:
+            log.exception("Discord bilgisi toplanamadı")
+            return []
+
+    @staticmethod
+    def _format_web(resp: AIResponse) -> str:
+        """Google koşulları: kaynak linkleri ve arama önerileri (en fazla 5) cevapla birlikte gösterilir."""
+        from urllib.parse import quote_plus
+
+        text = resp.text
+        if not resp.ok:
+            return text
+        if resp.web_sources:
+            text += "\n\n**Kaynaklar:** " + " • ".join(
+                f"[{discord.utils.escape_markdown(truncate(title, 60))}](<{url}>)" for title, url in resp.web_sources
+            )
+        if resp.search_queries:
+            text += "\n🔎 **Google'da ara:** " + " • ".join(
+                f"[{discord.utils.escape_markdown(truncate(q, 60))}](<https://www.google.com/search?q={quote_plus(q)}>)"
+                for q in resp.search_queries
+            )
+        return text + "\n-# 🌐 Google Search ile hazırlandı • yalnızca sana gösteriliyor"
 
     def _format_response(self, resp: AIResponse) -> str:
         text = resp.text
@@ -537,6 +571,46 @@ class AICog(commands.Cog, name="AICog"):
         )
         resp = await self._generate(req, ctx.channel)
         await self._ctx_send(ctx, self._format_response(resp))
+
+    @commands.hybrid_command(name="ara", aliases=["internet", "web", "arastir", "araştır"],
+                             description="İnternette ara (cevap yalnızca sana görünür)")
+    @commands.guild_only()
+    async def ara_command(self, ctx: commands.Context, *, soru: str) -> None:
+        """Google Search ile internette arar. Cevap yalnızca sana gösterilir (slash: gizli mesaj, prefix: DM)."""
+        reason = self.unavailable_reason(ctx.guild.id)
+        if reason or self.orchestrator is None:
+            await self._ctx_send(ctx, reason or "❌ AI kullanılamıyor.", ephemeral=True)
+            return
+        if self.google_client is None or not self.cfg.web_search_available:
+            await self._ctx_send(ctx, "🌐 İnternet araması bu botta kapalı (Google AI anahtarı ve "
+                                      "`AI_WEB_SEARCH_ENABLED=true` gerekli).", ephemeral=True)
+            return
+        if ctx.interaction is not None:
+            await ctx.defer(ephemeral=True)
+        req = self._build_request(ctx.guild, ctx.channel, ctx.author, soru,
+                                  ctx.message.id if ctx.interaction is None else None, None)
+        if ctx.interaction is not None:
+            resp = await self.orchestrator.answer_web(req, self.google_client)
+            for part in split_message(self._format_web(resp)):
+                await ctx.send(part, ephemeral=True, allowed_mentions=NO_MENTIONS, suppress_embeds=True)
+            return
+        # Prefix komutu: sonuç herkese açık kanala değil, DM'e gider (Google koşulları).
+        try:
+            dm = await ctx.author.create_dm()
+        except discord.HTTPException:
+            dm = None
+        if dm is None:
+            await ctx.send("DM açamadım; `/ara` slash komutunu kullan.", delete_after=20)
+            return
+        async with ctx.channel.typing():
+            resp = await self.orchestrator.answer_web(req, self.google_client)
+        try:
+            for part in split_message(self._format_web(resp)):
+                await dm.send(part, allowed_mentions=NO_MENTIONS, suppress_embeds=True)
+            await ctx.message.add_reaction("📬")
+        except discord.HTTPException:
+            await ctx.send("DM'lerin kapalı olduğu için sonucu gönderemedim; `/ara` slash komutunu kullan "
+                           "(sonuç yalnızca sana görünür).", delete_after=30)
 
     @commands.hybrid_command(name="hatirla", aliases=["hatırla"], description="Kayıtlı sohbet geçmişinde ara")
     @commands.guild_only()
@@ -763,7 +837,9 @@ class AICog(commands.Cog, name="AICog"):
             "• Beni etiketle veya mesajıma yanıt ver: `@Bot-GAP selam`\n"
             "• `!ai <mesaj>` — doğrudan soru sor\n"
             "• \"Kim en yüksek seviyede?\", \"seviyem kaç?\", \"best friend'im kim?\" gibi soruları "
-            "gerçek veritabanından cevaplarım."
+            "gerçek veritabanından cevaplarım.\n"
+            "• Sunucu bilgisi, roller, kanallar, seste kimler var, \"@üye kim?\" gibi soruları Discord'dan bakarak cevaplarım.\n"
+            "• `/ara <soru>` — Google'da araştırır; cevap **yalnızca sana** görünür (`!ara` ile DM'den gelir)."
         ), inline=False)
         embed.add_field(name="🧠 Hafıza", value=(
             "• `!hatirla <konu>` — hafızası açık kanallarda geçmiş konuşmaları arar (kota harcamaz)\n"

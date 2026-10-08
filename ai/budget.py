@@ -78,17 +78,21 @@ class RequestBudget:
             self._day_user.clear()
 
     def request_limit(self, provider: str) -> int:
-        return self.cfg.google_daily_request_budget if provider == "google" else self.cfg.daily_request_budget
+        if provider == "google":
+            return self.cfg.google_daily_request_budget
+        if provider == "google_search":
+            return self.cfg.google_daily_search_budget
+        return self.cfg.daily_request_budget
 
     def cost_limit(self, provider: str) -> float | None:
-        return self.cfg.google_daily_cost_limit_usd if provider == "google" else None
+        return self.cfg.google_daily_cost_limit_usd if provider in ("google", "google_search") else None
 
     def provider_has_room(self, provider: str, reserve: int = 0) -> bool:
         self._roll_day()
         if self._day_provider.get(provider, 0) + reserve >= self.request_limit(provider):
             return False
         limit = self.cost_limit(provider)
-        return limit is None or self._day_cost.get(provider, 0.0) < limit
+        return limit is None or self.provider_cost(provider) < limit
 
     def describe(self) -> str:
         parts = []
@@ -113,7 +117,10 @@ class RequestBudget:
         return self._day_provider.get(provider, 0)
 
     def provider_cost(self, provider: str) -> float:
+        """Google'ın USD sınırı model + arama harcamasının toplamına uygulanır."""
         self._roll_day()
+        if provider in ("google", "google_search"):
+            return self._day_cost.get("google", 0.0) + self._day_cost.get("google_search", 0.0)
         return self._day_cost.get(provider, 0.0)
 
     def user_used_today(self, guild_id: int, user_id: int) -> int:
@@ -208,7 +215,7 @@ class RequestBudget:
             self._day_cost[provider] = self._day_cost.get(provider, 0.0) + cost_usd
         # Sağlayıcı bütçesi her denemeyi sayar (maliyet koruması); kişisel sınır ise yalnızca
         # başarılı cevapları — yeniden denemeler ve sağlayıcı hataları kullanıcının hakkından düşmez.
-        if guild_id is not None and user_id is not None and error_code is None:
+        if guild_id is not None and user_id is not None and error_code is None and provider != "google_search":
             key = (guild_id, user_id)
             self._day_user[key] = self._day_user.get(key, 0) + 1
         if self.storage is not None:

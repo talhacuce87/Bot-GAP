@@ -119,6 +119,8 @@ class AIRequest:
     reply_to: ChatLine | None = None
     channel_cooldown: int | None = None
     member_count: int | None = None
+    discord_info: list[str] = field(default_factory=list)  # uygulamanın topladığı sunucu bilgisi
+    web_available: bool = False
     now: float = field(default_factory=time.time)
 
 
@@ -130,6 +132,8 @@ class AIResponse:
     model: str | None = None
     error_code: str | None = None
     candidate_ids: list[int] = field(default_factory=list)
+    web_sources: list[tuple[str, str]] = field(default_factory=list)
+    search_queries: list[str] = field(default_factory=list)
 
 
 class Orchestrator:
@@ -236,6 +240,7 @@ class Orchestrator:
                 )
             if self.stats is not None:
                 server_data = await self.stats.gather(req.guild_id, req.user_id, req.question, req.bot_id)
+            server_data = [*req.discord_info, *server_data]
             if self.retriever is not None and req.allowed_channels and historical:
                 retrieval = await self.retriever.search(
                     req.guild_id, question, req.allowed_channels, now=req.now, bot_id=req.bot_id,
@@ -274,6 +279,7 @@ class Orchestrator:
             historical=historical,
             member_count=req.member_count,
             channel_memory=req.channel_indexed if self.storage is not None else None,
+            web_available=req.web_available,
         )
         built = builder.build(inp)
         if built.dropped:
@@ -336,6 +342,65 @@ class Orchestrator:
     # ------------------------------------------------------------------
     # LLM'siz geçmiş arama (!hatirla)
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # İnternet araması (/ara) — Google Search ile
+    # ------------------------------------------------------------------
+
+    async def answer_web(self, req: AIRequest, google: Any) -> AIResponse:
+        """
+        Google Search açık cevap. Google koşulları gereği sonuç yalnızca soran kişiye
+        gösterilmeli ve saklanmamalıdır: konuşma önbelleğine ve hafızaya YAZILMAZ.
+        """
+        question = clean_user_input(req.question, req.bot_id, self.cfg.max_input_chars)
+        if not question:
+            return AIResponse("Ne aramamı istersin? `/ara <soru>`", ok=False, error_code="empty_input")
+        if not (self.budget.provider_has_room("google") and self.budget.provider_has_room("google_search")):
+            return AIResponse("Bugünlük internet arama bütçesi doldu, yarın tekrar dene. 🙏", ok=False,
+                              error_code="search_budget")
+        try:
+            async with self.budget.slot(req.guild_id, req.channel_id, req.user_id, channel_cooldown=req.channel_cooldown):
+                recent = []
+                try:
+                    recent = [line for _, line in await self._recent(req)][-8:]
+                except Exception:
+                    log.exception("Web araması için son konuşma okunamadı")
+                inp = ContextInput(
+                    question=self._render(req.guild_id, question),
+                    speaker_name=req.speaker_name, guild_name=req.guild_name, channel_name=req.channel_name,
+                    now=req.now, persona=self.persona.get(req.guild_id), recent=recent,
+                    server_data=list(req.discord_info), member_count=req.member_count,
+                    web_mode=True, web_available=True,
+                )
+                built = ContextBuilder(
+                    self.token_budget(),
+                    name_for=lambda uid, fb: self._name_for(req.guild_id, uid, fb),
+                    channel_name_for=lambda cid: self._channel_name_for(req.guild_id, cid),
+                ).build(inp)
+
+                async def on_attempt(model, error_code, tin, tout, *, cost=None):
+                    await self.budget.record_attempt(
+                        req.guild_id, req.user_id, model, error_code, tin, tout, provider="google", cost_usd=cost
+                    )
+
+                try:
+                    answer = await google.web_chat(built.messages, on_attempt=on_attempt)
+                except ProviderError as err:
+                    log.warning("İnternet araması başarısız: %s", err.code)
+                    return AIResponse(err.user_message, ok=False, error_code=err.code)
+
+                per_query = self.cfg.google_search_price_per_1000 / 1000
+                for _ in answer.queries:  # her Google araması ayrı ücretlendirilir
+                    await self.budget.record_attempt(
+                        req.guild_id, req.user_id, answer.model, None, None, None,
+                        provider="google_search", cost_usd=per_query,
+                    )
+                return AIResponse(
+                    clean_model_output(answer.text), ok=True, model=answer.model,
+                    web_sources=answer.sources[:5], search_queries=answer.queries[:5],
+                )
+        except BudgetError as err:
+            return AIResponse(err.user_message, ok=False, error_code=err.code)
 
     async def recall(self, guild_id: int, query: str, allowed_channels: set[int], bot_id: int | None) -> RetrievalResult | None:
         if self.retriever is None or not allowed_channels:
