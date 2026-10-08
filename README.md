@@ -231,7 +231,7 @@ flowchart LR
    AI_ENABLED=true
    OPENROUTER_API_KEY=sk-or-v1-...
    OPENROUTER_MODEL=google/gemma-4-31b-it:free
-   OPENROUTER_FALLBACK_MODEL=openrouter/free
+   OPENROUTER_FALLBACK_MODEL=nvidia/nemotron-3-super-120b-a12b:free,openrouter/free
    ```
 3. `docker compose up -d --build` (veya `pip install -r requirements.txt && python Main.py`).
 4. Sunucuda bir yönetici hafızayı açmak istediği kanalda: `!aiayar kanal ekle` — bot kanala bir
@@ -242,7 +242,12 @@ flowchart LR
 Türkçesi iyi). `openrouter/free` her istekte rastgele bir ücretsiz modele yönlendirir; bunların çoğu
 "reasoning" modelidir ve bazıları düşünme metnini cevaba sızdırır, bu yüzden yalnızca yedek olarak
 önerilir. Bot akıl yürütmeyi varsayılan olarak kapatır (`AI_REASONING_EFFORT=none`), `<think>` bloklarını
-siler ve düşünme metni gibi görünen cevapları kullanıcıya göndermeden yeniden dener. Bot açılışta ve 6 saatte bir `/api/v1/models` üzerinden
+siler ve düşünme metni gibi görünen cevapları kullanıcıya göndermeden yeniden dener.
+
+**Sağlayıcı yoğunluğu (429 "Provider returned error"):** Ücretsiz modelin arkasındaki sağlayıcı
+(ör. Gemma için Google AI Studio) sınır koyduğunda bot aynı modeli tekrar denemez; modeli 2 dakika
+(veya `Retry-After` kadar, en çok 15 dk) soğumaya alır ve sıradaki yedeğe geçer. Soğumadaki modeller
+`!aiayar` çıktısında görünür. Yedek olarak farklı sağlayıcıdaki bir model seçmek bu yüzden önemlidir. Bot açılışta ve 6 saatte bir `/api/v1/models` üzerinden
 fiyatı doğrular; fiyatı `0` olmayan (değişken fiyatlı `openrouter/auto` dahil) model
 `AI_ALLOW_PAID_MODELS=true` olmadıkça **asla** çağrılmaz. İsteklere ayrıca
 `provider.max_price = 0` eklenir ve yanıtta ücret raporlanırsa sağlayıcı kapatılır.
@@ -258,7 +263,7 @@ fiyatı doğrular; fiyatı `0` olmayan (değişken fiyatlı `openrouter/auto` da
 | `AI_ENABLED` | `false` | Eklentiyi aç/kapat |
 | `OPENROUTER_API_KEY` | – | OpenRouter anahtarı (loglanmaz) |
 | `OPENROUTER_MODEL` | `google/gemma-4-31b-it:free` | Birincil model |
-| `OPENROUTER_FALLBACK_MODEL` | – | Yedek model (sadece ücretsizse) |
+| `OPENROUTER_FALLBACK_MODEL` | – | Virgülle ayrılmış yedek modeller, sırayla (sadece ücretsizler) |
 | `AI_ALLOW_PAID_MODELS` | `false` | Ücretli modellere izin |
 | `AI_ENFORCE_ZERO_PRICE` | `true` | İsteğe `provider.max_price=0` ekle |
 | `AI_MAX_OUTPUT_TOKENS` | `350` | Yanıt token sınırı |

@@ -342,3 +342,61 @@ async def test_reasoning_effort_override():
     client, _ = make_client(server, reasoning_effort="low")
     await client.chat(MSGS)
     assert server.chat_calls[0]["reasoning"] == {"effort": "low", "exclude": True}
+
+
+def upstream_429(retry_after=None):
+    headers = {"Retry-After": str(retry_after)} if retry_after else {}
+    return httpx.Response(429, headers=headers, json={"error": {
+        "code": 429, "message": "Provider returned error",
+        "metadata": {"provider_name": "Google AI Studio", "raw": "quota"}}})
+
+
+async def test_upstream_429_skips_retries_and_uses_fallback_chain():
+    models = [
+        {"id": "test/model:free", "pricing": FREE, "context_length": 8000},
+        {"id": "second/model:free", "pricing": FREE, "context_length": 8000},
+        {"id": "third/model:free", "pricing": FREE, "context_length": 8000},
+    ]
+    server = Server([upstream_429(), upstream_429(), httpx.Response(200, json=ok_body(model="third/model:free"))],
+                    models=models)
+    client, sleeps = make_client(server, fallback_model="second/model:free, third/model:free")
+    res = await client.chat(MSGS)
+    assert res.model == "third/model:free"
+    assert [c["model"] for c in server.chat_calls] == ["test/model:free", "second/model:free", "third/model:free"]
+    assert sleeps == []  # aynı model tekrar denenmedi, beklenmedi
+    assert set(client.cooling_models()) == {"test/model:free", "second/model:free"}
+
+    # Sonraki istek soğumadaki modelleri hiç denemeden doğrudan çalışan modele gider
+    server.responses.append(httpx.Response(200, json=ok_body(model="third/model:free")))
+    await client.chat(MSGS)
+    assert server.chat_calls[-1]["model"] == "third/model:free" and len(server.chat_calls) == 4
+
+
+async def test_upstream_cooldown_expires_and_respects_retry_after():
+    server = Server([upstream_429(retry_after=30), httpx.Response(200, json=ok_body()),
+                     httpx.Response(200, json=ok_body())])
+    client, _ = make_client(server, fallback_model="fallback/model:free")
+    await client.chat(MSGS)
+    assert client.cooling_models() == {"test/model:free": 30}
+    client._clock.t += 31
+    await client.chat(MSGS)
+    assert server.chat_calls[-1]["model"] == "test/model:free"
+
+
+async def test_all_models_cooling_still_tries():
+    server = Server([upstream_429(), httpx.Response(200, json=ok_body())])
+    client, _ = make_client(server)
+    with pytest.raises(RateLimitedError):
+        await client.chat(MSGS)
+    await client.chat(MSGS)  # tek model soğumada olsa da denenir (atlanacak alternatif yok)
+    assert len(server.chat_calls) == 2
+
+
+async def test_openrouter_own_429_still_retried():
+    server = Server([
+        httpx.Response(429, headers={"Retry-After": "2"}, json={"error": {"code": 429, "message": "Rate limit exceeded"}}),
+        httpx.Response(200, json=ok_body()),
+    ])
+    client, sleeps = make_client(server)
+    await client.chat(MSGS)
+    assert sleeps == [2.0] and client.cooling_models() == {}

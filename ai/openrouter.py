@@ -36,6 +36,8 @@ PROVIDER_NAME = "openrouter"
 MODEL_METADATA_TTL_SECONDS = 6 * 3600
 KEY_STATUS_TTL_SECONDS = 300
 AUTH_CIRCUIT_SECONDS = 1800
+UPSTREAM_COOLDOWN_SECONDS = 120.0
+UPSTREAM_COOLDOWN_MAX_SECONDS = 900.0
 BACKOFF_BASE_SECONDS = 1.5
 BACKOFF_CAP_SECONDS = 20.0
 
@@ -83,9 +85,14 @@ class RateLimitedError(ProviderError):
     retryable = True
     user_message = "Yapay zekâ servisi şu an yoğun, biraz sonra tekrar dene."
 
-    def __init__(self, detail: str = "", *, status: int | None = None, retry_after: float | None = None) -> None:
+    def __init__(
+        self, detail: str = "", *, status: int | None = None,
+        retry_after: float | None = None, upstream: bool = False,
+    ) -> None:
         super().__init__(detail, status=status)
         self.retry_after = retry_after
+        # upstream=True: OpenRouter değil, modeli sunan sağlayıcı (ör. Google AI Studio) sınırladı.
+        self.upstream = upstream
 
 
 class ContextLengthError(ProviderError):
@@ -276,6 +283,7 @@ class OpenRouterClient:
         self._auth_blocked_until = 0.0
         self._quota_blocked_until = 0.0  # wall clock (time.time)
         self._paid_detected = False
+        self._model_cooldown_until: dict[str, float] = {}  # monotonic saat
         self.last_error: str | None = None
         self.last_model_used: str | None = None
 
@@ -309,7 +317,7 @@ class OpenRouterClient:
     # ------------------------------------------------------------------
 
     async def refresh_models(self, force: bool = False) -> bool:
-        wanted = {m for m in (self.cfg.model, self.cfg.fallback_model) if m}
+        wanted = set(self.model_chain())
         async with self._models_lock:
             if not force and self._models and self._clock() - self._models_fetched_at < MODEL_METADATA_TTL_SECONDS:
                 return True
@@ -399,9 +407,13 @@ class OpenRouterClient:
             raise err
 
         deadline = self._clock() + self.cfg.total_deadline_seconds
-        models = [self.cfg.model]
-        if self.cfg.fallback_model and self.cfg.fallback_model != self.cfg.model:
-            models.append(self.cfg.fallback_model)
+        models = self.model_chain()
+        # Yakın zamanda sağlayıcısı tarafından sınırlanan modeller atlanır (hepsi soğumadaysa sırayla denenir).
+        now = self._clock()
+        ready = [m for m in models if self._model_cooldown_until.get(m, 0) <= now]
+        if ready and len(ready) < len(models):
+            log.info("Soğumadaki model(ler) atlandı: %s", ", ".join(m for m in models if m not in ready))
+            models = ready
 
         last_error: ProviderError | None = None
         for index, model in enumerate(models):
@@ -413,7 +425,7 @@ class OpenRouterClient:
             if index > 0:
                 if attempt_gate is not None and not await attempt_gate():
                     break
-                log.warning("Yedek modele geçiliyor: %s → %s (%s)", models[0], model,
+                log.warning("Yedek modele geçiliyor: %s → %s (%s)", models[index - 1], model,
                             last_error.code if last_error else "?")
             try:
                 result = await self._chat_with_retries(
@@ -433,6 +445,16 @@ class OpenRouterClient:
                     raise
         assert last_error is not None
         raise last_error
+
+    def model_chain(self) -> list[str]:
+        """Birincil model + virgülle ayrılmış yedekler, tekrarsız."""
+        chain = [self.cfg.model, *(m.strip() for m in self.cfg.fallback_model.split(","))]
+        return list(dict.fromkeys(m for m in chain if m))
+
+    def cooling_models(self) -> dict[str, float]:
+        """Soğumadaki modeller → kalan saniye."""
+        now = self._clock()
+        return {m: round(t - now) for m, t in self._model_cooldown_until.items() if t > now}
 
     async def _chat_with_retries(
         self,
@@ -462,6 +484,13 @@ class OpenRouterClient:
                 if on_attempt is not None:
                     await on_attempt(model, err.code, None, None)
                 err.attempts = attempt  # type: ignore[attr-defined]
+                if isinstance(err, RateLimitedError) and err.upstream:
+                    # Sağlayıcı kotası saniyeler içinde açılmaz; aynı modeli tekrar denemek
+                    # bütçeyi boşa harcar. Modeli soğumaya al, hemen yedeğe geç.
+                    cool = min(UPSTREAM_COOLDOWN_MAX_SECONDS, err.retry_after or UPSTREAM_COOLDOWN_SECONDS)
+                    self._model_cooldown_until[model] = self._clock() + cool
+                    log.info("%s sağlayıcı tarafından sınırlandı, %.0f sn soğumada", model, cool)
+                    raise
                 if not err.retryable or attempt > self.cfg.max_retries:
                     raise
                 wait = self._backoff(attempt)
@@ -612,7 +641,8 @@ class OpenRouterClient:
             retry_after = _parse_retry_after(resp.headers.get("Retry-After"), now)
             if retry_after is None and reset_at is not None:
                 retry_after = max(0.0, reset_at - now)
-            raise RateLimitedError(detail, status=status, retry_after=retry_after)
+            upstream = bool(meta.get("provider_name")) or "provider returned error" in message.lower()
+            raise RateLimitedError(detail, status=status, retry_after=retry_after, upstream=upstream)
         if status in (408, 504):
             raise ProviderTimeoutError(detail, status=status)
         if status >= 500:

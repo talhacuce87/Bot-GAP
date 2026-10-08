@@ -790,6 +790,9 @@ class AICog(commands.Cog, name="AICog"):
             f"Sağlayıcı: {self.client.circuit_reason() or 'normal'} • Son hata: {self.client.last_error or '-'}"
             f" • Son model: `{self.client.last_model_used or '-'}`",
         ]
+        cooling = self.client.cooling_models()
+        if cooling:
+            lines.append("Soğumadaki modeller: " + ", ".join(f"`{m}` ({sec} sn)" for m, sec in cooling.items()))
         if stats:
             lines.append(
                 f"DB: {stats.get('messages', 0)} mesaj, {stats.get('memories', 0)} hafıza, "
