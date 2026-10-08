@@ -17,7 +17,7 @@ import datetime as dt
 import logging
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -60,6 +60,17 @@ class Memory:
     created_at: float
     updated_at: float
     expires_at: float | None
+
+
+@dataclass
+class UsageSummary:
+    per_provider: dict[str, int] = field(default_factory=dict)
+    cost_per_provider: dict[str, float] = field(default_factory=dict)
+    per_user: dict[tuple[int, int], int] = field(default_factory=dict)
+
+    @property
+    def total(self) -> int:
+        return sum(self.per_provider.values())
 
 
 def utc_day(ts: float | None = None) -> str:
@@ -166,7 +177,14 @@ class AIStorage:
                 continue
             log.info("AI DB migration uygulanıyor: %d (%s)", version, name)
             # executescript kendi COMMIT'ini yapar; IF NOT EXISTS ifadeleri tekrar güvenli.
-            await conn.executescript(sql)
+            # ALTER TABLE ADD COLUMN için IF NOT EXISTS olmadığından, yarıda kalmış bir
+            # migration'ın tekrarında "duplicate column" hatası uygulanmış sayılır.
+            try:
+                await conn.executescript(sql)
+            except sqlite3.OperationalError as err:
+                if "duplicate column" not in str(err).lower():
+                    raise
+                log.info("Migration %d: sütun zaten var, devam ediliyor", version)
             await conn.execute(
                 "INSERT OR IGNORE INTO ai_schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                 (version, name, time.time()),
@@ -699,6 +717,7 @@ class AIStorage:
         input_tokens: int | None,
         output_tokens: int | None,
         error_code: str | None,
+        cost_usd: float | None = None,
         ts: float | None = None,
     ) -> None:
         ts = ts if ts is not None else time.time()
@@ -708,27 +727,34 @@ class AIStorage:
                 """
                 INSERT INTO ai_usage
                     (ts, day, guild_id, user_id, provider, model, request_count,
-                     approximate_input_tokens, approximate_output_tokens, error_code)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                     approximate_input_tokens, approximate_output_tokens, error_code, approximate_cost_usd)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
                 """,
-                (ts, utc_day(ts), guild_id, user_id, provider, model, input_tokens, output_tokens, error_code),
+                (ts, utc_day(ts), guild_id, user_id, provider, model, input_tokens, output_tokens,
+                 error_code, cost_usd),
             )
             await c.commit()
         await self._run(op)
 
-    async def usage_counts(self, day: str) -> tuple[int, dict[tuple[int, int], int]]:
-        """Belirtilen UTC günü için (toplam, {(guild, user): adet})."""
+    async def usage_counts(self, day: str) -> "UsageSummary":
+        """Belirtilen UTC günü için sağlayıcı ve kullanıcı bazında istek sayıları ve tahmini maliyet."""
         async def op(c):
             async with c.execute(
                 """
-                SELECT guild_id, user_id, SUM(request_count) FROM ai_usage
-                WHERE day = ? GROUP BY guild_id, user_id
+                SELECT provider, guild_id, user_id, SUM(request_count), SUM(COALESCE(approximate_cost_usd, 0))
+                FROM ai_usage WHERE day = ? GROUP BY provider, guild_id, user_id
                 """,
                 (day,),
             ) as cur:
                 rows = await cur.fetchall()
-            per_user = {(r[0], r[1]): int(r[2]) for r in rows if r[0] is not None and r[1] is not None}
-            return sum(int(r[2]) for r in rows), per_user
+            summary = UsageSummary()
+            for provider, gid, uid, count, cost in rows:
+                count = int(count or 0)
+                summary.per_provider[provider] = summary.per_provider.get(provider, 0) + count
+                summary.cost_per_provider[provider] = summary.cost_per_provider.get(provider, 0.0) + float(cost or 0)
+                if gid is not None and uid is not None:
+                    summary.per_user[(gid, uid)] = summary.per_user.get((gid, uid), 0) + count
+            return summary
         return await self._run(op)
 
     # ------------------------------------------------------------------

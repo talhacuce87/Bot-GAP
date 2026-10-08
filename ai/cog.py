@@ -27,9 +27,11 @@ from ai.config import AIConfig
 from ai.context import ChatLine
 from ai.guard import authorized_source_channels, jump_url, redact_sensitive, render_mentions
 from ai.memory import MemoryError_, MemoryService
+from ai.google import GoogleAIClient
 from ai.openrouter import OpenRouterClient
 from ai.orchestrator import AIRequest, AIResponse, Orchestrator
 from ai.persona import PersonaStore
+from ai.providers import ProviderChain
 from ai.retrieval import TR_TZ, Retriever
 from ai.stats import StatsService
 from ai.storage import AIStorage
@@ -69,7 +71,9 @@ class AICog(commands.Cog, name="AICog"):
         self.storage: AIStorage | None = None
         self.storage_error: str | None = None
         self.client = OpenRouterClient(cfg)
+        self.google_client: GoogleAIClient | None = GoogleAIClient(cfg) if cfg.has_google_key else None
         self.budget = RequestBudget(cfg, None)
+        self.provider: ProviderChain | None = None
         self.persona = PersonaStore(cfg.persona_dir)
         self.memory: MemoryService | None = None
         self.orchestrator: Orchestrator | None = None
@@ -116,9 +120,12 @@ class AICog(commands.Cog, name="AICog"):
             )
             memory = MemoryService(self.storage, candidate_retention_days=self.cfg.candidate_retention_days)
         self.memory = memory
+        by_name = {"openrouter": self.client, "google": self.google_client}
+        clients = [by_name[p] for p in self.cfg.providers if by_name.get(p) is not None]
+        self.provider = ProviderChain(clients or [self.client], self.budget)
         self.orchestrator = Orchestrator(
             self.cfg,
-            client=self.client,
+            client=self.provider,
             budget=self.budget,
             persona=self.persona,
             storage=self.storage,
@@ -128,21 +135,29 @@ class AICog(commands.Cog, name="AICog"):
             name_for=self._display_name,
             channel_name_for=self._channel_name,
         )
-        if not self.cfg.has_api_key:
-            log.warning("AI_ENABLED=true fakat OPENROUTER_API_KEY boş — AI yanıtları devre dışı")
+        if not self.cfg.providers:
+            log.warning("AI_ENABLED=true fakat ne GOOGLE_AI_API_KEY ne OPENROUTER_API_KEY var — AI yanıtları devre dışı")
+        if self.google_client is not None:
+            log.warning(
+                "Google AI etkin (ÜCRETLİ olabilir): model=%s günlük sınır=%d istek / ~$%.2f",
+                self.cfg.google_model, self.cfg.google_daily_request_budget, self.cfg.google_daily_cost_limit_usd,
+            )
         self.maintenance_loop.start()
         log.info(
-            "AI modülü yüklendi: model=%s yedek=%s mod=%s hafıza=%s günlük bütçe=%d",
-            self.cfg.model, self.cfg.fallback_model or "-", self.cfg.response_mode,
-            self.cfg.memory_enabled and self.storage is not None, self.cfg.daily_request_budget,
+            "AI modülü yüklendi: sağlayıcılar=%s openrouter=%s%s mod=%s hafıza=%s bütçe=[%s]",
+            " → ".join(c.label for c in self.provider.clients), self.cfg.model,
+            f" (yedek: {self.cfg.fallback_model})" if self.cfg.fallback_model else "", self.cfg.response_mode,
+            self.cfg.memory_enabled and self.storage is not None, self.budget.describe(),
         )
 
     async def cog_unload(self) -> None:
         self.maintenance_loop.cancel()
-        try:
-            await self.client.aclose()
-        except Exception:
-            log.exception("OpenRouter istemcisi kapatılamadı")
+        clients = self.provider.clients if self.provider else [self.client, self.google_client]
+        for c in {id(c): c for c in [*clients, self.client, self.google_client] if c is not None}.values():
+            try:
+                await c.aclose()
+            except Exception:
+                log.exception("%s istemcisi kapatılamadı", c.label)
         if self.storage is not None:
             try:
                 await self.storage.close()
@@ -243,10 +258,24 @@ class AICog(commands.Cog, name="AICog"):
     def unavailable_reason(self, guild_id: int | None = None) -> str | None:
         if guild_id is not None and not self.guild_enabled(guild_id):
             return "Bu sunucuda AI özellikleri yönetici tarafından kapatıldı."
-        reason = self.client.circuit_reason()
-        if reason and not self.cfg.has_api_key:
+        if not self.cfg.providers:
             return "AI yapılandırılmamış (API anahtarı yok). Yöneticiye haber ver."
         return None
+
+    def _provider_lines(self) -> list[str]:
+        """Sağlayıcı başına model, günlük kullanım/sınır ve (ücretliyse) tahmini harcama."""
+        if self.provider is None:
+            return []
+        lines = []
+        for i, c in enumerate(self.provider.clients, 1):
+            name = c.provider_name
+            models = " → ".join(f"`{m}`" for m in c.model_chain())
+            usage = f"{self.budget.provider_used(name)}/{self.budget.request_limit(name)} istek"
+            if (limit := self.budget.cost_limit(name)) is not None:
+                usage += f", ~${self.budget.provider_cost(name):.3f}/${limit:.2f}"
+            state = c.circuit_reason()
+            lines.append(f"**{i}. {c.label}:** {models} • bugün {usage} (UTC)" + (f" ⚠️ {state}" if state else ""))
+        return lines
 
     def _mark_processed(self, message_id: int) -> bool:
         """Mesaj daha önce işlendiyse False (çift event koruması)."""
@@ -728,8 +757,8 @@ class AICog(commands.Cog, name="AICog"):
             "• E-posta, telefon, kart, şifre gibi bilgiler kaydedilmeden önce maskelenir.\n"
             "• Silinen/düzenlenen mesajlar hafızada da silinir/güncellenir.\n"
             "• `!unut <id>` • `!unuttur` (her şeyini sil) • `!aigizlilik kapat` (kaydetme)\n"
-            "• Cevap üretmek için sorun ve yalnızca ilgili kısa bağlam OpenRouter üzerinden bir yapay zekâ "
-            "modeline gönderilir; ücretsiz modellerin sağlayıcıları veriyi işleyebilir."
+            "• Cevap üretmek için sorun ve yalnızca ilgili kısa bağlam bir yapay zekâ sağlayıcısına "
+            "(Google AI Studio ve/veya OpenRouter) gönderilir; sağlayıcılar veriyi kendi koşullarına göre işleyebilir."
         ), inline=False)
         embed.add_field(name="⚠️ Sınırlar", value=(
             "• Geçmiş araması kelime eşleşmesiyle çalışır; farklı ifade edilmiş konuşmaları kaçırabilir.\n"
@@ -742,7 +771,7 @@ class AICog(commands.Cog, name="AICog"):
     async def aidurum_command(self, ctx: commands.Context) -> None:
         """AI durumu, model ve günlük bütçe."""
         guild_id = ctx.guild.id if ctx.guild else None
-        circuit = self.client.circuit_reason()
+        circuit = self.provider.circuit_reason() if self.provider else "başlatılmadı"
         if guild_id is not None and not self.guild_enabled(guild_id):
             state = "⛔ Bu sunucuda kapalı"
         elif circuit:
@@ -751,13 +780,12 @@ class AICog(commands.Cog, name="AICog"):
             state = "✅ Aktif"
         lines = [
             f"**Durum:** {state}",
-            f"**Model:** `{self.cfg.model}`" + (f" (yedek: `{self.cfg.fallback_model}`)" if self.cfg.fallback_model else ""),
-            f"**Bugünkü yerel bütçe:** {self.budget.used_today}/{self.cfg.daily_request_budget} istek (UTC gün)",
         ]
+        lines += self._provider_lines()
         if guild_id is not None:
             lines.append(f"**Senin bugünkü kullanımın:** {self.budget.user_used_today(guild_id, ctx.author.id)}"
                          f"/{self.cfg.user_daily_request_limit}")
-        key = await self.client.key_status() if self.cfg.has_api_key else None
+        key = await self.provider.key_status() if self.provider else None
         free = (key or {}).get("free_model_daily_requests")
         if isinstance(free, dict) and free.get("limit") is not None:
             lines.append(f"**OpenRouter ücretsiz günlük kota:** {free.get('used', '?')}/{free.get('limit')}")
@@ -786,11 +814,11 @@ class AICog(commands.Cog, name="AICog"):
             f"Kanal cooldown: **{self.channel_cooldown(gid)} sn** • Kullanıcı cooldown: {self.cfg.user_cooldown_seconds} sn",
             f"Mesaj saklama: **{self.retention_days(gid)} gün**",
             f"İndekslenen kanallar: {' '.join(f'<#{c}>' for c in channels) or '_yok_'}",
-            f"Bütçe: {self.budget.used_today}/{self.cfg.daily_request_budget} • Kuyruk: {self.budget.queue_depth}",
-            f"Sağlayıcı: {self.client.circuit_reason() or 'normal'} • Son hata: {self.client.last_error or '-'}"
-            f" • Son model: `{self.client.last_model_used or '-'}`",
+            *self._provider_lines(),
+            f"Kuyruk: {self.budget.queue_depth} • Son hata: {getattr(self.provider, 'last_error', None) or '-'}"
+            f" • Son model: `{getattr(self.provider, 'last_model_used', None) or '-'}`",
         ]
-        cooling = self.client.cooling_models()
+        cooling = self.provider.cooling_models() if self.provider else {}
         if cooling:
             lines.append("Soğumadaki modeller: " + ", ".join(f"`{m}` ({sec} sn)" for m, sec in cooling.items()))
         if stats:

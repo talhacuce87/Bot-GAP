@@ -15,14 +15,14 @@ import re
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field, replace
-from typing import Callable
+from typing import Any, Callable
 
 from ai.budget import BudgetError, RequestBudget
 from ai.config import AIConfig
 from ai.context import BuiltContext, ChatLine, ContextBuilder, ContextInput
 from ai.guard import clean_model_output, clean_user_input, jump_url, render_mentions
 from ai.memory import MemoryService
-from ai.openrouter import ContextLengthError, OpenRouterClient, ProviderError
+from ai.openrouter import ContextLengthError, ProviderError
 from ai.persona import PersonaStore
 from ai.retrieval import RetrievalResult, Retriever
 from ai.stats import StatsService
@@ -135,7 +135,7 @@ class Orchestrator:
         self,
         cfg: AIConfig,
         *,
-        client: OpenRouterClient,
+        client: Any,  # ProviderChain veya tek bir OpenRouterClient
         budget: RequestBudget,
         persona: PersonaStore,
         storage: AIStorage | None = None,
@@ -274,8 +274,10 @@ class Orchestrator:
         if built.dropped:
             log.info("Bağlam bütçesi nedeniyle düşenler: %s (~%d token)", built.dropped, built.approx_tokens)
 
-        async def on_attempt(model, error_code, tin, tout):
-            await self.budget.record_attempt(req.guild_id, req.user_id, model, error_code, tin, tout)
+        async def on_attempt(model, error_code, tin, tout, *, provider="openrouter", cost=None):
+            await self.budget.record_attempt(
+                req.guild_id, req.user_id, model, error_code, tin, tout, provider=provider, cost_usd=cost
+            )
 
         try:
             try:

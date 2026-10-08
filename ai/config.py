@@ -93,6 +93,21 @@ class AIConfig:
     memory_context_limit: int = 8
 
     slash_sync: bool = False
+
+    # Google AI Studio (Gemini API) — isteğe bağlı, ÜCRETLİ olabilir. Anahtar verilmesi
+    # bilinçli bir tercih sayılır; harcama günlük istek ve USD sınırlarıyla kesilir.
+    google_api_key: str = field(default="", repr=False)
+    google_model: str = "gemini-3.8-flash"
+    google_fallback_models: str = ""
+    google_api_base: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    google_daily_request_budget: int = 1000
+    google_daily_cost_limit_usd: float = 5.0
+    google_price_input_per_m: float = 0.75
+    google_price_output_per_m: float = 3.75
+    google_max_output_tokens: int = 800
+    google_reasoning_effort: str = "auto"
+    provider_order: str = "google,openrouter"
+
     db_path: Path = PROJECT_ROOT / "data" / "ai_memory.db"
     backup_dir: Path = PROJECT_ROOT / "data" / "backups"
     backup_keep: int = 7
@@ -101,6 +116,18 @@ class AIConfig:
     @property
     def has_api_key(self) -> bool:
         return bool(self.api_key)
+
+    @property
+    def has_google_key(self) -> bool:
+        return bool(self.google_api_key)
+
+    @property
+    def providers(self) -> list[str]:
+        """Kullanılacak sağlayıcılar, öncelik sırasıyla (anahtarı olmayanlar dahil değil)."""
+        available = {"openrouter": self.has_api_key, "google": self.has_google_key}
+        order = [p.strip().lower() for p in self.provider_order.split(",") if p.strip()]
+        order += [p for p in ("google", "openrouter") if p not in order]
+        return [p for p in dict.fromkeys(order) if available.get(p)]
 
 
 def load_config() -> AIConfig:
@@ -142,6 +169,17 @@ def load_config() -> AIConfig:
         neighbor_messages=_int("AI_NEIGHBOR_MESSAGES", 2, 0, 10),
         memory_context_limit=_int("AI_MEMORY_CONTEXT_LIMIT", 8, 0, 50),
         slash_sync=_bool("AI_SLASH_SYNC", False),
+        google_api_key=(os.getenv("GOOGLE_AI_API_KEY") or "").strip(),
+        google_model=_str("GOOGLE_AI_MODEL", "gemini-3.8-flash"),
+        google_fallback_models=(os.getenv("GOOGLE_AI_FALLBACK_MODEL") or "").strip(),
+        google_api_base=_str("GOOGLE_AI_API_BASE", "https://generativelanguage.googleapis.com/v1beta/openai").rstrip("/"),
+        google_daily_request_budget=_int("GOOGLE_AI_DAILY_REQUEST_BUDGET", 1000, 0, 1_000_000),
+        google_daily_cost_limit_usd=_float("GOOGLE_AI_DAILY_COST_LIMIT_USD", 5.0, 0.0, 10_000.0),
+        google_price_input_per_m=_float("GOOGLE_AI_PRICE_INPUT_PER_M", 0.75, 0.0, 1000.0),
+        google_price_output_per_m=_float("GOOGLE_AI_PRICE_OUTPUT_PER_M", 3.75, 0.0, 1000.0),
+        google_max_output_tokens=_int("GOOGLE_AI_MAX_OUTPUT_TOKENS", 800, 32, 8000),
+        google_reasoning_effort=(os.getenv("GOOGLE_AI_REASONING_EFFORT", "auto") or "").strip().lower(),
+        provider_order=_str("AI_PROVIDER_ORDER", "google,openrouter"),
         **_paths(),
     )
 

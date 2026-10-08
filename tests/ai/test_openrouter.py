@@ -84,7 +84,7 @@ async def test_success_and_payload():
     client, _ = make_client(server)
     attempts = []
 
-    async def hook(model, err, tin, tout):
+    async def hook(model, err, tin, tout, cost=None):
         attempts.append((model, err, tin, tout))
 
     res = await client.chat(MSGS, on_attempt=hook)

@@ -134,4 +134,12 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_ai_usage_ts ON ai_usage (ts);
         """,
     ),
+    (
+        2,
+        "usage_cost",
+        """
+        ALTER TABLE ai_usage ADD COLUMN approximate_cost_usd REAL;
+        CREATE INDEX IF NOT EXISTS idx_ai_usage_day_provider ON ai_usage (day, provider);
+        """,
+    ),
 ]

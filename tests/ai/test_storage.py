@@ -16,23 +16,51 @@ async def fts_ids(st: AIStorage, query: str) -> set[int]:
 
 
 async def test_schema_created_and_migrations_idempotent(tmp_path):
+    from ai.migrations import MIGRATIONS
+    latest = MIGRATIONS[-1][0]
     path = tmp_path / "ai.db"
     st = AIStorage(path)
     await st.open()
-    assert await st.schema_version() == 1
-    await st.close()
+    try:
+        assert await st.schema_version() == latest
+    finally:
+        await st.close()
     # Yeniden açmak migration'ı tekrar uygulamamalı ve hata vermemeli.
     st2 = AIStorage(path)
     await st2.open()
-    assert await st2.schema_version() == 1
-    async with st2._c().execute("SELECT COUNT(*) FROM ai_schema_migrations") as cur:
-        assert (await cur.fetchone())[0] == 1
-    await st2.close()
+    try:
+        assert await st2.schema_version() == latest
+        async with st2._c().execute("SELECT COUNT(*) FROM ai_schema_migrations") as cur:
+            assert (await cur.fetchone())[0] == len(MIGRATIONS)
+    finally:
+        await st2.close()
     with sqlite3.connect(path) as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        usage_cols = {r[1] for r in conn.execute("PRAGMA table_info(ai_usage)")}
     assert {"ai_messages", "ai_messages_fts", "ai_memories", "ai_memory_sources", "ai_settings",
             "ai_usage", "ai_schema_migrations", "ai_user_privacy"} <= tables
+    assert "approximate_cost_usd" in usage_cols
+
+
+async def test_migration_upgrade_from_v1_and_partial_rerun(tmp_path):
+    """v1 şemalı mevcut bir veritabanı v2'ye yükseltilir; sütun zaten varsa da hata vermez."""
+    from ai.migrations import MIGRATIONS
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(MIGRATIONS[0][2])
+        conn.execute("CREATE TABLE ai_schema_migrations (version INTEGER PRIMARY KEY, name TEXT, applied_at REAL)")
+        conn.execute("INSERT INTO ai_schema_migrations VALUES (1, 'initial', 0)")
+        conn.execute("INSERT INTO ai_usage (ts, day, provider) VALUES (1, '2026-01-01', 'openrouter')")
+        conn.execute("ALTER TABLE ai_usage ADD COLUMN approximate_cost_usd REAL")  # yarıda kalmış v2
+    st = AIStorage(path)
+    await st.open()
+    try:
+        assert await st.schema_version() == MIGRATIONS[-1][0]
+        summary = await st.usage_counts("2026-01-01")
+        assert summary.per_provider == {"openrouter": 1}
+    finally:
+        await st.close()
 
 
 async def test_insert_and_duplicate(storage):
@@ -171,10 +199,15 @@ async def test_usage_counts(storage):
                                input_tokens=10, output_tokens=5, error_code=None)
     await storage.record_usage(provider="openrouter", model="m", guild_id=1, user_id=5,
                                input_tokens=None, output_tokens=None, error_code="rate_limited")
+    await storage.record_usage(provider="google", model="g", guild_id=1, user_id=5,
+                               input_tokens=1000, output_tokens=100, error_code=None, cost_usd=0.0012)
     await storage.record_usage(provider="openrouter", model="m", guild_id=1, user_id=6,
                                input_tokens=None, output_tokens=None, error_code=None, ts=time.time() - 3 * 86400)
-    total, per_user = await storage.usage_counts(utc_day())
-    assert total == 2 and per_user == {(1, 5): 2}
+    summary = await storage.usage_counts(utc_day())
+    assert summary.total == 3
+    assert summary.per_provider == {"openrouter": 2, "google": 1}
+    assert summary.cost_per_provider["google"] == pytest.approx(0.0012)
+    assert summary.per_user == {(1, 5): 3}
 
 
 async def test_backup_uses_online_api(storage, tmp_path):

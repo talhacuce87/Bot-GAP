@@ -170,8 +170,8 @@ class ChatResult:
     cost: float | None = None
 
 
-AttemptHook = Callable[[str, str | None, int | None, int | None], Awaitable[None]]
-"""(model, error_code | None, input_tokens, output_tokens) — her HTTP denemesinden sonra."""
+AttemptHook = Callable[..., Awaitable[None]]
+"""(model, error_code | None, input_tokens, output_tokens, *, cost=None) — her HTTP denemesinden sonra."""
 
 AttemptGate = Callable[[], Awaitable[bool]]
 """İlk deneme dışındaki her denemeden önce çağrılır; False → yeniden deneme yapılmaz."""
@@ -251,6 +251,13 @@ def _is_context_length(message: str) -> bool:
 # ---------------------------------------------------------------------------
 
 class OpenRouterClient:
+    """OpenAI uyumlu chat istemcisi; varsayılan davranış OpenRouter'a göredir.
+    Diğer sağlayıcılar (ai/google.py) kanca metotlarını geçersiz kılar."""
+
+    provider_name = "openrouter"
+    label = "OpenRouter"
+    key_env = "OPENROUTER_API_KEY"
+
     def __init__(
         self,
         cfg: AIConfig,
@@ -265,14 +272,11 @@ class OpenRouterClient:
         self._rng = rng
         self._clock = clock
         self._client = httpx.AsyncClient(
-            base_url=cfg.api_base,
+            base_url=self._base_url(),
             timeout=httpx.Timeout(cfg.request_timeout_seconds, connect=10.0),
             limits=httpx.Limits(max_connections=4, max_keepalive_connections=2),
             transport=transport,
-            headers={
-                "HTTP-Referer": cfg.app_url,
-                "X-Title": cfg.app_title,
-            },
+            headers=self._default_headers(),
         )
         self._models: dict[str, ModelInfo] = {}
         self._models_fetched_at = 0.0
@@ -290,16 +294,43 @@ class OpenRouterClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    # --- Sağlayıcıya özgü kancalar -------------------------------------
+
+    def _api_key(self) -> str:
+        return self.cfg.api_key
+
+    def _base_url(self) -> str:
+        return self.cfg.api_base
+
+    def _default_headers(self) -> dict[str, str]:
+        return {"HTTP-Referer": self.cfg.app_url, "X-Title": self.cfg.app_title}
+
+    def _default_max_tokens(self) -> int:
+        return self.cfg.max_output_tokens
+
+    def _compute_cost(self, model: str, usage: dict[str, Any]) -> float | None:
+        """Sağlayıcının raporladığı ücret (OpenRouter usage.cost)."""
+        cost = usage.get("cost")
+        try:
+            return float(cost) if cost is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _on_cost(self, cost: float | None, model: str) -> None:
+        if cost and cost > 0 and not self.cfg.allow_paid_models:
+            self._paid_detected = True
+            log.error("OpenRouter ücret raporladı (%.6f) model=%s — sağlayıcı kapatıldı", cost, model)
+
     def _auth_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.cfg.api_key}"}
+        return {"Authorization": f"Bearer {self._api_key()}"}
 
     # ------------------------------------------------------------------
     # Durum
     # ------------------------------------------------------------------
 
     def circuit_reason(self) -> str | None:
-        if not self.cfg.has_api_key:
-            return "OPENROUTER_API_KEY tanımlı değil"
+        if not self._api_key():
+            return f"{self.key_env} tanımlı değil"
         if self._paid_detected:
             return "ücretli kullanım tespit edildi; sağlayıcı yeniden başlatmaya kadar kapalı"
         if self._clock() < self._auth_blocked_until:
@@ -364,7 +395,7 @@ class OpenRouterClient:
 
     async def key_status(self) -> dict[str, Any] | None:
         """GET /key: free_model_daily_requests vb. Önbellekli; hata durumunda None."""
-        if not self.cfg.has_api_key:
+        if not self._api_key():
             return None
         if self._key_status is not None and self._clock() - self._key_status_at < KEY_STATUS_TTL_SECONDS:
             return self._key_status
@@ -402,7 +433,7 @@ class OpenRouterClient:
             err = CircuitOpenError(reason)
             if time.time() < self._quota_blocked_until:
                 err.user_message = QuotaExhaustedError.user_message
-            elif not self.cfg.has_api_key or self._clock() < self._auth_blocked_until:
+            elif not self._api_key() or self._clock() < self._auth_blocked_until:
                 err.user_message = AuthError.user_message
             raise err
 
@@ -425,11 +456,11 @@ class OpenRouterClient:
             if index > 0:
                 if attempt_gate is not None and not await attempt_gate():
                     break
-                log.warning("Yedek modele geçiliyor: %s → %s (%s)", models[index - 1], model,
+                log.warning("%s yedek modele geçiliyor: %s → %s (%s)", self.label, models[index - 1], model,
                             last_error.code if last_error else "?")
             try:
                 result = await self._chat_with_retries(
-                    model, messages, max_tokens or self.cfg.max_output_tokens,
+                    model, messages, max_tokens or self._default_max_tokens(),
                     deadline, on_attempt, attempt_gate,
                 )
                 self.last_error = None
@@ -499,11 +530,11 @@ class OpenRouterClient:
                 if wait > self.cfg.max_retry_wait_seconds or self._clock() + wait >= deadline - 1:
                     log.info("Yeniden deneme atlandı: bekleme %.1fsn sınırı aşıyor", wait)
                     raise
-                log.info("OpenRouter %s (deneme %d), %.1fsn sonra tekrar", err.code, attempt, wait)
+                log.info("%s %s (deneme %d), %.1fsn sonra tekrar", self.label, err.code, attempt, wait)
                 await self._sleep(wait)
                 continue
             if on_attempt is not None:
-                await on_attempt(result.model, None, result.input_tokens, result.output_tokens)
+                await on_attempt(result.model, None, result.input_tokens, result.output_tokens, cost=result.cost)
             return ChatResult(
                 text=result.text, model=result.model, requested_model=model,
                 input_tokens=result.input_tokens, output_tokens=result.output_tokens,
@@ -563,6 +594,8 @@ class OpenRouterClient:
         except ValueError:
             body = None
 
+        if isinstance(body, list) and len(body) == 1 and isinstance(body[0], dict):
+            body = body[0]  # Google bazı hataları tek elemanlı liste olarak döndürür
         error_obj = body.get("error") if isinstance(body, dict) else None
         if status >= 400 or error_obj:
             self._raise_for_error(resp, status, error_obj)
@@ -581,20 +614,14 @@ class OpenRouterClient:
         finish_reason = choice.get("finish_reason")
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
         used_model = str(body.get("model") or model)
-        cost = usage.get("cost")
-        try:
-            cost = float(cost) if cost is not None else None
-        except (TypeError, ValueError):
-            cost = None
+        cost = self._compute_cost(used_model, usage)
 
         log.info(
-            "OpenRouter OK model=%s status=%s %.1fsn in=%s out=%s finish=%s",
-            used_model, status, elapsed, usage.get("prompt_tokens"), usage.get("completion_tokens"), finish_reason,
+            "%s OK model=%s status=%s %.1fsn in=%s out=%s finish=%s%s",
+            self.label, used_model, status, elapsed, usage.get("prompt_tokens"), usage.get("completion_tokens"),
+            finish_reason, f" ~${cost:.5f}" if cost else "",
         )
-
-        if cost and cost > 0 and not self.cfg.allow_paid_models:
-            self._paid_detected = True
-            log.error("OpenRouter ücret raporladı (%.6f) model=%s — sağlayıcı kapatıldı", cost, used_model)
+        self._on_cost(cost, used_model)
 
         if not text:
             raise EmptyResponseError(f"boş içerik (finish={finish_reason})", status=status)
@@ -619,7 +646,7 @@ class OpenRouterClient:
             if isinstance(code, int) and status < 400:
                 status = code  # 200 gövdesinde gelen hata
         detail = f"HTTP {status}: {message[:200]}"
-        log.warning("OpenRouter hata %s", detail)
+        log.warning("%s hata %s", self.label, detail)
 
         if status in (401, 403):
             self._auth_blocked_until = self._clock() + AUTH_CIRCUIT_SECONDS

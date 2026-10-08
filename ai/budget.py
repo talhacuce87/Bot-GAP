@@ -1,9 +1,11 @@
 """
 ai/budget.py — Sağlayıcıdan bağımsız yerel istek bütçesi ve hız sınırı.
 
-- Günlük toplam bütçe (UTC gün sınırı; ai_usage tablosundan yüklenir, yeniden
-  başlatma sayaçları sıfırlamaz). Her HTTP denemesi — başarısız olanlar dahil —
-  bütçeden düşer, çünkü sağlayıcı da onları sayabilir.
+- Sağlayıcı başına günlük bütçe (UTC gün sınırı; ai_usage tablosundan yüklenir,
+  yeniden başlatma sayaçları sıfırlamaz). Her HTTP denemesi — başarısız olanlar
+  dahil — bütçeden düşer, çünkü sağlayıcı da onları sayabilir. Ücretli
+  sağlayıcıda (Google) ayrıca günlük tahmini USD sınırı vardır.
+  Bir sağlayıcının bütçesi dolarsa diğeri kullanılmaya devam eder.
 - Kullanıcı başına günlük sınır: tek kullanıcı tüm ücretsiz kotayı tüketemez.
 - Kullanıcı ve kanal cooldown'ları.
 - Eşzamanlılık semaforu + sınırlı bekleme kuyruğu: kuyruk doluysa istek
@@ -49,8 +51,11 @@ class RequestBudget:
         self._in_flight: set[tuple[int, int]] = set()
         self._pending = 0
         self._day = utc_day(clock())
-        self._day_total = 0
+        self._day_provider: dict[str, int] = {}
+        self._day_cost: dict[str, float] = {}
         self._day_user: dict[tuple[int, int], int] = {}
+        # Anahtarı olmayan kurulumda da kontroller çalışsın diye en az bir sağlayıcı.
+        self.providers: list[str] = cfg.providers or ["openrouter"]
         self._user_last: dict[tuple[int, int], float] = {}
         self._channel_last: dict[tuple[int, int], float] = {}
 
@@ -58,15 +63,41 @@ class RequestBudget:
         if self.storage is None:
             return
         self._day = utc_day(self._clock())
-        self._day_total, self._day_user = await self.storage.usage_counts(self._day)
-        log.info("AI bütçesi yüklendi: bugün %d/%d istek", self._day_total, self.cfg.daily_request_budget)
+        summary = await self.storage.usage_counts(self._day)
+        self._day_provider = dict(summary.per_provider)
+        self._day_cost = dict(summary.cost_per_provider)
+        self._day_user = dict(summary.per_user)
+        log.info("AI bütçesi yüklendi: %s", self.describe())
 
     def _roll_day(self) -> None:
         today = utc_day(self._clock())
         if today != self._day:
             self._day = today
-            self._day_total = 0
+            self._day_provider.clear()
+            self._day_cost.clear()
             self._day_user.clear()
+
+    def request_limit(self, provider: str) -> int:
+        return self.cfg.google_daily_request_budget if provider == "google" else self.cfg.daily_request_budget
+
+    def cost_limit(self, provider: str) -> float | None:
+        return self.cfg.google_daily_cost_limit_usd if provider == "google" else None
+
+    def provider_has_room(self, provider: str, reserve: int = 0) -> bool:
+        self._roll_day()
+        if self._day_provider.get(provider, 0) + reserve >= self.request_limit(provider):
+            return False
+        limit = self.cost_limit(provider)
+        return limit is None or self._day_cost.get(provider, 0.0) < limit
+
+    def describe(self) -> str:
+        parts = []
+        for p in self.providers:
+            text = f"{p} {self.provider_used(p)}/{self.request_limit(p)}"
+            if (limit := self.cost_limit(p)) is not None:
+                text += f" (~${self.provider_cost(p):.3f}/${limit:.2f})"
+            parts.append(text)
+        return ", ".join(parts)
 
     # ------------------------------------------------------------------
     # Durum
@@ -75,11 +106,15 @@ class RequestBudget:
     @property
     def used_today(self) -> int:
         self._roll_day()
-        return self._day_total
+        return sum(self._day_provider.values())
 
-    @property
-    def remaining_today(self) -> int:
-        return max(0, self.cfg.daily_request_budget - self.used_today)
+    def provider_used(self, provider: str) -> int:
+        self._roll_day()
+        return self._day_provider.get(provider, 0)
+
+    def provider_cost(self, provider: str) -> float:
+        self._roll_day()
+        return self._day_cost.get(provider, 0.0)
 
     def user_used_today(self, guild_id: int, user_id: int) -> int:
         self._roll_day()
@@ -97,7 +132,7 @@ class RequestBudget:
         """Kotaları kontrol eder; aşılmışsa BudgetError fırlatır. Hiçbir şey tüketmez."""
         self._roll_day()
         now = self._clock()
-        if self._day_total + self._pending >= self.cfg.daily_request_budget:
+        if not any(self.provider_has_room(p, reserve=self._pending) for p in self.providers):
             raise BudgetError("daily_budget", "Bugünlük yapay zekâ istek bütçesi doldu, yarın (UTC 00:00 sonrası) tekrar dene. 🙏")
         if self._day_user.get((guild_id, user_id), 0) >= self.cfg.user_daily_request_limit:
             raise BudgetError("user_daily", "Bugünlük kişisel yapay zekâ sınırına ulaştın; herkese sıra gelsin diye böyle. Yarın görüşürüz!")
@@ -149,10 +184,11 @@ class RequestBudget:
             self._pending -= 1
             self._in_flight.discard(key)
 
-    async def attempt_gate(self) -> bool:
-        """Yeniden deneme / yedek model öncesi: bütçede yer var mı?"""
-        self._roll_day()
-        return self._day_total < self.cfg.daily_request_budget
+    async def attempt_gate(self, provider: str | None = None) -> bool:
+        """Yeniden deneme / yedek model öncesi: (verilen ya da herhangi bir) sağlayıcıda yer var mı?"""
+        if provider is not None:
+            return self.provider_has_room(provider)
+        return any(self.provider_has_room(p) for p in self.providers)
 
     async def record_attempt(
         self,
@@ -163,9 +199,12 @@ class RequestBudget:
         input_tokens: int | None,
         output_tokens: int | None,
         provider: str = "openrouter",
+        cost_usd: float | None = None,
     ) -> None:
         self._roll_day()
-        self._day_total += 1
+        self._day_provider[provider] = self._day_provider.get(provider, 0) + 1
+        if cost_usd:
+            self._day_cost[provider] = self._day_cost.get(provider, 0.0) + cost_usd
         if guild_id is not None and user_id is not None:
             key = (guild_id, user_id)
             self._day_user[key] = self._day_user.get(key, 0) + 1
@@ -174,7 +213,7 @@ class RequestBudget:
                 await self.storage.record_usage(
                     provider=provider, model=model, guild_id=guild_id, user_id=user_id,
                     input_tokens=input_tokens, output_tokens=output_tokens, error_code=error_code,
-                    ts=self._clock(),
+                    cost_usd=cost_usd, ts=self._clock(),
                 )
             except Exception:
                 # Muhasebe hatası isteği düşürmesin; bellekteki sayaç yine de güncel.

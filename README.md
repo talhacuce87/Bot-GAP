@@ -176,7 +176,7 @@ docker exec <container> python analysis.py --guild <sunucu_id> --legacy   # kay�
 
 ## 🧠 Yapay Zekâ Sohbet & Hafıza (isteğe bağlı)
 
-Bot-GAP, OpenRouter'ın **ücretsiz** modelleriyle konuşabilen, onaylı kanallardaki sohbetleri
+Bot-GAP, Google AI Studio (Gemini, ücretli) ve/veya OpenRouter'ın **ücretsiz** modelleriyle konuşabilen, onaylı kanallardaki sohbetleri
 hatırlayabilen hafif bir AI eklentisi içerir. `AI_ENABLED=false` (varsayılan) iken hiçbir AI kodu
 yüklenmez; bot eskisi gibi çalışır.
 
@@ -194,6 +194,7 @@ yüklenmez; bot eskisi gibi çalışır.
 | XP / liderlik / streak / Best Friend sorularını gerçek veritabanından cevaplama | ✅ |
 | Günlük/kişisel bütçe, cooldown, eşzamanlılık + sınırlı kuyruk | ✅ |
 | Slash komutları (hybrid) | ✅ kod hazır, `AI_SLASH_SYNC=true` ile kaydedilir |
+| Google AI Studio (Gemini API) sağlayıcısı, sağlayıcı zinciri, günlük istek + USD sınırı | ✅ |
 | Embedding/semantik arama, LLM ile hafıza özetleme, sunucu başına model seçimi | ⏳ planlanan |
 | Sesli kanal / görsel girdi | ❌ kapsam dışı |
 
@@ -211,7 +212,10 @@ flowchart LR
     CTX --> MEM[Onaylı hafıza]
     CTX --> RAG[Retriever · FTS5 BM25<br/>yetkili kanallar]
     CTX --> ST[StatsService<br/>XP DB salt-okunur]
-    ORC --> OR[OpenRouterClient<br/>yalnızca ücretsiz model]
+    ORC --> PC[ProviderChain<br/>google → openrouter]
+    PC --> GG[GoogleAIClient<br/>ücretli · istek+USD sınırı]
+    PC --> OR[OpenRouterClient<br/>yalnızca ücretsiz model]
+    GG --> GAPI[(Gemini API)]
     OR --> API[(OpenRouter API)]
     ING --> DB[(data/ai_memory.db)]
     RAG --> DB
@@ -219,7 +223,7 @@ flowchart LR
     ST --> XDB[(data/xp_system.db)]
 ```
 
-`ai/` paketi: `config` (env) · `storage` (SQLite) · `migrations` · `openrouter` (sağlayıcı) ·
+`ai/` paketi: `config` (env) · `storage` (SQLite) · `migrations` · `openrouter` / `google` (sağlayıcılar) · `providers` (zincir) ·
 `budget` (kota) · `guard` (güvenlik/gizlilik) · `retrieval` (FTS5) · `context` (prompt) ·
 `memory` (hafıza politikası) · `stats` (Bot-GAP verisi) · `persona` · `orchestrator` · `cog` (Discord).
 
@@ -256,11 +260,38 @@ fiyatı doğrular; fiyatı `0` olmayan (değişken fiyatlı `openrouter/auto` da
 **OpenRouter ücretsiz kotası** (2026-10 itibarıyla): dakikada 20 istek; günde 50 istek
 (hesaba toplam 10$+ kredi yüklenmişse 1000). `AI_DAILY_REQUEST_BUDGET` bunun altında tutulmalı.
 
+### Google AI Studio (ücretli, isteğe bağlı)
+
+`GOOGLE_AI_API_KEY` verildiğinde Google varsayılan olarak **birincil** sağlayıcı olur
+(`AI_PROVIDER_ORDER=google,openrouter`); hata, kota veya bütçe dolması durumunda OpenRouter'ın ücretsiz
+modellerine düşülür. Faturalandırması açık bir projenin anahtarıyla **her istek ücretlendirilir**.
+
+- Varsayılan model `gemini-3.8-flash` ($0.75 / $3.75 her 1M giriş/çıkış token; 1 Ocak 2027'den itibaren
+  $1.50 / $7.50). Tipik bir cevap ~$0.0015–0.0025. Gemini 3+ modellerinde düşünme kapatılamaz,
+  `minimal` seviyede çalışır ve düşünme tokenları çıktı olarak ücretlendirilir.
+- Daha ucuz alternatifler: `gemini-3.1-flash-lite` (~$0.0005/cevap), `gemini-2.5-flash-lite`
+  (~$0.0002/cevap, düşünme tamamen kapalı).
+- **Sert sınırlar** (UTC gün, yeniden başlatmada korunur): `GOOGLE_AI_DAILY_REQUEST_BUDGET` (varsayılan 1000)
+  ve `GOOGLE_AI_DAILY_COST_LIMIT_USD` (varsayılan $5). Biri dolunca Google o gün kullanılmaz.
+- Maliyet, yanıttaki token sayıları × `GOOGLE_AI_PRICE_*_PER_M` ile **tahmin** edilir (Google bu uç noktada
+  ücret raporlamaz). Model veya fiyat değişirse bu değerleri güncelle. Kesin fatura için Google Cloud
+  Console → Billing; ayrıca orada bir **bütçe uyarısı** kurman önerilir.
+- `!aidurum` / `!aiayar` sağlayıcı başına günlük istek sayısını ve tahmini harcamayı gösterir.
+- Google hataları: dakikalık 429 → `retryDelay` kadar bekleyip tekrar (30 sn'den uzunsa yedeğe geçer);
+  günlük kota 429 → model 15 dk soğumaya alınır; geçersiz anahtar → Google 30 dk devre dışı.
+
 ### Ortam değişkenleri
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
 | `AI_ENABLED` | `false` | Eklentiyi aç/kapat |
+| `GOOGLE_AI_API_KEY` | – | Google AI Studio anahtarı (loglanmaz; **ücretli olabilir**) |
+| `GOOGLE_AI_MODEL` / `GOOGLE_AI_FALLBACK_MODEL` | `gemini-3.8-flash` / – | Google modeli ve virgülle ayrılmış yedekleri |
+| `GOOGLE_AI_DAILY_REQUEST_BUDGET` / `GOOGLE_AI_DAILY_COST_LIMIT_USD` | `1000` / `5` | Google için sert günlük sınırlar |
+| `GOOGLE_AI_PRICE_INPUT_PER_M` / `GOOGLE_AI_PRICE_OUTPUT_PER_M` | `0.75` / `3.75` | Maliyet tahmini için birim fiyat (USD/1M token) |
+| `GOOGLE_AI_MAX_OUTPUT_TOKENS` | `800` | Google yanıt sınırı (düşünme dahil) |
+| `GOOGLE_AI_REASONING_EFFORT` | `auto` | `auto` / `none` / `minimal` / `low` … / `off` (gönderme) |
+| `AI_PROVIDER_ORDER` | `google,openrouter` | Sağlayıcı sırası |
 | `OPENROUTER_API_KEY` | – | OpenRouter anahtarı (loglanmaz) |
 | `OPENROUTER_MODEL` | `google/gemma-4-31b-it:free` | Birincil model |
 | `OPENROUTER_FALLBACK_MODEL` | – | Virgülle ayrılmış yedek modeller, sırayla (sadece ücretsizler) |
@@ -277,8 +308,8 @@ fiyatı doğrular; fiyatı `0` olmayan (değişken fiyatlı `openrouter/auto` da
 | `AI_INDEXING_DEFAULT` | `false` | `true` → tüm metin kanalları varsayılan indekslenir (önerilmez) |
 | `AI_MESSAGE_RETENTION_DAYS` | `30` | Mesaj saklama (sunucu bazında `!aiayar saklama`) |
 | `AI_CANDIDATE_RETENTION_DAYS` | `14` | Onaylanmamış aday hafıza ömrü |
-| `AI_DAILY_REQUEST_BUDGET` | `35` | Günlük toplam istek (UTC; her HTTP denemesi sayılır) |
-| `AI_USER_DAILY_REQUEST_LIMIT` | `10` | Kişi başı günlük istek |
+| `AI_DAILY_REQUEST_BUDGET` | `35` | OpenRouter günlük istek (UTC; her HTTP denemesi sayılır) |
+| `AI_USER_DAILY_REQUEST_LIMIT` | `10` | Kişi başı günlük istek (tüm sağlayıcılar toplamı) |
 | `AI_CHANNEL_COOLDOWN_SECONDS` / `AI_USER_COOLDOWN_SECONDS` | `15` / `30` | Cooldown'lar |
 | `AI_RECENT_CONTEXT_MESSAGES` | `25` | Kısa süreli bağlam penceresi |
 | `AI_SEARCH_RESULTS` / `AI_FINAL_PASSAGES` / `AI_NEIGHBOR_MESSAGES` | `10` / `5` / `2` | RAG sınırları |
@@ -312,8 +343,9 @@ kullanılamazsa bu veriler doğrudan gösterilir.
   kalır ve saklama süresinde temizlenir. Tek kaynağı silinen, onaylanmamış türetilmiş hafızalar iptal edilir.
 - Otomatik çıkarılan bilgiler ("en sevdiğim oyun X") yalnızca **aday** olur, kullanıcı
   `!onayla` demedikçe prompt'a girmez.
-- OpenRouter'a yalnızca ilgili istek için seçilmiş kısa bağlam gönderilir; kanal geçmişinin tamamı
-  gönderilmez. Ücretsiz model sağlayıcıları gönderilen veriyi işleyebilir/loglayabilir.
+- Sağlayıcıya (Google / OpenRouter) yalnızca ilgili istek için seçilmiş kısa bağlam gönderilir; kanal
+  geçmişinin tamamı gönderilmez. Sağlayıcılar gönderilen veriyi kendi koşullarına göre işleyebilir
+  (ücretsiz katmanlarda eğitim amaçlı kullanım dahil olabilir).
 - Saklama: varsayılan 30 gün (sunucu bazında değiştirilebilir); bakım 6 saatte bir çalışır.
 - Bilinen not: mevcut `AuditCog`, tüm komutların ilk 200 karakterini `activity_log`'a yazar;
   bu `!ai` sorularını da kapsar (mevcut davranış, değiştirilmedi; `EVENT_RETENTION_DAYS` ile sınırlı).

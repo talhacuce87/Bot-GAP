@@ -325,3 +325,35 @@ async def test_admin_subcommands_denied_for_regular_users_via_dispatch(env, cont
     await env.bot.invoke(actx)
     await asyncio.sleep(0.01)
     assert not errors
+
+
+async def test_google_primary_end_to_end_and_status(tmp_path):
+    from ai.google import GoogleAIClient
+
+    def gserver(request):
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "models/gemini-3.8-flash"}]})
+        return httpx.Response(200, json={"model": "gemini-3.8-flash", "choices": [{"message": {"content": "Google burada!"}}],
+                                         "usage": {"prompt_tokens": 1000, "completion_tokens": 100, "total_tokens": 1100}})
+
+    bot = await make_bot()
+    cfg = make_cfg(tmp_path, google_api_key="g-key", google_api_base="https://google.test/v1beta/openai")
+    cog = AICog(bot, cfg)
+    cog.client = OpenRouterClient(cfg, transport=httpx.MockTransport(Server()))
+    cog.google_client = GoogleAIClient(cfg, transport=httpx.MockTransport(gserver))
+    await bot.add_cog(cog)
+    try:
+        assert [c.provider_name for c in cog.provider.clients] == ["google", "openrouter"]
+        guild = FakeGuild()
+        ch = guild.add_channel()
+        user = make_member(guild)
+        msg = make_message(guild, ch, user, f"<@{BOT_ID}> selam", mentions=[BOT_MENTION])
+        await cog.on_message(msg)
+        assert msg.reply.call_args.args[0] == "Google burada!"
+        ctx = make_ctx(guild, ch, user)
+        await cog.aidurum_command.callback(cog, ctx)
+        status = ctx.send.call_args.args[0]
+        assert "Google AI" in status and "1/1000" in status and "~$0.001" in status
+        assert "OpenRouter" in status
+    finally:
+        await bot.remove_cog("AICog")
