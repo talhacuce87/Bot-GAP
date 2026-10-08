@@ -48,6 +48,9 @@ logs/
 
 # SQLite databases (persist data/ dir structure but not the DB itself)
 data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db.tmp
 data/**/*.db
 data/*.sqlite3
 data/backups/

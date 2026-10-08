@@ -111,6 +111,18 @@ class InfoCog(commands.Cog):
             inline=False,
         )
 
+        if self.bot.get_cog("AICog") is not None:
+            embed.add_field(
+                name="🧠 Yapay Zekâ Sohbet & Hafıza",
+                value=(
+                    "• `@Bot-GAP <mesaj>` veya `!ai <mesaj>` — Botla sohbet et\n"
+                    "• `!hatirla <konu>` — Kayıtlı sohbet geçmişinde ara\n"
+                    "• `!hafizam` / `!hafizaekle` / `!unut <id>` / `!unuttur` — Hafızanı yönet\n"
+                    "• `!aiyardim` — Yetenekler, sınırlar ve gizlilik • `!aidurum` — Durum ve kota"
+                ),
+                inline=False,
+            )
+
         is_admin = False
         if ctx.guild and getattr(getattr(ctx.author, "guild_permissions", None), "administrator", False):
             is_admin = True
@@ -139,6 +151,16 @@ class InfoCog(commands.Cog):
                 ),
                 inline=False,
             )
+            if self.bot.get_cog("AICog") is not None:
+                embed.add_field(
+                    name="🧠 AI Yönetimi (Admin)",
+                    value=(
+                        "• `!aiayar` — AI ayarları ve sistem durumu\n"
+                        "• `!aiayar kanal ekle|cikar [#kanal]` — Kanal hafızasını aç/kapat\n"
+                        "• `!aiayar ac|kapat`, `mod`, `cooldown`, `saklama`, `bakim`, `yedekle`"
+                    ),
+                    inline=False,
+                )
 
         embed.set_footer(
             text=f"Bot-GAP v{BOT_VERSION} • Son güncelleme detayları için: !yenilikler"

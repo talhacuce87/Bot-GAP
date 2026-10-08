@@ -8,6 +8,7 @@ Yüklenecek cog'lar:
   - LeaderboardCog (leaderboard.py)
   - InfoCog        (info.py)
   - AuditCog       (audit.py) — olay kaydı, hile tespiti, analiz komutları
+  - AICog          (ai/)      — isteğe bağlı hafızalı sohbet (AI_ENABLED=true ise)
 """
 
 from __future__ import annotations
@@ -119,6 +120,16 @@ class GapBot(commands.Bot):
         await self.add_cog(LeaderboardCog(self))
         await self.add_cog(InfoCog(self))
         await self.add_cog(AuditCog(self))
+        await self._load_ai()
+
+    async def _load_ai(self) -> None:
+        # İsteğe bağlı AI eklentisi; yüklenemezse bot onsuz devam eder.
+        try:
+            from ai import setup_ai
+
+            await setup_ai(self)
+        except Exception:
+            logging.getLogger("gap").exception("AI modülü yüklenemedi; bot AI olmadan devam ediyor")
 
     async def close(self) -> None:
         await activitylog.stop()
