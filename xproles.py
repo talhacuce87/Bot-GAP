@@ -179,8 +179,9 @@ class XPRoleManager:
                     "role_remove", member.guild.id, member.id,
                     roles=[r.name for r in to_remove], total_xp=total_xp,
                 )
-            except discord.Forbidden:
-                log.warning("Rol kaldırılamadı (yetki yok): %s → %s", member, [r.name for r in to_remove])
+            except discord.HTTPException as exc:
+                # Forbidden (yetki yok), NotFound (üye çıktı) vb. çağıranı (ses döngüsü) düşürmemeli
+                log.warning("Rol kaldırılamadı: %s → %s (%s)", member, [r.name for r in to_remove], exc)
 
         if target and target not in member.roles and target < bot_top:
             try:
@@ -189,5 +190,5 @@ class XPRoleManager:
                     "role_add", member.guild.id, member.id, role=target.name, total_xp=total_xp,
                 )
                 log.info("Rol verildi: %s (%s) → %s", member, member.id, target.name)
-            except discord.Forbidden:
-                log.warning("Rol verilemedi (yetki yok): %s → %s", member, target.name)
+            except discord.HTTPException as exc:
+                log.warning("Rol verilemedi: %s → %s (%s)", member, target.name, exc)

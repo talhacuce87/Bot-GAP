@@ -86,6 +86,9 @@ class SingleInstanceLock:
             return
         try:
             if os.name == "nt":
+                # msvcrt.locking dosyanın o anki konumundan itibaren çalışır;
+                # PID yazıldıktan sonra konum 0'da değil, kilitli byte'a dön.
+                self._handle.seek(0)
                 msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
@@ -138,9 +141,9 @@ class GapBot(commands.Bot):
 
 def main() -> None:
     activitylog.setup_logging()
+    _validate()
     lock = SingleInstanceLock(LOCK_PATH)
     lock.acquire()
-    _validate()
     bot = GapBot(
         command_prefix=PREFIX,
         intents=_intents(),

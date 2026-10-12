@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import discord
 from discord.ext import commands, tasks
@@ -20,9 +20,6 @@ from discord.ext import commands, tasks
 import activitylog
 import database as db
 from xproles import XPRoleManager
-
-if TYPE_CHECKING:
-    pass
 
 log = logging.getLogger("gap.xp")
 
@@ -36,6 +33,10 @@ MESSAGE_COOLDOWN_SECONDS = 20
 
 VOICE_XP_INTERVAL_MINUTES = 2
 VOICE_XP_PER_INTERVAL = 1
+
+# Açılışta önceki çalışmadan kalan ses oturumlarına en fazla bu kadar saniye
+# eklenir (son flush'tan sonra geçen süre; botun kapalı kaldığı süre sayılmaz).
+VOICE_RESTORE_MAX_SECONDS = VOICE_XP_INTERVAL_MINUTES * 60 + 60
 
 # Streak bonusu: her streak günü için +% bonus (max %50)
 STREAK_BONUS_PER_DAY = 0.02
@@ -53,7 +54,11 @@ STREAK_MILESTONES: dict[int, int] = {
 # Admin XP komutlarında zorunlu sebep açıklamasının en kısa uzunluğu
 ADMIN_REASON_MIN_LENGTH = 5
 
+BOOST_MIN, BOOST_MAX = 1.0, 10.0
+BOOST_MAX_HOURS = 720
+
 FEATURE_REQUESTS_PATH = Path(__file__).resolve().parent / "data" / "features.txt"
+FEATURE_MAX_LENGTH = 1000
 
 
 # ---------------------------------------------------------------------------
@@ -121,10 +126,13 @@ class XPTrackerCog(commands.Cog):
         timestamp = discord.utils.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         channel = getattr(message.channel, "name", str(message.channel.id))
         author = getattr(message.author, "display_name", str(message.author))
+        # Satır sonları tek satıra indirilir; aksi halde dosyaya sahte kayıt eklenebilir.
+        clean = " ".join(request.split())[:FEATURE_MAX_LENGTH]
+        author = " ".join(author.split())
         return (
             f"[{timestamp}] "
             f"guild={message.guild.id} channel=#{channel} "
-            f"user={author} ({message.author.id}) :: {request.strip()}\n"
+            f"user={author} ({message.author.id}) :: {clean}\n"
         )
 
     @staticmethod
@@ -250,19 +258,22 @@ class XPTrackerCog(commands.Cog):
         log.info("XP sistemi aktif: %s", self.bot.user)
 
     async def _restore_voice_sessions(self) -> None:
+        """
+        Önceki çalışmadan (ya da bağlantı kopmasından) kalan oturumları kapatır,
+        şu an seste olanlar için yeni oturum açar. Botun kapalı kaldığı süre eklenmez.
+        """
         for guild in self.bot.guilds:
             afk_id = guild.afk_channel.id if guild.afk_channel else None
-            for member in guild.members:
-                if member.bot:
-                    continue
-                if (
-                    member.voice
-                    and member.voice.channel
-                    and (afk_id is None or member.voice.channel.id != afk_id)
-                ):
-                    await db.start_voice_session(guild.id, member.id)
-                else:
-                    await db.end_voice_session(guild.id, member.id)
+            try:
+                await db.close_stale_voice_sessions(guild.id, VOICE_RESTORE_MAX_SECONDS)
+                for channel in guild.voice_channels:
+                    if afk_id is not None and channel.id == afk_id:
+                        continue
+                    for member in channel.members:
+                        if not member.bot:
+                            await db.start_voice_session(guild.id, member.id)
+            except Exception:
+                log.exception("Ses oturumları geri yüklenemedi (guild=%s)", guild.id)
 
     # ------------------------------------------------------------------
     # Event: üye katılımı
@@ -396,6 +407,12 @@ class XPTrackerCog(commands.Cog):
     @tasks.loop(minutes=VOICE_XP_INTERVAL_MINUTES)
     async def voice_xp_loop(self) -> None:
         for guild in self.bot.guilds:
+            try:
+                # Ses süresini düzenli olarak DB'ye yaz (çökmede süre kaybı/şişmesi olmasın)
+                await db.flush_voice_sessions(guild.id)
+            except Exception:
+                log.exception("Ses süresi kaydedilemedi (guild=%s)", guild.id)
+
             afk_id = guild.afk_channel.id if guild.afk_channel else None
             for channel in guild.voice_channels:
                 if afk_id is not None and channel.id == afk_id:
@@ -404,20 +421,24 @@ class XPTrackerCog(commands.Cog):
                 if len(valid) < 2:
                     continue
                 for member in valid:
-                    boost = await db.get_active_multiplier(guild.id, member.id)
-                    earned = max(1, round(VOICE_XP_PER_INTERVAL * boost))
-                    await db.add_voice_xp(guild.id, member.id, earned)
-                    activitylog.record(
-                        "xp_voice", guild.id, member.id,
-                        channel_id=channel.id, amount=earned,
-                        mute=(member.voice.self_mute or member.voice.mute) or None,
-                        stream=member.voice.self_stream or None,
-                        video=member.voice.self_video or None,
-                        boost=boost if boost != 1.0 else None,
-                        peers=[m.id for m in valid if m.id != member.id],
-                        bots=[m.id for m in channel.members if m.bot] or None,
-                    )
-                    await self._sync_role(member)
+                    # Tek bir üyedeki hata (üye çıktı, DB kilitli…) döngünün tamamını durdurmamalı
+                    try:
+                        boost = await db.get_active_multiplier(guild.id, member.id)
+                        earned = max(1, round(VOICE_XP_PER_INTERVAL * boost))
+                        await db.add_voice_xp(guild.id, member.id, earned)
+                        activitylog.record(
+                            "xp_voice", guild.id, member.id,
+                            channel_id=channel.id, amount=earned,
+                            mute=(member.voice.self_mute or member.voice.mute) or None,
+                            stream=member.voice.self_stream or None,
+                            video=member.voice.self_video or None,
+                            boost=boost if boost != 1.0 else None,
+                            peers=[m.id for m in valid if m.id != member.id],
+                            bots=[m.id for m in channel.members if m.bot] or None,
+                        )
+                        await self._sync_role(member)
+                    except Exception:
+                        log.exception("Ses XP'si verilemedi (guild=%s, üye=%s)", guild.id, member.id)
                     await asyncio.sleep(0)  # Rate limit dostu
 
     @voice_xp_loop.before_loop
@@ -437,6 +458,16 @@ class XPTrackerCog(commands.Cog):
     # ==================================================================
     # KOMUTLAR
     # ==================================================================
+
+    async def cog_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        """Bu cog'daki komutlar için ortak kullanıcı hatası mesajları (loglama audit.py'de)."""
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
+        elif isinstance(error, commands.NoPrivateMessage):
+            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
+        elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)) and ctx.command:
+            usage = ctx.command.usage or ctx.command.signature
+            await ctx.send(f"❌ Kullanım: `{ctx.prefix}{ctx.invoked_with} {usage}`")
 
     # ------------------------------------------------------------------
     # !xp
@@ -459,16 +490,13 @@ class XPTrackerCog(commands.Cog):
             row["active_voice_started_at"],
         )
 
-        boost = float(row["xp_boost_multiplier"])
-        boost_expires = row["xp_boost_expires_at"]
+        boost, boost_expires = db.active_boost(row)
         boost_str = ""
-        if boost > 1.0 and boost_expires:
+        if boost_expires is not None:
             remaining = max(0, int(boost_expires - time.time()))
-            h, r = divmod(remaining, 3600)
-            m, s = divmod(r, 60)
-            boost_str = f"\n⚡ Aktif boost: **{boost}x** — {h}sa {m}dk {s}sn kaldı"
+            boost_str = f"\n⚡ Aktif boost: **{boost:g}x** — {format_duration(remaining)} kaldı"
 
-        streak = int(row["streak_days"])
+        streak = db.current_streak(row)
         s_mult = streak_multiplier(streak)
         total_xp = int(row["total_xp"])
         current_role = self.get_display_role(ctx.author, total_xp)
@@ -559,7 +587,7 @@ class XPTrackerCog(commands.Cog):
             return
 
         row = await db.get_user_row(ctx.guild.id, ctx.author.id)
-        streak = int(row["streak_days"]) if row else 0
+        streak = db.current_streak(row) if row else 0
         mult = streak_multiplier(streak)
 
         next_milestone = next(
@@ -618,18 +646,12 @@ class XPTrackerCog(commands.Cog):
         self._audit_admin(ctx, "admin_sync", checked=count)
         await ctx.send(f"✅ XP rol kontrolü tamamlandı. Kontrol edilen üye: **{count}**")
 
-    @xpsenkronize_command.error
-    async def _xpsenkronize_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
-        else:
-            raise error
-
     # ------------------------------------------------------------------
     # !xpayarla (admin) — kullanıcının XP'sini doğrudan ayarla
     # ------------------------------------------------------------------
 
-    @commands.command(name="xpayarla")
+    @commands.command(name="xpayarla", usage="@kullanıcı <miktar> <sebep>")
+    @commands.guild_only()
     @commands.has_permissions(administrator=True)
     async def xpayarla_command(
         self,
@@ -639,11 +661,7 @@ class XPTrackerCog(commands.Cog):
         *,
         reason: str | None = None,
     ) -> None:
-        """Kullanıcının toplam XP'sini ayarlar. Ses/metin oranı yarı yarıya bölünür."""
-        if ctx.guild is None:
-            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-            return
-
+        """Kullanıcının toplam XP'sini ayarlar. Mesaj/ses XP oranı korunur."""
         reason = await self._require_reason(ctx, reason, "!xpayarla @kullanıcı <miktar> <sebep>")
         if reason is None:
             return
@@ -652,10 +670,7 @@ class XPTrackerCog(commands.Cog):
             await ctx.send("❌ XP 0'dan küçük olamaz.")
             return
 
-        row = await db.get_user_row(ctx.guild.id, member.id)
-        before = int(row["total_xp"]) if row else 0
-        half = total_xp // 2
-        await db.set_xp(ctx.guild.id, member.id, text_xp=half, voice_xp=total_xp - half)
+        before, total_xp = await db.set_total_xp(ctx.guild.id, member.id, total=total_xp)
         self._audit_admin(
             ctx, "admin_xp_set", member,
             amount=total_xp - before, before=before, after=total_xp, sebep=reason,
@@ -666,20 +681,12 @@ class XPTrackerCog(commands.Cog):
             f"📝 Sebep: {reason}"
         )
 
-    @xpayarla_command.error
-    async def _xpayarla_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
-        elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Kullanım: `!xpayarla @kullanıcı <miktar> <sebep>`")
-        else:
-            raise error
-
     # ------------------------------------------------------------------
     # !xpekle (admin) — mevcut XP'ye ekle
     # ------------------------------------------------------------------
 
-    @commands.command(name="xpekle")
+    @commands.command(name="xpekle", usage="@kullanıcı <miktar> <sebep>")
+    @commands.guild_only()
     @commands.has_permissions(administrator=True)
     async def xpekle_command(
         self,
@@ -689,20 +696,12 @@ class XPTrackerCog(commands.Cog):
         *,
         reason: str | None = None,
     ) -> None:
-        """Kullanıcıya XP ekler (negatif değer XP çıkarır)."""
-        if ctx.guild is None:
-            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-            return
-
+        """Kullanıcıya XP ekler (negatif değer XP çıkarır). Mesaj/ses XP oranı korunur."""
         reason = await self._require_reason(ctx, reason, "!xpekle @kullanıcı <miktar> <sebep>")
         if reason is None:
             return
 
-        row = await db.get_user_row(ctx.guild.id, member.id)
-        current = int(row["total_xp"]) if row else 0
-        new_total = max(0, current + amount)
-        half = new_total // 2
-        await db.set_xp(ctx.guild.id, member.id, text_xp=half, voice_xp=new_total - half)
+        current, new_total = await db.set_total_xp(ctx.guild.id, member.id, delta=amount)
         self._audit_admin(
             ctx, "admin_xp_add", member,
             amount=new_total - current, before=current, after=new_total, sebep=reason,
@@ -716,20 +715,55 @@ class XPTrackerCog(commands.Cog):
             f"📝 Sebep: {reason}"
         )
 
-    @xpekle_command.error
-    async def _xpekle_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
-        elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Kullanım: `!xpekle @kullanıcı <miktar> <sebep>`")
-        else:
-            raise error
+    # ------------------------------------------------------------------
+    # !xpcikar (admin) — mevcut XP'den çıkar
+    # ------------------------------------------------------------------
+
+    @commands.command(
+        name="xpcikar",
+        aliases=["xpçıkar", "xpcıkar", "xpsil"],
+        usage="@kullanıcı <miktar> <sebep>",
+    )
+    @commands.guild_only()
+    @commands.has_permissions(administrator=True)
+    async def xpcikar_command(
+        self,
+        ctx: commands.Context,
+        member: discord.Member,
+        amount: int,
+        *,
+        reason: str | None = None,
+    ) -> None:
+        """Kullanıcıdan XP çıkarır (0'ın altına düşmez). Mesaj/ses XP oranı korunur."""
+        reason = await self._require_reason(ctx, reason, "!xpçıkar @kullanıcı <miktar> <sebep>")
+        if reason is None:
+            return
+
+        if amount <= 0:
+            await ctx.send("❌ Çıkarılacak miktar 0'dan büyük olmalı.")
+            return
+
+        current, new_total = await db.set_total_xp(ctx.guild.id, member.id, delta=-amount)
+        removed = current - new_total
+        self._audit_admin(
+            ctx, "admin_xp_remove", member,
+            amount=-removed, before=current, after=new_total, sebep=reason,
+        )
+        await self._sync_role(member)
+
+        note = f" (sadece {removed:,} XP'si vardı)" if removed < amount else ""
+        await ctx.send(
+            f"✅ **{member.display_name}** kullanıcısından **{removed:,} XP** çıkarıldı{note}. "
+            f"Yeni toplam: **{new_total:,} XP**\n"
+            f"📝 Sebep: {reason}"
+        )
 
     # ------------------------------------------------------------------
     # !boost (admin) — XP boost ver
     # ------------------------------------------------------------------
 
-    @commands.command(name="boost")
+    @commands.command(name="boost", usage="@kullanıcı <çarpan> [saat] <sebep>")
+    @commands.guild_only()
     @commands.has_permissions(administrator=True)
     async def boost_command(
         self,
@@ -744,10 +778,6 @@ class XPTrackerCog(commands.Cog):
         Kullanıcıya XP boost uygular. Saat verilmezse 1 saattir.
         Örnek: !boost @kullanıcı 2.0 24 etkinlik ödülü  → 24 saat boyunca 2x XP
         """
-        if ctx.guild is None:
-            await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
-            return
-
         reason = await self._require_reason(ctx, reason, "!boost @kullanıcı <çarpan> [saat] <sebep>")
         if reason is None:
             return
@@ -755,12 +785,13 @@ class XPTrackerCog(commands.Cog):
         if hours is None:
             hours = 1.0
 
-        if multiplier < 1.0 or multiplier > 10.0:
-            await ctx.send("❌ Çarpan 1.0 ile 10.0 arasında olmalı.")
+        # isfinite: "nan"/"inf" float'a çevrilebildiği için ayrıca kontrol edilir
+        if not math.isfinite(multiplier) or not (BOOST_MIN <= multiplier <= BOOST_MAX):
+            await ctx.send(f"❌ Çarpan {BOOST_MIN:g} ile {BOOST_MAX:g} arasında olmalı.")
             return
 
-        if hours <= 0 or hours > 720:
-            await ctx.send("❌ Süre 0-720 saat arasında olmalı.")
+        if not math.isfinite(hours) or hours <= 0 or hours > BOOST_MAX_HOURS:
+            await ctx.send(f"❌ Süre 0-{BOOST_MAX_HOURS} saat arasında olmalı.")
             return
 
         duration = int(hours * 3600)
@@ -774,15 +805,6 @@ class XPTrackerCog(commands.Cog):
             f"Süre: **{h}sa {m}dk**\n"
             f"📝 Sebep: {reason}"
         )
-
-    @boost_command.error
-    async def _boost_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
-        elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Kullanım: `!boost @kullanıcı <çarpan> [saat] <sebep>`")
-        else:
-            raise error
 
     # ------------------------------------------------------------------
     # !yedekle (admin) — Veritabanı yedeği al
@@ -798,11 +820,4 @@ class XPTrackerCog(commands.Cog):
             await ctx.send(f"✅ Veritabanı yedeği başarıyla oluşturuldu:\n`{backup_path}`")
         else:
             await ctx.send("❌ Yedek alınırken bir hata oluştu.")
-
-    @backup_command.error
-    async def _backup_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
-        else:
-            raise error
 

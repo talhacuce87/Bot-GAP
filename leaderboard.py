@@ -218,7 +218,7 @@ async def build_leaderboard_card(
                             radius=18, outline=OUTLINE, width=2)
 
     buf = io.BytesIO()
-    canvas.save(buf, format="PNG")
+    canvas.convert("RGB").save(buf, format="PNG")
     buf.seek(0)
     return buf
 

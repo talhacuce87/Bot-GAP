@@ -8,6 +8,7 @@ event loop'uyla tam uyumludur.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import time
 from itertools import combinations
@@ -19,6 +20,9 @@ import aiosqlite
 log = logging.getLogger("gap.db")
 
 DATABASE_PATH = Path(__file__).resolve().parent / "data" / "xp_system.db"
+
+# Streak günleri Türkiye saatine (UTC+3, yaz saati yok) göre döner.
+STREAK_TZ = datetime.timezone(datetime.timedelta(hours=3), "TRT")
 
 # ---------------------------------------------------------------------------
 # Şema
@@ -123,10 +127,8 @@ def _db() -> aiosqlite.Connection:
     return aiosqlite.connect(DATABASE_PATH)
 
 
-def _utc_today_iso() -> str:
-    import datetime
-
-    return datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+def _today() -> datetime.date:
+    return datetime.datetime.now(STREAK_TZ).date()
 
 
 def _normalize_pair(user_a: int, user_b: int) -> tuple[int, int]:
@@ -195,19 +197,38 @@ async def add_voice_xp(guild_id: int, user_id: int, amount: int) -> None:
         await db.commit()
 
 
-async def set_xp(guild_id: int, user_id: int, text_xp: int, voice_xp: int) -> None:
-    """Admin: XP'yi doğrudan ayarla."""
+async def set_total_xp(
+    guild_id: int,
+    user_id: int,
+    *,
+    total: int | None = None,
+    delta: int | None = None,
+) -> tuple[int, int]:
+    """
+    Admin: toplam XP'yi ayarlar (total) ya da değiştirir (delta).
+    Mesaj/ses XP oranı korunur; hiç XP yoksa tamamı mesaj XP'sine yazılır.
+    Döner: (önceki_toplam, yeni_toplam)
+    """
     await ensure_user(guild_id, user_id)
     async with _db() as db:
+        async with db.execute(
+            "SELECT text_xp, voice_xp FROM user_xp WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+
+        text_xp, voice_xp = int(row[0]), int(row[1])
+        current = text_xp + voice_xp
+        new_total = total if total is not None else current + (delta or 0)
+        new_total = max(0, new_total)
+
+        new_text = round(new_total * text_xp / current) if current > 0 else new_total
         await db.execute(
-            """
-            UPDATE user_xp
-            SET text_xp = ?, voice_xp = ?
-            WHERE guild_id = ? AND user_id = ?
-            """,
-            (max(0, text_xp), max(0, voice_xp), guild_id, user_id),
+            "UPDATE user_xp SET text_xp = ?, voice_xp = ? WHERE guild_id = ? AND user_id = ?",
+            (new_text, new_total - new_text, guild_id, user_id),
         )
         await db.commit()
+        return current, new_total
 
 
 async def add_message_count(guild_id: int, user_id: int) -> None:
@@ -271,6 +292,48 @@ async def end_voice_session(guild_id: int, user_id: int) -> int:
         return elapsed
 
 
+async def flush_voice_sessions(guild_id: int) -> None:
+    """
+    Sunucudaki tüm aktif oturumların geçen süresini voice_seconds'a yazar ve
+    başlangıcı ileri taşır. Periyodik çağrıldığı için bot çökse bile en fazla
+    bir periyotluk süre kaybolur; bot kapalıyken geçen süre asla eklenmez.
+    """
+    now = time.time()
+    async with _db() as db:
+        await db.execute(
+            """
+            UPDATE user_xp
+            SET voice_seconds = voice_seconds
+                    + MAX(0, CAST(? - active_voice_started_at AS INTEGER)),
+                active_voice_started_at = active_voice_started_at
+                    + MAX(0, CAST(? - active_voice_started_at AS INTEGER))
+            WHERE guild_id = ? AND active_voice_started_at IS NOT NULL
+            """,
+            (now, now, guild_id),
+        )
+        await db.commit()
+
+
+async def close_stale_voice_sessions(guild_id: int, max_elapsed: int) -> None:
+    """
+    Açılışta çağrılır: önceki çalışmadan kalan oturumları kapatır. Son flush'tan
+    sonra en fazla max_elapsed saniye eklenir (botun kapalı kaldığı süre sayılmaz).
+    """
+    now = time.time()
+    async with _db() as db:
+        await db.execute(
+            """
+            UPDATE user_xp
+            SET voice_seconds = voice_seconds
+                    + MIN(?, MAX(0, CAST(? - active_voice_started_at AS INTEGER))),
+                active_voice_started_at = NULL
+            WHERE guild_id = ? AND active_voice_started_at IS NOT NULL
+            """,
+            (max_elapsed, now, guild_id),
+        )
+        await db.commit()
+
+
 async def add_pair_voice_seconds_bulk(guild_id: int, user_ids: list[int], amount: int) -> int:
     unique_ids = sorted(set(user_ids))
     if amount <= 0 or len(unique_ids) < 2:
@@ -319,6 +382,29 @@ async def get_bestfriend_row(guild_id: int, user_id: int) -> aiosqlite.Row | Non
             return await cur.fetchone()
 
 
+async def get_bestfriend_rows(guild_id: int, user_id: int, limit: int = 10) -> list[aiosqlite.Row]:
+    """Kullanıcının en çok ses geçirdiği kişiler (çoktan aza)."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT
+                CASE
+                    WHEN user_low_id = ? THEN user_high_id
+                    ELSE user_low_id
+                END AS partner_id,
+                shared_seconds
+            FROM voice_pair_stats
+            WHERE guild_id = ?
+              AND (user_low_id = ? OR user_high_id = ?)
+            ORDER BY shared_seconds DESC, partner_id ASC
+            LIMIT ?
+            """,
+            (user_id, guild_id, user_id, user_id, limit),
+        ) as cur:
+            return list(await cur.fetchall())
+
+
 async def get_pair_shared_seconds(guild_id: int, user_a: int, user_b: int) -> int:
     low_id, high_id = _normalize_pair(user_a, user_b)
     async with _db() as db:
@@ -344,6 +430,8 @@ async def set_boost(
     multiplier: float,
     duration_seconds: int,
 ) -> None:
+    if not (1.0 <= multiplier <= 10.0):  # NaN da bu kontrolden geçemez
+        raise ValueError(f"Geçersiz boost çarpanı: {multiplier}")
     await ensure_user(guild_id, user_id)
     expires_at = time.time() + duration_seconds
     async with _db() as db:
@@ -378,23 +466,40 @@ async def get_active_multiplier(guild_id: int, user_id: int) -> float:
     row = await get_user_row(guild_id, user_id)
     if row is None:
         return 1.0
-    return float(row["xp_boost_multiplier"])
+    mult = float(row["xp_boost_multiplier"])
+    # Bozuk değerlere karşı koruma
+    return mult if 1.0 <= mult <= 10.0 else 1.0
+
+
+def active_boost(row: aiosqlite.Row) -> tuple[float, float | None]:
+    """Satırdaki boost hâlâ geçerliyse (çarpan, bitiş) döner, değilse (1.0, None)."""
+    mult = float(row["xp_boost_multiplier"])
+    expires = row["xp_boost_expires_at"]
+    if expires is None or expires <= time.time() or not (1.0 < mult <= 10.0):
+        return 1.0, None
+    return mult, float(expires)
 
 
 # ---------------------------------------------------------------------------
 # Streak
 # ---------------------------------------------------------------------------
 
+def current_streak(row: aiosqlite.Row) -> int:
+    """Gösterim için seri: son mesaj bugün ya da dün değilse seri bozulmuştur."""
+    today = _today()
+    if row["last_message_date"] in (today.isoformat(), (today - datetime.timedelta(days=1)).isoformat()):
+        return int(row["streak_days"])
+    return 0
+
+
 async def update_streak(guild_id: int, user_id: int) -> tuple[int, bool]:
     """
     Günlük streak'i günceller.
     Döner: (yeni_streak, bugün_ilk_mesaj_mı)
     """
-    import datetime
-    today = _utc_today_iso()
-    yesterday = (
-        datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=1)
-    ).isoformat()
+    today_date = _today()
+    today = today_date.isoformat()
+    yesterday = (today_date - datetime.timedelta(days=1)).isoformat()
 
     await ensure_user(guild_id, user_id)
 
@@ -481,7 +586,7 @@ async def get_leaderboard(guild_id: int, limit: int = 10) -> list[aiosqlite.Row]
                    (text_xp + voice_xp) AS total_xp
             FROM user_xp
             WHERE guild_id = ?
-            ORDER BY total_xp DESC, voice_xp DESC, text_xp DESC
+            ORDER BY total_xp DESC, voice_xp DESC, text_xp DESC, user_id ASC
             LIMIT ?
             """,
             (guild_id, limit),
