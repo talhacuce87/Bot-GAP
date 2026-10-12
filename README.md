@@ -14,7 +14,7 @@ A feature-rich, high-performance Discord bot built with Python and Pillow that t
 
 * 💬 **Mesaj XP:** Mesaj başına cooldown korumalı dinamik XP kazanımı.
 * 🔊 **Ses XP & Takip:** Ses kanallarında geçirilen süreyi hassas biçimde kaydetme.
-* 👥 **Best Friend Sistemi (`!bf`):** Ortak ses süresini takip eden ve 100 saatlik eşiğe göre özel çift kartı üreten sistem.
+* 👥 **Arkadaşlık Tier'ları (`!bf`, `!arkadaslar`):** Ortak ses süresine göre 6 kademeli tier sistemi (Tanıdık → Ruh İkizi), tier kartı ve görsel arkadaş listesi.
 * 🎴 **Görsel Kullanıcı Kartı (`!kart`):** Pillow ile oluşturulan seviye, rol ve ilerleme kartı.
 * 🏆 **Liderlik Sıralaması (`!liderlik`):** Sunucudaki ilk 10 kullanıcının madalyalı görsel sıralama kartı.
 * 🗺️ **Rol Haritası (`!roller`):** Seviye kilitlerini ve XP hedeflerini gösteren görsel rol yol haritası.
@@ -39,8 +39,9 @@ Bot-GAP/
 ├── Main.py              # Bot giriş noktası ve cog yükleyici
 ├── usercard.py          # !kart kullanıcı profili kart üretimi
 ├── leaderboard.py       # !liderlik ve !roller görsel kart üretimi
-├── bestfriend.py        # !bf ses çifti takibi ve kart üretimi
+├── bestfriend.py        # Ses çifti takibi, arkadaşlık tier'ları, !bf / !arkadaslar kartları
 ├── rolescard.py         # XP rol haritası kart tasarımı
+├── cardutils.py         # Kartların ortak Pillow yardımcıları (font, avatar, panel, gradient)
 ├── font_utils.py        # Font/glif temizleme ve emoji fallback yardımcıları
 ├── info.py              # !yardim, !yenilikler (changelog) ve ping komutları
 ├── audit.py             # Olay kaydı dinleyicileri, canlı hile dedektörü, analiz komutları
@@ -120,7 +121,9 @@ docker compose up -d --build
 * `!kart [@kullanıcı]` → Seviye, XP ve istatistik kartını görsel olarak gösterir.
 * `!liderlik` (alias: `!lb`, `!top`) → Sunucu içi ilk 10 XP sıralama kartını oluşturur.
 * `!roller` (alias: `!roles`, `!xproller`) → Seviye rol yol haritasını görsel kart olarak gösterir.
-* `!bf [@kullanıcı]` → En çok vakit geçirilen ses partnerini ve 100 saatlik Best Friend durumunu gösterir.
+* `!bf [@kullanıcı]` → En çok vakit geçirilen ses partneriyle arkadaşlık tier kartını gösterir.
+* `!arkadaslar [@kullanıcı]` (alias: `!fl`, `!friends`) → En çok vakit geçirilen 10 kişiyi tier'larıyla listeler.
+* `!tierlar` (alias: `!tiers`) → Arkadaşlık tier'larını ve saat eşiklerini gösterir.
 * `!xp` → Detaylı metin tabanlı XP ve rol durumu embed'i gönderir.
 * `!streak` → Günlük seri ve aktif çarpan durumunu görüntüler.
 * `!feature <istek>` → Bot geliştiricisine özellik önerisi kaydeder.
@@ -128,9 +131,10 @@ docker compose up -d --build
 
 ### 🛡️ Yönetici Komutları
 * `!yedekle` (alias: `!backup`) → Veritabanının anlık yedeğini güvenle alır.
-* `!xpayarla @kullanıcı <miktar>` → Kullanıcının toplam XP'sini doğrudan ayarlar.
-* `!xpekle @kullanıcı <miktar>` → Kullanıcıya XP ekler veya çıkarır.
-* `!boost @kullanıcı <çarpan> [saat]` → Süreli XP boost çarpanı uygular.
+* `!xpayarla @kullanıcı <miktar> <sebep>` → Kullanıcının toplam XP'sini doğrudan ayarlar (mesaj/ses oranı korunur).
+* `!xpekle @kullanıcı <miktar> <sebep>` → Kullanıcıya XP ekler.
+* `!xpçıkar @kullanıcı <miktar> <sebep>` (alias: `!xpcikar`, `!xpsil`) → Kullanıcıdan XP çıkarır.
+* `!boost @kullanıcı <çarpan> [saat] <sebep>` → Süreli XP boost çarpanı uygular.
 * `!xpsenkronize` → Sunucudaki tüm üyelerin XP rollerini baştan kontrol edip senkronize eder.
 
 AI komutları için aşağıdaki **🧠 Yapay Zekâ Sohbet & Hafıza** bölümüne bak.

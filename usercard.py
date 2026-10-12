@@ -10,13 +10,13 @@ Değişiklikler:
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import discord
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 import database as dbmod
+from cardutils import load_font
 from font_utils import clean_display_name, clean_text
 from xp import XPTrackerCog
 from xproles import ROLE_REWARDS
@@ -80,45 +80,8 @@ ROLE_THEMES: dict[int, dict[str, object]] = {
     ROLE_REWARDS[1000000]: {"background_base": "#14110D", "background_start": "#20180F", "background_end": "#382515", "panel_outline": "#8E6A2C", "outer_panel_outline": "#B08533", "accent": "#FFF0B0", "bar_bg": "#312416", "bar_fill": "#F4E0A1", "bar_fill_end": "#FFD16B", "glow_primary": "#FFF0B6", "glow_secondary": "#FFD56F", "glow_tertiary": "#FFF8D9"},
 }
 
-# ---------------------------------------------------------------------------
-# Font cache — disk'ten sadece bir kez okunur
-# ---------------------------------------------------------------------------
-
-_font_cache: dict[tuple[int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
-
-
-def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    key = (size, bold)
-    if key in _font_cache:
-        return _font_cache[key]
-
-    assets_dir = Path(__file__).resolve().parent / "assets" / "fonts"
-    candidates: list[str] = []
-
-    if bold:
-        candidates += [
-            str(assets_dir / "DejaVuSans-Bold.ttf"),
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            r"C:\Windows\Fonts\arialbd.ttf",
-            r"C:\Windows\Fonts\segoeuib.ttf",
-        ]
-    candidates += [
-        str(assets_dir / "DejaVuSans.ttf"),
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        r"C:\Windows\Fonts\arial.ttf",
-        r"C:\Windows\Fonts\segoeui.ttf",
-    ]
-
-    font: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.load_default()
-    for path in candidates:
-        try:
-            font = ImageFont.truetype(path, size)
-            break
-        except OSError:
-            continue
-
-    _font_cache[key] = font
-    return font
+# Font yükleme ve cache cardutils.py'de; leaderboard/bestfriend de bunu kullanır.
+_load_font = load_font
 
 
 # ---------------------------------------------------------------------------
@@ -389,15 +352,15 @@ class UserCardCog(commands.Cog):
         dt(draw, (886, 188), f"Level {level}", f_label, ac, sh, anchor="mm")
 
         self._draw_progress_bar(card, ratio, theme)
-        dt(draw, (286, 438), f"Level {level}", f_level, tp, sh)
+        dt(draw, (286, 452), f"Level {level}", f_level, tp, sh, anchor="lm")
         next_label = "MAX" if ceiling <= floor else f"Level {next_level}"
-        dt(draw, (948, 438), next_label, f_level, tp, sh, anchor="rm")
+        dt(draw, (948, 452), next_label, f_level, tp, sh, anchor="rm")
 
         xp_text = "MAX" if ceiling <= floor else f"{total_xp:,} / {ceiling:,} XP"
         dt(draw, (616, 550), xp_text, f_progress, ts, sh, anchor="mm")
 
         buf = io.BytesIO()
-        card.save(buf, format="PNG")
+        card.convert("RGB").save(buf, format="PNG")
         buf.seek(0)
         return buf
 

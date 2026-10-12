@@ -13,8 +13,8 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.3.0"
-LAST_DEPLOY_DATE = "8 Ekim 2026"
+BOT_VERSION = "2.4.0"
+LAST_DEPLOY_DATE = "12 Ekim 2026"
 
 # Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
 ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "0") or 0)
@@ -84,7 +84,9 @@ class InfoCog(commands.Cog):
             name="📊 Profil & İstatistik Kartları",
             value=(
                 "• `!kart [@üye]` — Özelleştirilmiş görsel profil ve seviye kartı\n"
-                "• `!bf [@üye]` — En çok ses geçirilen partnerle ortak Best Friend kartı\n"
+                "• `!bf [@üye]` — En çok ses geçirilen partnerle arkadaşlık tier kartı\n"
+                "• `!arkadaslar [@üye]` — En çok ses geçirilen 10 kişi ve tier'ları\n"
+                "• `!tierlar` — Arkadaşlık tier'ları ve saat eşikleri\n"
                 "• `!xp` — Hızlı metin tabanlı XP ve aktif boost durumu\n"
                 "• `!streak` — Günlük mesaj serisi ve XP çarpanı bonusu"
             ),
@@ -132,7 +134,8 @@ class InfoCog(commands.Cog):
             embed.add_field(
                 name="⚙️ Yönetici Komutları (Admin)",
                 value=(
-                    "• `!xpekle @üye <miktar> <sebep>` — Kullanıcıya XP ekler veya çıkarır\n"
+                    "• `!xpekle @üye <miktar> <sebep>` — Kullanıcıya XP ekler\n"
+                    "• `!xpçıkar @üye <miktar> <sebep>` — Kullanıcıdan XP çıkarır\n"
                     "• `!xpayarla @üye <miktar> <sebep>` — Kullanıcının toplam XP'sini doğrudan belirler\n"
                     "• `!boost @üye <çarpan> [saat] <sebep>` — Belirtilen süre için geçici XP boost tanımlar\n"
                     "• *XP komutlarında sebep zorunludur; tüm işlemler kayıt altına alınır*\n"
@@ -184,51 +187,49 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "Bu sürümle Bot-GAP artık sohbet edebiliyor ve onaylı kanallardaki "
-                "konuşmaları hatırlayabiliyor."
+                "Bu sürümle Best Friend sistemi kademeli arkadaşlık tier'larına dönüştü "
+                "ve birçok hata düzeltildi."
             ),
-            color=discord.Color.from_rgb(98, 225, 194),
+            color=discord.Color.from_rgb(255, 143, 177),
         )
 
         embed.add_field(
-            name="💬 Botla Sohbet",
+            name="💞 Arkadaşlık Tier'ları",
             value=(
-                "• Beni etiketle (`@Bot-GAP selam`), mesajıma yanıt ver ya da `!ai <mesaj>` yaz.\n"
-                "• \"Kim en yüksek seviyede?\", \"Seviyem kaç?\", \"Best friend'im kim?\" gibi "
-                "soruları tahmin etmeden, gerçek XP verisinden cevaplarım."
-            ),
-            inline=False,
-        )
-
-        embed.add_field(
-            name="🧠 Hafıza",
-            value=(
-                "• `!hatirla <konu>` — Hafızası açık kanallarda geçmiş konuşmaları arar.\n"
-                "• `!hafizaekle <bilgi>` — Kendin hakkında bir şeyi hatırlamamı iste; "
-                "`!hafizam` ile gör, `!unut <id>` ile sil.\n"
-                "• `!ani <metin>` / `!anilar` — Sunucunun ortak anılarını kaydet ve listele."
+                "• Ortak ses süresine göre 6 kademe: 🌱 Tanıdık → 🤝 Arkadaş → 💙 Yakın Arkadaş → "
+                "💞 Best Friend → 🔥 Kanka → 👑 Ruh İkizi\n"
+                "• `!tierlar` — Tüm tier'lar ve kaç saat gerektikleri"
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="🔒 Gizlilik",
+            name="🎴 Yeni Kartlar",
             value=(
-                "• Mesajlar yalnızca yöneticilerin **açıkça hafızasını açtığı** kanallarda, "
-                "sınırlı bir süre saklanır. DM'ler saklanmaz.\n"
-                "• E-posta, telefon, şifre gibi bilgiler kaydedilmeden önce gizlenir; "
-                "sildiğin mesaj hafızadan da silinir.\n"
-                "• `!aigizlilik kapat` ile mesajlarının kaydedilmesini kapatabilir, "
-                "`!unuttur` ile tüm kayıtlarını silebilirsin."
+                "• `!bf` kartı baştan tasarlandı: tier rengine göre tema, kalp rozeti ve "
+                "tüm tier'ları gösteren ilerleme yolu\n"
+                "• `!arkadaslar` — En çok vakit geçirdiğin 10 kişiyi tier'larıyla gösterir"
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="ℹ️ Bilmen Gerekenler",
+            name="🛠️ Düzeltmeler",
             value=(
-                "• Yapay zekâ kullanımının günlük sınırları var (`!aidurum`).\n"
-                "• Yapay zekâ hata yapabilir. Ayrıntılar ve tüm komutlar: `!aiyardim`"
+                "• Bot yeniden başlayınca ses süresi artık şişmiyor\n"
+                "• Günlük seri Türkiye saatiyle gece 00:00'da yenileniyor; bozulan seri artık eski haliyle görünmüyor\n"
+                "• `!kart` ve `!liderlik` kartlarındaki saydamlık ve hizalama hataları giderildi\n"
+                "• Süresi dolmuş boost `!xp`'de artık gösterilmiyor\n"
+                "• Ses XP sistemi tek bir hatada durmuyor"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="⚙️ Yönetim",
+            value=(
+                "• `!xpçıkar @üye <miktar> <sebep>` eklendi\n"
+                "• `!xpekle` / `!xpayarla` artık mesaj/ses XP oranını koruyor"
             ),
             inline=False,
         )
