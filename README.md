@@ -225,29 +225,32 @@ Her şarkı başladığında kapaklı bir **"şimdi çalıyor" kartı** gelir. S
 
 ### Kendi kendini onarma
 
-YouTube sık sık değişir ve eski yt-dlp sürümleri bozulur. Bot bunu kendisi halleder:
+YouTube sık sık değişir, eski yt-dlp sürümleri bozulur ve sunucu IP'lerini "bot" diye kısıtlayabilir. Bot bunları kendisi halleder:
 
 1. Açılışta ve **günde bir** yt-dlp, yt-dlp-ejs ve deno'yu `pip` ile günceller.
-2. **6 saatte bir** test videosuyla YouTube'u dener.
-3. YouTube hata verirse (testte ya da gerçek bir şarkıda) önce **kararlı**, olmazsa **nightly** sürüme günceller ve tekrar dener. yt-dlp ayrı süreçte çalıştığı için güncelleme **yeniden başlatma gerektirmez**.
-4. Hâlâ olmuyorsa şarkılar **SoundCloud'dan** çalınmaya çalışılır ve `LOG_CHANNEL_ID` kanalına **günde en fazla bir** uyarı gider. Düzelince "tekrar çalışıyor" bildirimi gelir.
+2. **6 saatte bir** (YouTube sorunluyken **30 dakikada bir**) bir müzik videosuyla YouTube'u dener. Test, linkin alınmasıyla yetinmez; ses akışını çalarken kullanılan FFmpeg ile gerçekten açar.
+3. YouTube hata verirse önce farklı **bağlantı yöntemlerini** dener (IPv4'e zorlama, farklı YouTube istemcileri: tv, mweb, embedded, android_vr). Çalışanı kaydeder ve sonraki tüm çağrılarda onu kullanır. Olmazsa **kararlı**, sonra **nightly** sürüme günceller ve yöntemleri yeniden dener. yt-dlp ayrı süreçte çalıştığı için hiçbiri **yeniden başlatma gerektirmez**.
+4. Her şarkının linki çalınmadan önce denenir. Açılmazsa o şarkı için en fazla üç yöntem denenir. Hâlâ olmuyorsa YouTube "sorunlu" sayılır ve onarım **arka planda** başlar; şarkı beklemeden yedeğe geçer.
+5. Yedek **SoundCloud**'dur. Bulunan sonuç gerçekten aynı şarkı olmalıdır: bütün kelimeler tutmalı, istenmeyen versiyonlar (slowed, remix, cover, live…) ve 30 sn'lik önizlemeler atlanır. Spotify linklerinde süre de karşılaştırılır. Aynı şarkı yoksa yanlış bir şarkı çalınmaz, hata mesajı verilir.
+6. Sorun sürerse `LOG_CHANNEL_ID` kanalına **günde en fazla bir** uyarı gider (SoundCloud yedeğinin çalışıp çalışmadığı da yazar). Düzelince "tekrar çalışıyor" bildirimi gelir.
 
-Yöneticiler `!muzikdurum` ile durumu görür, `!muzikguncelle` ile onarımı elle başlatır.
+YouTube ses linkini, onu alan istemcinin tarayıcı kimliğine (User-Agent) bağlar. Bot bu yüzden yt-dlp'nin User-Agent'ını şarkıyla birlikte saklayıp FFmpeg'e verir.
 
-**Elle müdahale gereken tek durum:** YouTube sunucunun IP adresini bot olarak işaretlerse (uyarıda `blocked` yazar) güncelleme yetmez. Bu durumda:
+Yöneticiler `!muzikdurum` ile YouTube'u ve SoundCloud'u **o an canlı test eder**: gerçek hata mesajlarını, kullanılan bağlantı yöntemini ve yapılması gerekeni gösterir. `!muzikguncelle` onarımı elle başlatır.
 
-1. Yedek bir Google hesabıyla tarayıcıdan YouTube'a gir.
-2. Çerezleri Netscape formatında (`cookies.txt`) dışa aktar ve `data/cookies.txt` olarak kaydet.
-3. `.env` dosyasına `YTDLP_COOKIES_FILE=/app/data/cookies.txt` yaz ve botu yeniden başlat.
+**Elle müdahale gereken durum:** YouTube sunucunun IP adresini tamamen engellerse (uyarıda `blocked` yazar ve hiçbir yöntem işe yaramaz) iki çözüm var:
+
+- **Çerez:** Yedek bir Google hesabıyla tarayıcının gizli penceresinde YouTube'a gir, çerezleri Netscape formatında (`cookies.txt`) dışa aktar, pencereyi kapat. Dosyayı `data/cookies.txt` olarak kaydet, `.env` dosyasına `YTDLP_COOKIES_FILE=/app/data/cookies.txt` yaz ve botu yeniden başlat.
+- **Proxy:** `.env` dosyasına bir HTTP proxy yaz: `YTDLP_PROXY=http://kullanici:sifre@host:port`. yt-dlp ve FFmpeg trafiği bu proxy'den geçer. FFmpeg yalnızca `http://` proxy destekler.
 
 ### Ayarlar
 
-`MUSIC_ENABLED`, `MUSIC_AUTO_UPDATE`, `MUSIC_HEALTHCHECK_HOURS`, `MUSIC_IDLE_TIMEOUT_SECONDS`, `MUSIC_ALONE_TIMEOUT_SECONDS`, `MUSIC_MAX_QUEUE`, `MUSIC_MAX_PLAYLIST`, `MUSIC_MAX_TRACK_MINUTES`, `MUSIC_DEFAULT_VOLUME`, `YTDLP_COOKIES_FILE`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`. Açıklamaları `.env.example` içinde; varsayılanlarla ek ayar gerekmez.
+`MUSIC_ENABLED`, `MUSIC_AUTO_UPDATE`, `MUSIC_HEALTHCHECK_HOURS`, `MUSIC_IDLE_TIMEOUT_SECONDS`, `MUSIC_ALONE_TIMEOUT_SECONDS`, `MUSIC_MAX_QUEUE`, `MUSIC_MAX_PLAYLIST`, `MUSIC_MAX_TRACK_MINUTES`, `MUSIC_DEFAULT_VOLUME`, `YTDLP_COOKIES_FILE`, `YTDLP_PROXY`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`. Açıklamaları `.env.example` içinde; varsayılanlarla ek ayar gerekmez.
 
 ### Bilinen sınırlar
 
 - Canlı yayınlar ve yaş sınırlı videolar çalınamaz.
-- SoundCloud yedeğinde orijinal şarkılar genelde ücretli olduğundan yedek çoğu zaman bir cover ya da başka birinin yüklemesini çalar. Yedek yalnızca YouTube tamamen çöktüğünde devreye girer.
+- SoundCloud'da birçok resmi şarkı yalnızca 30 sn'lik önizleme olarak var. Yedek bu yüzden çoğu zaman başka birinin yüklediği kopyayı çalar; aynı şarkının tam bir kopyası yoksa hiç çalmaz.
 
 > ⚠️ YouTube'un kullanım şartları içeriğin kendi oynatıcısı dışında çalınmasına izin vermez. Bu özellik yalnızca The Gap sunucusu için eklenmiştir.
 

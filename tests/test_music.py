@@ -21,13 +21,19 @@ from music import spotify, ytdl
 from music.config import MusicConfig
 from music.player import GuildPlayer
 from music.sources import SourceError, SourceResolver, _normalize_youtube, classify_input
-from music.updater import Updater
+from music.updater import STRATEGIES, Updater
 from music.ytdl import Track, YtdlError
 
 
 @pytest.fixture
 def cfg(tmp_path):
     return MusicConfig(state_path=tmp_path / "music_state.json")
+
+
+@pytest.fixture(autouse=True)
+def _offline_probe(monkeypatch):
+    """Testler ağa çıkmasın: ses akışı kontrolü varsayılan olarak "açılıyor" döner."""
+    monkeypatch.setattr(ytdl, "probe_stream", AsyncMock(return_value=None))
 
 
 # ---------------------------------------------------------------------------
@@ -128,15 +134,24 @@ def test_spotify_embed_without_data_raises():
 # Kendi kendini onarma
 # ---------------------------------------------------------------------------
 
-def _scripted_updater(cfg, results: list[bool]):
-    """check_youtube sırayla results'taki sonuçları döner; update çağrıları kaydedilir."""
+def _strategy_name() -> str:
+    return next(name for name, args in STRATEGIES.items() if args == ytdl._strategy_args)
+
+
+def _scripted_updater(cfg, works):
+    """
+    works(yöntem, güncelleme_sayısı) → YouTube o anki bağlantı yöntemi ve yapılan
+    güncelleme sayısıyla çalışıyor mu. update çağrıları (pre) kaydedilir.
+    """
     up = Updater(cfg)
     calls: list[bool] = []
-    it = iter(results)
+    tried: list[str] = []
 
     async def check():
-        ok = next(it)
-        return (True, "", "") if ok else (False, "error", "nsig extraction failed")
+        tried.append(_strategy_name())
+        if works(_strategy_name(), len(calls)):
+            return True, "", ""
+        return False, "blocked", "Sign in to confirm you're not a bot"
 
     async def update(*, pre=False, reason=""):
         calls.append(pre)
@@ -144,44 +159,75 @@ def _scripted_updater(cfg, results: list[bool]):
 
     up.check_youtube = check
     up.update = update
-    return up, calls
+    return up, calls, tried
 
 
 async def test_heal_does_nothing_when_youtube_works(cfg):
-    up, calls = _scripted_updater(cfg, [True])
+    up, calls, tried = _scripted_updater(cfg, lambda strategy, updates: True)
     assert await up.heal("test") is True
-    assert calls == [] and up.state.health_ok
+    assert calls == [] and tried == ["default"] and up.state.health_ok
+
+
+async def test_heal_finds_working_strategy_without_updating(cfg):
+    up, calls, tried = _scripted_updater(cfg, lambda strategy, updates: strategy == "tv")
+    assert await up.heal("test") is True
+    assert calls == [] and tried == ["default", "ipv4", "tv"]
+    assert up.state.strategy == "tv" and _strategy_name() == "tv"
+    assert Updater(cfg).state.strategy == "tv" and _strategy_name() == "tv"   # yeniden başlayınca da kullanılır
 
 
 async def test_heal_stable_update_fixes(cfg):
-    up, calls = _scripted_updater(cfg, [False, True])
+    up, calls, _ = _scripted_updater(cfg, lambda strategy, updates: updates >= 1)
     assert await up.heal("test") is True
-    assert calls == [False]
+    assert calls == [False] and up.state.strategy == "default"
 
 
 async def test_heal_falls_back_to_nightly(cfg):
-    up, calls = _scripted_updater(cfg, [False, False, True])
+    up, calls, _ = _scripted_updater(cfg, lambda strategy, updates: updates >= 2 and strategy == "mweb")
     assert await up.heal("test") is True
-    assert calls == [False, True]
+    assert calls == [False, True] and up.state.strategy == "mweb"
 
 
 async def test_heal_gives_up_alerts_once_and_respects_cooldown(cfg):
-    up, calls = _scripted_updater(cfg, [False, False, False, False])
+    up, calls, tried = _scripted_updater(cfg, lambda strategy, updates: False)
     assert await up.heal("test") is False
     assert calls == [False, True]
+    assert len(tried) == 1 + (len(STRATEGIES) - 1) + 2 * len(STRATEGIES)   # her güncellemeden sonra tüm yöntemler
+    assert up.state.strategy == "default" and _strategy_name() == "default"  # çalışmayana geçilmez
     assert not up.state.health_ok and up.state.failing_since
     assert up.should_alert()
     up.mark_alerted()
     assert not up.should_alert()                     # günde bir kez
     assert await up.heal("tekrar") is False
-    assert calls == [False, True]                    # 30 dk içinde yeniden güncelleme yok
+    assert calls == [False, True]                    # 30 dk içinde yeniden onarım yok
     assert Updater(cfg).state.health_ok is False     # durum diske yazıldı
 
 
-async def test_heal_without_auto_update(cfg):
-    up, calls = _scripted_updater(replace(cfg, auto_update=False), [False])
+async def test_heal_without_auto_update_still_tries_strategies(cfg):
+    up, calls, _ = _scripted_updater(replace(cfg, auto_update=False), lambda strategy, updates: strategy == "ipv4")
+    assert await up.heal("test") is True
+    assert calls == [] and up.state.strategy == "ipv4"
+
+    up, calls, _ = _scripted_updater(replace(cfg, auto_update=False, state_path=cfg.state_path.with_name("b.json")),
+                                     lambda strategy, updates: False)
     assert await up.heal("test") is False
     assert calls == []
+
+
+def test_network_options_reach_ytdlp_and_ffmpeg():
+    try:
+        ytdl.configure_network(strategy_args=STRATEGIES["tv"], proxy="http://u:p@proxy:8080")
+        cmd = ytdl.build_command(["-f", "x"], "https://youtu.be/x")
+        assert cmd[cmd.index("--proxy") + 1] == "http://u:p@proxy:8080"
+        assert "youtube:player_client=tv,web_safari" in cmd and "--force-ipv4" in cmd
+        assert cmd[-2:] == ["--", "https://youtu.be/x"]
+        assert ytdl.ffmpeg_input_options() == " -http_proxy http://u:p@proxy:8080"
+        assert ytdl.ffmpeg_input_options("Mozilla/5.0 (X)") == " -user_agent 'Mozilla/5.0 (X)' -http_proxy http://u:p@proxy:8080"
+        ytdl.configure_network(proxy="socks5://proxy:1080")
+        assert ytdl.ffmpeg_input_options() == ""                   # FFmpeg SOCKS desteklemez
+    finally:
+        ytdl.configure_network(strategy_args=[], proxy="")
+    assert "--proxy" not in ytdl.build_command([], "x")
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +256,7 @@ async def test_stream_falls_back_to_soundcloud_when_youtube_is_broken(cfg, monke
     monkeypatch.setattr(up, "heal", AsyncMock(return_value=False))
     res = SourceResolver(cfg, up)
 
-    async def extract_stream(target, *, cookies_file=""):
+    async def extract_stream(target, *, cookies_file="", strategy_args=None):
         if target.startswith("ytsearch") or "youtube" in target:
             raise YtdlError("blocked", "Sign in to confirm you're not a bot")
         return {"url": "https://sc/stream.mp3", "title": "Song", "webpage_url": "https://soundcloud.com/a/song",
@@ -219,17 +265,66 @@ async def test_stream_falls_back_to_soundcloud_when_youtube_is_broken(cfg, monke
     async def extract_flat(target, *, limit, cookies_file=""):
         assert target.startswith("scsearch")
         return None, [
-            {"url": "https://api.soundcloud.com/tracks/1", "duration": 30.0},   # önizleme → atlanır
-            {"url": "https://api.soundcloud.com/tracks/2", "duration": 199.0},
+            {"url": "https://api.soundcloud.com/tracks/1", "duration": 30.0, "title": "Song", "uploader": "Artist"},  # önizleme
+            {"url": "https://api.soundcloud.com/tracks/3", "duration": 200.0, "title": "Başka Şarkı", "uploader": "X"},  # alakasız
+            {"url": "https://api.soundcloud.com/tracks/2", "duration": 199.0, "title": "Song", "uploader": "Artist"},
         ]
 
-    monkeypatch.setattr(ytdl, "extract_stream", extract_stream)
+    picked: list[str] = []
+    real_extract = extract_stream
+
+    async def tracking_extract(target, **kwargs):
+        picked.append(target)
+        return await real_extract(target, **kwargs)
+
+    monkeypatch.setattr(ytdl, "extract_stream", tracking_extract)
     monkeypatch.setattr(ytdl, "extract_flat", extract_flat)
 
     track = Track(title="Song", artist="Artist", query="Artist - Song", requester_id=1, source="spotify", duration=200)
     assert await res.stream_for(track) == "https://sc/stream.mp3"
     assert track.fallback == "soundcloud"
+    assert picked[-1] == "https://api.soundcloud.com/tracks/2"
+    assert not up.state.health_ok                                   # sonraki şarkılar YouTube'da oyalanmaz
+    await asyncio.sleep(0)                                          # onarım arka planda başladı
     up.heal.assert_awaited()
+
+
+async def test_soundcloud_fallback_refuses_unrelated_songs(cfg, monkeypatch):
+    res = SourceResolver(cfg, Updater(cfg))
+
+    async def extract_flat(target, *, limit, cookies_file=""):
+        return None, [{"url": "https://sc/1", "duration": 220.0, "title": "Тук-тук-тук а серце бʼється", "uploader": "Meroslava"}]
+
+    monkeypatch.setattr(ytdl, "extract_flat", extract_flat)
+    monkeypatch.setattr(ytdl, "extract_stream", AsyncMock(side_effect=AssertionError("çalınmamalı")))
+    assert await res._soundcloud_track("Linkin Park - Numb (Official Music Video) [4K UPGRADE]", 1, 187) is None
+    assert "benzeyen" in res.soundcloud_error
+
+
+@pytest.mark.parametrize(
+    ("query", "candidate", "ok"),
+    [
+        ("Kubilay Karça - Ayaza Serdim", "Kubilay Karca | Ayaza Serdim Can Music", True),
+        ("Barış Manço Gülpembe", "GÜLPEMBE - barış manço", True),
+        ("Linkin Park - Numb (Official Music Video)", "Numb (piano cover) someone", False),
+        ("Linkin Park - Numb", "linkin park - numb (slowed + reverb) arushi", False),   # başka versiyon
+        ("Linkin Park - Numb (Remix)", "Linkin Park - Numb remix", True),             # istenen versiyon
+        ("Sezen Aksu - Firuze", "Sezen Aksu - Geri Dön okanaciksoz", False),           # aynı sanatçı, başka şarkı
+        ("Tarkan - Şımarık", "Simarik Tarkan", True),
+        ("Duman - Bu Akşam Ah Bu Akşam", "Duman Bu Akşam", False),
+    ],
+)
+def test_is_same_song(query, candidate, ok):
+    from music.sources import clean_query, is_same_song
+
+    assert is_same_song(clean_query(query), candidate) is ok
+
+
+def test_clean_query():
+    from music.sources import clean_query
+
+    assert clean_query("Numb (Official Music Video) [4K UPGRADE] – Linkin Park") == "Numb - Linkin Park"
+    assert clean_query("TARKAN - Şımarık (Official Music Video)") == "TARKAN - Şımarık"
 
 
 async def test_deleted_video_does_not_trigger_heal(cfg, monkeypatch):
@@ -357,6 +452,7 @@ async def test_health_alerts_once_then_reports_recovery(monkeypatch, tmp_path):
     try:
         cog = bot.get_cog("MusicCog")
         cog.updater.cfg = replace(cog.updater.cfg, state_path=tmp_path / "ms.json")
+        cog.sources.check_soundcloud = AsyncMock(return_value=(True, ""))
         alerts: list[str] = []
         monkeypatch.setattr(bot, "dispatch", lambda event, guild, title, desc: alerts.append(title))
 

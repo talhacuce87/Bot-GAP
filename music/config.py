@@ -16,8 +16,9 @@ log = logging.getLogger("gap.music.config")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Sağlık kontrolü için yıllardır yerinde duran, kısa bir video ("Me at the zoo").
-DEFAULT_HEALTHCHECK_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+# Sağlık kontrolü için yıllardır yerinde duran bir müzik videosu. ("Me at the zoo" gibi çok eski
+# videolar YouTube'un bot/PO token kısıtlamalarına takılmadığından sorunları göstermez.)
+DEFAULT_HEALTHCHECK_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -59,6 +60,8 @@ class MusicConfig:
     healthcheck_hours: int = 6
     # YouTube sunucu IP'sini engellerse: Netscape formatında çerez dosyası (yedek bir hesaptan)
     cookies_file: str = ""
+    # Sunucu IP'si tamamen engelliyse yt-dlp ve FFmpeg trafiği için proxy (örn. http://kullanici:sifre@host:port)
+    proxy: str = field(default="", repr=False)
     spotify_client_id: str = ""
     spotify_client_secret: str = field(default="", repr=False)
     state_path: Path = PROJECT_ROOT / "data" / "music_state.json"
@@ -81,6 +84,7 @@ def load_config() -> MusicConfig:
         healthcheck_url=_str("MUSIC_HEALTHCHECK_URL", DEFAULT_HEALTHCHECK_URL),
         healthcheck_hours=_int("MUSIC_HEALTHCHECK_HOURS", 6, 1, 168),
         cookies_file=cookies,
+        proxy=_str("YTDLP_PROXY"),
         spotify_client_id=_str("SPOTIFY_CLIENT_ID"),
         spotify_client_secret=_str("SPOTIFY_CLIENT_SECRET"),
     )

@@ -4,8 +4,9 @@ music/updater.py — YouTube çalmayı kendi kendine onaran güncelleyici.
 YouTube sık sık değişir; yt-dlp ekibi de genelde saatler/günler içinde düzeltme
 yayınlar. Bu modül:
 - açılışta ve günde bir yt-dlp / yt-dlp-ejs / deno'yu pip ile günceller,
-- YouTube hata verdiğinde önce kararlı sürüme, olmazsa nightly sürüme günceller
-  ve tekrar dener,
+- YouTube hata verdiğinde önce farklı bağlantı yöntemlerini (IPv4, farklı YouTube
+  istemcileri) dener; olmazsa kararlı, sonra nightly sürüme güncelleyip tekrar dener,
+- çalışan yöntemi hatırlar ve sonraki tüm çağrılarda onu kullanır,
 - durumu data/music_state.json'a yazar (yöneticiler !muzikdurum ile görür).
 
 yt-dlp her çağrıda ayrı süreçte çalıştığı için (ytdl.py) güncelleme bot yeniden
@@ -36,6 +37,17 @@ DAILY = 24 * 3600
 # Bu hatalar içerikle ilgilidir (video silinmiş, yaş sınırlı…); güncelleme çözmez.
 CONTENT_ERRORS = {"unavailable", "age", "live"}
 
+# YouTube sunucu IP'sini "bot" diye işaretlediğinde sırayla denenen bağlantı yöntemleri.
+# Engel çoğu zaman IPv6 adresine ya da belirli bir YouTube istemcisine (player client) özgüdür.
+STRATEGIES: dict[str, list[str]] = {
+    "default": [],
+    "ipv4": ["--force-ipv4"],
+    "tv": ["--force-ipv4", "--extractor-args", "youtube:player_client=tv,web_safari"],
+    "mweb": ["--force-ipv4", "--extractor-args", "youtube:player_client=mweb,tv_simply"],
+    "embedded": ["--force-ipv4", "--extractor-args", "youtube:player_client=web_embedded,tv_embedded"],
+    "android_vr": ["--force-ipv4", "--extractor-args", "youtube:player_client=android_vr"],
+}
+
 
 @dataclass
 class MusicState:
@@ -50,6 +62,7 @@ class MusicState:
     health_kind: str = ""
     failing_since: float = 0.0
     last_alert_ts: float = 0.0
+    strategy: str = "default"
 
 
 class Updater:
@@ -57,6 +70,13 @@ class Updater:
         self.cfg = cfg
         self.state = self._load(cfg.state_path)
         self._lock = asyncio.Lock()
+        if self.state.strategy not in STRATEGIES:
+            self.state.strategy = "default"
+        self._apply(self.state.strategy)
+
+    @staticmethod
+    def _apply(strategy: str) -> None:
+        ytdl.configure_network(strategy_args=STRATEGIES[strategy])
 
     # ------------------------------------------------------------------
     # Durum
@@ -129,10 +149,12 @@ class Updater:
     async def check_youtube(self) -> tuple[bool, str, str]:
         """Döner: (çalışıyor mu, hata türü, hata mesajı)."""
         try:
-            await ytdl.extract_stream(self.cfg.healthcheck_url, cookies_file=self.cfg.cookies_file)
-            return True, "", ""
+            info = await ytdl.extract_stream(self.cfg.healthcheck_url, cookies_file=self.cfg.cookies_file)
         except ytdl.YtdlError as exc:
             return False, exc.kind, str(exc)
+        if error := await ytdl.probe_stream(info["url"], ytdl.user_agent_of(info)):
+            return False, "stream", f"yt-dlp link verdi ama ses akışı açılmıyor ({error})"
+        return True, "", ""
 
     def _record_health(self, ok: bool, kind: str = "", error: str = "") -> None:
         now = time.time()
@@ -146,9 +168,51 @@ class Updater:
         self.state.health_ok = ok
         self.save()
 
+    def mark_failing(self, kind: str, error: str) -> None:
+        """Gerçek bir şarkı açılmadı: sonraki şarkılar YouTube'da oyalanmadan yedeğe geçsin."""
+        if self.state.health_ok:
+            log.warning("YouTube şarkıda başarısız oldu, sorunlu sayılıyor: %s %s", kind, error[:150])
+        self._record_health(False, kind, error)
+
+    def can_heal(self) -> bool:
+        return time.time() - self.state.last_heal_ts >= HEAL_COOLDOWN
+
+    def strategy_order(self) -> list[str]:
+        """Şu an kullanılan yöntem önce, sonra diğerleri."""
+        current = self.state.strategy
+        return [current] + [name for name in STRATEGIES if name != current]
+
+    async def try_strategies(self, *, skip_current: bool = False) -> tuple[bool, str, str]:
+        """
+        Bağlantı yöntemlerini sırayla dener (önce şu anki). Çalışan bulunursa onu
+        kaydeder ve kullanmaya başlar; bulunamazsa eskisinde kalır.
+        Döner: (çalışıyor mu, son hata türü, son hata mesajı).
+        """
+        current = self.state.strategy
+        order = self.strategy_order()
+        if skip_current:
+            order = order[1:]
+        kind = err = ""
+        blocked = ""
+        for name in order:
+            self._apply(name)
+            ok, kind, err = await self.check_youtube()
+            if kind == "blocked":
+                blocked = err  # en açıklayıcı hata: IP engeli (diğer yöntemlerin hatası bunu gizlemesin)
+            if ok:
+                if name != current:
+                    log.warning("YouTube engeli '%s' bağlantı yöntemiyle aşıldı (önceki: %s)", name, current)
+                    self.state.strategy = name
+                    self.save()
+                return True, "", ""
+            log.info("Bağlantı yöntemi '%s' çalışmadı: %s %s", name, kind, err[:150])
+        self._apply(current)
+        return (False, "blocked", blocked) if blocked else (False, kind, err)
+
     async def heal(self, reason: str, *, force: bool = False) -> bool:
         """
-        YouTube'u onarmayı dener: kararlı güncelleme → test → nightly → test.
+        YouTube'u onarmayı dener: diğer bağlantı yöntemleri → kararlı güncelleme →
+        nightly güncelleme (her güncellemeden sonra yöntemler yeniden denenir).
         Döner: YouTube şu an çalışıyor mu.
         """
         async with self._lock:
@@ -156,22 +220,24 @@ class Updater:
             if ok:
                 self._record_health(True)
                 return True
-            if not self.cfg.auto_update:
-                self._record_health(False, kind, err)
-                return False
             if not force and time.time() - self.state.last_heal_ts < HEAL_COOLDOWN:
                 self._record_health(False, kind, err)
                 return False
 
             self.state.last_heal_ts = time.time()
             log.warning("YouTube çalışmıyor (%s: %s) — onarım deneniyor (%s)", kind, err, reason)
-            for pre in (False, True):
-                await self.update(pre=pre, reason=reason)
-                ok, kind, err = await self.check_youtube()
-                if ok:
-                    log.info("YouTube onarıldı (%s güncelleme ile)", "nightly" if pre else "kararlı")
-                    self._record_health(True)
-                    return True
+            ok, kind, err = await self.try_strategies(skip_current=True)
+            if ok:
+                self._record_health(True)
+                return True
+            if self.cfg.auto_update:
+                for pre in (False, True):
+                    changed = await self.update(pre=pre, reason=reason)
+                    ok, kind, err = await (self.try_strategies() if changed else self.check_youtube())
+                    if ok:
+                        log.info("YouTube onarıldı (%s güncelleme ile)", "nightly" if pre else "kararlı")
+                        self._record_health(True)
+                        return True
             self._record_health(False, kind, err)
             return False
 

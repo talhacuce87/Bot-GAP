@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -21,9 +22,38 @@ log = logging.getLogger("gap.music.ytdl")
 
 DEFAULT_TIMEOUT = 60
 
+# Ağ ayarları: updater.py YouTube engelini aşan yöntemi (strategy) seçer, proxy .env'den gelir.
+_strategy_args: list[str] = []
+_proxy = ""
+
+
+def configure_network(*, strategy_args: list[str] | None = None, proxy: str | None = None) -> None:
+    global _strategy_args, _proxy
+    if strategy_args is not None:
+        _strategy_args = list(strategy_args)
+    if proxy is not None:
+        _proxy = proxy.strip()
+
+
+def ffmpeg_input_options(user_agent: str | None = None) -> str:
+    """
+    Akışı açarken FFmpeg'e verilecek girdi seçenekleri.
+
+    - YouTube ses linkini, linki alan istemcinin User-Agent'ına bağlar; FFmpeg kendi
+      varsayılanıyla ("Lavf/…") isterse 403 alır. Bu yüzden yt-dlp'nin User-Agent'ı verilir.
+    - Link onu isteyen IP'ye de bağlı olduğu için yt-dlp proxy kullanıyorsa FFmpeg de aynı
+      proxy'den çekmeli (FFmpeg yalnızca HTTP proxy destekler).
+    """
+    opts = ""
+    if user_agent:
+        opts += f" -user_agent {shlex.quote(user_agent)}"
+    if _proxy.lower().startswith(("http://", "https://")):
+        opts += f" -http_proxy {shlex.quote(_proxy)}"
+    return opts
+
 
 class YtdlError(Exception):
-    """yt-dlp hatası. kind: blocked | unavailable | age | live | timeout | error"""
+    """yt-dlp hatası. kind: blocked | unavailable | age | live | timeout | stream | error"""
 
     def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
@@ -44,6 +74,8 @@ class Track:
     # Çözülmüş ses akışı (YouTube linkleri birkaç saat geçerli)
     stream_url: str | None = None
     stream_expires: float = 0.0
+    # Akışı FFmpeg ile açarken gönderilecek User-Agent (YouTube linki buna bağlı)
+    user_agent: str | None = None
     # YouTube çalışmadığı için başka kaynaktan çalındıysa (örn. "soundcloud")
     fallback: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
@@ -107,10 +139,15 @@ def classify_error(stderr: str) -> str:
     return "error"
 
 
-def build_command(args: list[str], target: str, cookies_file: str = "") -> list[str]:
+def build_command(
+    args: list[str], target: str, cookies_file: str = "", strategy_args: list[str] | None = None,
+) -> list[str]:
     cmd = [sys.executable, "-m", "yt_dlp", "-J", "--no-warnings", "--ignore-config", "--no-progress"]
     if cookies_file:
         cmd += ["--cookies", cookies_file]
+    if _proxy:
+        cmd += ["--proxy", _proxy]
+    cmd += _strategy_args if strategy_args is None else strategy_args
     # "--" sonrası hiçbir zaman seçenek olarak yorumlanmaz (kullanıcı girdisi buraya gelir)
     return cmd + list(args) + ["--", target]
 
@@ -128,8 +165,11 @@ def subprocess_env() -> dict[str, str]:
     return env
 
 
-async def run_json(args: list[str], target: str, *, cookies_file: str = "", timeout: int = DEFAULT_TIMEOUT) -> dict:
-    cmd = build_command(args, target, cookies_file)
+async def run_json(
+    args: list[str], target: str, *, cookies_file: str = "", timeout: int = DEFAULT_TIMEOUT,
+    strategy_args: list[str] | None = None,
+) -> dict:
+    cmd = build_command(args, target, cookies_file, strategy_args)
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=subprocess_env(),
     )
@@ -175,9 +215,11 @@ def _entry_to_track(entry: dict, requester_id: int, source: str) -> Track:
     )
 
 
-async def extract_stream(target: str, *, cookies_file: str = "") -> dict:
+async def extract_stream(target: str, *, cookies_file: str = "", strategy_args: list[str] | None = None) -> dict:
     """Tek bir parçanın tüm bilgisini ve ses akışı URL'sini getirir. target bir URL ya da 'ytsearch1:…' olabilir."""
-    info = await run_json(["--no-playlist", "-f", AUDIO_FORMAT], target, cookies_file=cookies_file)
+    info = await run_json(
+        ["--no-playlist", "-f", AUDIO_FORMAT], target, cookies_file=cookies_file, strategy_args=strategy_args,
+    )
     if info.get("entries") is not None:  # arama sonucu
         entries = [e for e in info["entries"] if e]
         if not entries:
@@ -198,6 +240,37 @@ async def extract_flat(target: str, *, limit: int, cookies_file: str = "") -> tu
     if info.get("entries") is None:
         return info.get("title"), [info]
     return info.get("title"), [e for e in info["entries"] if e][:limit]
+
+
+def user_agent_of(info: dict) -> str | None:
+    return (info.get("http_headers") or {}).get("User-Agent")
+
+
+async def probe_stream(url: str, user_agent: str | None = None, *, timeout: float = 25) -> str | None:
+    """
+    Ses akışının çalınabildiğini, çalarken kullanılan FFmpeg'in kendisiyle 1 saniye
+    okuyarak doğrular. yt-dlp link verse de link 403 dönebilir (bazı YouTube istemcileri,
+    eksik User-Agent…); Python'un HTTP istemcisi YouTube'a farklı göründüğü için bu
+    kontrol mutlaka FFmpeg ile yapılır. Döner: hata metni ya da None (açılıyor).
+    """
+    cmd = [ffmpeg_path(), "-v", "error", "-nostdin", *shlex.split(ffmpeg_input_options(user_agent)),
+           "-t", "1", "-i", url, "-f", "null", "-"]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        return f"FFmpeg çalıştırılamadı: {exc}"
+    try:
+        _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return f"{timeout:g} sn içinde açılmadı"
+    if proc.returncode != 0:
+        lines = err.decode("utf-8", "replace").strip().splitlines()
+        return (lines[-1] if lines else f"FFmpeg çıkış kodu {proc.returncode}")[:200]
+    return None
 
 
 async def version() -> str | None:
