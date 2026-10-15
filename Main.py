@@ -8,6 +8,7 @@ Yüklenecek cog'lar:
   - LeaderboardCog (leaderboard.py)
   - InfoCog        (info.py)
   - AuditCog       (audit.py) — olay kaydı, hile tespiti, analiz komutları
+  - MusicCog       (music/)   — YouTube/Spotify/SoundCloud çalma (MUSIC_ENABLED=false ile kapatılır)
   - AICog          (ai/)      — isteğe bağlı hafızalı sohbet (AI_ENABLED=true ise)
 """
 
@@ -123,7 +124,17 @@ class GapBot(commands.Bot):
         await self.add_cog(LeaderboardCog(self))
         await self.add_cog(InfoCog(self))
         await self.add_cog(AuditCog(self))
+        await self._load_music()
         await self._load_ai()
+
+    async def _load_music(self) -> None:
+        # İsteğe bağlı müzik modülü; yüklenemezse bot onsuz devam eder.
+        try:
+            from music import setup_music
+
+            await setup_music(self)
+        except Exception:
+            logging.getLogger("gap").exception("Müzik modülü yüklenemedi; bot müziksiz devam ediyor")
 
     async def _load_ai(self) -> None:
         # İsteğe bağlı AI eklentisi; yüklenemezse bot onsuz devam eder.

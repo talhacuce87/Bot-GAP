@@ -21,7 +21,7 @@ from tests.ai.fakes import FakeGuild, make_member, make_message
 
 ROOT = Path(__file__).resolve().parent.parent
 BOT_ID = 4242
-EXISTING_COGS = {"XPTrackerCog", "BestFriendCog", "UserCardCog", "LeaderboardCog", "InfoCog", "AuditCog"}
+EXISTING_COGS = {"XPTrackerCog", "BestFriendCog", "UserCardCog", "LeaderboardCog", "InfoCog", "AuditCog", "MusicCog"}
 
 
 @pytest.fixture

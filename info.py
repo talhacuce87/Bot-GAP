@@ -13,8 +13,8 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.4.0"
-LAST_DEPLOY_DATE = "12 Ekim 2026"
+BOT_VERSION = "2.5.0"
+LAST_DEPLOY_DATE = "15 Ekim 2026"
 
 # Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
 ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "0") or 0)
@@ -103,6 +103,18 @@ class InfoCog(commands.Cog):
             inline=False,
         )
 
+        if self.bot.get_cog("MusicCog") is not None:
+            embed.add_field(
+                name="🎵 Müzik",
+                value=(
+                    "• `!çal <link ya da şarkı adı>` — YouTube / Spotify / SoundCloud (playlist dahil)\n"
+                    "• `!geç` • `!duraklat` • `!devam` • `!bitir` — kontrol (butonlarla da olur)\n"
+                    "• `!kuyruk` • `!şimdi` • `!karıştır` • `!kaldır <no>` • `!temizle`\n"
+                    "• `!tekrar [kapalı|şarkı|kuyruk]` • `!volume [0-100]`"
+                ),
+                inline=False,
+            )
+
         embed.add_field(
             name="🚀 Sistem & Sürüm",
             value=(
@@ -140,7 +152,8 @@ class InfoCog(commands.Cog):
                     "• `!boost @üye <çarpan> [saat] <sebep>` — Belirtilen süre için geçici XP boost tanımlar\n"
                     "• *XP komutlarında sebep zorunludur; tüm işlemler kayıt altına alınır*\n"
                     "• `!xpsenkronize` — Sunucu üyelerinin XP rollerini kontrol edip eşitler\n"
-                    "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır"
+                    "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır\n"
+                    "• `!muzikdurum` / `!muzikguncelle` — Müzik sisteminin sağlığı / elle güncelleme"
                 ),
                 inline=False,
             )
@@ -187,49 +200,38 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "Bu sürümle Best Friend sistemi kademeli arkadaşlık tier'larına dönüştü "
-                "ve birçok hata düzeltildi."
+                "Bot-GAP artık ses kanalında müzik çalabiliyor! 🎵"
             ),
-            color=discord.Color.from_rgb(255, 143, 177),
+            color=discord.Color.from_rgb(0, 212, 255),
         )
 
         embed.add_field(
-            name="💞 Arkadaşlık Tier'ları",
+            name="🎵 Müzik",
             value=(
-                "• Ortak ses süresine göre 6 kademe: 🌱 Tanıdık → 🤝 Arkadaş → 💙 Yakın Arkadaş → "
-                "💞 Best Friend → 🔥 Kanka → 👑 Ruh İkizi\n"
-                "• `!tierlar` — Tüm tier'lar ve kaç saat gerektikleri"
-            ),
-            inline=False,
-        )
-
-        embed.add_field(
-            name="🎴 Yeni Kartlar",
-            value=(
-                "• `!bf` kartı baştan tasarlandı: tier rengine göre tema, kalp rozeti ve "
-                "tüm tier'ları gösteren ilerleme yolu\n"
-                "• `!arkadaslar` — En çok vakit geçirdiğin 10 kişiyi tier'larıyla gösterir"
+                "• `!çal <link ya da şarkı adı>` — YouTube, Spotify ve SoundCloud linkleri; "
+                "playlist ve albümler de olur\n"
+                "• Spotify linkleri şarkı bulunup YouTube'dan çalınır\n"
+                "• Şimdi çalıyor mesajındaki butonlarla ⏯️ ⏭️ ⏹️ 🔁 📜 kontrol"
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="🛠️ Düzeltmeler",
+            name="🎛️ Kontrol Komutları",
             value=(
-                "• Bot yeniden başlayınca ses süresi artık şişmiyor\n"
-                "• Günlük seri Türkiye saatiyle gece 00:00'da yenileniyor; bozulan seri artık eski haliyle görünmüyor\n"
-                "• `!kart` ve `!liderlik` kartlarındaki saydamlık ve hizalama hataları giderildi\n"
-                "• Süresi dolmuş boost `!xp`'de artık gösterilmiyor\n"
-                "• Ses XP sistemi tek bir hatada durmuyor"
+                "• `!geç`, `!duraklat`, `!devam`, `!bitir`\n"
+                "• `!kuyruk`, `!şimdi`, `!karıştır`, `!kaldır <no>`, `!temizle`\n"
+                "• `!tekrar [kapalı|şarkı|kuyruk]`, `!volume [0-100]`"
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="⚙️ Yönetim",
+            name="🛠️ Kendi Kendini Onarır",
             value=(
-                "• `!xpçıkar @üye <miktar> <sebep>` eklendi\n"
-                "• `!xpekle` / `!xpayarla` artık mesaj/ses XP oranını koruyor"
+                "• YouTube değiştikçe bot kendini otomatik günceller\n"
+                "• YouTube geçici olarak açılmazsa şarkı SoundCloud'dan çalınmaya çalışılır\n"
+                "• Kanalda kimse kalmayınca ya da boşta kalınca bot kendisi çıkar"
             ),
             inline=False,
         )

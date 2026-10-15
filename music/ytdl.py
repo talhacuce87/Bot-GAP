@@ -1,0 +1,204 @@
+"""
+music/ytdl.py — yt-dlp'yi ayrı bir süreç olarak çalıştırır.
+
+yt-dlp bot sürecine import edilmez; her çağrı `python -m yt_dlp` ile ayrı
+süreçte çalışır. Böylece updater.py yt-dlp'yi pip ile güncellediğinde yeni
+sürüm, bot yeniden başlatılmadan bir sonraki çağrıda devreye girer.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import shutil
+import sys
+from dataclasses import dataclass, field
+from typing import Any
+
+log = logging.getLogger("gap.music.ytdl")
+
+DEFAULT_TIMEOUT = 60
+
+
+class YtdlError(Exception):
+    """yt-dlp hatası. kind: blocked | unavailable | age | live | timeout | error"""
+
+    def __init__(self, kind: str, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+@dataclass
+class Track:
+    title: str
+    requester_id: int
+    # Çalınacak sayfa (YouTube/SoundCloud). Spotify parçalarında None; query'den aranır.
+    url: str | None = None
+    query: str | None = None
+    artist: str | None = None
+    duration: int | None = None
+    thumbnail: str | None = None
+    source: str = "youtube"  # youtube | spotify | soundcloud | search
+    # Çözülmüş ses akışı (YouTube linkleri birkaç saat geçerli)
+    stream_url: str | None = None
+    stream_expires: float = 0.0
+    # YouTube çalışmadığı için başka kaynaktan çalındıysa (örn. "soundcloud")
+    fallback: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def display(self) -> str:
+        if self.artist and self.artist.lower() not in self.title.lower():
+            return f"{self.artist} — {self.title}"
+        return self.title
+
+
+def deno_path() -> str | None:
+    """pip ile kurulan deno'yu bulur; yoksa PATH'teki deno (yt-dlp kendisi de arar)."""
+    try:
+        import deno
+
+        return deno.find_deno_bin()
+    except Exception:
+        return shutil.which("deno")
+
+
+def ffmpeg_path() -> str:
+    """Sistemdeki ffmpeg; yoksa imageio-ffmpeg'in getirdiği hazır ffmpeg."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    import imageio_ffmpeg
+
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def classify_error(stderr: str) -> str:
+    text = stderr.lower()
+    # "Sign in to confirm your age" de "sign in to confirm" içerir; önce yaş kontrolü
+    if "confirm your age" in text or "age-restricted" in text or "inappropriate for some users" in text:
+        return "age"
+    if any(s in text for s in (
+        "sign in to confirm", "not a bot", "http error 429", "too many requests",
+        "rate-limit", "rate limit", "try again later",
+    )):
+        return "blocked"
+    # YouTube tarafındaki değişikliklerden kaynaklanan, güncellemeyle düzelen hatalar
+    if "requested format" in text or "signature" in text or "nsig" in text or "challenge" in text:
+        return "error"
+    if "is live" in text or "live event" in text or "premieres in" in text:
+        return "live"
+    if any(s in text for s in (
+        "unavailable", "private video", "has been removed", "is not available",
+        "does not exist", "no video results", "unable to find", "404",
+    )):
+        return "unavailable"
+    return "error"
+
+
+def build_command(args: list[str], target: str, cookies_file: str = "") -> list[str]:
+    cmd = [sys.executable, "-m", "yt_dlp", "-J", "--no-warnings", "--ignore-config", "--no-progress"]
+    if cookies_file:
+        cmd += ["--cookies", cookies_file]
+    # "--" sonrası hiçbir zaman seçenek olarak yorumlanmaz (kullanıcı girdisi buraya gelir)
+    return cmd + list(args) + ["--", target]
+
+
+def subprocess_env() -> dict[str, str]:
+    """
+    yt-dlp YouTube için JS çalıştırıcısı (deno) ister ve onu PATH'te arar. pip ile
+    kurulan deno'nun klasörünü PATH'in başına ekleriz; böylece yt-dlp'nin komut
+    satırı seçeneklerine bağımlı kalmayız (seçenek adı değişse de çalışmaya devam eder).
+    """
+    env = dict(os.environ)
+    deno = deno_path()
+    if deno:
+        env["PATH"] = os.pathsep.join([os.path.dirname(deno), env.get("PATH", "")])
+    return env
+
+
+async def run_json(args: list[str], target: str, *, cookies_file: str = "", timeout: int = DEFAULT_TIMEOUT) -> dict:
+    cmd = build_command(args, target, cookies_file)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=subprocess_env(),
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise YtdlError("timeout", f"yt-dlp {timeout} sn içinde cevap vermedi")
+
+    err = stderr.decode("utf-8", "replace")
+    if proc.returncode != 0 or not stdout.strip():
+        kind = classify_error(err)
+        last = err.strip().splitlines()[-1] if err.strip() else f"çıkış kodu {proc.returncode}"
+        log.info("yt-dlp hatası (%s) %s: %s", kind, target[:120], last[:300])
+        raise YtdlError(kind, last[:300])
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise YtdlError("error", f"yt-dlp çıktısı okunamadı: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Yüksek seviye işlemler
+# ---------------------------------------------------------------------------
+
+AUDIO_FORMAT = "bestaudio[acodec=opus]/bestaudio/best"
+
+
+def _entry_to_track(entry: dict, requester_id: int, source: str) -> Track:
+    url = entry.get("webpage_url") or entry.get("url")
+    if url and source == "youtube" and not url.startswith("http"):
+        url = f"https://www.youtube.com/watch?v={url}"
+    thumbs = entry.get("thumbnails") or []
+    return Track(
+        title=entry.get("title") or "Bilinmeyen parça",
+        requester_id=requester_id,
+        url=url,
+        artist=entry.get("uploader") or entry.get("channel") or entry.get("artist"),
+        duration=int(entry["duration"]) if entry.get("duration") else None,
+        thumbnail=entry.get("thumbnail") or (thumbs[-1].get("url") if thumbs else None),
+        source=source,
+    )
+
+
+async def extract_stream(target: str, *, cookies_file: str = "") -> dict:
+    """Tek bir parçanın tüm bilgisini ve ses akışı URL'sini getirir. target bir URL ya da 'ytsearch1:…' olabilir."""
+    info = await run_json(["--no-playlist", "-f", AUDIO_FORMAT], target, cookies_file=cookies_file)
+    if info.get("entries") is not None:  # arama sonucu
+        entries = [e for e in info["entries"] if e]
+        if not entries:
+            raise YtdlError("unavailable", "Arama sonuç vermedi")
+        info = entries[0]
+    if info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming"}:
+        raise YtdlError("live", "Canlı yayınlar çalınamıyor")
+    if not info.get("url"):
+        raise YtdlError("error", "Ses akışı bulunamadı")
+    return info
+
+
+async def extract_flat(target: str, *, limit: int, cookies_file: str = "") -> tuple[str | None, list[dict]]:
+    """Playlist ya da arama sonuçlarını hızlıca (akış URL'si olmadan) listeler. Döner: (başlık, girdiler)."""
+    info = await run_json(
+        ["--flat-playlist", "--playlist-end", str(limit)], target, cookies_file=cookies_file,
+    )
+    if info.get("entries") is None:
+        return info.get("title"), [info]
+    return info.get("title"), [e for e in info["entries"] if e][:limit]
+
+
+async def version() -> str | None:
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "yt_dlp", "--version",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return None
+    return out.decode().strip() or None
