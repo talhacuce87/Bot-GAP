@@ -108,9 +108,9 @@ class InfoCog(commands.Cog):
                 name="🎵 Müzik",
                 value=(
                     "• `!çal <link ya da şarkı adı>` — YouTube / Spotify / SoundCloud (playlist dahil)\n"
-                    "• `!geç` • `!duraklat` • `!devam` • `!bitir` — kontrol (butonlarla da olur)\n"
-                    "• `!kuyruk` • `!şimdi` • `!karıştır` • `!kaldır <no>` • `!temizle`\n"
-                    "• `!tekrar [kapalı|şarkı|kuyruk]` • `!volume [0-100]`"
+                    "• Kontrol, şimdi çalıyor kartının altındaki butonlarla: ⏮️ ⏪ ⏯️ ⏩ ⏭️ · 🔁 🔀 ⏹️\n"
+                    "• `!playlist` — Çalan listeyi gösterir · `!şimdi` — Oynatıcıyı en alta taşır\n"
+                    "• `!kaldır <no>` • `!temizle` • `!volume [0-100]`"
                 ),
                 inline=False,
             )
@@ -211,17 +211,18 @@ class InfoCog(commands.Cog):
                 "• `!çal <link ya da şarkı adı>` — YouTube, Spotify ve SoundCloud linkleri; "
                 "playlist ve albümler de olur\n"
                 "• Spotify linkleri şarkı bulunup YouTube'dan çalınır\n"
-                "• Şimdi çalıyor mesajındaki butonlarla ⏯️ ⏭️ ⏹️ 🔁 📜 kontrol"
+                "• Her şarkı için kapaklı bir **şimdi çalıyor kartı** gelir"
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="🎛️ Kontrol Komutları",
+            name="🎛️ Kartın Altındaki Butonlar",
             value=(
-                "• `!geç`, `!duraklat`, `!devam`, `!bitir`\n"
-                "• `!kuyruk`, `!şimdi`, `!karıştır`, `!kaldır <no>`, `!temizle`\n"
-                "• `!tekrar [kapalı|şarkı|kuyruk]`, `!volume [0-100]`"
+                "• ⏮️ Başa sar (ilk 5 sn'de basarsan önceki şarkı) · ⏪ 10 sn geri\n"
+                "• ⏯️ Duraklat / devam · ⏩ 10 sn ileri · ⏭️ Sonraki şarkı\n"
+                "• 🔁 Tekrar (kapalı → şarkı → liste) · 🔀 Karıştır · ⏹️ Bitir\n"
+                "• `!playlist` ile çalan listeyi, `!şimdi` ile oynatıcıyı en alta getir"
             ),
             inline=False,
         )

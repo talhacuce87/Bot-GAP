@@ -54,6 +54,8 @@ class SpotifyResult:
     kind: str  # track | album | playlist
     name: str
     tracks: list[SpotifyTrack]
+    # Parça/albüm kapağı (playlist kapağı parçalara ait olmadığı için kullanılmaz)
+    cover: str | None = None
 
 
 def parse_link(text: str) -> tuple[str, str] | None:
@@ -68,6 +70,13 @@ def is_short_link(text: str) -> bool:
 
 def _clean(text: str | None) -> str:
     return " ".join((text or "").replace("\xa0", " ").split())
+
+
+def _largest_image(images: list[dict] | None) -> str | None:
+    images = [i for i in images or [] if i.get("url")]
+    if not images:
+        return None
+    return max(images, key=lambda i: i.get("maxWidth") or i.get("width") or 0)["url"]
 
 
 def parse_embed_html(html: str) -> SpotifyResult:
@@ -93,7 +102,8 @@ def parse_embed_html(html: str) -> SpotifyResult:
         ]
     if not tracks or not tracks[0].title:
         raise SpotifyError("Embed sayfasında parça yok")
-    return SpotifyResult(kind, name, tracks)
+    cover = _largest_image((entity.get("visualIdentity") or {}).get("image")) if kind != "playlist" else None
+    return SpotifyResult(kind, name, tracks, cover)
 
 
 class SpotifyClient:
@@ -190,9 +200,13 @@ class SpotifyClient:
             return ", ".join(a["name"] for a in obj.get("artists") or [] if a.get("name"))
 
         if kind == "track":
-            return SpotifyResult("track", data["name"], [SpotifyTrack(data["name"], artists(data), data.get("duration_ms"))])
+            cover = _largest_image((data.get("album") or {}).get("images"))
+            return SpotifyResult(
+                "track", data["name"], [SpotifyTrack(data["name"], artists(data), data.get("duration_ms"))], cover,
+            )
         items = (data.get("tracks") or {}).get("items") or []
         return SpotifyResult(
             "album", data["name"],
             [SpotifyTrack(t["name"], artists(t), t.get("duration_ms")) for t in items if t.get("name")],
+            _largest_image(data.get("images")),
         )

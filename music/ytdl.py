@@ -55,6 +55,15 @@ class Track:
         return self.title
 
 
+def format_time(seconds: float | int | None) -> str:
+    if seconds is None:
+        return "?"
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
 def deno_path() -> str | None:
     """pip ile kurulan deno'yu bulur; yoksa PATH'teki deno (yt-dlp kendisi de arar)."""
     try:

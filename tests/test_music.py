@@ -336,7 +336,8 @@ async def test_music_commands_register_without_conflicts(monkeypatch, tmp_path):
     try:
         assert bot.get_cog("MusicCog") is not None
         for name in ("çal", "cal", "play", "p", "geç", "skip", "bitir", "kuyruk", "şimdi", "np",
-                     "tekrar", "volume", "karıştır", "kaldır", "temizle", "muzikdurum", "muzikguncelle"):
+                     "tekrar", "volume", "karıştır", "kaldır", "temizle", "muzikdurum", "muzikguncelle",
+                     "playlist", "pl", "önceki", "ileri", "geri", "duraklat", "devam"):
             assert bot.get_command(name) is not None, name
         assert bot.get_command("ses").cog_name == "XPTrackerCog"   # mevcut !ses bozulmadı
     finally:

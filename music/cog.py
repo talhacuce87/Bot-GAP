@@ -1,5 +1,10 @@
 """
-music/cog.py — Müzik komutları, kontrol butonları ve kendi kendini onaran arka plan görevleri.
+music/cog.py — Müzik komutları, "şimdi çalıyor" oynatıcısı ve kendi kendini onaran arka plan görevleri.
+
+Çalma kontrolü "şimdi çalıyor" mesajındaki butonlarla yapılır:
+    ⏮️ başa sar / önceki   ⏪ 10 sn geri   ⏯️ duraklat-devam   ⏩ 10 sn ileri   ⏭️ sonraki
+    🔁 tekrar   🔀 karıştır   ⏹️ bitir
+Eski komutlar (!geç, !duraklat…) gizli olarak çalışmaya devam eder.
 """
 
 from __future__ import annotations
@@ -12,11 +17,12 @@ import discord
 from discord.ext import commands, tasks
 
 import activitylog
-from music import ytdl
+from music import card, ytdl
 from music.config import MusicConfig
-from music.player import LOOP_LABELS, GuildPlayer, format_time
+from music.player import LOOP_LABELS, SEEK_STEP, GuildPlayer, format_time
 from music.sources import SourceError, SourceResolver
 from music.updater import Updater
+from music.ytdl import Track
 
 log = logging.getLogger("gap.music")
 
@@ -24,8 +30,10 @@ QUEUE_PAGE_SIZE = 10
 LOOP_ARGS = {
     "kapali": "off", "kapalı": "off", "off": "off", "kapat": "off",
     "sarki": "track", "şarkı": "track", "track": "track", "tek": "track",
-    "kuyruk": "queue", "liste": "queue", "queue": "queue", "hepsi": "queue",
+    "kuyruk": "queue", "liste": "queue", "queue": "queue", "hepsi": "queue", "playlist": "queue",
 }
+SOURCE_NOTES = {"spotify": "Spotify → YouTube", "soundcloud": "SoundCloud"}
+ACCENT = discord.Color.from_rgb(0, 212, 255)
 BLOCKED_HINT = (
     "YouTube bu sunucunun IP adresini bot olarak işaretlemiş olabilir. Kalıcı çözüm: yedek bir "
     "Google hesabıyla YouTube'a girip çerezleri (cookies.txt) dışa aktar, `.env` içine "
@@ -110,11 +118,65 @@ class MusicCog(commands.Cog):
             await ctx.send("❌ Ses kanalına bağlanamadım, birazdan tekrar dene.")
 
     # ------------------------------------------------------------------
-    # Kontrol butonları
+    # Oynatıcı mesajı & çalma listesi
     # ------------------------------------------------------------------
 
-    def controls_view(self, player: GuildPlayer) -> discord.ui.View:
-        return MusicControls(self, player)
+    def now_playing_view(self, player: GuildPlayer, *, finished: bool = False) -> NowPlayingView:
+        return NowPlayingView(self, player, finished=finished)
+
+    def playlist_embed(self, player: GuildPlayer, page: int = 1) -> discord.Embed:
+        queue = list(player.queue)
+        pages = max(1, math.ceil(len(queue) / QUEUE_PAGE_SIZE))
+        page = max(1, min(page, pages))
+        start = (page - 1) * QUEUE_PAGE_SIZE
+        esc = discord.utils.escape_markdown
+        current = player.current
+
+        parts: list[str] = []
+        if page == 1 and player.history:
+            parts.append("\n".join(f"⏮️ ~~{esc(t.display)[:70]}~~" for t in list(player.history)[-2:]))
+        if current:
+            icon = "⏸️" if player.is_paused else "▶️"
+            line = f"{icon} **{esc(current.display)[:90]}**"
+            if current.duration:
+                ratio = min(1.0, player.elapsed / current.duration)
+                filled = int(ratio * 16)
+                line += (f"\n`{format_time(player.elapsed)}` {'▰' * filled}{'▱' * (16 - filled)} "
+                         f"`{format_time(current.duration)}`")
+            parts.append(line)
+        upcoming = [
+            f"`{i}.` {esc(t.display)[:80]} · `{format_time(t.duration)}`"
+            for i, t in enumerate(queue[start:start + QUEUE_PAGE_SIZE], start=start + 1)
+        ]
+        parts.append("**Sıradakiler**\n" + "\n".join(upcoming) if upcoming else "_Sırada başka şarkı yok._")
+
+        collection = current.extra.get("collection") if current else None
+        embed = discord.Embed(
+            title=f"📃 {collection}"[:256] if collection else "📜 Çalma listesi",
+            description="\n\n".join(parts)[:4000],
+            color=ACCENT,
+        )
+        remaining = sum(t.duration or 0 for t in queue)
+        if current and current.duration:
+            remaining += max(0, current.duration - int(player.elapsed))
+        embed.set_footer(
+            text=f"{len(queue)} şarkı sırada · kalan {format_time(remaining)} · tekrar: "
+            f"{LOOP_LABELS[player.loop_mode]} · sayfa {page}/{pages}"
+        )
+        if current and current.thumbnail:
+            embed.set_thumbnail(url=current.thumbnail)
+        return embed
+
+    async def _check_control(self, ctx: commands.Context) -> GuildPlayer | None:
+        """Gizli kontrol komutları için: aynı kanalda mı, bir şey çalıyor mu?"""
+        if error := self._same_channel_error(ctx.author):
+            await ctx.send(f"❌ {error}")
+            return None
+        player = self.players.get(ctx.guild.id)
+        if not player or not player.current:
+            await ctx.send("Şu an bir şey çalmıyor.")
+            return None
+        return player
 
     # ------------------------------------------------------------------
     # Komutlar
@@ -142,6 +204,8 @@ class MusicCog(commands.Cog):
                 await ctx.send(f"❌ {exc}")
                 return
 
+        for track in tracks:
+            track.extra["collection"] = collection
         player = self._player_for(ctx)
         await player.connect(self._user_channel(ctx.author))
         was_busy = player.current is not None or bool(player.queue)
@@ -162,38 +226,67 @@ class MusicCog(commands.Cog):
         elif tracks[0].fallback == "soundcloud":
             await ctx.send("ℹ️ YouTube şu an erişilemiyor, şarkı SoundCloud'dan çalınıyor.")
 
-    @commands.command(name="geç", aliases=["gec", "skip", "atla", "s"])
-    async def skip_command(self, ctx: commands.Context) -> None:
-        """Çalan şarkıyı geçer."""
+    @commands.command(name="playlist", aliases=["kuyruk", "queue", "q", "liste", "sıra", "sira", "pl"], usage="[sayfa]")
+    async def playlist_command(self, ctx: commands.Context, page: int = 1) -> None:
+        """Çalan playlist'i / kuyruğu gösterir: önceki, şimdi çalan ve sıradaki şarkılar."""
         player = self.players.get(ctx.guild.id)
-        if error := self._same_channel_error(ctx.author):
-            await ctx.send(f"❌ {error}")
-        elif player and player.skip():
-            await ctx.message.add_reaction("⏭️")
-        else:
+        if not player or (not player.current and not player.queue):
+            await ctx.send("Şu an bir şey çalmıyor. `!çal <link>` ile başlat.")
+            return
+        view = PlaylistView(self, player, page)
+        view.message = await ctx.send(embed=self.playlist_embed(player, page), view=view)
+
+    @commands.command(name="şimdi", aliases=["simdi", "np", "nowplaying", "çalan", "calan", "oynatıcı", "oynatici"])
+    async def now_command(self, ctx: commands.Context) -> None:
+        """Oynatıcıyı (kart + butonlar) sohbetin en altına yeniden gönderir."""
+        player = self.players.get(ctx.guild.id)
+        if not player or not player.current:
             await ctx.send("Şu an bir şey çalmıyor.")
+            return
+        player.text_channel = ctx.channel
+        await player.send_now_playing()
 
-    @commands.command(name="duraklat", aliases=["pause"])
+    # Butonlarla yapılabilenlerin komut hâlleri; !yardim'da gösterilmez ama çalışır.
+
+    @commands.command(name="geç", aliases=["gec", "skip", "atla", "s", "sonraki", "next"], hidden=True)
+    async def skip_command(self, ctx: commands.Context) -> None:
+        if (player := await self._check_control(ctx)) and player.skip():
+            await ctx.message.add_reaction("⏭️")
+
+    @commands.command(name="önceki", aliases=["onceki", "prev", "previous", "back"], hidden=True)
+    async def previous_command(self, ctx: commands.Context) -> None:
+        if (player := await self._check_control(ctx)) and player.previous() != "none":
+            await ctx.message.add_reaction("⏮️")
+
+    @commands.command(name="ileri", aliases=["forward", "ff"], usage="[saniye]", hidden=True)
+    async def forward_command(self, ctx: commands.Context, seconds: int = SEEK_STEP) -> None:
+        if player := await self._check_control(ctx):
+            pos = player.seek_relative(abs(seconds))
+            if pos is None:
+                await ctx.send("⏭️ Şarkının sonuna gelindi, sıradakine geçiliyor.")
+            else:
+                await ctx.send(f"⏩ `{format_time(pos)}` / `{format_time(player.current.duration)}`")
+
+    @commands.command(name="geri", aliases=["rewind", "rw"], usage="[saniye]", hidden=True)
+    async def rewind_command(self, ctx: commands.Context, seconds: int = SEEK_STEP) -> None:
+        if player := await self._check_control(ctx):
+            pos = player.seek_relative(-abs(seconds))
+            if pos is not None:
+                await ctx.send(f"⏪ `{format_time(pos)}` / `{format_time(player.current.duration)}`")
+
+    @commands.command(name="duraklat", aliases=["pause"], hidden=True)
     async def pause_command(self, ctx: commands.Context) -> None:
-        player = self.players.get(ctx.guild.id)
-        if error := self._same_channel_error(ctx.author):
-            await ctx.send(f"❌ {error}")
-        elif player and player.pause():
+        if (player := await self._check_control(ctx)) and player.pause():
             await ctx.message.add_reaction("⏸️")
-        else:
-            await ctx.send("Şu an çalan bir şey yok.")
+            await player.refresh_controls()
 
-    @commands.command(name="devam", aliases=["resume"])
+    @commands.command(name="devam", aliases=["resume"], hidden=True)
     async def resume_command(self, ctx: commands.Context) -> None:
-        player = self.players.get(ctx.guild.id)
-        if error := self._same_channel_error(ctx.author):
-            await ctx.send(f"❌ {error}")
-        elif player and player.resume():
+        if (player := await self._check_control(ctx)) and player.resume():
             await ctx.message.add_reaction("▶️")
-        else:
-            await ctx.send("Duraklatılmış bir şarkı yok.")
+            await player.refresh_controls()
 
-    @commands.command(name="bitir", aliases=["stop", "dur", "dc", "çık", "cik", "leave"])
+    @commands.command(name="bitir", aliases=["stop", "dur", "dc", "çık", "cik", "leave"], hidden=True)
     async def stop_command(self, ctx: commands.Context) -> None:
         """Müziği durdurur, kuyruğu temizler ve kanaldan çıkar."""
         player = self.players.get(ctx.guild.id)
@@ -206,55 +299,18 @@ class MusicCog(commands.Cog):
         await player.stop()
         await ctx.message.add_reaction("⏹️")
 
-    @commands.command(name="kuyruk", aliases=["queue", "q", "sıra", "sira"], usage="[sayfa]")
-    async def queue_command(self, ctx: commands.Context, page: int = 1) -> None:
-        player = self.players.get(ctx.guild.id)
-        if not player or (not player.current and not player.queue):
-            await ctx.send("Kuyruk boş. `!çal <link>` ile bir şey ekle.")
-            return
-        await ctx.send(embed=self.queue_embed(player, page))
-
-    def queue_embed(self, player: GuildPlayer, page: int = 1) -> discord.Embed:
-        pages = max(1, math.ceil(len(player.queue) / QUEUE_PAGE_SIZE))
-        page = max(1, min(page, pages))
-        start = (page - 1) * QUEUE_PAGE_SIZE
-        lines = [
-            f"`{i}.` {discord.utils.escape_markdown(t.display)[:80]} · `{format_time(t.duration)}`"
-            for i, t in enumerate(list(player.queue)[start:start + QUEUE_PAGE_SIZE], start=start + 1)
-        ]
-        now = f"🎵 **{discord.utils.escape_markdown(player.current.display)}**\n\n" if player.current else ""
-        total = sum(t.duration or 0 for t in player.queue)
-        embed = discord.Embed(
-            title="📜 Kuyruk",
-            description=now + ("\n".join(lines) if lines else "_Sırada başka şarkı yok._"),
-            color=discord.Color.from_rgb(0, 212, 255),
-        )
-        embed.set_footer(
-            text=f"{len(player.queue)} parça · toplam {format_time(total)} · tekrar: "
-            f"{LOOP_LABELS[player.loop_mode]} · sayfa {page}/{pages}"
-        )
-        return embed
-
-    @commands.command(name="şimdi", aliases=["simdi", "np", "nowplaying", "çalan", "calan"])
-    async def now_command(self, ctx: commands.Context) -> None:
-        player = self.players.get(ctx.guild.id)
-        if not player or not player.current:
-            await ctx.send("Şu an bir şey çalmıyor.")
-            return
-        await ctx.send(embed=player.now_playing_embed(player.current, with_progress=True))
-
-    @commands.command(name="karıştır", aliases=["karistir", "shuffle"])
+    @commands.command(name="karıştır", aliases=["karistir", "shuffle"], hidden=True)
     async def shuffle_command(self, ctx: commands.Context) -> None:
         player = self.players.get(ctx.guild.id)
         if error := self._same_channel_error(ctx.author):
             await ctx.send(f"❌ {error}")
         elif not player or len(player.queue) < 2:
-            await ctx.send("Karıştırmak için kuyrukta en az 2 şarkı olmalı.")
+            await ctx.send("Karıştırmak için sırada en az 2 şarkı olmalı.")
         else:
             player.shuffle()
-            await ctx.send(f"🔀 Kuyruk karıştırıldı ({len(player.queue)} parça).")
+            await ctx.send(f"🔀 Liste karıştırıldı ({len(player.queue)} şarkı).")
 
-    @commands.command(name="tekrar", aliases=["loop", "repeat"], usage="[kapalı | şarkı | kuyruk]")
+    @commands.command(name="tekrar", aliases=["loop", "repeat"], usage="[kapalı | şarkı | liste]", hidden=True)
     async def loop_command(self, ctx: commands.Context, mode: str | None = None) -> None:
         player = self.players.get(ctx.guild.id)
         if error := self._same_channel_error(ctx.author):
@@ -270,6 +326,7 @@ class MusicCog(commands.Cog):
         else:
             raise commands.BadArgument(mode)
         await ctx.send(f"Tekrar modu: **{LOOP_LABELS[player.loop_mode]}**")
+        await player.refresh_controls()
 
     @commands.command(name="volume", aliases=["vol", "sesduzeyi", "sesdüzeyi"], usage="[0-100]")
     async def volume_command(self, ctx: commands.Context, percent: int | None = None) -> None:
@@ -446,49 +503,188 @@ class MusicCog(commands.Cog):
             self.updater.mark_alerted()
 
 
-class MusicControls(discord.ui.View):
-    """"Şimdi çalıyor" mesajındaki butonlar: duraklat/devam, geç, durdur, tekrar, kuyruk."""
+class NowPlayingView(discord.ui.LayoutView):
+    """
+    "Şimdi çalıyor" mesajı: başlık satırı, kart görseli, bilgi satırı ve iki sıra buton.
+    finished=True iken (şarkı bitti) butonlar kalkar, yazı ve kart kalır.
+    """
 
-    def __init__(self, cog: MusicCog, player: GuildPlayer) -> None:
+    def __init__(self, cog: MusicCog, player: GuildPlayer, *, finished: bool = False) -> None:
         super().__init__(timeout=None)
         self.cog = cog
         self.player = player
+        track = player.now_track or player.current
+        if track is None:
+            self.add_item(discord.ui.TextDisplay("🎵 Çalma bitti."))
+            return
+
+        name, artist = card.split_title(track, plain=True)
+        title = discord.utils.escape_markdown(f"{name} - {artist}" if artist else name)
+        if finished:
+            head = f"🎵 · Çalındı **{title}**"
+        elif player.is_paused:
+            head = f"⏸️ · Duraklatıldı **{title}**"
+        else:
+            head = f"🔊 · Şimdi çalıyor **{title}**"
+        self.add_item(discord.ui.TextDisplay(head[:1000]))
+        if player.now_has_card:
+            self.add_item(discord.ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{card.FILENAME}")))
+        self.add_item(discord.ui.TextDisplay(self._info_line(track, finished)))
+        if finished:
+            return
+
+        b = self._button
+        style = discord.ButtonStyle
+        loop_emoji = "🔂" if player.loop_mode == "track" else "🔁"
+        self.add_item(discord.ui.ActionRow(
+            b("⏮️", self.previous_button),
+            b("⏪", self.rewind_button),
+            b("▶️" if player.is_paused else "⏸️", self.toggle_button, style.primary),
+            b("⏩", self.forward_button),
+            b("⏭️", self.skip_button),
+        ))
+        self.add_item(discord.ui.ActionRow(
+            b(loop_emoji, self.loop_button, style.success if player.loop_mode != "off" else style.secondary),
+            b("🔀", self.shuffle_button),
+            b("⏹️", self.stop_button, style.danger),
+        ))
+
+    def _info_line(self, track: Track, finished: bool) -> str:
+        parts = [f"İsteyen: <@{track.requester_id}>"]
+        if track.fallback == "soundcloud":
+            parts.append("YouTube erişilemedi, SoundCloud'dan çalınıyor")
+        elif note := SOURCE_NOTES.get(track.source):
+            parts.append(note)
+        if collection := track.extra.get("collection"):
+            parts.append(f"📃 {discord.utils.escape_markdown(collection)[:60]}")
+        if not finished:
+            if self.player.loop_mode != "off":
+                parts.append(f"Tekrar: {LOOP_LABELS[self.player.loop_mode]}")
+            if self.player.queue:
+                parts.append(f"Sırada {len(self.player.queue)} şarkı · `!playlist`")
+        if track.url:
+            parts.append(f"[Kaynağı aç]({track.url})")
+        return "-# " + " · ".join(parts)
+
+    @staticmethod
+    def _button(emoji: str, handler, style: discord.ButtonStyle = discord.ButtonStyle.secondary) -> discord.ui.Button:
+        button = discord.ui.Button(emoji=emoji, style=style)
+        button.callback = handler
+        return button
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         member = interaction.user
         if not isinstance(member, discord.Member):
             return False
-        if self.cog.players.get(member.guild.id) is not self.player:
-            await interaction.response.send_message("Bu oynatıcı artık aktif değil.", ephemeral=True)
+        player = self.cog.players.get(member.guild.id)
+        if player is not self.player or player.now_message is None or (
+            interaction.message is not None and interaction.message.id != player.now_message.id
+        ):
+            await interaction.response.send_message("Bu oynatıcı artık aktif değil; en alttaki mesajı kullan.", ephemeral=True)
             return False
         if error := self.cog._same_channel_error(member):
             await interaction.response.send_message(f"❌ {error}", ephemeral=True)
             return False
         return True
 
-    @discord.ui.button(emoji="⏯️", style=discord.ButtonStyle.secondary)
-    async def toggle_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        if self.player.is_paused:
-            self.player.resume()
+    async def _refresh(self, interaction: discord.Interaction) -> None:
+        await interaction.response.edit_message(
+            view=NowPlayingView(self.cog, self.player), allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    async def _not_playing(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_message("Şu an bir şey çalmıyor.", ephemeral=True, delete_after=5)
+
+    async def previous_button(self, interaction: discord.Interaction) -> None:
+        if self.player.previous() == "none":
+            await self._not_playing(interaction)
         else:
-            self.player.pause()
-        await interaction.response.defer()
+            await interaction.response.defer()
 
-    @discord.ui.button(emoji="⏭️", style=discord.ButtonStyle.secondary)
-    async def skip_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        self.player.skip()
-        await interaction.response.defer()
+    async def _seek(self, interaction: discord.Interaction, delta: int) -> None:
+        if not self.player.current:
+            await self._not_playing(interaction)
+            return
+        pos = self.player.seek_relative(delta)
+        if pos is None:
+            await interaction.response.defer()  # sona gelindi, sıradakine geçildi
+            return
+        icon = "⏩" if delta > 0 else "⏪"
+        await interaction.response.send_message(
+            f"{icon} `{format_time(pos)}` / `{format_time(self.player.current.duration)}`", ephemeral=True, delete_after=4,
+        )
 
-    @discord.ui.button(emoji="⏹️", style=discord.ButtonStyle.danger)
-    async def stop_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+    async def rewind_button(self, interaction: discord.Interaction) -> None:
+        await self._seek(interaction, -SEEK_STEP)
+
+    async def forward_button(self, interaction: discord.Interaction) -> None:
+        await self._seek(interaction, SEEK_STEP)
+
+    async def toggle_button(self, interaction: discord.Interaction) -> None:
+        if not (self.player.resume() if self.player.is_paused else self.player.pause()):
+            await self._not_playing(interaction)
+            return
+        await self._refresh(interaction)
+
+    async def skip_button(self, interaction: discord.Interaction) -> None:
+        if self.player.skip():
+            await interaction.response.defer()
+        else:
+            await self._not_playing(interaction)
+
+    async def loop_button(self, interaction: discord.Interaction) -> None:
+        self.player.cycle_loop()
+        await self._refresh(interaction)
+
+    async def shuffle_button(self, interaction: discord.Interaction) -> None:
+        if len(self.player.queue) < 2:
+            await interaction.response.send_message(
+                "Karıştırmak için sırada en az 2 şarkı olmalı.", ephemeral=True, delete_after=5,
+            )
+            return
+        self.player.shuffle()
+        await interaction.response.send_message(
+            f"🔀 Liste karıştırıldı ({len(self.player.queue)} şarkı).", ephemeral=True, delete_after=5,
+        )
+
+    async def stop_button(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         await self.player.stop()
 
-    @discord.ui.button(emoji="🔁", style=discord.ButtonStyle.secondary)
-    async def loop_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        mode = self.player.cycle_loop()
-        await interaction.response.send_message(f"Tekrar modu: **{LOOP_LABELS[mode]}**", ephemeral=True)
 
-    @discord.ui.button(emoji="📜", style=discord.ButtonStyle.secondary)
-    async def queue_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await interaction.response.send_message(embed=self.cog.queue_embed(self.player), ephemeral=True)
+class PlaylistView(discord.ui.View):
+    """!playlist mesajındaki sayfa ve yenile butonları."""
+
+    def __init__(self, cog: MusicCog, player: GuildPlayer, page: int) -> None:
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.player = player
+        self.page = page
+        self.message: discord.Message | None = None
+
+    async def _show(self, interaction: discord.Interaction, page: int) -> None:
+        if self.cog.players.get(self.player.guild.id) is not self.player:
+            await interaction.response.edit_message(content="Çalma bitti.", embed=None, view=None)
+            return
+        pages = max(1, math.ceil(len(self.player.queue) / QUEUE_PAGE_SIZE))
+        self.page = max(1, min(page, pages))
+        await interaction.response.edit_message(embed=self.cog.playlist_embed(self.player, self.page), view=self)
+
+    @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.secondary)
+    async def prev_page(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self._show(interaction, self.page - 1)
+
+    @discord.ui.button(emoji="🔄", style=discord.ButtonStyle.secondary)
+    async def refresh_page(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self._show(interaction, self.page)
+
+    @discord.ui.button(emoji="▶️", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self._show(interaction, self.page + 1)
+
+    async def on_timeout(self) -> None:
+        if self.message is not None:
+            try:
+                await self.message.edit(view=None)
+            except discord.HTTPException:
+                pass
