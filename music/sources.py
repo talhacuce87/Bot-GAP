@@ -277,7 +277,9 @@ class SourceResolver:
                 self.soundcloud_error = "Aranan şarkıya benzeyen tam sürüm bulunamadı"
                 log.info("SoundCloud'da eşleşen tam sürüm yok: %s", query)
                 return None
-            scored.sort(key=lambda se: (-se[0], abs((se[1].get("duration") or 0) - (expected_duration or 0))))
+            # Süre bilinmiyorsa SoundCloud'un alaka sırası korunur (sort kararlıdır)
+            scored.sort(key=lambda se: (-se[0], abs((se[1].get("duration") or 0) - expected_duration)
+                                        if expected_duration else 0))
             info = await ytdl.extract_stream(scored[0][1]["url"])
         except YtdlError as exc:
             self.soundcloud_error = f"{exc.kind}: {exc}"

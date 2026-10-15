@@ -156,7 +156,8 @@ class InfoCog(commands.Cog):
                     "• *XP komutlarında sebep zorunludur; tüm işlemler kayıt altına alınır*\n"
                     "• `!xpsenkronize` — Sunucu üyelerinin XP rollerini kontrol edip eşitler\n"
                     "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır\n"
-                    "• `!muzikdurum` / `!muzikguncelle` — Müzik sisteminin sağlığı / elle güncelleme"
+                    "• `!muzikdurum` / `!muzikguncelle` — Müzik sisteminin sağlığı / elle güncelleme\n"
+                    "• `!muzikcerez` — YouTube engeline karşı yedek hesap çerezi yükle (bota DM'den)"
                 ),
                 inline=False,
             )
