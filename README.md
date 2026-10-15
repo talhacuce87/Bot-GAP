@@ -14,6 +14,7 @@ A feature-rich, high-performance Discord bot built with Python and Pillow that t
 
 * 💬 **Mesaj XP:** Mesaj başına cooldown korumalı dinamik XP kazanımı.
 * 🔊 **Ses XP & Takip:** Ses kanallarında geçirilen süreyi hassas biçimde kaydetme.
+* 🎵 **Müzik (`!çal`):** YouTube, Spotify ve SoundCloud linklerini ses kanalında çalar; YouTube bozulursa kendini otomatik günceller.
 * 👥 **Arkadaşlık Tier'ları (`!bf`, `!arkadaslar`):** Ortak ses süresine göre 6 kademeli tier sistemi (Tanıdık → Ruh İkizi), tier kartı ve görsel arkadaş listesi.
 * 🎴 **Görsel Kullanıcı Kartı (`!kart`):** Pillow ile oluşturulan seviye, rol ve ilerleme kartı.
 * 🏆 **Liderlik Sıralaması (`!liderlik`):** Sunucudaki ilk 10 kullanıcının madalyalı görsel sıralama kartı.
@@ -51,6 +52,7 @@ Bot-GAP/
 ├── xproles.py           # Seviye eşikleri ve rol yönetimi
 ├── database.py          # Merkezi asenkron SQLite veritabanı
 ├── ai/                  # İsteğe bağlı AI sohbet & hafıza eklentisi (bkz. "Yapay Zekâ")
+├── music/               # YouTube/Spotify/SoundCloud müzik çalar ve kendi kendini onaran yt-dlp güncelleyici
 ├── persona/default.md   # Düzenlenebilir bot kişiliği
 ├── tests/               # pytest testleri (AI + regresyon)
 ├── requirements.txt     # Bağımlılıklar
@@ -137,7 +139,7 @@ docker compose up -d --build
 * `!boost @kullanıcı <çarpan> [saat] <sebep>` → Süreli XP boost çarpanı uygular.
 * `!xpsenkronize` → Sunucudaki tüm üyelerin XP rollerini baştan kontrol edip senkronize eder.
 
-AI komutları için aşağıdaki **🧠 Yapay Zekâ Sohbet & Hafıza** bölümüne bak.
+Müzik komutları için **🎵 Müzik**, AI komutları için **🧠 Yapay Zekâ Sohbet & Hafıza** bölümüne bak.
 
 ---
 
@@ -175,6 +177,57 @@ docker exec <container> python analysis.py --guild <sunucu_id> --legacy   # kay�
 1. `info.py` içinde `BOT_VERSION` ve `LAST_DEPLOY_DATE` değerlerini güncelle.
 2. `_build_changelog_embed()` içindeki notları yeni sürüme göre yaz.
 3. Deploy et. Bot açılınca sürüm numarası son duyurulandan farklıysa notları `ANNOUNCE_CHANNEL_ID` kanalına **bir kez** paylaşır (`data/announced_version.txt`). Sürüm numarası değişmeden yapılan yeniden başlatmalarda tekrar paylaşmaz.
+
+---
+
+## 🎵 Müzik
+
+`!çal <link ya da şarkı adı>` ile **YouTube**, **Spotify** ve **SoundCloud** linkleri (playlist/albüm dahil) ses kanalında çalınır.
+
+### Nasıl çalışır?
+
+- **YouTube:** Ses [yt-dlp](https://github.com/yt-dlp/yt-dlp) ile alınır, FFmpeg ile Discord'a aktarılır. yt-dlp ayrı bir süreç olarak çalışır.
+- **Spotify:** Spotify sesi DRM'li olduğu için hiçbir bot çalamaz. Bot linkteki şarkı adı/sanatçıyı okur (herkese açık embed sayfasından, anahtar gerekmez) ve şarkıyı YouTube'da bulup çalar.
+- **SoundCloud:** Doğrudan çalınır. YouTube çalışmazsa yedek kaynak olarak da kullanılır.
+- **Ses şifrelemesi (DAVE):** Discord Mart 2026'dan beri sesli kanallarda uçtan uca şifreleme istiyor; `discord.py[voice]` 2.7+ (davey) bunu sağlar.
+
+Ekstra kurulum yok: ffmpeg (`imageio-ffmpeg`), deno ve yt-dlp `requirements.txt` ile gelir.
+
+### Kendi kendini onarma
+
+YouTube sık sık değişir ve eski yt-dlp sürümleri bozulur. Bot bunu kendisi halleder:
+
+1. Açılışta ve **günde bir** yt-dlp / yt-dlp-ejs / deno'yu `pip` ile günceller.
+2. **6 saatte bir** test videosuyla YouTube'u dener.
+3. YouTube hata verirse (test ya da gerçek bir şarkı) önce **kararlı**, olmazsa **nightly** sürüme günceller ve tekrar dener. yt-dlp ayrı süreçte çalıştığı için güncelleme **yeniden başlatma gerektirmez**.
+4. Hâlâ olmuyorsa şarkılar **SoundCloud'dan** çalınmaya çalışılır ve `LOG_CHANNEL_ID` kanalına **günde en fazla bir** uyarı gider. Düzelince "tekrar çalışıyor" bildirimi gelir.
+
+Yöneticiler `!muzikdurum` ile durumu görür, `!muzikguncelle` ile onarımı elle tetikler.
+
+**Elle müdahale gereken tek durum:** YouTube sunucunun IP adresini bot olarak işaretlerse (uyarıda `blocked` yazar) güncelleme yetmez. Yedek bir Google hesabıyla YouTube'a girip çerezleri Netscape formatında (`cookies.txt`) dışa aktar, `data/cookies.txt` olarak koy ve `.env`'e `YTDLP_COOKIES_FILE=/app/data/cookies.txt` yaz.
+
+### Komutlar
+
+| Komut | Açıklama |
+|---|---|
+| `!çal <link/arama>` (`!cal`, `!play`, `!p`) | Çalar ya da kuyruğa ekler; argümansız duraklatılmışı devam ettirir |
+| `!geç` (`!skip`, `!s`) | Şarkıyı geçer |
+| `!duraklat` / `!devam` | Duraklatır / devam ettirir |
+| `!bitir` (`!stop`, `!dc`) | Durdurur, kuyruğu temizler, kanaldan çıkar |
+| `!kuyruk [sayfa]` (`!q`) | Kuyruğu gösterir |
+| `!şimdi` (`!np`) | Çalan şarkı ve ilerleme |
+| `!tekrar [kapalı\|şarkı\|kuyruk]` (`!loop`) | Tekrar modu |
+| `!karıştır` · `!kaldır <no>` · `!temizle` | Kuyruk yönetimi |
+| `!volume [0-100]` (`!vol`) | Ses düzeyi |
+| `!muzikdurum` · `!muzikguncelle` (admin) | Sağlık durumu / elle güncelleme |
+
+"Şimdi çalıyor" mesajındaki butonlar: ⏯️ ⏭️ ⏹️ 🔁 📜. Botu yalnızca onunla aynı ses kanalındakiler kontrol edebilir. Kanalda kimse kalmazsa 60 sn, kuyruk boş kalırsa 5 dk sonra bot kendisi çıkar. Bot ses kanalındayken XP sistemi onu saymaz.
+
+### Ortam değişkenleri
+
+`MUSIC_ENABLED`, `MUSIC_AUTO_UPDATE`, `MUSIC_HEALTHCHECK_HOURS`, `MUSIC_IDLE_TIMEOUT_SECONDS`, `MUSIC_ALONE_TIMEOUT_SECONDS`, `MUSIC_MAX_QUEUE`, `MUSIC_MAX_PLAYLIST`, `MUSIC_MAX_TRACK_MINUTES`, `MUSIC_DEFAULT_VOLUME`, `YTDLP_COOKIES_FILE`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` — açıklamalar `.env.example` içinde.
+
+> ⚠️ YouTube'un kullanım şartları içeriğin kendi oynatıcısı dışında çalınmasına izin vermez. Bu özellik yalnızca The Gap sunucusu için, herkese açık bir bot olarak yayınlanmadan kullanılmak üzere eklenmiştir.
 
 ---
 
