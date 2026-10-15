@@ -13,7 +13,7 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.5.0"
+BOT_VERSION = "2.6.0"
 LAST_DEPLOY_DATE = "15 Ekim 2026"
 
 # Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
@@ -98,7 +98,8 @@ class InfoCog(commands.Cog):
             value=(
                 "• `!liderlik` — En yüksek XP'ye sahip ilk 10 üyenin görsel afişi\n"
                 "• `!roller` — 19 XP rol seviyesi ve gereksinimlerini gösteren görsel harita\n"
-                "• `!topxp` — Metin tabanlı ilk 10 XP listesi"
+                "• `!topxp` — Metin tabanlı ilk 10 XP listesi\n"
+                "• `!sürgünler` — Sürgündekiler ve kalan cezaları"
             ),
             inline=False,
         )
@@ -150,6 +151,8 @@ class InfoCog(commands.Cog):
                     "• `!xpçıkar @üye <miktar> <sebep>` — Kullanıcıdan XP çıkarır\n"
                     "• `!xpayarla @üye <miktar> <sebep>` — Kullanıcının toplam XP'sini doğrudan belirler\n"
                     "• `!boost @üye <çarpan> [saat] <sebep>` — Belirtilen süre için geçici XP boost tanımlar\n"
+                    "• `!sürgün @üye <süre|kalıcı> <sebep>` — XP 0.5x, boost ve seri işlemez (örn. `3g`, `12sa`)\n"
+                    "• `!sürgünsonlandır @üye` — Sürgünü erken bitirir\n"
                     "• *XP komutlarında sebep zorunludur; tüm işlemler kayıt altına alınır*\n"
                     "• `!xpsenkronize` — Sunucu üyelerinin XP rollerini kontrol edip eşitler\n"
                     "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır\n"
@@ -200,9 +203,20 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "Bot-GAP artık ses kanalında müzik çalabiliyor! 🎵"
+                "Sürgün sistemi geldi ⛓️ ve Bot-GAP artık ses kanalında müzik çalabiliyor! 🎵"
             ),
             color=discord.Color.from_rgb(0, 212, 255),
+        )
+
+        embed.add_field(
+            name="⛓️ Sürgün",
+            value=(
+                "• Yöneticiler `!sürgün @üye <süre|kalıcı> <sebep>` ile üyeyi sürgüne gönderebilir\n"
+                "• Sürgündeki üye tüm XP'yi **0.5x** kazanır; boost ve seri çarpanı işlemez\n"
+                "• Seri donar, ceza bitince kaldığı yerden devam eder\n"
+                "• `!sürgünler` — Sürgündekileri ve kalan sürelerini gösteren kart"
+            ),
+            inline=False,
         )
 
         embed.add_field(

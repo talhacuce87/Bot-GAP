@@ -87,6 +87,19 @@ CREATE INDEX IF NOT EXISTS idx_activity_event_ts
 
 CREATE INDEX IF NOT EXISTS idx_activity_ts
     ON activity_log (ts);
+
+-- Sürgün (XP cezası). ends_at NULL = kalıcı. Ceza bitince satır silinir.
+CREATE TABLE IF NOT EXISTS exiles (
+    guild_id        INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,
+    started_at      REAL    NOT NULL,
+    ends_at         REAL,
+    reason          TEXT    NOT NULL,
+    moderator_id    INTEGER NOT NULL,
+    channel_id      INTEGER,
+    streak_at_start INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id)
+);
 """
 
 _MIGRATIONS: list[str] = [
@@ -540,6 +553,130 @@ async def update_streak(guild_id: int, user_id: int) -> tuple[int, bool]:
             )
             await db.commit()
             return new_streak, True
+        except Exception:
+            await db.rollback()
+            raise
+
+
+# ---------------------------------------------------------------------------
+# Sürgün
+# ---------------------------------------------------------------------------
+#
+# Sürgündeki üye sabit bir düşük çarpanla XP kazanır (bkz. xp.py). Bu sürede
+# seri dondurulur: update_streak çağrılmaz, ceza bitince end_exile seriyi
+# kaldığı yerden devam edecek şekilde geri yükler.
+
+def exile_expired(row: aiosqlite.Row, now: float | None = None) -> bool:
+    return row["ends_at"] is not None and row["ends_at"] <= (now if now is not None else time.time())
+
+
+async def set_exile(
+    guild_id: int,
+    user_id: int,
+    *,
+    ends_at: float | None,
+    reason: str,
+    moderator_id: int,
+    channel_id: int | None,
+) -> bool:
+    """
+    Üyeyi sürgüne gönderir. Zaten sürgündeyse yalnızca süre, sebep ve yetkili
+    güncellenir (başlangıç ve dondurulan seri korunur). Döner: yeni sürgün mü.
+    """
+    if await get_exile(guild_id, user_id) is not None:
+        async with _db() as db:
+            await db.execute(
+                """
+                UPDATE exiles SET ends_at = ?, reason = ?, moderator_id = ?, channel_id = ?
+                WHERE guild_id = ? AND user_id = ?
+                """,
+                (ends_at, reason, moderator_id, channel_id, guild_id, user_id),
+            )
+            await db.commit()
+        return False
+
+    row = await get_user_row(guild_id, user_id)
+    streak = current_streak(row) if row else 0
+    async with _db() as db:
+        await db.execute(
+            """
+            INSERT INTO exiles
+                (guild_id, user_id, started_at, ends_at, reason, moderator_id, channel_id, streak_at_start)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (guild_id, user_id, time.time(), ends_at, reason, moderator_id, channel_id, streak),
+        )
+        await db.commit()
+    return True
+
+
+async def get_exile(guild_id: int, user_id: int) -> aiosqlite.Row | None:
+    """Sürgün kaydı (süresi dolmuş ama henüz kapatılmamış olabilir; bkz. exile_expired)."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM exiles WHERE guild_id = ? AND user_id = ?", (guild_id, user_id),
+        ) as cur:
+            return await cur.fetchone()
+
+
+async def list_exiles(guild_id: int) -> list[aiosqlite.Row]:
+    """Sunucudaki süresi dolmamış sürgünler: önce kalıcılar, sonra en geç bitenden en erkene."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT * FROM exiles
+            WHERE guild_id = ? AND (ends_at IS NULL OR ends_at > ?)
+            ORDER BY ends_at IS NOT NULL, ends_at DESC, started_at
+            """,
+            (guild_id, time.time()),
+        ) as cur:
+            return list(await cur.fetchall())
+
+
+async def list_expired_exiles() -> list[aiosqlite.Row]:
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM exiles WHERE ends_at IS NOT NULL AND ends_at <= ?", (time.time(),),
+        ) as cur:
+            return list(await cur.fetchall())
+
+
+async def end_exile(guild_id: int, user_id: int) -> aiosqlite.Row | None:
+    """
+    Sürgünü bitirir ve donan seriyi geri yükler. Döner: silinen kayıt (yoksa None).
+
+    Seri sürgün başında canlıysa son mesaj tarihi en az "dün" yapılır; böylece
+    üyenin ilk mesajı seriyi kaldığı yerden sürdürür (aynı gün bittiyse bugün
+    zaten sayılmıştır, ikinci kez artmaz).
+    """
+    yesterday = (_today() - datetime.timedelta(days=1)).isoformat()
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            async with db.execute(
+                "SELECT * FROM exiles WHERE guild_id = ? AND user_id = ?", (guild_id, user_id),
+            ) as cur:
+                row = await cur.fetchone()
+            if row is None:
+                await db.commit()
+                return None
+            await db.execute("DELETE FROM exiles WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+            if row["streak_at_start"] > 0:
+                await db.execute(
+                    """
+                    UPDATE user_xp
+                    SET streak_days = ?,
+                        last_message_date = MAX(COALESCE(last_message_date, ''), ?)
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (row["streak_at_start"], yesterday, guild_id, user_id),
+                )
+            await db.commit()
+            return row
         except Exception:
             await db.rollback()
             raise

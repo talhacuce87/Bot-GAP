@@ -31,6 +31,7 @@ Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanma
 |---|---|
 | 💬 **Mesaj ve ses XP'si** | Mesaj başına rastgele XP (20 sn bekleme), seste 2 dakikada bir XP. Günlük seri ve süreli boost çarpanları. |
 | 🏅 **Seviye rolleri** | 19 kademe; XP eşiği geçilince rol otomatik verilir. |
+| ⛓️ **Sürgün** | Yöneticilerin XP cezası: süreli ya da kalıcı 0.5x XP, hapishane temalı `!sürgünler` kartı. |
 | 🎴 **Görsel kartlar** | `!kart` profil kartı, `!liderlik` ilk 10, `!roller` rol haritası, `!bf` arkadaşlık kartı. |
 | 👥 **Arkadaşlık tier'ları** | Birlikte seste geçirilen süreye göre 6 kademe: Tanıdık → Ruh İkizi. |
 | 🎵 **Müzik** | YouTube, Spotify ve SoundCloud linkleri; kapaklı "şimdi çalıyor" kartı ve butonlu oynatıcı. YouTube bozulunca kendi kendini onarır. |
@@ -125,6 +126,7 @@ Tüm komutların kısa listesi Discord'da `!yardim` ile görülebilir.
 | `!topxp` | İlk 10 sıralama (metin) |
 | `!roller` (`!roles`) | 19 seviye rolünü ve eşiklerini gösteren harita |
 | `!streak` | Günlük seri ve çarpan |
+| `!sürgünler` | Sürgündekiler, sebepleri ve kalan süreleri (kart) |
 
 ### Arkadaşlık
 
@@ -156,6 +158,8 @@ Diğer kontroller şimdi çalıyor kartının altındaki butonlardadır; bkz. [O
 | `!xpçıkar @üye <miktar> <sebep>` (`!xpcikar`, `!xpsil`) | XP çıkarır |
 | `!xpayarla @üye <miktar> <sebep>` | Toplam XP'yi ayarlar (mesaj/ses oranı korunur) |
 | `!boost @üye <çarpan> [saat] <sebep>` | Süreli XP çarpanı (1–10x, en fazla 720 saat) |
+| `!sürgün @üye <süre\|kalıcı> <sebep>` (`!surgun`) | Üyeyi sürgüne gönderir; bkz. [Sürgün](#sürgün) |
+| `!sürgünsonlandır @üye` (`!surgunsonlandir`) | Sürgünü erken bitirir |
 | `!xpsenkronize` | Tüm üyelerin seviye rollerini XP'lerine göre düzeltir |
 | `!yedekle` (`!backup`) | Veritabanının anlık yedeğini alır |
 | `!muzikdurum` · `!muzikguncelle` | Müzik sisteminin sağlığı / elle onarım |
@@ -173,8 +177,21 @@ XP komutlarında sebep zorunludur (en az 5 karakter) ve her işlem olay kaydına
 | **Günlük seri** | O gün yazılan ilk mesaj seriyi ilerletir. Her seri günü mesaj XP'sine **+%2** ekler (en fazla **+%50**). |
 | **Seri ödülleri** | 7 gün +50 · 14 gün +120 · 30 gün +300 · 60 gün +700 · 100 gün +1500 XP |
 | **Boost** | Yöneticinin verdiği süreli çarpan; mesaj ve ses XP'sine uygulanır. |
+| **Sürgün** | Sürgündeki üye tüm XP'yi sabit **0.5x** kazanır; boost ve seri çarpanı yok sayılır. |
 
 Seviye, toplam XP'nin geçtiği rol eşiğidir: 0, 150, 400, 800, 1.400, 2.300, 3.500, 5.200, 7.600, 10.500, 14.500, 19.500, 25.500, 32.500, 40.000, 100.000, 250.000, 500.000 ve 1.000.000 XP (19 seviye). Eşik geçilince rol otomatik verilir; `!roller` haritayı gösterir.
+
+### Sürgün
+
+Yöneticilerin XP cezası. `!sürgün @üye <süre> <sebep>` ile verilir.
+
+- **Süre:** `30dk`, `12sa`, `3g`, `1hafta`, `1ay`, birleşik `1g12sa` ya da sadece sayı (saat). En fazla 365 gün. `kalıcı` yazılırsa bir yönetici `!sürgünsonlandır` ile kaldırana kadar sürer.
+- **Ceza:** Mesaj ve ses XP'si sabit **0.5x** olur; aktif boost ve seri çarpanı hesaba katılmaz. Küsurat birikir (ör. seste 4 dakikada 1 XP).
+- **Seri donar:** Sürgünde seri ne ilerler ne bozulur, ödül de vermez. Ceza bitince kaldığı günden ve çarpandan devam eder.
+- **Bitiş:** Süre dolunca bot dakikada bir kontrol edip cezayı kendisi kaldırır ve sürgünün verildiği kanalda haber verir. Erken bitirmek için `!sürgünsonlandır @üye`.
+- Zaten sürgündeki birine tekrar `!sürgün` yazılırsa süre ve sebep güncellenir.
+- `!sürgünler` herkesin görebildiği hapishane temalı bir kart çizer: sabıka fotoğrafı, sebep, sürgün eden yönetici, kalan süre ve çekilen cezanın çubuğu (kalıcılar kırmızı).
+- Sürgün verme, güncelleme ve bitirme işlemleri olay kaydına ve log kanalına yazılır.
 
 ---
 
@@ -478,6 +495,7 @@ Bot-GAP/
 ├── leaderboard.py       # !liderlik ve !roller
 ├── rolescard.py         # Rol haritası kartı
 ├── bestfriend.py        # Ses çifti takibi, tier'lar, !bf / !arkadaslar
+├── exile.py             # !sürgün XP cezası ve !sürgünler kartı
 ├── cardutils.py         # Kartların ortak Pillow yardımcıları
 ├── font_utils.py        # Emoji ve desteklenmeyen karakter temizleme
 ├── info.py              # !yardim, !yenilikler, !ping, sürüm duyurusu

@@ -57,6 +57,9 @@ ADMIN_REASON_MIN_LENGTH = 5
 BOOST_MIN, BOOST_MAX = 1.0, 10.0
 BOOST_MAX_HOURS = 720
 
+# Sürgündeki üyenin sabit XP çarpanı; boost ve seri çarpanı yok sayılır (bkz. exile.py)
+EXILE_MULTIPLIER = 0.5
+
 FEATURE_REQUESTS_PATH = Path(__file__).resolve().parent / "data" / "features.txt"
 FEATURE_MAX_LENGTH = 1000
 
@@ -94,6 +97,8 @@ class XPTrackerCog(commands.Cog):
         # Cooldown: (guild_id, user_id) → unix timestamp
         self._cooldowns: dict[tuple[int, int], float] = {}
         self._feature_lock = asyncio.Lock()
+        # Sürgünde 0.5x çarpanın küsuratı: (guild_id, user_id) → biriken XP (örn. ses XP'si 1 → 0.5)
+        self._exile_carry: dict[tuple[int, int], float] = {}
 
     async def cog_load(self) -> None:
         await db.init_db()
@@ -196,6 +201,27 @@ class XPTrackerCog(commands.Cog):
             return None
         return reason[:300]
 
+    async def get_exile(self, guild_id: int, user_id: int):
+        """
+        Üyenin süren sürgün kaydı (yoksa None). Süresi dolmuş ama henüz kapatılmamış
+        bir sürgün burada kapatılır ki seri bozulmadan geri yüklensin.
+        """
+        row = await db.get_exile(guild_id, user_id)
+        if row is None or not db.exile_expired(row):
+            return row
+        ended = await db.end_exile(guild_id, user_id)
+        if ended is not None:
+            self.bot.dispatch("exile_end", guild_id, user_id, ended, None)
+        return None
+
+    def _exiled_xp(self, guild_id: int, user_id: int, base: float) -> int:
+        """Sürgün çarpanıyla kazanılan XP; küsurat bir sonrakine aktarılır."""
+        key = (guild_id, user_id)
+        total = self._exile_carry.get(key, 0.0) + base * EXILE_MULTIPLIER
+        earned = int(total)
+        self._exile_carry[key] = total - earned
+        return earned
+
     async def _sync_role(self, member: discord.Member) -> None:
         row = await db.get_user_row(member.guild.id, member.id)
         total_xp = int(row["total_xp"]) if row else 0
@@ -297,8 +323,11 @@ class XPTrackerCog(commands.Cog):
         guild_id = message.guild.id
         user_id = message.author.id
 
+        # Sürgünde seri donar: ilerlemez, bozulmaz, ödül vermez.
+        exile = await self.get_exile(guild_id, user_id)
+
         # Günlük seri, normal mesaj ve komut mesajlarında da ilerler.
-        streak, is_first_today = await db.update_streak(guild_id, user_id)
+        streak, is_first_today = (0, False) if exile else await db.update_streak(guild_id, user_id)
 
         # Streak milestone bildirimi
         if is_first_today and streak in STREAK_MILESTONES:
@@ -326,13 +355,16 @@ class XPTrackerCog(commands.Cog):
         if self._check_cooldown(guild_id, user_id):
             base_xp = random.randint(MESSAGE_XP_MIN, MESSAGE_XP_MAX)
 
-            # Boost çarpanı
-            boost = await db.get_active_multiplier(guild_id, user_id)
-
-            # Streak çarpanı
-            s_mult = streak_multiplier(streak)
-
-            earned = max(1, round(base_xp * boost * s_mult))
+            if exile:
+                # Sürgün: sabit çarpan, boost ve seri yok sayılır
+                boost, s_mult = 1.0, None
+                earned = self._exiled_xp(guild_id, user_id, base_xp)
+                if earned <= 0:
+                    return
+            else:
+                boost = await db.get_active_multiplier(guild_id, user_id)
+                s_mult = streak_multiplier(streak)
+                earned = max(1, round(base_xp * boost * s_mult))
 
             # Seviye atlama kontrolü için önceki XP
             old_row = await db.get_user_row(guild_id, user_id)
@@ -344,6 +376,7 @@ class XPTrackerCog(commands.Cog):
                 "xp_message", guild_id, user_id,
                 channel_id=message.channel.id, amount=earned,
                 base=base_xp, boost=boost if boost != 1.0 else None, streak_mult=s_mult,
+                exile=EXILE_MULTIPLIER if exile else None,
             )
 
             if isinstance(message.author, discord.Member):
@@ -423,12 +456,20 @@ class XPTrackerCog(commands.Cog):
                 for member in valid:
                     # Tek bir üyedeki hata (üye çıktı, DB kilitli…) döngünün tamamını durdurmamalı
                     try:
-                        boost = await db.get_active_multiplier(guild.id, member.id)
-                        earned = max(1, round(VOICE_XP_PER_INTERVAL * boost))
+                        exile = await self.get_exile(guild.id, member.id)
+                        if exile:
+                            boost = 1.0
+                            earned = self._exiled_xp(guild.id, member.id, VOICE_XP_PER_INTERVAL)
+                            if earned <= 0:
+                                continue
+                        else:
+                            boost = await db.get_active_multiplier(guild.id, member.id)
+                            earned = max(1, round(VOICE_XP_PER_INTERVAL * boost))
                         await db.add_voice_xp(guild.id, member.id, earned)
                         activitylog.record(
                             "xp_voice", guild.id, member.id,
                             channel_id=channel.id, amount=earned,
+                            exile=EXILE_MULTIPLIER if exile else None,
                             mute=(member.voice.self_mute or member.voice.mute) or None,
                             stream=member.voice.self_stream or None,
                             video=member.voice.self_video or None,
@@ -496,8 +537,15 @@ class XPTrackerCog(commands.Cog):
             remaining = max(0, int(boost_expires - time.time()))
             boost_str = f"\n⚡ Aktif boost: **{boost:g}x** — {format_duration(remaining)} kaldı"
 
-        streak = db.current_streak(row)
+        exile = await self.get_exile(ctx.guild.id, ctx.author.id)
+        streak = exile["streak_at_start"] if exile else db.current_streak(row)
         s_mult = streak_multiplier(streak)
+        if exile:
+            ends = "kalıcı" if exile["ends_at"] is None else f"<t:{int(exile['ends_at'])}:R> bitiyor"
+            boost_str = (
+                f"⛓️ **Sürgündesin** ({ends}): tüm XP **{EXILE_MULTIPLIER:g}x**, "
+                f"boost ve seri çarpanı işlemiyor.\n📝 Sebep: {exile['reason']}"
+            )
         total_xp = int(row["total_xp"])
         current_role = self.get_display_role(ctx.author, total_xp)
         next_role_name, next_role_xp = self.role_manager.get_next_role_info(ctx.author, total_xp)
@@ -519,7 +567,8 @@ class XPTrackerCog(commands.Cog):
         embed.add_field(name="Ses Süresi", value=format_duration(live_seconds), inline=True)
         embed.add_field(
             name="🔥 Seri",
-            value=f"{streak} gün (x{s_mult:.2f} çarpan)",
+            value=f"{streak} gün (donduruldu, sürgün bitince x{s_mult:.2f} ile devam)" if exile
+            else f"{streak} gün (x{s_mult:.2f} çarpan)",
             inline=False,
         )
         if boost_str:
@@ -587,6 +636,14 @@ class XPTrackerCog(commands.Cog):
             return
 
         row = await db.get_user_row(ctx.guild.id, ctx.author.id)
+        exile = await self.get_exile(ctx.guild.id, ctx.author.id)
+        if exile:
+            streak = exile["streak_at_start"]
+            await ctx.send(
+                f"⛓️ **{ctx.author.display_name}**, sürgündesin; serin **{streak} günde** donduruldu.\n"
+                f"Sürgün bitince **x{streak_multiplier(streak):.2f}** çarpanla kaldığın yerden devam eder."
+            )
+            return
         streak = db.current_streak(row) if row else 0
         mult = streak_multiplier(streak)
 
