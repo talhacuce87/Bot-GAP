@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import math
+import os
+import time
+from dataclasses import replace
 
 import discord
 from discord.ext import commands, tasks
@@ -38,11 +40,39 @@ ACCENT = discord.Color.from_rgb(0, 212, 255)
 BLOCKED_HINT = (
     "YouTube bu sunucunun IP adresini bot olarak işaretlemiş. Bot farklı bağlantı yöntemlerini "
     "(IPv4, farklı YouTube istemcileri) ve güncellemeleri kendisi denedi ama aşamadı; düzelene kadar 30 dakikada bir "
-    "tekrar deneyecek. Kalıcı çözüm için iki seçenek var:\n"
-    "• Yedek bir Google hesabıyla YouTube'a girip çerezleri (cookies.txt) dışa aktar, `data/cookies.txt` "
-    "olarak koy, `.env` içine `YTDLP_COOKIES_FILE=/app/data/cookies.txt` yaz ve botu yeniden başlat.\n"
+    "tekrar deneyecek. Kalıcı çözüm:\n"
+    "• **Yedek** bir Google hesabının çerezini bota DM'den `!muzikcerez` yazıp `cookies.txt` ekleyerek gönder "
+    "(nasıl alınacağını `!muzikcerez` anlatır). Ana hesabını kullanma.\n"
     "• Ya da `.env` içine bir HTTP proxy yaz: `YTDLP_PROXY=http://kullanici:sifre@host:port`."
 )
+COOKIE_HELP = (
+    "🍪 **YouTube çerezi nasıl eklenir?**\n"
+    "1. **Yedek** bir Google hesabı aç ya da kullan (ana hesabını kullanma; YouTube nadiren de olsa kısıtlayabilir).\n"
+    "2. Tarayıcıya \"Get cookies.txt LOCALLY\" eklentisini kur; eklentiyi gizli pencerede çalışmaya izin ver.\n"
+    "3. **Gizli pencerede** youtube.com'a o yedek hesapla giriş yap, bir video aç.\n"
+    "4. Eklentiden **Export** ile `cookies.txt` dosyasını indir, sonra gizli pencereyi **kapat** "
+    "(açık kalırsa YouTube çerezleri yeniler ve dosya geçersizleşir).\n"
+    "5. Bana **DM'den** `!muzikcerez` yazıp dosyayı ekle. Kaydedip YouTube'u hemen test ederim.\n"
+    "Kaldırmak için: `!muzikcerez sil`"
+)
+COOKIE_LOGIN_NAMES = {"LOGIN_INFO", "SID", "__Secure-1PSID", "__Secure-3PSID", "SAPISID"}
+MAX_COOKIE_BYTES = 1_000_000
+
+
+def parse_cookie_file(text: str) -> tuple[int, bool]:
+    """Netscape cookies.txt içeriği: (youtube.com çerez sayısı, giriş yapılmış hesap mı)."""
+    count, logged_in = 0, False
+    for line in text.splitlines():
+        if line.startswith("#HttpOnly_"):
+            line = line[len("#HttpOnly_"):]
+        elif not line.strip() or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) != 7 or not fields[0].lstrip(".").endswith("youtube.com"):
+            continue
+        count += 1
+        logged_in = logged_in or fields[5] in COOKIE_LOGIN_NAMES
+    return count, logged_in
 
 
 class MusicCog(commands.Cog):
@@ -104,9 +134,24 @@ class MusicCog(commands.Cog):
         return None
 
     async def cog_check(self, ctx: commands.Context) -> bool:
-        if ctx.guild is None:
+        # Çerez dosyası gizli olduğu için !muzikcerez DM'den de kullanılabilir
+        if ctx.guild is None and not (ctx.command and ctx.command.name == "muzikcerez"):
             raise commands.NoPrivateMessage()
         return True
+
+    def _is_admin_anywhere(self, user: discord.abc.User) -> bool:
+        """Kullanıcı, botun bulunduğu sunuculardan birinde yönetici mi (DM komutları için)."""
+        for guild in self.bot.guilds:
+            member = guild.get_member(user.id)
+            if member is not None and member.guild_permissions.administrator:
+                return True
+        return False
+
+    def set_cookies(self, path: str) -> None:
+        """Çerez dosyasını yeniden başlatmadan devreye alır (boş: kaldırır)."""
+        self.cfg = replace(self.cfg, cookies_file=path)
+        self.sources.cfg = self.cfg
+        self.updater.cfg = self.cfg
 
     async def cog_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
         if isinstance(error, commands.MissingPermissions):
@@ -421,6 +466,65 @@ class MusicCog(commands.Cog):
         if not yt_ok and yt_kind == "blocked":
             embed.add_field(name="Ne yapmalı?", value=BLOCKED_HINT[:1024], inline=False)
         await msg.edit(content=None, embed=embed)
+
+    @commands.command(name="muzikcerez", aliases=["müzikçerez", "muzikçerez", "musiccookies"], usage="[sil]")
+    async def cookies_command(self, ctx: commands.Context, action: str | None = None) -> None:
+        """YouTube engelini aşmak için yedek hesabın cookies.txt dosyasını yükler (yönetici, DM önerilir)."""
+        if not self._is_admin_anywhere(ctx.author):
+            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
+            return
+        path = self.cfg.state_path.parent / "cookies.txt"
+        if ctx.guild is not None and ctx.message.attachments:
+            # Çerez dosyası gizli bilgidir: kanaldan hemen kaldır
+            try:
+                await ctx.message.delete()
+                note = "🔒 Mesajını kanaldan sildim; bir dahakine dosyayı bana **DM'den** gönder."
+            except discord.HTTPException:
+                note = "⚠️ Mesajını silemedim, lütfen hemen kendin sil ve bir dahakine **DM'den** gönder."
+            await ctx.send(note)
+
+        if action and action.lower() in {"sil", "kaldır", "kaldir", "off"}:
+            path.unlink(missing_ok=True)
+            self.set_cookies("")
+            activitylog.record("admin_music_cookies", ctx.guild.id if ctx.guild else None, ctx.author.id, removed=True)
+            await ctx.send("🗑️ YouTube çerezi kaldırıldı.")
+            return
+
+        attachment = ctx.message.attachments[0] if ctx.message.attachments else None
+        if attachment is None:
+            await ctx.send(COOKIE_HELP)
+            return
+        if attachment.size > MAX_COOKIE_BYTES:
+            await ctx.send("❌ Dosya çok büyük; bu bir cookies.txt dosyası olmamalı.")
+            return
+        text = (await attachment.read()).decode("utf-8", "replace")
+        count, logged_in = parse_cookie_file(text)
+        if not count:
+            await ctx.send("❌ Dosyada Netscape formatında youtube.com çerezi bulamadım. " + COOKIE_HELP.split("\n", 1)[1])
+            return
+        if not logged_in:
+            await ctx.send("❌ Bu çerezler giriş yapılmış bir hesaba ait değil. Gizli pencerede yedek hesapla "
+                           "youtube.com'a **giriş yaptıktan sonra** dışa aktar.")
+            return
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        self.set_cookies(str(path))
+        activitylog.record("admin_music_cookies", ctx.guild.id if ctx.guild else None, ctx.author.id, cookies=count)
+        msg = await ctx.send(f"🍪 {count} YouTube çerezi kaydedildi. YouTube test ediliyor, bu bir dakika sürebilir…")
+        ok = await self.updater.heal("çerez eklendi", force=True)
+        await self._report_health_change()
+        if ok:
+            await msg.edit(content="✅ Çerez kaydedildi ve YouTube çalışıyor. Bot yeniden başlasa da bu çerezi kullanır.")
+        else:
+            st = self.updater.state
+            await msg.edit(content=f"⚠️ Çerez kaydedildi ama YouTube hâlâ açılmıyor: `{st.health_kind}` — "
+                                   f"{st.health_error[:200]}\nÇerezler eski ya da geçersiz olabilir; gizli pencereden "
+                                   f"yeniden dışa aktarıp tekrar dene. Ayrıntı: `!muzikdurum`")
 
     @commands.command(name="muzikguncelle", aliases=["müzikgüncelle", "musicupdate"])
     @commands.has_permissions(administrator=True)

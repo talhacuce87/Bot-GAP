@@ -163,6 +163,7 @@ Diğer kontroller şimdi çalıyor kartının altındaki butonlardadır; bkz. [O
 | `!xpsenkronize` | Tüm üyelerin seviye rollerini XP'lerine göre düzeltir |
 | `!yedekle` (`!backup`) | Veritabanının anlık yedeğini alır |
 | `!muzikdurum` · `!muzikguncelle` | Müzik sisteminin sağlığı / elle onarım |
+| `!muzikcerez [sil]` | YouTube engeline karşı yedek hesap çerezi yükler (bota **DM'den**, `cookies.txt` ekleyerek) |
 
 XP komutlarında sebep zorunludur (en az 5 karakter) ve her işlem olay kaydına yazılır. Yapay zekâ komutları için [ilgili bölüme](#komutlar) bak.
 
@@ -238,9 +239,14 @@ YouTube ses linkini, onu alan istemcinin tarayıcı kimliğine (User-Agent) bağ
 
 Yöneticiler `!muzikdurum` ile YouTube'u ve SoundCloud'u **o an canlı test eder**: gerçek hata mesajlarını, kullanılan bağlantı yöntemini ve yapılması gerekeni gösterir. `!muzikguncelle` onarımı elle başlatır.
 
-**Elle müdahale gereken durum:** YouTube sunucunun IP adresini tamamen engellerse (uyarıda `blocked` yazar ve hiçbir yöntem işe yaramaz) iki çözüm var:
+**Elle müdahale gereken durum:** YouTube sunucunun IP adresini tamamen engellerse (uyarıda `blocked` yazar ve hiçbir yöntem işe yaramaz) iki çözüm var. Büyük müzik botları da aynı yolları kullanır: giriş yapılmış (yedek) hesaplar, geniş IP havuzları ya da YouTube dışı kaynaklar.
 
-- **Çerez:** Yedek bir Google hesabıyla tarayıcının gizli penceresinde YouTube'a gir, çerezleri Netscape formatında (`cookies.txt`) dışa aktar, pencereyi kapat. Dosyayı `data/cookies.txt` olarak kaydet, `.env` dosyasına `YTDLP_COOKIES_FILE=/app/data/cookies.txt` yaz ve botu yeniden başlat.
+- **Çerez (önerilen, sunucuya erişim gerekmez):**
+  1. **Yedek** bir Google hesabı kullan (ana hesabını değil).
+  2. Tarayıcıya "Get cookies.txt LOCALLY" eklentisini kur ve gizli pencerede çalışmasına izin ver.
+  3. **Gizli pencerede** o hesapla youtube.com'a gir, bir video aç, eklentiden `cookies.txt` dışa aktar ve pencereyi **kapat** (açık kalırsa YouTube çerezleri yeniler, dosya geçersizleşir).
+  4. Bota **DM'den** `!muzikcerez` yazıp dosyayı ekle. Bot dosyayı kontrol eder, `data/cookies.txt` olarak kaydeder, yeniden başlatmadan devreye alır ve YouTube'u hemen test edip sonucu söyler. Dosya bir kanala atılırsa bot mesajı siler.
+  5. Kaldırmak için `!muzikcerez sil`. İstenirse `.env`'de `YTDLP_COOKIES_FILE` ile başka bir dosya da gösterilebilir.
 - **Proxy:** `.env` dosyasına bir HTTP proxy yaz: `YTDLP_PROXY=http://kullanici:sifre@host:port`. yt-dlp ve FFmpeg trafiği bu proxy'den geçer. FFmpeg yalnızca `http://` proxy destekler.
 
 ### Ayarlar
@@ -250,6 +256,7 @@ Yöneticiler `!muzikdurum` ile YouTube'u ve SoundCloud'u **o an canlı test eder
 ### Bilinen sınırlar
 
 - Canlı yayınlar ve yaş sınırlı videolar çalınamaz.
+- Art arda 3 şarkı çalınamazsa kaynaklar sorunlu sayılır: liste durdurulur ve her şarkı için ayrı hata yerine tek mesaj gelir.
 - SoundCloud'da birçok resmi şarkı yalnızca 30 sn'lik önizleme olarak var. Yedek bu yüzden çoğu zaman başka birinin yüklediği kopyayı çalar; aynı şarkının tam bir kopyası yoksa hiç çalmaz.
 
 > ⚠️ YouTube'un kullanım şartları içeriğin kendi oynatıcısı dışında çalınmasına izin vermez. Bu özellik yalnızca The Gap sunucusu için eklenmiştir.

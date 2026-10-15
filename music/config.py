@@ -67,8 +67,12 @@ class MusicConfig:
     state_path: Path = PROJECT_ROOT / "data" / "music_state.json"
 
 
+# !muzikcerez ile Discord'dan yüklenen çerez dosyası; varsa .env'de ayar gerekmeden kullanılır
+DEFAULT_COOKIES_PATH = PROJECT_ROOT / "data" / "cookies.txt"
+
+
 def load_config() -> MusicConfig:
-    cookies = _str("YTDLP_COOKIES_FILE")
+    cookies = _str("YTDLP_COOKIES_FILE") or (str(DEFAULT_COOKIES_PATH) if DEFAULT_COOKIES_PATH.is_file() else "")
     if cookies and not Path(cookies).is_file():
         log.warning("YTDLP_COOKIES_FILE bulunamadı, çerezsiz devam ediliyor: %s", cookies)
         cookies = ""

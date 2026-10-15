@@ -38,6 +38,8 @@ EARLY_FAILURE_SECONDS = 5
 # ⏮️: şarkının ilk bu kadar saniyesindeyse önceki şarkıya, sonrasındaysa başa döner
 PREVIOUS_THRESHOLD = 5
 SEEK_STEP = 10
+# Art arda bu kadar şarkı çalınamazsa kaynaklar sorunlu demektir: liste durdurulur (her şarkı için mesaj yağmasın)
+MAX_FAILURES_IN_ROW = 3
 HISTORY_SIZE = 50
 
 LOOP_MODES = ("off", "track", "queue")
@@ -67,6 +69,7 @@ class GuildPlayer:
         self._go_back = False
         self._seek_to: float | None = None
         self._closing = False
+        self._failures_in_row = 0
         self._offset = 0.0
         self._started_at = 0.0
         self._paused_at: float | None = None
@@ -286,8 +289,21 @@ class GuildPlayer:
             try:
                 stream_url = await self.cog.sources.stream_for(track)
             except SourceError as exc:
-                await self._say(f"⚠️ **{discord.utils.escape_markdown(track.display)}** çalınamadı: {exc} Sıradakine geçiyorum.")
+                self._failures_in_row += 1
+                title = discord.utils.escape_markdown(track.display)
+                if self._failures_in_row >= MAX_FAILURES_IN_ROW and self.queue:
+                    dropped = len(self.queue)
+                    self.queue.clear()
+                    self._failures_in_row = 0
+                    await self._say(
+                        f"⚠️ **{title}** çalınamadı: {exc}\n"
+                        f"⛔ Art arda {MAX_FAILURES_IN_ROW} şarkı çalınamadı; müzik kaynakları şu an sorunlu görünüyor. "
+                        f"Kalan **{dropped}** şarkı kuyruktan kaldırıldı. Yöneticiler: `!muzikdurum`"
+                    )
+                else:
+                    await self._say(f"⚠️ **{title}** çalınamadı: {exc} Sıradakine geçiyorum.")
                 return
+            self._failures_in_row = 0
             if not self.is_connected or self._closing:
                 return
 
