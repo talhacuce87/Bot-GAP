@@ -12,15 +12,18 @@ aynı şarkı SoundCloud'da aranır (fallback).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import time
+import unicodedata
 from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 
 from music import spotify, ytdl
 from music.config import MusicConfig
-from music.updater import CONTENT_ERRORS, Updater
+from music.updater import CONTENT_ERRORS, STRATEGIES, Updater
 from music.ytdl import Track, YtdlError
 
 log = logging.getLogger("gap.music.sources")
@@ -34,6 +37,74 @@ STREAM_TTL = 4 * 3600
 MAX_QUERY_LENGTH = 200
 # SoundCloud'da ücretli parçalar sadece 30 sn'lik önizleme olarak gelir
 SC_PREVIEW_SECONDS = 31
+# !muzikdurum'daki canlı SoundCloud testi için aranan şarkı
+SC_TEST_QUERY = "Barış Manço Gülpembe"
+# YouTube çalışırken bir şarkı için en fazla bu kadar bağlantı yöntemi denenir (bekletmemek için)
+SONG_STRATEGY_LIMIT = 3
+_NOISE_WORDS = {
+    "official", "video", "music", "audio", "lyrics", "lyric", "hd", "hq", "4k", "upgrade", "remaster",
+    "remastered", "feat", "ft", "klip", "clip", "mv", "visualizer", "the", "and", "ve", "ile", "topic", "vevo",
+}
+_TR_FOLD = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+
+
+def _words(text: str) -> set[str]:
+    """Karşılaştırma için sade kelimeler: küçük harf, Türkçe/aksan katlama, gürültü kelimeleri atılır."""
+    text = unicodedata.normalize("NFKD", text.translate(_TR_FOLD).casefold())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return {w for w in re.findall(r"\w+", text) if len(w) > 1 and w not in _NOISE_WORDS}
+
+
+# Adayda olup aranan şarkıda olmayan bu kelimeler başka bir versiyon demektir (slowed, cover…)
+_VARIANT_WORDS = {
+    "slowed", "reverb", "sped", "speed", "spedup", "nightcore", "remix", "rmx", "cover", "karaoke",
+    "instrumental", "enstrumantal", "8d", "live", "canli", "acoustic", "akustik", "mashup", "bassboosted",
+    "boosted", "lofi", "tiktok", "edit", "loop", "hour", "saat",
+}
+
+
+def clean_query(text: str) -> str:
+    """
+    YouTube başlığını aramaya uygun hâle getirir: (Official Video), [4K] gibi ekler atılır;
+    versiyon bildiren parantezler ((Remix), (Live)…) kalır.
+    """
+    text = re.sub(r"[(\[]([^)\]]*)[)\]]",
+                  lambda m: f" {m.group(1)} " if _words(m.group(1)) & _VARIANT_WORDS else " ", text)
+    text = re.sub(r"\s*[–—|]\s*", " - ", text)
+    return " ".join(text.split()).strip(" -")
+
+
+def match_score(query: str, candidate: str) -> float:
+    """
+    Aranan şarkının kelimelerinin ne kadarı adayda geçiyor (0–1). Aday başka bir versiyonsa
+    (aranan şarkıda olmayan "slowed", "cover", "remix"… kelimeleri) 0 döner.
+    """
+    wanted, found = _words(query), _words(candidate)
+    if not wanted or (found & _VARIANT_WORDS) - wanted:
+        return 0.0
+    return len(wanted & found) / len(wanted)
+
+
+def is_same_song(query: str, candidate: str) -> bool:
+    """
+    Aday aranan şarkı mı? Kısa sorgularda (≤4 kelime) bütün kelimeler, uzunlarda 5 kelimede
+    en fazla 1 eksik kabul edilir. ("Sezen Aksu - Firuze" ≠ "Sezen Aksu - Geri Dön")
+    """
+    wanted = _words(query)
+    if not wanted:
+        return False
+    allowed_missing = len(wanted) // 5
+    return match_score(query, candidate) >= 1 - allowed_missing / len(wanted) - 1e-9
+
+
+def _not_found_anywhere(kind: str) -> str:
+    return f"{ERROR_MESSAGES.get(kind, ERROR_MESSAGES['error'])} SoundCloud'da da aynı şarkı bulunamadı."
+
+
+def _duration_ok(candidate: float | None, expected: int | None) -> bool:
+    if not expected or not candidate:
+        return True
+    return abs(candidate - expected) <= max(20, expected * 0.15)
 
 
 class SourceError(Exception):
@@ -46,6 +117,7 @@ ERROR_MESSAGES = {
     "live": "Canlı yayınlar çalınamıyor.",
     "blocked": "YouTube şu an bota erişim vermiyor.",
     "timeout": "Kaynak çok geç cevap verdi.",
+    "stream": "YouTube şu an ses akışını açmıyor.",
     "error": "İçerik okunamadı.",
 }
 
@@ -105,6 +177,9 @@ class SourceResolver:
         self.cfg = cfg
         self.updater = updater
         self.spotify = spotify.SpotifyClient(cfg.spotify_client_id, cfg.spotify_client_secret)
+        # SoundCloud yedeğinin son hatası (!muzikdurum'da gösterilir)
+        self.soundcloud_error = ""
+        self._heal_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------------
     # Girdi → parça listesi
@@ -158,11 +233,15 @@ class SourceResolver:
                 return [track], None
 
             # Tek video (YouTube / SoundCloud): bilgi + akış URL'si tek seferde
-            target = _normalize_youtube(text) if kind == "youtube" else text
-            info = await self._with_heal(lambda: ytdl.extract_stream(target, cookies_file=cookies), kind)
+            if kind == "youtube":
+                target = _normalize_youtube(text)
+                info = await self._with_heal(lambda: self._youtube_stream(target, cookies), kind)
+            else:
+                info = await ytdl.extract_stream(text)
             track = ytdl._entry_to_track(info, requester_id, "soundcloud" if kind == "soundcloud" else "youtube")
             _check_duration(track, self.cfg)
             track.stream_url = info["url"]
+            track.user_agent = ytdl.user_agent_of(info)
             track.stream_expires = time.time() + STREAM_TTL
             return [track], None
         except YtdlError as exc:
@@ -172,28 +251,44 @@ class SourceResolver:
                 fallback = await self._soundcloud_track(query, requester_id)
                 if fallback:
                     return [fallback], None
+                raise SourceError(_not_found_anywhere(exc.kind)) from exc
             raise SourceError(ERROR_MESSAGES.get(exc.kind, ERROR_MESSAGES["error"])) from exc
 
     async def _soundcloud_track(
         self, query: str | None, requester_id: int, expected_duration: int | None = None,
     ) -> Track | None:
-        """SoundCloud'da arar; 30 sn'lik önizlemeleri (ücretli parçalar) atlar."""
+        """
+        SoundCloud'da arar. 30 sn'lik önizlemeleri (ücretli parçalar) ve aranan şarkıya
+        benzemeyen sonuçları atlar; alakasız bir şarkı çalmaktansa hiç çalmamak yeğdir.
+        """
+        query = clean_query(query or "")
         if not query:
             return None
         try:
             _, entries = await ytdl.extract_flat(f"scsearch5:{query}", limit=5)
-            full = [e for e in entries if e.get("url") and (e.get("duration") or 0) > SC_PREVIEW_SECONDS]
-            if not full:
+            scored = [
+                (match_score(query, f"{e.get('title') or ''} {e.get('uploader') or ''}"), e)
+                for e in entries
+                if e.get("url") and (e.get("duration") or 0) > SC_PREVIEW_SECONDS
+                and _duration_ok(e.get("duration"), expected_duration)
+                and is_same_song(query, f"{e.get('title') or ''} {e.get('uploader') or ''}")
+            ]
+            if not scored:
+                self.soundcloud_error = "Aranan şarkıya benzeyen tam sürüm bulunamadı"
+                log.info("SoundCloud'da eşleşen tam sürüm yok: %s", query)
                 return None
-            if expected_duration:
-                full.sort(key=lambda e: abs((e.get("duration") or 0) - expected_duration))
-            info = await ytdl.extract_stream(full[0]["url"])
-        except YtdlError:
+            scored.sort(key=lambda se: (-se[0], abs((se[1].get("duration") or 0) - (expected_duration or 0))))
+            info = await ytdl.extract_stream(scored[0][1]["url"])
+        except YtdlError as exc:
+            self.soundcloud_error = f"{exc.kind}: {exc}"
+            log.warning("SoundCloud yedeği çalışmadı (%s): %s", query, self.soundcloud_error)
             return None
         if "/preview/" in info.get("url", ""):
             return None
+        self.soundcloud_error = ""
         track = ytdl._entry_to_track(info, requester_id, "soundcloud")
         track.stream_url = info["url"]
+        track.user_agent = ytdl.user_agent_of(info)
         track.stream_expires = time.time() + STREAM_TTL
         track.fallback = "soundcloud"
         return track
@@ -207,19 +302,31 @@ class SourceResolver:
         if track.stream_url and time.time() < track.stream_expires:
             return track.stream_url
 
-        cookies = self.cfg.cookies_file if track.source != "soundcloud" else ""
         target = track.url or f"ytsearch1:{track.query or track.display}"
         try:
-            info = await self._with_heal(lambda: ytdl.extract_stream(target, cookies_file=cookies), track.source)
+            if track.source == "soundcloud":
+                info = await ytdl.extract_stream(target)
+            else:
+                cookies = self.cfg.cookies_file
+                info = await self._with_heal(lambda: self._youtube_stream(target, cookies), track.source)
         except YtdlError as exc:
             if exc.kind in CONTENT_ERRORS and track.source != "spotify":
                 raise SourceError(ERROR_MESSAGES[exc.kind]) from exc
             # YouTube onarılamadı ya da bu parça açılmıyor: SoundCloud'da aynı şarkı
-            query = track.query or (await youtube_title(track.url) if track.url and track.source == "youtube" else None)
-            fallback = await self._soundcloud_track(query or track.display, track.requester_id, track.duration)
+            if track.source == "spotify" and track.artist:
+                # SoundCloud'da "feat." sanatçılar genelde yazmaz; ana sanatçı + şarkı adıyla ara
+                query = f"{track.artist.split(',')[0].strip()} - {track.title}"
+            elif track.url and track.source in {"youtube", "search"}:
+                query = await youtube_title(track.url)
+            else:
+                query = track.query
+            # Süre filtresi yalnızca Spotify'ın verdiği gerçek şarkı süresiyle (YouTube klipleri farklı uzunlukta olabilir)
+            expected = track.duration if track.source == "spotify" else None
+            fallback = await self._soundcloud_track(query or track.display, track.requester_id, expected)
             if not fallback:
-                raise SourceError(ERROR_MESSAGES.get(exc.kind, ERROR_MESSAGES["error"])) from exc
+                raise SourceError(_not_found_anywhere(exc.kind)) from exc
             info = {"url": fallback.stream_url, "webpage_url": fallback.url,
+                    "http_headers": {"User-Agent": fallback.user_agent} if fallback.user_agent else {},
                     "duration": fallback.duration, "thumbnail": fallback.thumbnail}
             track.fallback = "soundcloud"
 
@@ -228,17 +335,68 @@ class SourceResolver:
             track.thumbnail = track.thumbnail or info.get("thumbnail")
         track.duration = track.duration or (int(info["duration"]) if info.get("duration") else None)
         track.stream_url = info["url"]
+        track.user_agent = ytdl.user_agent_of(info)
         track.stream_expires = time.time() + STREAM_TTL
         return track.stream_url
 
+    async def _youtube_stream(self, target: str, cookies: str) -> dict:
+        """
+        YouTube parçasının bilgisini ve gerçekten açılan bir ses akışını getirir.
+
+        Hangi bağlantı yönteminin çalıştığı videoya göre değişebilir (bazı istemcilerin
+        linkleri bazı videolarda 403 döner). Bu yüzden link çalmadan önce denenir; açılmazsa
+        bu parça için birkaç yöntem daha denenir. Hiçbiri olmazsa YouTube sorunlu sayılır ve
+        sonraki şarkılarda onarım bitene kadar tek hızlı deneme yapılıp yedeğe geçilir.
+        """
+        # YouTube zaten sorunluysa tek hızlı deneme (bazı videolar yine açılabilir), sonra yedeğe
+        limit = SONG_STRATEGY_LIMIT if self.updater.state.health_ok else 1
+        order = self.updater.strategy_order()[:limit]
+        error: YtdlError | None = None
+        for name in order:
+            try:
+                info = await ytdl.extract_stream(target, cookies_file=cookies, strategy_args=STRATEGIES[name])
+            except YtdlError as exc:
+                if exc.kind in CONTENT_ERRORS:
+                    raise
+                error = error if error and error.kind == "blocked" else exc
+                continue
+            if (problem := await ytdl.probe_stream(info["url"], ytdl.user_agent_of(info))) is None:
+                if name != order[0]:
+                    log.info("'%s' bu parçada '%s' yöntemiyle açıldı", target[:80], name)
+                return info
+            error = error or YtdlError("stream", f"Ses akışı açılmıyor ({problem})")
+        error = error or YtdlError("error", "Ses akışı bulunamadı")
+        self.updater.mark_failing(error.kind, str(error))
+        raise error
+
+    async def check_soundcloud(self) -> tuple[bool, str]:
+        """Canlı test: SoundCloud'da bir şarkı bulunup akışı alınabiliyor mu."""
+        track = await self._soundcloud_track(SC_TEST_QUERY, 0)
+        if track is not None:
+            return True, ""
+        return False, self.soundcloud_error or "Arama sonuç vermedi"
+
     async def _with_heal(self, call, kind: str):
-        """yt-dlp çağrısı; YouTube kaynaklı (içerik dışı) hatada bir kez onarıp tekrar dener."""
+        """
+        yt-dlp çağrısı. YouTube kaynaklı (içerik dışı) hatada onarım arka planda başlatılır ve
+        hata hemen yükseltilir: şarkı beklemeden yedeğe geçer, sonraki şarkılar onarımdan yararlanır.
+        """
         try:
             return await call()
         except YtdlError as exc:
             if exc.kind in CONTENT_ERRORS or kind.startswith("soundcloud"):
                 raise
-            healed = await self.updater.heal(f"{kind} hatası: {exc.kind}")
-            if not healed:
-                raise
-            return await call()
+            self._heal_in_background(f"{kind} hatası: {exc.kind}")
+            raise
+
+    def _heal_in_background(self, reason: str) -> None:
+        if (self._heal_task and not self._heal_task.done()) or not self.updater.can_heal():
+            return
+
+        async def run() -> None:
+            try:
+                await self.updater.heal(reason)
+            except Exception:
+                log.exception("Arka plan YouTube onarımı başarısız")
+
+        self._heal_task = asyncio.create_task(run(), name="music-heal")

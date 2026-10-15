@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import discord
 
 import activitylog
-from music import card
+from music import card, ytdl
 from music.sources import SourceError
 from music.ytdl import Track, format_time
 
@@ -313,7 +313,7 @@ class GuildPlayer:
 
     async def _stream(self, track: Track, stream_url: str, start_at: float) -> tuple[float, Exception | None]:
         """Parçayı start_at saniyesinden çalar, bitmesini bekler. Döner: (çalınan süre, hata)."""
-        before = FFMPEG_BEFORE + (f" -ss {start_at:.2f}" if start_at else "")
+        before = FFMPEG_BEFORE + ytdl.ffmpeg_input_options(track.user_agent) + (f" -ss {start_at:.2f}" if start_at else "")
         source = discord.PCMVolumeTransformer(
             discord.FFmpegPCMAudio(stream_url, executable=self.cog.ffmpeg, before_options=before, options=FFMPEG_OPTIONS),
             volume=self.volume,

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import math
 
 import discord
@@ -35,9 +36,12 @@ LOOP_ARGS = {
 SOURCE_NOTES = {"spotify": "Spotify → YouTube", "soundcloud": "SoundCloud"}
 ACCENT = discord.Color.from_rgb(0, 212, 255)
 BLOCKED_HINT = (
-    "YouTube bu sunucunun IP adresini bot olarak işaretlemiş olabilir. Kalıcı çözüm: yedek bir "
-    "Google hesabıyla YouTube'a girip çerezleri (cookies.txt) dışa aktar, `.env` içine "
-    "`YTDLP_COOKIES_FILE=/app/data/cookies.txt` yaz ve botu yeniden başlat."
+    "YouTube bu sunucunun IP adresini bot olarak işaretlemiş. Bot farklı bağlantı yöntemlerini "
+    "(IPv4, farklı YouTube istemcileri) ve güncellemeleri kendisi denedi ama aşamadı; düzelene kadar 30 dakikada bir "
+    "tekrar deneyecek. Kalıcı çözüm için iki seçenek var:\n"
+    "• Yedek bir Google hesabıyla YouTube'a girip çerezleri (cookies.txt) dışa aktar, `data/cookies.txt` "
+    "olarak koy, `.env` içine `YTDLP_COOKIES_FILE=/app/data/cookies.txt` yaz ve botu yeniden başlat.\n"
+    "• Ya da `.env` içine bir HTTP proxy yaz: `YTDLP_PROXY=http://kullanici:sifre@host:port`."
 )
 
 
@@ -51,9 +55,9 @@ class MusicCog(commands.Cog):
         self._alone_timers: dict[int, asyncio.Task] = {}
         self._was_failing = not self.updater.state.health_ok
         self.ffmpeg = ytdl.ffmpeg_path()
+        ytdl.configure_network(proxy=cfg.proxy)
 
     async def cog_load(self) -> None:
-        self.health_loop.change_interval(hours=self.cfg.healthcheck_hours)
         self.health_loop.start()
         self.update_loop.start()
 
@@ -374,7 +378,12 @@ class MusicCog(commands.Cog):
     @commands.command(name="muzikdurum", aliases=["müzikdurum", "musicstatus"])
     @commands.has_permissions(administrator=True)
     async def status_command(self, ctx: commands.Context) -> None:
-        """Müzik sisteminin sağlık ve güncelleme durumunu gösterir."""
+        """Müzik sisteminin durumunu gösterir; YouTube ve SoundCloud'u o an canlı test eder."""
+        msg = await ctx.send("🔎 YouTube ve SoundCloud test ediliyor…")
+        async with ctx.typing():
+            (yt_ok, yt_kind, yt_err), (sc_ok, sc_err) = await asyncio.gather(
+                self.updater.check_youtube(), self.sources.check_soundcloud(),
+            )
         st = self.updater.state
 
         def ago(ts: float) -> str:
@@ -382,11 +391,23 @@ class MusicCog(commands.Cog):
                 return "hiç"
             return f"<t:{int(ts)}:R>"
 
-        health = "✅ Çalışıyor" if st.health_ok else f"❌ Çalışmıyor ({st.health_kind})"
+        def result(ok: bool, error: str) -> str:
+            return "✅ Çalışıyor" if ok else f"❌ Çalışmıyor\n`{error[:300]}`"
+
         embed = discord.Embed(title="🎵 Müzik sistemi durumu", color=discord.Color.from_rgb(0, 212, 255))
-        embed.add_field(name="YouTube", value=f"{health}\nSon kontrol: {ago(st.health_ts)}", inline=False)
-        if not st.health_ok:
-            embed.add_field(name="Hata", value=f"`{st.health_error[:200]}`\nSorun başlangıcı: {ago(st.failing_since)}", inline=False)
+        embed.add_field(
+            name="YouTube (şimdi test edildi)",
+            value=result(yt_ok, f"{yt_kind}: {yt_err}")
+            + (f"\nSorun başlangıcı: {ago(st.failing_since)}" if not st.health_ok and st.failing_since else ""),
+            inline=False,
+        )
+        embed.add_field(name="SoundCloud yedeği (şimdi test edildi)", value=result(sc_ok, sc_err), inline=False)
+        embed.add_field(
+            name="Bağlantı yöntemi",
+            value=f"`{st.strategy}`" + (" (engeli aşmak için otomatik seçildi)" if st.strategy != "default" else ""),
+            inline=True,
+        )
+        embed.add_field(name="Proxy", value="Var" if self.cfg.proxy else "Yok", inline=True)
         embed.add_field(
             name="yt-dlp",
             value=f"`{await ytdl.version() or '?'}` ({'nightly' if st.channel == 'nightly' else 'kararlı'})\n"
@@ -397,7 +418,9 @@ class MusicCog(commands.Cog):
         embed.add_field(name="YouTube çerezi", value="Var" if self.cfg.cookies_file else "Yok", inline=True)
         embed.add_field(name="Spotify API", value="Var" if self.sources.spotify.api_enabled else "Yok (embed kullanılıyor)", inline=True)
         embed.add_field(name="Aktif oynatıcı", value=str(len(self.players)), inline=True)
-        await ctx.send(embed=embed)
+        if not yt_ok and yt_kind == "blocked":
+            embed.add_field(name="Ne yapmalı?", value=BLOCKED_HINT[:1024], inline=False)
+        await msg.edit(content=None, embed=embed)
 
     @commands.command(name="muzikguncelle", aliases=["müzikgüncelle", "musicupdate"])
     @commands.has_permissions(administrator=True)
@@ -456,8 +479,13 @@ class MusicCog(commands.Cog):
     # Kendi kendini onarma
     # ------------------------------------------------------------------
 
-    @tasks.loop(hours=6)
+    @tasks.loop(minutes=30)
     async def health_loop(self) -> None:
+        # YouTube sağlamken MUSIC_HEALTHCHECK_HOURS'ta bir, sorunluyken (bir şarkı açılmadıysa da)
+        # her 30 dakikada bir test edilir ki düzelince hemen geri dönülsün.
+        st = self.updater.state
+        if st.health_ok and time.time() - st.health_ts < self.cfg.healthcheck_hours * 3600:
+            return
         try:
             await self.updater.health_check()
             await self._report_health_change()
@@ -495,10 +523,14 @@ class MusicCog(commands.Cog):
                 "yt-dlp en yeni (nightly) sürüme güncellendi ama YouTube hâlâ açılmıyor. Genelde yt-dlp ekibi "
                 "birkaç gün içinde düzeltme yayınlar; bot her gün kendini güncelleyip tekrar deneyecek."
             )
+            sc_ok, sc_err = await self.sources.check_soundcloud()
+            fallback = (
+                "Bu sürede şarkılar SoundCloud'dan çalınıyor." if sc_ok
+                else f"⚠️ SoundCloud yedeği de çalışmıyor (`{sc_err[:150]}`); şu an müzik çalınamıyor."
+            )
             self.bot.dispatch(
                 "gap_alert", None, "🎵 Müzik: YouTube çalışmıyor",
-                f"**Hata:** `{st.health_kind}` — {st.health_error[:200]}\n"
-                f"Bu sürede şarkılar SoundCloud'dan çalınmaya çalışılıyor.\n\n{hint}",
+                f"**Hata:** `{st.health_kind}` — {st.health_error[:200]}\n{fallback}\n\n{hint}",
             )
             self.updater.mark_alerted()
 
