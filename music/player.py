@@ -1,10 +1,11 @@
 """
-music/player.py — Sunucu başına müzik çalar: kuyruk, tekrar modları, ses düzeyi.
+music/player.py — Sunucu başına müzik çalar: kuyruk, geçmiş, sarma, tekrar modları, ses düzeyi.
 
 Her sunucunun tek bir GuildPlayer'ı ve onu süren tek bir arka plan görevi vardır.
 Ses discord.py'nin FFmpeg kaynağıyla çalınır; FFmpeg kopan bağlantıyı kendisi
 yeniden kurar (-reconnect). Akış hemen koparsa (süresi dolmuş link vb.) parça
-taze bir linkle bir kez daha denenir.
+taze bir linkle bir kez daha denenir. İleri/geri sarma FFmpeg'i aynı parça için
+`-ss <saniye>` ile yeniden başlatarak yapılır.
 """
 
 from __future__ import annotations
@@ -19,11 +20,14 @@ from typing import TYPE_CHECKING
 import discord
 
 import activitylog
+from music import card
 from music.sources import SourceError
-from music.ytdl import Track
+from music.ytdl import Track, format_time
 
 if TYPE_CHECKING:
     from music.cog import MusicCog
+
+__all__ = ["GuildPlayer", "LOOP_LABELS", "LOOP_MODES", "format_time"]
 
 log = logging.getLogger("gap.music.player")
 
@@ -31,18 +35,13 @@ FFMPEG_BEFORE = "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_on_netwo
 FFMPEG_OPTIONS = "-vn"
 # Bundan kısa süren çalma (sn) akış hatası sayılır ve parça bir kez daha denenir
 EARLY_FAILURE_SECONDS = 5
+# ⏮️: şarkının ilk bu kadar saniyesindeyse önceki şarkıya, sonrasındaysa başa döner
+PREVIOUS_THRESHOLD = 5
+SEEK_STEP = 10
+HISTORY_SIZE = 50
 
 LOOP_MODES = ("off", "track", "queue")
-LOOP_LABELS = {"off": "Kapalı", "track": "🔂 Şarkı", "queue": "🔁 Kuyruk"}
-
-
-def format_time(seconds: float | int | None) -> str:
-    if seconds is None:
-        return "?"
-    seconds = max(0, int(seconds))
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+LOOP_LABELS = {"off": "Kapalı", "track": "🔂 Şarkı", "queue": "🔁 Liste"}
 
 
 class GuildPlayer:
@@ -51,17 +50,24 @@ class GuildPlayer:
         self.guild = guild
         self.text_channel = text_channel
         self.queue: deque[Track] = deque()
+        self.history: deque[Track] = deque(maxlen=HISTORY_SIZE)
         self.current: Track | None = None
         self.loop_mode = "off"
         self.volume = cog.cfg.default_volume / 100
         self.voice: discord.VoiceClient | None = None
+        # Son "şimdi çalıyor" mesajı, gösterdiği parça ve kart eklenip eklenemediği
         self.now_message: discord.Message | None = None
+        self.now_track: Track | None = None
+        self.now_has_card = False
 
         self._wakeup = asyncio.Event()
         self._track_done = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._skipped = False
+        self._go_back = False
+        self._seek_to: float | None = None
         self._closing = False
+        self._offset = 0.0
         self._started_at = 0.0
         self._paused_at: float | None = None
         self._paused_total = 0.0
@@ -79,15 +85,20 @@ class GuildPlayer:
         return self.voice is not None and self.voice.is_paused()
 
     @property
+    def is_active(self) -> bool:
+        return self.voice is not None and (self.voice.is_playing() or self.voice.is_paused())
+
+    @property
     def channel(self) -> discord.VoiceChannel | None:
         return self.voice.channel if self.voice else None
 
     @property
     def elapsed(self) -> float:
+        """Parçanın neresinde olduğumuz (sn), sarmalar dahil."""
         if not self.current or not self._started_at:
             return 0.0
         paused = self._paused_total + (time.monotonic() - self._paused_at if self._paused_at else 0.0)
-        return time.monotonic() - self._started_at - paused
+        return self._offset + time.monotonic() - self._started_at - paused
 
     # ------------------------------------------------------------------
     # Bağlantı & kuyruk
@@ -114,11 +125,44 @@ class GuildPlayer:
             self._task = asyncio.create_task(self._run(), name=f"music-{self.guild.id}")
 
     def skip(self) -> bool:
-        if not self.voice or not (self.voice.is_playing() or self.voice.is_paused()):
+        if not self.is_active:
             return False
         self._skipped = True
         self.voice.stop()
         return True
+
+    def previous(self) -> str:
+        """⏮️ davranışı. Döner: 'restart' (başa sardı) | 'previous' (önceki şarkı) | 'none'."""
+        if not self.is_active or not self.current:
+            return "none"
+        if self.elapsed > PREVIOUS_THRESHOLD or not self.history:
+            return "restart" if self.seek(0) else "none"
+        self._go_back = True
+        self._skipped = True
+        self.voice.stop()
+        return "previous"
+
+    def seek(self, position: float) -> bool:
+        """Çalan parçada verilen saniyeye atlar. Parçanın sonunu geçiyorsa sıradakine geçer."""
+        if not self.is_active or not self.current:
+            return False
+        position = max(0.0, position)
+        duration = self.current.duration
+        if duration and position >= duration - 1:
+            return self.skip()
+        self._seek_to = position
+        self.voice.stop()
+        return True
+
+    def seek_relative(self, delta: float) -> float | None:
+        """İleri (+) / geri (-) sarar; yeni konumu döner (sıradakine geçildiyse ya da çalmıyorsa None)."""
+        if not self.current:
+            return None
+        target = max(0.0, self.elapsed + delta)
+        duration = self.current.duration
+        if not self.seek(target) or (duration and target >= duration - 1):
+            return None
+        return target
 
     def pause(self) -> bool:
         if self.voice and self.voice.is_playing():
@@ -165,7 +209,7 @@ class GuildPlayer:
         self._closing = True
         self.queue.clear()
         self.loop_mode = "off"
-        if self.voice and (self.voice.is_playing() or self.voice.is_paused()):
+        if self.is_active:
             self._skipped = True
             self.voice.stop()
         self._wakeup.set()
@@ -196,16 +240,33 @@ class GuildPlayer:
             if not self._closing:
                 await self._cleanup()
 
+    @staticmethod
+    def _fresh(track: Track) -> Track:
+        """Parça yeniden çalınacak: yeni "şimdi çalıyor" mesajı gönderilsin."""
+        track.extra.pop("announced", None)
+        return track
+
     async def _next_track(self) -> Track | None:
-        previous, skipped = self.current, self._skipped
-        self._skipped = False
-        if previous and self.loop_mode == "track" and not skipped:
-            return previous
-        if previous and self.loop_mode == "queue":
-            previous.stream_url = None  # sırası gelince taze link alınsın
-            previous.extra.pop("announced", None)
-            self.queue.append(previous)
+        previous, skipped, back = self.current, self._skipped, self._go_back
+        self._skipped = self._go_back = False
         self.current = None
+
+        if back and self.history:
+            prev = self.history.pop()
+            if self.queue and self.queue[-1] is prev:  # liste tekrarında sona eklenmişti
+                self.queue.pop()
+            if previous:
+                self.queue.appendleft(self._fresh(previous))
+            return self._fresh(prev)
+
+        if previous and self.loop_mode == "track" and not skipped:
+            self.current = previous
+            return previous
+        if previous:
+            self.history.append(previous)
+            if self.loop_mode == "queue":
+                previous.stream_url = None  # sırası gelince taze link alınsın
+                self.queue.append(self._fresh(previous))
 
         while not self.queue:
             self._wakeup.clear()
@@ -218,18 +279,43 @@ class GuildPlayer:
                 return None
         return self.queue.popleft()
 
-    async def _play(self, track: Track, *, retry: bool = True) -> None:
+    async def _play(self, track: Track) -> None:
         self.current = track
-        try:
-            stream_url = await self.cog.sources.stream_for(track)
-        except SourceError as exc:
-            await self._say(f"⚠️ **{discord.utils.escape_markdown(track.display)}** çalınamadı: {exc} Sıradakine geçiyorum.")
-            return
-        if not self.is_connected or self._closing:
+        start_at, retried = 0.0, False
+        while True:
+            try:
+                stream_url = await self.cog.sources.stream_for(track)
+            except SourceError as exc:
+                await self._say(f"⚠️ **{discord.utils.escape_markdown(track.display)}** çalınamadı: {exc} Sıradakine geçiyorum.")
+                return
+            if not self.is_connected or self._closing:
+                return
+
+            played, error = await self._stream(track, stream_url, start_at)
+            if self._closing:
+                return
+            if self._seek_to is not None:
+                start_at, self._seek_to = self._seek_to, None
+                self._skipped = False
+                continue
+            if error:
+                log.warning("Çalma hatası (%s): %s", track.display, error)
+            # Akış hemen koptuysa (link süresi dolmuş / geçici hata) taze linkle bir kez daha dene
+            remaining = (track.duration or 0) - start_at
+            if not retried and not self._skipped and played < EARLY_FAILURE_SECONDS and (
+                error or remaining > EARLY_FAILURE_SECONDS
+            ):
+                log.info("Akış erken bitti (%.1f sn), yeniden deneniyor: %s", played, track.display)
+                retried = True
+                track.stream_url = None
+                continue
             return
 
+    async def _stream(self, track: Track, stream_url: str, start_at: float) -> tuple[float, Exception | None]:
+        """Parçayı start_at saniyesinden çalar, bitmesini bekler. Döner: (çalınan süre, hata)."""
+        before = FFMPEG_BEFORE + (f" -ss {start_at:.2f}" if start_at else "")
         source = discord.PCMVolumeTransformer(
-            discord.FFmpegPCMAudio(stream_url, executable=self.cog.ffmpeg, before_options=FFMPEG_BEFORE, options=FFMPEG_OPTIONS),
+            discord.FFmpegPCMAudio(stream_url, executable=self.cog.ffmpeg, before_options=before, options=FFMPEG_OPTIONS),
             volume=self.volume,
         )
         loop = asyncio.get_running_loop()
@@ -241,6 +327,8 @@ class GuildPlayer:
                 play_error.append(error)
             loop.call_soon_threadsafe(self._track_done.set)
 
+        was_paused = self._paused_at is not None
+        self._offset = start_at
         self._started_at = time.monotonic()
         self._paused_at = None
         self._paused_total = 0.0
@@ -248,27 +336,19 @@ class GuildPlayer:
 
         if track.extra.get("announced") is None:
             track.extra["announced"] = True
-            await self._send_now_playing(track)
-        activitylog.record(
-            "music_play", self.guild.id, track.requester_id,
-            channel_id=self.channel.id if self.channel else None,
-            title=track.display[:150], source=track.source, fallback=track.fallback,
-        )
+            await self.send_now_playing()
+            activitylog.record(
+                "music_play", self.guild.id, track.requester_id,
+                channel_id=self.channel.id if self.channel else None,
+                title=track.display[:150], source=track.source, fallback=track.fallback,
+            )
+        elif was_paused:
+            await self.refresh_controls()  # duraklatılmışken sarıldı; artık çalıyor
         prefetch = asyncio.create_task(self._prefetch_next())
 
         await self._track_done.wait()
         prefetch.cancel()
-        played = self.elapsed
-
-        if play_error:
-            log.warning("Çalma hatası (%s): %s", track.display, play_error[0])
-        # Akış hemen koptuysa (link süresi dolmuş / geçici hata) taze linkle bir kez daha dene
-        if retry and not self._skipped and not self._closing and played < EARLY_FAILURE_SECONDS and (
-            play_error or (track.duration or 0) > EARLY_FAILURE_SECONDS
-        ):
-            log.info("Akış erken bitti (%.1f sn), yeniden deneniyor: %s", played, track.display)
-            track.stream_url = None
-            await self._play(track, retry=False)
+        return self.elapsed - start_at, (play_error[0] if play_error else None)
 
     async def _prefetch_next(self) -> None:
         """Sıradaki parçanın ses linkini önceden hazırla ki geçiş beklemesin."""
@@ -290,51 +370,45 @@ class GuildPlayer:
         except discord.HTTPException:
             pass
 
-    def now_playing_embed(self, track: Track, *, with_progress: bool = False) -> discord.Embed:
-        title = discord.utils.escape_markdown(track.display)
-        embed = discord.Embed(
-            title="🎵 Şimdi çalıyor",
-            description=f"**[{title}]({track.url})**" if track.url else f"**{title}**",
-            color=discord.Color.from_rgb(0, 212, 255),
-        )
-        if with_progress and track.duration:
-            ratio = min(1.0, self.elapsed / track.duration)
-            bar = "▬" * int(ratio * 14) + "🔘" + "▬" * (14 - int(ratio * 14))
-            embed.add_field(name="İlerleme", value=f"`{format_time(self.elapsed)}` {bar} `{format_time(track.duration)}`", inline=False)
-        else:
-            embed.add_field(name="Süre", value=format_time(track.duration), inline=True)
-        embed.add_field(name="İsteyen", value=f"<@{track.requester_id}>", inline=True)
-        if self.loop_mode != "off":
-            embed.add_field(name="Tekrar", value=LOOP_LABELS[self.loop_mode], inline=True)
-        if self.queue:
-            nxt = discord.utils.escape_markdown(self.queue[0].display)
-            embed.add_field(name=f"Sırada ({len(self.queue)})", value=nxt[:100], inline=False)
-        footer = {"spotify": "Spotify linki · YouTube'dan çalınıyor", "soundcloud": "SoundCloud"}.get(track.source)
-        if track.fallback == "soundcloud":
-            footer = "YouTube şu an erişilemiyor · SoundCloud'dan çalınıyor"
-        if footer:
-            embed.set_footer(text=footer)
-        if track.thumbnail:
-            embed.set_thumbnail(url=track.thumbnail)
-        return embed
-
-    async def _send_now_playing(self, track: Track) -> None:
+    async def send_now_playing(self) -> None:
+        """Çalan şarkının kartını ve kontrol butonlarını yeni bir mesaj olarak gönderir."""
+        track = self.current
+        if track is None:
+            return
         await self._retire_controls()
+        file = None
         try:
+            cover = await card.fetch_cover(track.thumbnail)
+            file = discord.File(await asyncio.to_thread(card.render_card, track, cover), filename=card.FILENAME)
+        except Exception:
+            log.exception("Şimdi çalıyor kartı çizilemedi: %s", track.display)
+        self.now_track, self.now_has_card = track, file is not None
+        try:
+            kwargs = {"file": file} if file else {}
             self.now_message = await self.text_channel.send(
-                embed=self.now_playing_embed(track), view=self.cog.controls_view(self),
+                view=self.cog.now_playing_view(self), allowed_mentions=discord.AllowedMentions.none(), **kwargs,
             )
         except discord.HTTPException:
+            log.exception("Şimdi çalıyor mesajı gönderilemedi")
             self.now_message = None
 
+    async def refresh_controls(self) -> None:
+        """Butonları ve yazıyı güncel duruma (duraklatıldı, tekrar modu…) getirir."""
+        if self.now_message is None or self.now_track is None:
+            return
+        try:
+            await self.now_message.edit(view=self.cog.now_playing_view(self), allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            pass
+
     async def _retire_controls(self) -> None:
-        """Eski "şimdi çalıyor" mesajındaki butonları kaldır."""
+        """Eski "şimdi çalıyor" mesajındaki butonları kaldırır (kart ve yazı kalır)."""
         if self.now_message is not None:
+            message, self.now_message = self.now_message, None
             try:
-                await self.now_message.edit(view=None)
+                await message.edit(view=self.cog.now_playing_view(self, finished=True))
             except discord.HTTPException:
                 pass
-            self.now_message = None
 
     # ------------------------------------------------------------------
     # Temizlik
@@ -342,9 +416,10 @@ class GuildPlayer:
 
     async def _cleanup(self) -> None:
         self._closing = True
+        await self._retire_controls()
         self.current = None
         self.queue.clear()
-        await self._retire_controls()
+        self.history.clear()
         if self.voice is not None:
             try:
                 await self.voice.disconnect(force=True)

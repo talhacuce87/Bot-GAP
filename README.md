@@ -211,17 +211,24 @@ Yöneticiler `!muzikdurum` ile durumu görür, `!muzikguncelle` ile onarımı el
 | Komut | Açıklama |
 |---|---|
 | `!çal <link/arama>` (`!cal`, `!play`, `!p`) | Çalar ya da kuyruğa ekler; argümansız duraklatılmışı devam ettirir |
-| `!geç` (`!skip`, `!s`) | Şarkıyı geçer |
-| `!duraklat` / `!devam` | Duraklatır / devam ettirir |
-| `!bitir` (`!stop`, `!dc`) | Durdurur, kuyruğu temizler, kanaldan çıkar |
-| `!kuyruk [sayfa]` (`!q`) | Kuyruğu gösterir |
-| `!şimdi` (`!np`) | Çalan şarkı ve ilerleme |
-| `!tekrar [kapalı\|şarkı\|kuyruk]` (`!loop`) | Tekrar modu |
-| `!karıştır` · `!kaldır <no>` · `!temizle` | Kuyruk yönetimi |
+| `!playlist [sayfa]` (`!kuyruk`, `!q`, `!pl`) | Çalan liste: önceki, şimdi çalan (ilerlemesiyle) ve sıradaki şarkılar; ◀️ 🔄 ▶️ ile sayfalanır |
+| `!şimdi` (`!np`) | Oynatıcıyı (kart + butonlar) sohbetin en altına yeniden gönderir |
+| `!kaldır <no>` · `!temizle` | Kuyruktan şarkı siler / kuyruğu boşaltır |
 | `!volume [0-100]` (`!vol`) | Ses düzeyi |
 | `!muzikdurum` · `!muzikguncelle` (admin) | Sağlık durumu / elle güncelleme |
 
-"Şimdi çalıyor" mesajındaki butonlar: ⏯️ ⏭️ ⏹️ 🔁 📜. Botu yalnızca onunla aynı ses kanalındakiler kontrol edebilir. Kanalda kimse kalmazsa 60 sn, kuyruk boş kalırsa 5 dk sonra bot kendisi çıkar. Bot ses kanalındayken XP sistemi onu saymaz.
+### Oynatıcı
+
+Her şarkı başladığında kapaklı bir **"şimdi çalıyor" kartı** gelir (Spotify linklerinde albüm kapağı, YouTube'da video görseli). Kartın altındaki butonlar:
+
+| | | | | |
+|---|---|---|---|---|
+| ⏮️ başa sar — ilk 5 sn'deyse **önceki şarkı** | ⏪ 10 sn geri | ⏯️ duraklat / devam | ⏩ 10 sn ileri | ⏭️ sonraki şarkı |
+| 🔁 tekrar: kapalı → 🔂 şarkı → 🔁 liste | 🔀 karıştır | ⏹️ bitir | | |
+
+Şarkı bitince eski kartın butonları kalkar, yenisi gelir. Butonlarla yapılanların komutları da gizli olarak çalışır: `!geç`, `!önceki`, `!ileri [sn]`, `!geri [sn]`, `!duraklat`, `!devam`, `!tekrar [kapalı|şarkı|liste]`, `!karıştır`, `!bitir`.
+
+Botu yalnızca onunla aynı ses kanalındakiler kontrol edebilir. Kanalda kimse kalmazsa 60 sn, kuyruk boş kalırsa 5 dk sonra bot kendisi çıkar. Bot ses kanalındayken XP sistemi onu saymaz.
 
 ### Ortam değişkenleri
 

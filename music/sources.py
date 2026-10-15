@@ -129,7 +129,7 @@ class SourceResolver:
                 raise SourceError("Spotify linki okunamadı.") from exc
             tracks = [
                 Track(title=t.title, artist=t.artist, query=t.query, requester_id=requester_id,
-                      duration=(t.duration_ms or 0) // 1000 or None, source="spotify")
+                      duration=(t.duration_ms or 0) // 1000 or None, thumbnail=result.cover, source="spotify")
                 for t in result.tracks[: self.cfg.max_playlist]
             ]
             return tracks, (result.name if result.kind != "track" else None)
