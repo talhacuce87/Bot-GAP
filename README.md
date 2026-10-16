@@ -4,7 +4,7 @@
   <img src="assets/banner.jpg" alt="The Gap" width="100%">
 </p>
 
-**The Gap** Discord sunucusunun botu. Mesaj ve ses aktivitesine XP verir, seviye rollerini dağıtır, görsel kartlar çizer, kimin kiminle ne kadar seste vakit geçirdiğini tutar, ses kanalında müzik çalar ve isteğe bağlı olarak yapay zekâyla sohbet eder.
+**The Gap** Discord sunucusunun botu. Mesaj ve ses aktivitesine XP verir, seviye rollerini dağıtır, görsel kartlar çizer, kimin kiminle ne kadar seste vakit geçirdiğini tutar ve isteğe bağlı olarak yapay zekâyla sohbet eder.
 
 Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanmak üzere tasarlanmadı.
 
@@ -17,7 +17,6 @@ Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanma
 - [Güncelleme ve yeni sürüm](#-güncelleme-ve-yeni-sürüm)
 - [Komutlar](#-komutlar)
 - [XP sistemi](#-xp-sistemi)
-- [Müzik](#-müzik)
 - [Yapay zekâ sohbet ve hafıza](#-yapay-zekâ-sohbet-ve-hafıza-isteğe-bağlı)
 - [Loglama ve hile analizi](#-loglama-ve-hile-analizi)
 - [Veri ve yedekleme](#-veri-ve-yedekleme)
@@ -34,7 +33,6 @@ Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanma
 | ⛓️ **Sürgün** | Yöneticilerin XP cezası: süreli ya da kalıcı 0.5x XP, hapishane temalı `!sürgünler` kartı. |
 | 🎴 **Görsel kartlar** | `!kart` profil kartı, `!liderlik` ilk 10, `!roller` rol haritası, `!bf` arkadaşlık kartı. |
 | 👥 **Arkadaşlık tier'ları** | Birlikte seste geçirilen süreye göre 6 kademe: Tanıdık → Ruh İkizi. |
-| 🎵 **Müzik** | YouTube, Spotify ve SoundCloud linkleri; kapaklı "şimdi çalıyor" kartı ve butonlu oynatıcı. YouTube bozulunca kendi kendini onarır. |
 | 🧠 **Yapay zekâ** *(isteğe bağlı)* | Etiketlenince cevap verir, onaylı kanallardaki sohbetleri hatırlar, XP verisini bilir, internette arar. |
 | 🕵️ **Hile dedektörü** | Makro, tekrar mesaj, sessizde XP kasma gibi durumları log kanalına bildirir. |
 
@@ -51,8 +49,8 @@ cp .env.example .env      # en azından DISCORD_TOKEN'ı doldur
 docker compose up -d --build
 ```
 
-- İmaj `python:3.11-slim` tabanlıdır. ffmpeg, deno ve yt-dlp `requirements.txt` ile gelir; sisteme ayrıca bir şey kurmak gerekmez.
-- Tüm veri (`xp_system.db`, loglar, yedekler, müzik durumu) `./data` klasöründedir. Bu klasör konteynere bağlı olduğu için yeniden deploy'da silinmez.
+- İmaj `python:3.11-slim` tabanlıdır; sisteme ayrıca bir şey kurmak gerekmez.
+- Tüm veri (`xp_system.db`, loglar, yedekler) `./data` klasöründedir. Bu klasör konteynere bağlı olduğu için yeniden deploy'da silinmez.
 - Loglar: `docker compose logs -f bot-gap`
 
 ### Docker olmadan
@@ -74,10 +72,9 @@ Tam liste ve açıklamalar `.env.example` içinde. Temel ayarlar:
 |---|---|---|
 | `DISCORD_TOKEN` | ✅ | Bot token'ı |
 | `BOT_PREFIX` | | Komut ön eki (varsayılan `!`) |
-| `LOG_CHANNEL_ID` | | Şüpheli hareket, admin işlemi ve müzik sistemi uyarılarının gideceği kanal |
+| `LOG_CHANNEL_ID` | | Şüpheli hareket ve admin işlemi uyarılarının gideceği kanal |
 | `ANNOUNCE_CHANNEL_ID` | | Yeni sürüm açıldığında güncelleme notlarının paylaşılacağı kanal |
 | `LOG_FILE_RETENTION_DAYS` / `EVENT_RETENTION_DAYS` | | Log dosyası / olay kaydı saklama süresi (varsayılan 90 / 365 gün) |
-| `MUSIC_ENABLED` | | Müzik modülü (varsayılan açık). Diğer müzik ayarları için [Müzik](#-müzik) |
 | `AI_ENABLED` | | Yapay zekâ eklentisi (varsayılan kapalı). Ayarlar için [Yapay zekâ](#-yapay-zekâ-sohbet-ve-hafıza-isteğe-bağlı) |
 
 Discord Developer Portal'da botun **Server Members Intent** ve **Message Content Intent** izinleri açık olmalı.
@@ -138,18 +135,6 @@ Tüm komutların kısa listesi Discord'da `!yardim` ile görülebilir.
 
 Tier'lar birlikte seste geçirilen süreye göre belirlenir: 🌱 Tanıdık 5 sa · 🤝 Arkadaş 20 sa · 💙 Yakın Arkadaş 50 sa · 💞 Best Friend 100 sa · 🔥 Kanka 250 sa · 👑 Ruh İkizi 500 sa.
 
-### Müzik
-
-| Komut | Açıklama |
-|---|---|
-| `!çal <link ya da şarkı adı>` (`!cal`, `!play`, `!p`) | Çalar ya da sıraya ekler. Boş yazılırsa duraklatılmış şarkıyı devam ettirir |
-| `!playlist [sayfa]` (`!kuyruk`, `!q`, `!pl`) | Çalan liste: önceki, şimdi çalan ve sıradaki şarkılar |
-| `!şimdi` (`!np`) | Oynatıcıyı sohbetin en altına yeniden gönderir |
-| `!kaldır <no>` · `!temizle` | Sıradan şarkı siler / sırayı boşaltır |
-| `!volume [0-100]` (`!vol`) | Ses düzeyi |
-
-Diğer kontroller şimdi çalıyor kartının altındaki butonlardadır; bkz. [Oynatıcı](#oynatıcı).
-
 ### Yönetici
 
 | Komut | Açıklama |
@@ -162,8 +147,6 @@ Diğer kontroller şimdi çalıyor kartının altındaki butonlardadır; bkz. [O
 | `!sürgünsonlandır @üye` (`!surgunsonlandir`) | Sürgünü erken bitirir |
 | `!xpsenkronize` | Tüm üyelerin seviye rollerini XP'lerine göre düzeltir |
 | `!yedekle` (`!backup`) | Veritabanının anlık yedeğini alır |
-| `!muzikdurum` · `!muzikguncelle` | Müzik sisteminin sağlığı / elle onarım |
-| `!muzikcerez [sil]` | YouTube engeline karşı yedek hesap çerezi yükler (bota **DM'den**, `cookies.txt` ekleyerek) |
 
 XP komutlarında sebep zorunludur (en az 5 karakter) ve her işlem olay kaydına yazılır. Yapay zekâ komutları için [ilgili bölüme](#komutlar) bak.
 
@@ -193,73 +176,6 @@ Yöneticilerin XP cezası. `!sürgün @üye <süre> <sebep>` ile verilir.
 - Zaten sürgündeki birine tekrar `!sürgün` yazılırsa süre ve sebep güncellenir.
 - `!sürgünler` herkesin görebildiği hapishane temalı bir kart çizer: sabıka fotoğrafı, sebep, sürgün eden yönetici, kalan süre ve çekilen cezanın çubuğu (kalıcılar kırmızı).
 - Sürgün verme, güncelleme ve bitirme işlemleri olay kaydına ve log kanalına yazılır.
-
----
-
-## 🎵 Müzik
-
-`!çal <link ya da şarkı adı>` ile **YouTube**, **Spotify** ve **SoundCloud** linkleri (playlist ve albümler dahil) ses kanalında çalınır. Linksiz yazılan metin YouTube'da aranır.
-
-### Oynatıcı
-
-Her şarkı başladığında kapaklı bir **"şimdi çalıyor" kartı** gelir. Spotify linklerinde albüm kapağı, YouTube'da video görseli kullanılır. Kartın altındaki butonlar:
-
-| | | | | |
-|:-:|:-:|:-:|:-:|:-:|
-| ⏮️ | ⏪ | ⏯️ | ⏩ | ⏭️ |
-| başa sar · ilk 5 sn'de **önceki şarkı** | 10 sn geri | duraklat / devam | 10 sn ileri | sonraki şarkı |
-| 🔁 | 🔀 | ⏹️ | | |
-| tekrar: kapalı → 🔂 şarkı → 🔁 liste | karıştır | bitir | | |
-
-- Şarkı bitince eski kartın butonları kalkar ve yeni kart gelir.
-- Butonları yalnızca botla aynı ses kanalında olanlar kullanabilir.
-- Kanalda kimse kalmazsa 60 sn, sıra boş kalırsa 5 dk sonra bot kendisi çıkar.
-- Bot ses kanalındayken XP sistemi onu saymaz.
-- Butonların komut karşılıkları da gizli olarak çalışır: `!geç`, `!önceki`, `!ileri [sn]`, `!geri [sn]`, `!duraklat`, `!devam`, `!tekrar [kapalı|şarkı|liste]`, `!karıştır`, `!bitir`.
-
-### Nasıl çalışır?
-
-- **YouTube:** Ses [yt-dlp](https://github.com/yt-dlp/yt-dlp) ile alınır, FFmpeg ile Discord'a aktarılır. yt-dlp bot sürecinin dışında ayrı bir süreç olarak çalışır.
-- **Spotify:** Spotify sesi DRM korumalı olduğu için hiçbir bot doğrudan çalamaz. Bot linkteki şarkı adını ve sanatçıyı Spotify'ın herkese açık embed sayfasından okur (API anahtarı gerekmez) ve şarkıyı YouTube'da bulup çalar.
-- **SoundCloud:** Doğrudan çalınır. YouTube çalışmazsa yedek kaynak olarak da kullanılır.
-- **Ses şifrelemesi (DAVE):** Discord, Mart 2026'dan beri ses kanallarında uçtan uca şifreleme istiyor. `discord.py[voice]` 2.7+ bunu sağlar.
-
-### Kendi kendini onarma
-
-YouTube sık sık değişir, eski yt-dlp sürümleri bozulur ve sunucu IP'lerini "bot" diye kısıtlayabilir. Bot bunları kendisi halleder:
-
-1. Açılışta ve **günde bir** yt-dlp, yt-dlp-ejs ve deno'yu `pip` ile günceller.
-2. **6 saatte bir** (YouTube sorunluyken **30 dakikada bir**) bir müzik videosuyla YouTube'u dener. Test, linkin alınmasıyla yetinmez; ses akışını çalarken kullanılan FFmpeg ile gerçekten açar.
-3. YouTube hata verirse önce farklı **bağlantı yöntemlerini** dener (IPv4'e zorlama, farklı YouTube istemcileri: tv, mweb, embedded, android_vr). Çalışanı kaydeder ve sonraki tüm çağrılarda onu kullanır. Olmazsa **kararlı**, sonra **nightly** sürüme günceller ve yöntemleri yeniden dener. yt-dlp ayrı süreçte çalıştığı için hiçbiri **yeniden başlatma gerektirmez**.
-4. Her şarkının linki çalınmadan önce denenir. Açılmazsa o şarkı için en fazla üç yöntem denenir. Hâlâ olmuyorsa YouTube "sorunlu" sayılır ve onarım **arka planda** başlar; şarkı beklemeden yedeğe geçer.
-5. Yedek **SoundCloud**'dur. Bulunan sonuç gerçekten aynı şarkı olmalıdır: bütün kelimeler tutmalı, istenmeyen versiyonlar (slowed, remix, cover, live…) ve 30 sn'lik önizlemeler atlanır. Spotify linklerinde süre de karşılaştırılır. Aynı şarkı yoksa yanlış bir şarkı çalınmaz, hata mesajı verilir.
-6. Sorun sürerse `LOG_CHANNEL_ID` kanalına **günde en fazla bir** uyarı gider (SoundCloud yedeğinin çalışıp çalışmadığı da yazar). Düzelince "tekrar çalışıyor" bildirimi gelir.
-
-YouTube ses linkini, onu alan istemcinin tarayıcı kimliğine (User-Agent) bağlar. Bot bu yüzden yt-dlp'nin User-Agent'ını şarkıyla birlikte saklayıp FFmpeg'e verir.
-
-Yöneticiler `!muzikdurum` ile YouTube'u ve SoundCloud'u **o an canlı test eder**: gerçek hata mesajlarını, kullanılan bağlantı yöntemini ve yapılması gerekeni gösterir. `!muzikguncelle` onarımı elle başlatır.
-
-**Elle müdahale gereken durum:** YouTube sunucunun IP adresini tamamen engellerse (uyarıda `blocked` yazar ve hiçbir yöntem işe yaramaz) iki çözüm var. Büyük müzik botları da aynı yolları kullanır: giriş yapılmış (yedek) hesaplar, geniş IP havuzları ya da YouTube dışı kaynaklar.
-
-- **Çerez (önerilen, sunucuya erişim gerekmez):**
-  1. **Yedek** bir Google hesabı kullan (ana hesabını değil).
-  2. Tarayıcıya "Get cookies.txt LOCALLY" eklentisini kur ve gizli pencerede çalışmasına izin ver.
-  3. **Gizli pencerede** o hesapla youtube.com'a gir, bir video aç, eklentiden `cookies.txt` dışa aktar ve pencereyi **kapat** (açık kalırsa YouTube çerezleri yeniler, dosya geçersizleşir).
-  4. Bota **DM'den** `!muzikcerez` yazıp dosyayı ekle. Bot dosyayı kontrol eder, `data/cookies.txt` olarak kaydeder, yeniden başlatmadan devreye alır ve YouTube'u hemen test edip sonucu söyler. Dosya bir kanala atılırsa bot mesajı siler.
-  5. Kaldırmak için `!muzikcerez sil`. İstenirse `.env`'de `YTDLP_COOKIES_FILE` ile başka bir dosya da gösterilebilir.
-- **Proxy:** `.env` dosyasına bir HTTP proxy yaz: `YTDLP_PROXY=http://kullanici:sifre@host:port`. yt-dlp ve FFmpeg trafiği bu proxy'den geçer. FFmpeg yalnızca `http://` proxy destekler.
-
-### Ayarlar
-
-`MUSIC_ENABLED`, `MUSIC_AUTO_UPDATE`, `MUSIC_HEALTHCHECK_HOURS`, `MUSIC_IDLE_TIMEOUT_SECONDS`, `MUSIC_ALONE_TIMEOUT_SECONDS`, `MUSIC_MAX_QUEUE`, `MUSIC_MAX_PLAYLIST`, `MUSIC_MAX_TRACK_MINUTES`, `MUSIC_DEFAULT_VOLUME`, `YTDLP_COOKIES_FILE`, `YTDLP_PROXY`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`. Açıklamaları `.env.example` içinde; varsayılanlarla ek ayar gerekmez.
-
-### Bilinen sınırlar
-
-- Canlı yayınlar ve yaş sınırlı videolar çalınamaz.
-- Art arda 3 şarkı çalınamazsa kaynaklar sorunlu sayılır: liste durdurulur ve her şarkı için ayrı hata yerine tek mesaj gelir.
-- SoundCloud'da birçok resmi şarkı yalnızca 30 sn'lik önizleme olarak var. Yedek bu yüzden çoğu zaman başka birinin yüklediği kopyayı çalar; aynı şarkının tam bir kopyası yoksa hiç çalmaz.
-
-> ⚠️ YouTube'un kullanım şartları içeriğin kendi oynatıcısı dışında çalınmasına izin vermez. Bu özellik yalnızca The Gap sunucusu için eklenmiştir.
 
 ---
 
@@ -481,7 +397,6 @@ docker exec bot-gap python analysis.py --guild <sunucu_id> --legacy   # kayıt �
 |---|---|
 | `xp_system.db` | XP, seri, boost, ses süreleri, olay kaydı (SQLite WAL) |
 | `ai_memory.db` | Yapay zekâ hafızası (yalnızca AI açıksa) |
-| `music_state.json` | Müzik sisteminin sağlık ve güncelleme durumu |
 | `logs/` | Log dosyaları |
 | `backups/` | Otomatik ve elle alınan yedekler |
 
@@ -512,7 +427,6 @@ Bot-GAP/
 ├── audit.py             # Olay kaydı, canlı hile dedektörü, analiz komutları
 ├── activitylog.py       # Log dosyası kurulumu ve olay yazıcısı
 ├── analysis.py          # Geçmişe dönük hile analizi (CLI)
-├── music/               # Müzik: kaynaklar, oynatıcı, kart, kendi kendini onaran güncelleyici
 ├── ai/                  # İsteğe bağlı yapay zekâ eklentisi
 ├── persona/default.md   # Düzenlenebilir bot kişiliği
 ├── tests/               # pytest testleri
@@ -525,7 +439,7 @@ Bot-GAP/
 
 ### Teknolojiler
 
-Python 3.11 · discord.py 2.7 (`[voice]`) · Pillow · aiosqlite · aiohttp · yt-dlp · FFmpeg (`imageio-ffmpeg`)
+Python 3.11 · discord.py 2.7 · Pillow · aiosqlite · httpx
 
 ### Testler
 
@@ -534,4 +448,4 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-Testler ağa ve Discord'a bağlanmaz; yt-dlp, Spotify ve ses bağlantısı sahtelenir.
+Testler ağa ve Discord'a bağlanmaz.

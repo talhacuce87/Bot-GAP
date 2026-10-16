@@ -104,18 +104,6 @@ class InfoCog(commands.Cog):
             inline=False,
         )
 
-        if self.bot.get_cog("MusicCog") is not None:
-            embed.add_field(
-                name="🎵 Müzik",
-                value=(
-                    "• `!çal <link ya da şarkı adı>` — YouTube / Spotify / SoundCloud (playlist dahil)\n"
-                    "• Kontrol, şimdi çalıyor kartının altındaki butonlarla: ⏮️ ⏪ ⏯️ ⏩ ⏭️ · 🔁 🔀 ⏹️\n"
-                    "• `!playlist` — Çalan listeyi gösterir · `!şimdi` — Oynatıcıyı en alta taşır\n"
-                    "• `!kaldır <no>` • `!temizle` • `!volume [0-100]`"
-                ),
-                inline=False,
-            )
-
         embed.add_field(
             name="🚀 Sistem & Sürüm",
             value=(
@@ -155,9 +143,7 @@ class InfoCog(commands.Cog):
                     "• `!sürgünsonlandır @üye` — Sürgünü erken bitirir\n"
                     "• *XP komutlarında sebep zorunludur; tüm işlemler kayıt altına alınır*\n"
                     "• `!xpsenkronize` — Sunucu üyelerinin XP rollerini kontrol edip eşitler\n"
-                    "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır\n"
-                    "• `!muzikdurum` / `!muzikguncelle` — Müzik sisteminin sağlığı / elle güncelleme\n"
-                    "• `!muzikcerez` — YouTube engeline karşı yedek hesap çerezi yükle (bota DM'den)"
+                    "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır"
                 ),
                 inline=False,
             )
@@ -204,7 +190,7 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "Sürgün sistemi geldi ⛓️ ve Bot-GAP artık ses kanalında müzik çalabiliyor! 🎵"
+                "Sürgün sistemi geldi! ⛓️"
             ),
             color=discord.Color.from_rgb(0, 212, 255),
         )
@@ -216,38 +202,6 @@ class InfoCog(commands.Cog):
                 "• Sürgündeki üye tüm XP'yi **0.5x** kazanır; boost ve seri çarpanı işlemez\n"
                 "• Seri donar, ceza bitince kaldığı yerden devam eder\n"
                 "• `!sürgünler` — Sürgündekileri ve kalan sürelerini gösteren kart"
-            ),
-            inline=False,
-        )
-
-        embed.add_field(
-            name="🎵 Müzik",
-            value=(
-                "• `!çal <link ya da şarkı adı>` — YouTube, Spotify ve SoundCloud linkleri; "
-                "playlist ve albümler de olur\n"
-                "• Spotify linkleri şarkı bulunup YouTube'dan çalınır\n"
-                "• Her şarkı için kapaklı bir **şimdi çalıyor kartı** gelir"
-            ),
-            inline=False,
-        )
-
-        embed.add_field(
-            name="🎛️ Kartın Altındaki Butonlar",
-            value=(
-                "• ⏮️ Başa sar (ilk 5 sn'de basarsan önceki şarkı) · ⏪ 10 sn geri\n"
-                "• ⏯️ Duraklat / devam · ⏩ 10 sn ileri · ⏭️ Sonraki şarkı\n"
-                "• 🔁 Tekrar (kapalı → şarkı → liste) · 🔀 Karıştır · ⏹️ Bitir\n"
-                "• `!playlist` ile çalan listeyi, `!şimdi` ile oynatıcıyı en alta getir"
-            ),
-            inline=False,
-        )
-
-        embed.add_field(
-            name="🛠️ Kendi Kendini Onarır",
-            value=(
-                "• YouTube değiştikçe bot kendini otomatik günceller\n"
-                "• YouTube geçici olarak açılmazsa şarkı SoundCloud'dan çalınmaya çalışılır\n"
-                "• Kanalda kimse kalmayınca ya da boşta kalınca bot kendisi çıkar"
             ),
             inline=False,
         )
