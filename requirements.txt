@@ -1,11 +1,5 @@
-# [voice]: ses kanalı desteği (PyNaCl + davey/DAVE şifrelemesi; discord.py 2.7+ gerekir)
-discord.py[voice]>=2.7,<3.0
+discord.py>=2.7,<3.0
 Pillow>=10.1,<12.0
 python-dotenv>=1.0,<2.0
 aiosqlite>=0.19,<1.0
 httpx>=0.27,<1.0
-# Müzik: sürüm üst sınırı yok — bot yt-dlp/ejs/deno'yu çalışırken kendi kendine günceller
-yt-dlp[default]>=2026.8.19
-yt-dlp-ejs>=0.8.0
-deno>=2.3
-imageio-ffmpeg>=0.5
