@@ -25,6 +25,7 @@ from pathlib import Path
 
 from music import ytdl
 from music.config import MusicConfig
+from music.warp import Warp
 
 log = logging.getLogger("gap.music.updater")
 
@@ -63,6 +64,11 @@ class MusicState:
     failing_since: float = 0.0
     last_alert_ts: float = 0.0
     strategy: str = "default"
+    route: str = "direct"  # direct | warp
+
+
+# Engelli bir yolda (WARP'a geçince, yeni kimlikte) denenen en fazla yöntem sayısı
+ROUTE_STRATEGY_LIMIT = 3
 
 
 class Updater:
@@ -73,6 +79,70 @@ class Updater:
         if self.state.strategy not in STRATEGIES:
             self.state.strategy = "default"
         self._apply(self.state.strategy)
+        # Kullanıcı kendi proxy'sini verdiyse WARP devre dışı (onun proxy'si kullanılır)
+        self.warp = Warp(cfg.state_path.parent / "warp") if cfg.warp and not cfg.proxy else None
+        if self.warp is None:
+            self.state.route = "direct"
+
+    # ------------------------------------------------------------------
+    # Ağ yolu: doğrudan ya da Cloudflare WARP
+    # ------------------------------------------------------------------
+
+    async def start_network(self) -> None:
+        """Açılışta: kayıtlı yol WARP ise başlatır; başlamazsa doğrudan bağlantıya döner."""
+        if self.state.route == "warp" and not await self._use_route("warp"):
+            log.warning("WARP başlatılamadı, doğrudan bağlantıyla devam ediliyor")
+            await self._use_route("direct")
+
+    async def ensure_network(self) -> None:
+        """WARP kullanılıyorsa ve süreç kapanmışsa yeniden başlatır."""
+        if self.state.route == "warp" and self.warp is not None and not self.warp.running:
+            log.warning("WARP süreci kapanmış, yeniden başlatılıyor")
+            await self._use_route("warp")
+
+    async def _use_route(self, route: str, *, fresh: bool = False) -> bool:
+        if route == "warp":
+            if self.warp is None:
+                return False
+            if fresh:
+                ok = await self.warp.rotate()
+            else:
+                ok = self.warp.running or await self.warp.start()
+            if not ok:
+                return False
+            ytdl.configure_network(proxy=self.warp.proxy_url)
+            return True
+        ytdl.configure_network(proxy=self.cfg.proxy)
+        if self.warp is not None:
+            await self.warp.stop()
+        return True
+
+    async def _try_other_routes(self) -> tuple[bool, str, str]:
+        """
+        Mevcut yol başarısızken: doğrudan bağlantıdaysak WARP'ı (olmazsa yeni WARP kimliğini),
+        WARP'taysak yeni WARP kimliğini, sonra doğrudan bağlantıyı dener.
+        """
+        original = self.state.route
+        if original == "direct":
+            attempts = [("warp", False), ("warp", True)]
+        else:
+            attempts = [("warp", True), ("direct", False)]
+        best = (False, "", "")
+        for route, fresh in attempts:
+            if not await self._use_route(route, fresh=fresh):
+                best = best if best[1] else (False, "warp", self.warp.last_error if self.warp else "")
+                continue
+            ok, kind, err = await self.try_strategies(limit=ROUTE_STRATEGY_LIMIT)
+            if ok:
+                if route != original or fresh:
+                    log.warning("YouTube engeli %s ile aşıldı", "yeni WARP kimliği" if fresh else route)
+                self.state.route = route
+                self.save()
+                return True, "", ""
+            if kind == "blocked" or not best[1] or best[1] == "warp":
+                best = (False, kind, err)
+        await self._use_route(original)
+        return best
 
     @staticmethod
     def _apply(strategy: str) -> None:
@@ -108,7 +178,7 @@ class Updater:
                "--no-input", "--quiet", *(["--pre"] if pre else []), *PACKAGES]
         try:
             proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **ytdl.NO_WINDOW,
             )
             _, err = await asyncio.wait_for(proc.communicate(), timeout=PIP_TIMEOUT)
         except (OSError, asyncio.TimeoutError) as exc:
@@ -152,7 +222,7 @@ class Updater:
             info = await ytdl.extract_stream(self.cfg.healthcheck_url, cookies_file=self.cfg.cookies_file)
         except ytdl.YtdlError as exc:
             return False, exc.kind, str(exc)
-        if error := await ytdl.probe_stream(info["url"], ytdl.user_agent_of(info)):
+        if error := await ytdl.wait_until_playable(info["url"], ytdl.user_agent_of(info)):
             return False, "stream", f"yt-dlp link verdi ama ses akışı açılmıyor ({error})"
         return True, "", ""
 
@@ -182,7 +252,7 @@ class Updater:
         current = self.state.strategy
         return [current] + [name for name in STRATEGIES if name != current]
 
-    async def try_strategies(self, *, skip_current: bool = False) -> tuple[bool, str, str]:
+    async def try_strategies(self, *, skip_current: bool = False, limit: int | None = None) -> tuple[bool, str, str]:
         """
         Bağlantı yöntemlerini sırayla dener (önce şu anki). Çalışan bulunursa onu
         kaydeder ve kullanmaya başlar; bulunamazsa eskisinde kalır.
@@ -192,6 +262,8 @@ class Updater:
         order = self.strategy_order()
         if skip_current:
             order = order[1:]
+        if limit is not None:
+            order = order[:limit]
         kind = err = ""
         blocked = ""
         for name in order:
@@ -211,8 +283,9 @@ class Updater:
 
     async def heal(self, reason: str, *, force: bool = False) -> bool:
         """
-        YouTube'u onarmayı dener: diğer bağlantı yöntemleri → kararlı güncelleme →
-        nightly güncelleme (her güncellemeden sonra yöntemler yeniden denenir).
+        YouTube'u onarmayı dener: diğer bağlantı yöntemleri → Cloudflare WARP (gerekirse yeni
+        kimlikle) → kararlı güncelleme → nightly güncelleme (her güncellemeden sonra yöntemler
+        yeniden denenir).
         Döner: YouTube şu an çalışıyor mu.
         """
         async with self._lock:
@@ -230,6 +303,13 @@ class Updater:
             if ok:
                 self._record_health(True)
                 return True
+            if self.warp is not None:
+                ok, route_kind, route_err = await self._try_other_routes()
+                if ok:
+                    self._record_health(True)
+                    return True
+                if route_kind and kind != "blocked":
+                    kind, err = route_kind, route_err
             if self.cfg.auto_update:
                 for pre in (False, True):
                     changed = await self.update(pre=pre, reason=reason)

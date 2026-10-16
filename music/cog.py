@@ -39,7 +39,7 @@ SOURCE_NOTES = {"spotify": "Spotify → YouTube", "soundcloud": "SoundCloud"}
 ACCENT = discord.Color.from_rgb(0, 212, 255)
 BLOCKED_HINT = (
     "YouTube bu sunucunun IP adresini bot olarak işaretlemiş. Bot farklı bağlantı yöntemlerini "
-    "(IPv4, farklı YouTube istemcileri) ve güncellemeleri kendisi denedi ama aşamadı; düzelene kadar 30 dakikada bir "
+    "(IPv4, farklı YouTube istemcileri), Cloudflare WARP'ı ve güncellemeleri kendisi denedi ama aşamadı; düzelene kadar 30 dakikada bir "
     "tekrar deneyecek. Kalıcı çözüm:\n"
     "• **Yedek** bir Google hesabının çerezini bota DM'den `!muzikcerez` yazıp `cookies.txt` ekleyerek gönder "
     "(nasıl alınacağını `!muzikcerez` anlatır). Ana hesabını kullanma.\n"
@@ -88,12 +88,16 @@ class MusicCog(commands.Cog):
         ytdl.configure_network(proxy=cfg.proxy)
 
     async def cog_load(self) -> None:
+        # Kayıtlı yol WARP ise arka planda başlat (ilk seferde indirme sürebilir, açılışı bekletmesin)
+        self._network_task = asyncio.create_task(self.updater.start_network(), name="music-network")
         self.health_loop.start()
         self.update_loop.start()
 
     async def cog_unload(self) -> None:
         self.health_loop.cancel()
         self.update_loop.cancel()
+        if self.updater.warp is not None:
+            await self.updater.warp.stop()
         for task in self._alone_timers.values():
             task.cancel()
         for player in list(self.players.values()):
@@ -452,7 +456,14 @@ class MusicCog(commands.Cog):
             value=f"`{st.strategy}`" + (" (engeli aşmak için otomatik seçildi)" if st.strategy != "default" else ""),
             inline=True,
         )
-        embed.add_field(name="Proxy", value="Var" if self.cfg.proxy else "Yok", inline=True)
+        warp = self.updater.warp
+        if self.cfg.proxy:
+            route = "Kendi proxy'n (`YTDLP_PROXY`)"
+        elif st.route == "warp" and warp is not None:
+            route = f"Cloudflare WARP ({'çalışıyor' if warp.running else 'kapalı'}, IP `{warp.last_ip or '?'}`)"
+        else:
+            route = "Doğrudan" + (f"\nWARP hatası: `{warp.last_error[:150]}`" if warp and warp.last_error else "")
+        embed.add_field(name="Ağ yolu", value=route, inline=True)
         embed.add_field(
             name="yt-dlp",
             value=f"`{await ytdl.version() or '?'}` ({'nightly' if st.channel == 'nightly' else 'kararlı'})\n"
@@ -591,6 +602,7 @@ class MusicCog(commands.Cog):
         if st.health_ok and time.time() - st.health_ts < self.cfg.healthcheck_hours * 3600:
             return
         try:
+            await self.updater.ensure_network()
             await self.updater.health_check()
             await self._report_health_change()
         except Exception:

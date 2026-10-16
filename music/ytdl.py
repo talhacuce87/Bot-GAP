@@ -14,6 +14,7 @@ import logging
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,6 +22,8 @@ from typing import Any
 log = logging.getLogger("gap.music.ytdl")
 
 DEFAULT_TIMEOUT = 60
+# Windows'ta alt süreçler (yt-dlp, FFmpeg, wgcf…) konsol penceresi açmasın
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 # Ağ ayarları: updater.py YouTube engelini aşan yöntemi (strategy) seçer, proxy .env'den gelir.
 _strategy_args: list[str] = []
@@ -171,7 +174,7 @@ async def run_json(
 ) -> dict:
     cmd = build_command(args, target, cookies_file, strategy_args)
     proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=subprocess_env(),
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=subprocess_env(), **NO_WINDOW,
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -257,7 +260,7 @@ async def probe_stream(url: str, user_agent: str | None = None, *, timeout: floa
            "-t", "1", "-i", url, "-f", "null", "-"]
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE, **NO_WINDOW,
         )
     except OSError as exc:
         return f"FFmpeg çalıştırılamadı: {exc}"
@@ -273,10 +276,29 @@ async def probe_stream(url: str, user_agent: str | None = None, *, timeout: floa
     return None
 
 
+# YouTube yeni bir ses linkini ilk birkaç saniye (ölçümlerde 1–10 sn) 403 ile reddediyor, sonra açıyor.
+STREAM_WARMUP_SECONDS = 15
+STREAM_WARMUP_INTERVAL = 1.5
+
+
+async def wait_until_playable(url: str, user_agent: str | None = None, *, limit: float | None = None) -> str | None:
+    """
+    Linki açılana kadar dener: 403 dönerse kısa aralıklarla `limit` saniyeye kadar tekrar dener.
+    403 dışı hatalarda (bağlantı yok, bozuk link…) beklemez. Döner: son hata ya da None (açılıyor).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + (STREAM_WARMUP_SECONDS if limit is None else limit)
+    while True:
+        error = await probe_stream(url, user_agent)
+        if error is None or "403" not in error or loop.time() >= deadline:
+            return error
+        await asyncio.sleep(STREAM_WARMUP_INTERVAL)
+
+
 async def version() -> str | None:
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "yt_dlp", "--version",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, **NO_WINDOW,
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)

@@ -230,16 +230,18 @@ YouTube sık sık değişir, eski yt-dlp sürümleri bozulur ve sunucu IP'lerini
 
 1. Açılışta ve **günde bir** yt-dlp, yt-dlp-ejs ve deno'yu `pip` ile günceller.
 2. **6 saatte bir** (YouTube sorunluyken **30 dakikada bir**) bir müzik videosuyla YouTube'u dener. Test, linkin alınmasıyla yetinmez; ses akışını çalarken kullanılan FFmpeg ile gerçekten açar.
-3. YouTube hata verirse önce farklı **bağlantı yöntemlerini** dener (IPv4'e zorlama, farklı YouTube istemcileri: tv, mweb, embedded, android_vr). Çalışanı kaydeder ve sonraki tüm çağrılarda onu kullanır. Olmazsa **kararlı**, sonra **nightly** sürüme günceller ve yöntemleri yeniden dener. yt-dlp ayrı süreçte çalıştığı için hiçbiri **yeniden başlatma gerektirmez**.
-4. Her şarkının linki çalınmadan önce denenir. Açılmazsa o şarkı için en fazla üç yöntem denenir. Hâlâ olmuyorsa YouTube "sorunlu" sayılır ve onarım **arka planda** başlar; şarkı beklemeden yedeğe geçer.
-5. Yedek **SoundCloud**'dur. Bulunan sonuç gerçekten aynı şarkı olmalıdır: bütün kelimeler tutmalı, istenmeyen versiyonlar (slowed, remix, cover, live…) ve 30 sn'lik önizlemeler atlanır. Spotify linklerinde süre de karşılaştırılır. Aynı şarkı yoksa yanlış bir şarkı çalınmaz, hata mesajı verilir.
-6. Sorun sürerse `LOG_CHANNEL_ID` kanalına **günde en fazla bir** uyarı gider (SoundCloud yedeğinin çalışıp çalışmadığı da yazar). Düzelince "tekrar çalışıyor" bildirimi gelir.
+3. YouTube hata verirse önce farklı **bağlantı yöntemlerini** dener (IPv4'e zorlama, farklı YouTube istemcileri: tv, mweb, embedded, android_vr). Çalışanı kaydeder ve sonraki tüm çağrılarda onu kullanır.
+4. Sunucunun IP'si engelliyse **Cloudflare WARP**'a geçer: ücretsiz WARP kimliği alır (wgcf), kullanıcı alanında çalışan yerel bir proxy açar (wireproxy; root, NET_ADMIN ya da ek Docker ayarı gerekmez) ve yt-dlp ile FFmpeg trafiğini oradan geçirir. WARP IP'si de işaretlenirse yeni kimlik alıp yeni IP'ye geçer. Programlar ilk ihtiyaçta `data/warp/` altına bir kez indirilir; seçilen yol yeniden başlatmada hatırlanır.
+5. Hâlâ olmuyorsa **kararlı**, sonra **nightly** sürüme günceller ve yöntemleri yeniden dener. yt-dlp ayrı süreçte çalıştığı için hiçbiri **yeniden başlatma gerektirmez**.
+6. Her şarkının linki çalınmadan önce denenir. YouTube yeni linkleri ilk birkaç saniye (ölçümlerde 1–10 sn) 403 ile reddettiği için bot 15 saniyeye kadar bekleyip tekrar dener. Açılmazsa o şarkı için en fazla üç yöntem denenir; olmazsa onarım **arka planda** başlar ve şarkı beklemeden yedeğe geçer.
+7. Yedek **SoundCloud**'dur. Bulunan sonuç gerçekten aynı şarkı olmalıdır: bütün kelimeler tutmalı, istenmeyen versiyonlar (slowed, remix, cover, live…) ve 30 sn'lik önizlemeler atlanır. Spotify linklerinde süre de karşılaştırılır. Aynı şarkı yoksa yanlış bir şarkı çalınmaz, hata mesajı verilir.
+8. Sorun sürerse `LOG_CHANNEL_ID` kanalına **günde en fazla bir** uyarı gider (SoundCloud yedeğinin çalışıp çalışmadığı da yazar). Düzelince "tekrar çalışıyor" bildirimi gelir.
 
 YouTube ses linkini, onu alan istemcinin tarayıcı kimliğine (User-Agent) bağlar. Bot bu yüzden yt-dlp'nin User-Agent'ını şarkıyla birlikte saklayıp FFmpeg'e verir.
 
 Yöneticiler `!muzikdurum` ile YouTube'u ve SoundCloud'u **o an canlı test eder**: gerçek hata mesajlarını, kullanılan bağlantı yöntemini ve yapılması gerekeni gösterir. `!muzikguncelle` onarımı elle başlatır.
 
-**Elle müdahale gereken durum:** YouTube sunucunun IP adresini tamamen engellerse (uyarıda `blocked` yazar ve hiçbir yöntem işe yaramaz) iki çözüm var. Büyük müzik botları da aynı yolları kullanır: giriş yapılmış (yedek) hesaplar, geniş IP havuzları ya da YouTube dışı kaynaklar.
+**Elle müdahale gereken durum:** WARP dahil hiçbir yol işe yaramazsa (uyarıda `blocked` yazar) iki çözüm var. Büyük müzik botları da aynı yolları kullanır: giriş yapılmış (yedek) hesaplar, geniş IP havuzları ya da YouTube dışı kaynaklar.
 
 - **Çerez (önerilen, sunucuya erişim gerekmez):**
   1. **Yedek** bir Google hesabı kullan (ana hesabını değil).
@@ -251,7 +253,7 @@ Yöneticiler `!muzikdurum` ile YouTube'u ve SoundCloud'u **o an canlı test eder
 
 ### Ayarlar
 
-`MUSIC_ENABLED`, `MUSIC_AUTO_UPDATE`, `MUSIC_HEALTHCHECK_HOURS`, `MUSIC_IDLE_TIMEOUT_SECONDS`, `MUSIC_ALONE_TIMEOUT_SECONDS`, `MUSIC_MAX_QUEUE`, `MUSIC_MAX_PLAYLIST`, `MUSIC_MAX_TRACK_MINUTES`, `MUSIC_DEFAULT_VOLUME`, `YTDLP_COOKIES_FILE`, `YTDLP_PROXY`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`. Açıklamaları `.env.example` içinde; varsayılanlarla ek ayar gerekmez.
+`MUSIC_ENABLED`, `MUSIC_AUTO_UPDATE`, `MUSIC_HEALTHCHECK_HOURS`, `MUSIC_IDLE_TIMEOUT_SECONDS`, `MUSIC_ALONE_TIMEOUT_SECONDS`, `MUSIC_MAX_QUEUE`, `MUSIC_MAX_PLAYLIST`, `MUSIC_MAX_TRACK_MINUTES`, `MUSIC_DEFAULT_VOLUME`, `MUSIC_WARP`, `YTDLP_COOKIES_FILE`, `YTDLP_PROXY`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`. Açıklamaları `.env.example` içinde; varsayılanlarla ek ayar gerekmez.
 
 ### Bilinen sınırlar
 

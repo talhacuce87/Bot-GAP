@@ -56,6 +56,8 @@ class MusicConfig:
     default_volume: int = 50
     # yt-dlp / yt-dlp-ejs / deno'yu kendi kendine güncelle (açılışta + günlük + hata anında)
     auto_update: bool = True
+    # YouTube/SoundCloud sunucu IP'sini engellerse ücretsiz Cloudflare WARP'tan çık (bkz. warp.py)
+    warp: bool = True
     healthcheck_url: str = DEFAULT_HEALTHCHECK_URL
     healthcheck_hours: int = 6
     # YouTube sunucu IP'sini engellerse: Netscape formatında çerez dosyası (yedek bir hesaptan)
@@ -85,6 +87,7 @@ def load_config() -> MusicConfig:
         max_track_seconds=_int("MUSIC_MAX_TRACK_MINUTES", 180, 5, 24 * 60) * 60,
         default_volume=_int("MUSIC_DEFAULT_VOLUME", 50, 1, 100),
         auto_update=_bool("MUSIC_AUTO_UPDATE", True),
+        warp=_bool("MUSIC_WARP", True),
         healthcheck_url=_str("MUSIC_HEALTHCHECK_URL", DEFAULT_HEALTHCHECK_URL),
         healthcheck_hours=_int("MUSIC_HEALTHCHECK_HOURS", 6, 1, 168),
         cookies_file=cookies,

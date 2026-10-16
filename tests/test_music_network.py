@@ -108,13 +108,13 @@ async def test_song_tries_youtube_once_when_it_is_known_broken(cfg, monkeypatch)
     assert (await SourceResolver(cfg, up)._youtube_stream("https://youtu.be/x", ""))["url"] == "https://akis/default"
 
 
-async def test_song_tries_at_most_three_strategies_then_marks_youtube_broken(cfg, monkeypatch):
+async def test_song_tries_at_most_three_strategies_without_condemning_youtube(cfg, monkeypatch):
     tried = _fake_ytdl(monkeypatch, extract=lambda n: None, probe=lambda n: "HTTP 403")
     up = Updater(cfg)
     with pytest.raises(YtdlError) as exc:
         await SourceResolver(cfg, up)._youtube_stream("https://youtu.be/x", "")
     assert tried == ["default", "ipv4", "tv"] and exc.value.kind == "stream"
-    assert not up.state.health_ok
+    assert up.state.health_ok              # tek şarkı yüzünden değil, sağlık testine göre karar verilir
 
 
 async def test_blocked_error_is_reported_over_later_errors(cfg, monkeypatch):

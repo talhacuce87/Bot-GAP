@@ -347,8 +347,8 @@ class SourceResolver:
 
         Hangi bağlantı yönteminin çalıştığı videoya göre değişebilir (bazı istemcilerin
         linkleri bazı videolarda 403 döner). Bu yüzden link çalmadan önce denenir; açılmazsa
-        bu parça için birkaç yöntem daha denenir. Hiçbiri olmazsa YouTube sorunlu sayılır ve
-        sonraki şarkılarda onarım bitene kadar tek hızlı deneme yapılıp yedeğe geçilir.
+        bu parça için birkaç yöntem daha denenir. YouTube sağlık testinde sorunlu çıktıysa
+        onarım bitene kadar tek hızlı deneme yapılıp yedeğe geçilir.
         """
         # YouTube zaten sorunluysa tek hızlı deneme (bazı videolar yine açılabilir), sonra yedeğe
         limit = SONG_STRATEGY_LIMIT if self.updater.state.health_ok else 1
@@ -362,14 +362,14 @@ class SourceResolver:
                     raise
                 error = error if error and error.kind == "blocked" else exc
                 continue
-            if (problem := await ytdl.probe_stream(info["url"], ytdl.user_agent_of(info))) is None:
+            if (problem := await ytdl.wait_until_playable(info["url"], ytdl.user_agent_of(info))) is None:
                 if name != order[0]:
                     log.info("'%s' bu parçada '%s' yöntemiyle açıldı", target[:80], name)
                 return info
             error = error or YtdlError("stream", f"Ses akışı açılmıyor ({problem})")
-        error = error or YtdlError("error", "Ses akışı bulunamadı")
-        self.updater.mark_failing(error.kind, str(error))
-        raise error
+        # YouTube'u "sorunlu" saymak sağlık testinin işi (_with_heal arka planda başlatır);
+        # bazı videolar her yöntemde açılmaz, tek şarkı yüzünden diğerleri cezalandırılmasın.
+        raise error or YtdlError("error", "Ses akışı bulunamadı")
 
     async def check_soundcloud(self) -> tuple[bool, str]:
         """Canlı test: SoundCloud'da bir şarkı bulunup akışı alınabiliyor mu."""

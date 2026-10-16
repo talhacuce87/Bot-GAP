@@ -284,7 +284,6 @@ async def test_stream_falls_back_to_soundcloud_when_youtube_is_broken(cfg, monke
     assert await res.stream_for(track) == "https://sc/stream.mp3"
     assert track.fallback == "soundcloud"
     assert picked[-1] == "https://api.soundcloud.com/tracks/2"
-    assert not up.state.health_ok                                   # sonraki şarkılar YouTube'da oyalanmaz
     await asyncio.sleep(0)                                          # onarım arka planda başladı
     up.heal.assert_awaited()
 
