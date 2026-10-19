@@ -9,8 +9,8 @@ const PER_EMOTE = 3;
 const DURATION = 1.8;
 const GRID: [number, number] = [4, 2]; // 512×256 atlas, 128px hücre
 const CELL = 128;
-/** Emoji başın biraz üstünden çıkar (isim etiketinin hemen altı). */
-const HEAD_Y = 2.0;
+/** Emoji isim etiketinin üstünden çıkar: yüzü ve ismi kapatmasın. */
+const HEAD_Y = 2.6;
 
 function atlas(): THREE.CanvasTexture {
   const c = document.createElement("canvas");

@@ -2,7 +2,7 @@
 // Yüz/isim billboard'ları kameraya vertex shader'da döner ve uzakta solar (CPU'suz LOD).
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { EMOTES, FLAG_SEATED, FLAG_WALKING } from "../../../shared/constants";
+import { EMOTES, FLAG_RUNNING, FLAG_SEATED, FLAG_WALKING } from "../../../shared/constants";
 import { ATLAS_CELLS, type AvatarAtlas, FACE_GRID, NAME_GRID } from "./atlas";
 
 export const MAX_AVATARS = ATLAS_CELLS;
@@ -21,6 +21,8 @@ export interface AvatarView {
   /** Son emote (EMOTES indeksi, yoksa -1) ve başladığı an (sn, döngü saati). */
   emote: number;
   emoteAt: number;
+  /** Zıplama yüksekliği (m). */
+  jumpY: number;
 }
 
 /** Emote gövde animasyonlarının süresi (sn). */
@@ -191,9 +193,13 @@ export class AvatarRenderer {
     if (this.count >= MAX_AVATARS || v.alpha <= 0.01) return;
     const i = this.count++;
     const seated = (v.flags & FLAG_SEATED) !== 0;
-    const walking = (v.flags & FLAG_WALKING) !== 0 && !seated;
-    const bob = walking ? Math.abs(Math.sin(time * 9 + v.phase)) * 0.09 : 0;
-    const sway = walking ? Math.sin(time * 9 + v.phase) * 0.06 : 0;
+    const airborne = v.jumpY > 0;
+    const walking = (v.flags & FLAG_WALKING) !== 0 && !seated && !airborne;
+    // Koşarken adımlar sıklaşır ve sallanma artar.
+    const running = walking && (v.flags & FLAG_RUNNING) !== 0;
+    const stepHz = running ? 14 : 9;
+    const bob = walking ? Math.abs(Math.sin(time * stepHz + v.phase)) * (running ? 0.13 : 0.09) : 0;
+    const sway = walking ? Math.sin(time * stepHz + v.phase) * (running ? 0.1 : 0.06) : 0;
     // Emote: dans döner, el sallama yana yatar, diğerleri zıplar.
     let spin = 0, lean = 0, hop = 0;
     const et = time - v.emoteAt;
@@ -210,7 +216,7 @@ export class AvatarRenderer {
         }
       }
     }
-    const y = (seated ? -SEAT_DROP : 0) + bob + hop;
+    const y = (seated ? -SEAT_DROP : 0) + bob + hop + v.jumpY;
     // Belirip kaybolurken alfa yerine ölçek: gövde opak kalır, sıralama sorunu olmaz.
     const s = v.alpha < 1 ? 0.3 + 0.7 * v.alpha : 1;
 
@@ -227,7 +233,9 @@ export class AvatarRenderer {
     this.face.setMatrixAt(i, this.m);
     this.m.makeTranslation(v.x, y + NAME_Y * s, v.z);
     this.name.setMatrixAt(i, this.m);
-    this.m.makeScale(0.95 * s, 1, 0.95 * s).setPosition(v.x, 0.04, v.z);
+    // Havadayken gölge küçülür: yükseklik hissi.
+    const sh = 0.95 * s * Math.max(0.45, 1 - v.jumpY * 0.45);
+    this.m.makeScale(sh, 1, sh).setPosition(v.x, 0.04, v.z);
     this.shadow.setMatrixAt(i, this.m);
 
     this.faceCell.setX(i, v.cell);

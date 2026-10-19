@@ -148,3 +148,12 @@ describe("jail", () => {
     expect(room.players.get(b)!.info.jailed).toBe(true);
   });
 });
+
+describe("flags", () => {
+  it("keeps jump counter and running bits, drops unknown bits", () => {
+    const room = new Room("g:f");
+    const sid = room.join(user("a"), new FakeConn(), 0);
+    room.applyState(sid, { x: 0, z: 8, rot: 0, flags: 0b1101 | 16 | 128 }, 100);
+    expect(room.players.get(sid)!.state.flags).toBe(0b1101 | 16);
+  });
+});
