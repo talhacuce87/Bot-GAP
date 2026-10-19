@@ -796,6 +796,26 @@ async def get_guild_events(
             return await cur.fetchall()
 
 
+async def get_guild_events_between(
+    guild_id: int,
+    start_ts: float,
+    end_ts: float,
+    events: tuple[str, ...],
+) -> list[aiosqlite.Row]:
+    """[start_ts, end_ts) aralığındaki olaylar (haftalık/aylık özetler için)."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"""
+            SELECT ts, user_id, event, channel_id, amount, meta FROM activity_log
+            WHERE guild_id = ? AND ts >= ? AND ts < ? AND event IN ({','.join('?' * len(events))})
+            ORDER BY ts ASC
+            """,
+            (guild_id, start_ts, end_ts, *events),
+        ) as cur:
+            return await cur.fetchall()
+
+
 async def get_all_user_rows(guild_id: int) -> list[aiosqlite.Row]:
     async with _db() as db:
         db.row_factory = aiosqlite.Row

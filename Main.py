@@ -9,6 +9,7 @@ Yüklenecek cog'lar:
   - InfoCog        (info.py)
   - AuditCog       (audit.py) — olay kaydı, hile tespiti, analiz komutları
   - ExileCog       (exile.py) — !sürgün XP cezası ve !sürgünler kartı
+  - SummaryCog     (summary.py) — haftalık özet ve aylık Wrapped kartları
   - AICog          (ai/)      — isteğe bağlı hafızalı sohbet (AI_ENABLED=true ise)
 """
 
@@ -28,6 +29,7 @@ from bestfriend import BestFriendCog
 from exile import ExileCog
 from info import InfoCog
 from leaderboard import LeaderboardCog
+from summary import SummaryCog
 from usercard import UserCardCog
 from xp import XPTrackerCog
 
@@ -126,6 +128,7 @@ class GapBot(commands.Bot):
         await self.add_cog(InfoCog(self))
         await self.add_cog(AuditCog(self))
         await self.add_cog(ExileCog(self))
+        await self.add_cog(SummaryCog(self))
         await self._load_ai()
 
     async def _load_ai(self) -> None:

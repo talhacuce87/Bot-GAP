@@ -13,8 +13,8 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.6.0"
-LAST_DEPLOY_DATE = "15 Ekim 2026"
+BOT_VERSION = "2.7.0"
+LAST_DEPLOY_DATE = "19 Ekim 2026"
 
 # Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
 ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "0") or 0)
@@ -88,7 +88,9 @@ class InfoCog(commands.Cog):
                 "• `!arkadaslar [@üye]` — En çok ses geçirilen 10 kişi ve tier'ları\n"
                 "• `!tierlar` — Arkadaşlık tier'ları ve saat eşikleri\n"
                 "• `!xp` — Hızlı metin tabanlı XP ve aktif boost durumu\n"
-                "• `!streak` — Günlük mesaj serisi ve XP çarpanı bonusu"
+                "• `!streak` — Günlük mesaj serisi ve XP çarpanı bonusu\n"
+                "• `!haftalik` — Kişisel haftalık özet kartın (sadece pazar, haftada bir)\n"
+                "• `!wrapped` — Kişisel aylık Wrapped kartın (sadece ayın son günü, ayda bir)"
             ),
             inline=False,
         )
@@ -190,18 +192,27 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "Sürgün sistemi geldi! ⛓️"
+                "Haftalık özet ve aylık Wrapped geldi! 📊"
             ),
             color=discord.Color.from_rgb(0, 212, 255),
         )
 
         embed.add_field(
-            name="⛓️ Sürgün",
+            name="📊 Haftalık Özet",
             value=(
-                "• Yöneticiler `!sürgün @üye <süre|kalıcı> <sebep>` ile üyeyi sürgüne gönderebilir\n"
-                "• Sürgündeki üye tüm XP'yi **0.5x** kazanır; boost ve seri çarpanı işlemez\n"
-                "• Seri donar, ceza bitince kaldığı yerden devam eder\n"
-                "• `!sürgünler` — Sürgündekileri ve kalan sürelerini gösteren kart"
+                "• Her **pazar 21:00**'de haftanın kartı kanala düşer: MVP, seste en çok kalan, "
+                "en çok yazan, haftanın ikilisi, en uzun seri, gece kuşu\n"
+                "• Pazar günü `!haftalik` ile kendi haftalık kartını al (haftada bir kez)"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="🎁 Aylık Wrapped",
+            value=(
+                "• **Ayın son günü 21:00**'de ayın Wrapped kartı kanala düşer\n"
+                "• O gün `!wrapped` ile kendi kartını al: kazandığın XP ve sıran, mesaj/ses, "
+                "en çok takıldığın kişi, en aktif saatin ve bu ayki hâlin (Gece Kuşu, Ses Bağımlısı…)"
             ),
             inline=False,
         )
