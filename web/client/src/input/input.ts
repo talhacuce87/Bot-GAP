@@ -17,6 +17,7 @@ export class Input {
   private lookY = 0;
   private zoom = 0;
   private action = false;
+  private emote = -1;
 
   private joyId = -1;
   private joyOx = 0;
@@ -46,6 +47,7 @@ export class Input {
       if (e.target instanceof HTMLInputElement) return;
       const k = e.key.toLocaleLowerCase("en");
       if (k === "e" || k === " ") this.action = true;
+      if (k >= "1" && k <= "6") this.emote = Number(k) - 1;
       this.keys.add(k);
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLocaleLowerCase("en")));
@@ -201,6 +203,17 @@ export class Input {
     const a = this.action;
     this.action = false;
     return a;
+  }
+
+  /** 1–6 tuşu ya da ekrandaki emote düğmesi; yoksa -1. */
+  consumeEmote(): number {
+    const e = this.emote;
+    this.emote = -1;
+    return e;
+  }
+
+  triggerEmote(i: number): void {
+    this.emote = i;
   }
 
   triggerAction(): void {

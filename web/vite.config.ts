@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 
-const server = "http://localhost:3000";
+// Ayrı bir kopyada (worktree) çalışırken farklı porttaki sunucuya bağlanmak için: WORLD_DEV_SERVER
+const server = process.env.WORLD_DEV_SERVER || "http://localhost:3000";
 
 export default defineConfig({
   root: "client",
@@ -12,7 +13,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 700,
   },
   server: {
-    port: 5173,
+    port: Number(process.env.WORLD_DEV_PORT || 5173),
     host: true,
     // Discord geliştirme tüneli (cloudflared) farklı bir host adıyla gelir.
     allowedHosts: true,
