@@ -181,6 +181,11 @@ export class Room {
     }
   }
 
+  /** Her bağlantıyı oyuncunun sunucusuyla gezer (sunucu bazlı yayınlar için). */
+  each(fn: (conn: Conn, guild: string | null) => void): void {
+    for (const p of this.players.values()) fn(p.conn, p.guild);
+  }
+
   sendTo(conn: Conn, ev: ServerEvent): void {
     conn.send(JSON.stringify(ev));
   }

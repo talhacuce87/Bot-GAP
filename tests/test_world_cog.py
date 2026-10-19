@@ -66,3 +66,40 @@ def test_disabled_without_secret(monkeypatch):
     monkeypatch.delenv("WORLD_SHARED_SECRET", raising=False)
     cog = world_cog.WorldCog(SimpleNamespace(guilds=[]))
     assert cog.secret == ""
+
+
+async def test_leaderboard_payload_uses_names_avatars_and_levels(db):
+    await db.add_text_xp(1, 111111, 500)
+    await db.add_voice_xp(1, 222222, 900)
+    await db.add_text_xp(1, 333333, 50)
+
+    members = {
+        111111: SimpleNamespace(id=111111, display_name="Ali", name="ali", avatar=SimpleNamespace(key="a" * 32)),
+        222222: SimpleNamespace(id=222222, display_name="Ayşe", name="ayse", avatar=None),
+    }
+    guild = SimpleNamespace(id=1, get_member=members.get)
+    xp_cog = SimpleNamespace(get_progress_data=lambda total: (total // 100, 0, 0, 0, 0.0))
+    bot = SimpleNamespace(guilds=[guild], get_cog=lambda name: xp_cog if name == "XPTrackerCog" else None)
+
+    payload = await world_cog.build_leaderboard_payload(bot)
+    rows = payload["guilds"]["1"]
+
+    assert [r["id"] for r in rows] == ["222222", "111111", "333333"]
+    assert rows[0] == {"id": "222222", "name": "Ayşe", "avatar": None, "level": 9, "xp": 900}
+    assert rows[1]["avatar"] == "a" * 32 and rows[1]["level"] == 5
+    assert rows[2]["name"] == "Kullanıcı 3333"  # sunucudan ayrılmış üye
+
+
+async def test_leaderboard_posted_to_world(db, monkeypatch):
+    await db.add_text_xp(1, 111111, 10)
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    bot = SimpleNamespace(guilds=[SimpleNamespace(id=1, get_member=lambda uid: None)], get_cog=lambda name: None)
+    cog = world_cog.WorldCog(bot)
+    seen = []
+    cog._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: (seen.append(r), httpx.Response(200))[1]),
+        headers={"x-world-secret": cog.secret},
+    )
+    await cog.push_leaderboard()
+    assert seen[0].url.path == "/internal/leaderboard"
+    assert b'"111111"' in seen[0].content

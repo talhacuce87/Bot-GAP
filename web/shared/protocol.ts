@@ -23,12 +23,22 @@ export interface PlayerInfo {
   jailed: boolean;
 }
 
+/** Şöhret Kürsüsü satırı (XP sıralaması, bot gönderir). */
+export interface BoardEntry {
+  id: string;
+  name: string;
+  avatar: string | null;
+  level: number;
+  xp: number;
+}
+
 /** Sunucunun gönderdiği JSON olaylar. */
 export type ServerEvent =
   | { t: "welcome"; you: number; room: string; players: PlayerInfo[] }
   | { t: "join"; player: PlayerInfo }
   | { t: "leave"; sid: number }
   | { t: "jail"; sid: number; jailed: boolean; x: number; z: number; rot: number }
+  | { t: "board"; updated: number; entries: BoardEntry[] }
   | { t: "pong"; c: number; s: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */

@@ -9,7 +9,8 @@ import { WebSocket, WebSocketServer } from "ws";
 import { TICK_HZ } from "../../shared/constants";
 import { decodeState, type PlayerState } from "../../shared/protocol";
 import { cleanName, exchangeCode, type SessionUser, signSession, verifySession } from "./auth";
-import { type JoinOptions, Rooms } from "./room";
+import { type Board, Boards } from "./board";
+import { type Conn, type JoinOptions, Rooms } from "./room";
 
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
@@ -22,6 +23,12 @@ const SESSION_SECRET = SHARED_SECRET || randomBytes(32).toString("hex");
 const STATIC_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)), "../client");
 
 const rooms = new Rooms();
+
+const boards = new Boards();
+
+function sendBoard(conn: Conn, board: Board | null): void {
+  if (board) conn.send(JSON.stringify({ t: "board", updated: board.updated, entries: board.entries }));
+}
 
 // Bot'un gönderdiği sürgün listesi: sunucu id → sürgündeki kullanıcı id'leri.
 let exiles = new Map<string, Set<string>>();
@@ -221,6 +228,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { ok: true });
   }
 
+  if (path === "/internal/leaderboard" && method === "POST") {
+    if (!secretMatches(req.headers["x-world-secret"])) return json(res, 404, { error: "not found" });
+    const body = await readJson(req, 256 * 1024);
+    if (!body.guilds || typeof body.guilds !== "object") return json(res, 400, { error: "guilds required" });
+    boards.replace(body.guilds as Record<string, unknown>);
+    for (const room of rooms.all()) room.each((conn, guild) => sendBoard(conn, boards.for(guild)));
+    return json(res, 200, { ok: true });
+  }
+
   if (method === "GET" || method === "HEAD") return serveStatic(req, res, path);
   res.writeHead(405).end();
 }
@@ -269,6 +285,7 @@ server.on("upgrade", (req, socket, head) => {
 function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions): void {
   const room = rooms.get(key);
   const sid = room.join(user, ws, Date.now(), opts);
+  sendBoard(ws, boards.for(opts.guild ?? null));
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   alive.add(ws);
 
