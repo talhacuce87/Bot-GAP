@@ -17,6 +17,7 @@ Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanma
 - [Güncelleme ve yeni sürüm](#-güncelleme-ve-yeni-sürüm)
 - [Komutlar](#-komutlar)
 - [XP sistemi](#-xp-sistemi)
+- [Haftalık özet ve aylık Wrapped](#-haftalık-özet-ve-aylık-wrapped)
 - [Yapay zekâ sohbet ve hafıza](#-yapay-zekâ-sohbet-ve-hafıza-isteğe-bağlı)
 - [Loglama ve hile analizi](#-loglama-ve-hile-analizi)
 - [Veri ve yedekleme](#-veri-ve-yedekleme)
@@ -31,6 +32,7 @@ Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanma
 | 💬 **Mesaj ve ses XP'si** | Mesaj başına rastgele XP (20 sn bekleme), seste 2 dakikada bir XP. Günlük seri ve süreli boost çarpanları. |
 | 🏅 **Seviye rolleri** | 19 kademe; XP eşiği geçilince rol otomatik verilir. |
 | ⛓️ **Sürgün** | Yöneticilerin XP cezası: süreli ya da kalıcı 0.5x XP, hapishane temalı `!sürgünler` kartı. |
+| 📊 **Haftalık özet & Wrapped** | Pazar akşamı haftanın, ayın son günü ayın kartı kendiliğinden paylaşılır; herkes kendi kartını da alabilir. |
 | 🎴 **Görsel kartlar** | `!kart` profil kartı, `!liderlik` ilk 10, `!roller` rol haritası, `!bf` arkadaşlık kartı. |
 | 👥 **Arkadaşlık tier'ları** | Birlikte seste geçirilen süreye göre 6 kademe: Tanıdık → Ruh İkizi. |
 | 🧠 **Yapay zekâ** *(isteğe bağlı)* | Etiketlenince cevap verir, onaylı kanallardaki sohbetleri hatırlar, XP verisini bilir, internette arar. |
@@ -74,6 +76,8 @@ Tam liste ve açıklamalar `.env.example` içinde. Temel ayarlar:
 | `BOT_PREFIX` | | Komut ön eki (varsayılan `!`) |
 | `LOG_CHANNEL_ID` | | Şüpheli hareket ve admin işlemi uyarılarının gideceği kanal |
 | `ANNOUNCE_CHANNEL_ID` | | Yeni sürüm açıldığında güncelleme notlarının paylaşılacağı kanal |
+| `SUMMARY_CHANNEL_ID` | | Haftalık özet ve aylık Wrapped kartlarının paylaşılacağı kanal (boşsa `ANNOUNCE_CHANNEL_ID`) |
+| `SUMMARY_POST_HOUR` | | Özetlerin paylaşılacağı saat, Türkiye saati (varsayılan 21) |
 | `LOG_FILE_RETENTION_DAYS` / `EVENT_RETENTION_DAYS` | | Log dosyası / olay kaydı saklama süresi (varsayılan 90 / 365 gün) |
 | `AI_ENABLED` | | Yapay zekâ eklentisi (varsayılan kapalı). Ayarlar için [Yapay zekâ](#-yapay-zekâ-sohbet-ve-hafıza-isteğe-bağlı) |
 
@@ -124,6 +128,8 @@ Tüm komutların kısa listesi Discord'da `!yardim` ile görülebilir.
 | `!roller` (`!roles`) | 19 seviye rolünü ve eşiklerini gösteren harita |
 | `!streak` | Günlük seri ve çarpan |
 | `!sürgünler` | Sürgündekiler, sebepleri ve kalan süreleri (kart) |
+| `!haftalik` | Kişisel haftalık özet kartı — yalnızca **pazar**, haftada bir kez |
+| `!wrapped` (`!aylik`) | Kişisel aylık Wrapped kartı — yalnızca **ayın son günü**, ayda bir kez |
 
 ### Arkadaşlık
 
@@ -176,6 +182,17 @@ Yöneticilerin XP cezası. `!sürgün @üye <süre> <sebep>` ile verilir.
 - Zaten sürgündeki birine tekrar `!sürgün` yazılırsa süre ve sebep güncellenir.
 - `!sürgünler` herkesin görebildiği hapishane temalı bir kart çizer: sabıka fotoğrafı, sebep, sürgün eden yönetici, kalan süre ve çekilen cezanın çubuğu (kalıcılar kırmızı).
 - Sürgün verme, güncelleme ve bitirme işlemleri olay kaydına ve log kanalına yazılır.
+
+---
+
+## 📊 Haftalık özet ve aylık Wrapped
+
+Bot, olay kaydındaki veriden (XP, mesajlar, ses XP'si ve o sırada seste kimlerin olduğu, seviye atlamaları) dönem özetleri çıkarır. Saatler Türkiye saatidir.
+
+- **Otomatik paylaşım:** Her **pazar 21:00**'de haftanın kartı (pazartesi 00:00'dan itibaren), **ayın son günü 21:00**'de ayın Wrapped kartı `SUMMARY_CHANNEL_ID` kanalına (boşsa `ANNOUNCE_CHANNEL_ID`) gider. Bot o saatte kapalıysa aynı gün açılınca gönderir. Her dönem **bir kez** paylaşılır (`data/summary_state.json`).
+- **Sunucu kartı:** Dönemin MVP'si (en çok XP) ve ilk 4, seste en çok kalan, en çok yazan, dönemin ikilisi (birlikte en çok seste kalan iki kişi), en uzun seri, gece kuşu (00:00–05:00 arası en çok yazan), seviye atlayanlar, toplam mesaj/ses ve en hareketli gün-saat.
+- **Kişisel kart:** `!haftalik` yalnızca **pazar**, `!wrapped` yalnızca **ayın son günü** çalışır ve herkes dönemde **bir kez** alabilir. Başka günlerde bot bir sonraki tarihi söyler. Kartta: kazanılan XP ve sunucudaki sıra, mesaj ve ses süresi, en çok takıldığın kişi, en aktif saat ve gün, seviye değişimi, seri ve dönemin "hâli" (Gece Kuşu, Sosyal Kelebek, Ses Bağımlısı, Klavye Delikanlısı, Sessiz Gölge, Dengeli Gapçı).
+- Ses süresi, ses XP'si kazanılan süredir: yanında en az bir kişi varken, sağır değilken ve AFK kanalında değilken.
 
 ---
 
@@ -399,6 +416,7 @@ docker exec bot-gap python analysis.py --guild <sunucu_id> --legacy   # kayıt �
 | `ai_memory.db` | Yapay zekâ hafızası (yalnızca AI açıksa) |
 | `logs/` | Log dosyaları |
 | `backups/` | Otomatik ve elle alınan yedekler |
+| `summary_state.json` | Paylaşılan özetler ve dönemde kart alanlar |
 
 - XP veritabanının anlık yedeği: `!yedekle` → `data/backups/xp_system_YYYYMMDD.db`.
 - AI veritabanı her gün `data/backups/ai_memory_YYYYMMDD.db` olarak yedeklenir (son 7 tutulur); elle: `!aiayar yedekle`.
@@ -421,6 +439,8 @@ Bot-GAP/
 ├── rolescard.py         # Rol haritası kartı
 ├── bestfriend.py        # Ses çifti takibi, tier'lar, !bf / !arkadaslar
 ├── exile.py             # !sürgün XP cezası ve !sürgünler kartı
+├── summary.py           # Haftalık özet / aylık Wrapped: otomatik paylaşım, komutlar, kartlar
+├── summary_stats.py     # Özet istatistikleri (dönemler, sayımlar, kişilik etiketi)
 ├── cardutils.py         # Kartların ortak Pillow yardımcıları
 ├── font_utils.py        # Emoji ve desteklenmeyen karakter temizleme
 ├── info.py              # !yardim, !yenilikler, !ping, sürüm duyurusu
