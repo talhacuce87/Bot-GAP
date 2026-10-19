@@ -351,6 +351,7 @@ class ExileCog(commands.Cog):
             moderator_id=ctx.author.id, channel_id=ctx.channel.id,
         )
         exile = await db.get_exile(ctx.guild.id, member.id)
+        self.bot.dispatch("exile_change", ctx.guild.id, member.id)
         label = "kalıcı" if ends_at is None else format_remaining(seconds)
         self._audit(ctx, "admin_exile", member, sure=label, sebep=reason, yeni=is_new)
 
@@ -384,6 +385,7 @@ class ExileCog(commands.Cog):
         if row is None:
             await ctx.send(f"ℹ️ **{member.display_name}** zaten sürgünde değil.")
             return
+        self.bot.dispatch("exile_change", ctx.guild.id, member.id)
         self._audit(ctx, "admin_exile_end", member, sebep=row["reason"])
         await ctx.send(self._release_text(member.mention, row, by=ctx.author.display_name),
                        allowed_mentions=discord.AllowedMentions(users=[member]))

@@ -30,7 +30,7 @@ export class Bots {
       const b: Bot = { sid, x: Math.sin(a) * r, z: Math.cos(a) * r + 6, rot: 0, tx: 0, tz: 0, wait: 0, seated: false };
       this.pickTarget(b);
       this.bots.push(b);
-      remotes.add({ sid, id: `bot-${i}`, name: `Bot ${i + 1}`, avatar: null, spectator: false });
+      remotes.add({ sid, id: `bot-${i}`, name: `Bot ${i + 1}`, avatar: null, spectator: false, jailed: false });
     }
   }
 

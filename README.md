@@ -452,6 +452,15 @@ Tarayıcıda Discord olmadan misafir olarak açılır. Kullanılabilecek paramet
 | `?bots=20` | 20 sahte oyuncu ekler (performans testi) |
 | `?low` | Kenar yumuşatmayı (antialias) kapatır |
 | `?noadapt` | Çözünürlüğü sabit tutar |
+| `?jail=1` | Misafiri zindana koyar (zindan testi) |
+| `?debug=1&at=x,z` | Belirtilen noktada başlatır |
+
+**Bölgeler:**
+- **Meydan:** Çeşme ve doğma noktası.
+- **Amfi ve perde:** Kuzeyde.
+- **Zindan:** Batıda. `!sürgün` ile cezalandırılanlar dünyaya girince hücrede doğar ve çıkamaz. Ceza bitince parmaklıkların önüne çıkarılır; bot listeyi 20 sn'de bir, komut verildiğinde ise hemen dünyaya gönderir (`world_cog.py`). Bunun için iki serviste de aynı `WORLD_SHARED_SECRET` tanımlı olmalı.
+- **LAGER'in Mangalı:** Doğuda, ormanın içinde. Mangal, kütük oturaklar, piknik masası ve ışık zinciri var.
+- **Gölet:** Güneyde, kenarında bir bank var.
 
 **Kontroller:** WASD ile yürü, sürükleyerek kamerayı çevir, tekerlekle yakınlaştır, E ile koltuğa otur. Dokunmatik cihazlarda ekranın sol yarısı joystick, sağ yarısı kamera.
 

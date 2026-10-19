@@ -47,6 +47,7 @@ export async function login(): Promise<Session> {
   const res = await post<{ access_token: string; session: string; user: Session["user"] }>(`${base}/api/token`, { code });
   await sdk.commands.authenticate({ access_token: res.access_token });
   const q = new URLSearchParams({ session: res.session, instance: sdk.instanceId });
+  if (sdk.guildId) q.set("guild", sdk.guildId);
   return { mode: "discord", session: res.session, user: res.user, base, wsUrl: `${wsBase(base)}?${q}`, sdk };
 }
 
@@ -66,5 +67,6 @@ async function guestLogin(): Promise<Session> {
   }
   const room = (params.get("room") || "lobi").replace(/[^\w-]/g, "").slice(0, 32) || "lobi";
   const q = new URLSearchParams({ session: res.session, room });
+  if (params.get("jail") === "1") q.set("jail", "1");
   return { mode: "guest", session: res.session, user: res.user, base: "", wsUrl: `${wsBase("")}?${q}` };
 }

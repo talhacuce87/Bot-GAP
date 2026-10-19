@@ -9,7 +9,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { TICK_HZ } from "../../shared/constants";
 import { decodeState, type PlayerState } from "../../shared/protocol";
 import { cleanName, exchangeCode, type SessionUser, signSession, verifySession } from "./auth";
-import { Rooms } from "./room";
+import { type JoinOptions, Rooms } from "./room";
 
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
@@ -22,6 +22,15 @@ const SESSION_SECRET = SHARED_SECRET || randomBytes(32).toString("hex");
 const STATIC_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)), "../client");
 
 const rooms = new Rooms();
+
+// Bot'un gönderdiği sürgün listesi: sunucu id → sürgündeki kullanıcı id'leri.
+let exiles = new Map<string, Set<string>>();
+
+function isExiled(userId: string, guild: string | null): boolean {
+  if (guild) return exiles.get(guild)?.has(userId) ?? false;
+  for (const set of exiles.values()) if (set.has(userId)) return true;
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // HTTP yardımcıları
@@ -198,6 +207,20 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { rooms: [...rooms.all()].map((r) => r.summary()) });
   }
 
+  if (path === "/internal/exiles" && method === "POST") {
+    if (!secretMatches(req.headers["x-world-secret"])) return json(res, 404, { error: "not found" });
+    const body = await readJson(req, 256 * 1024);
+    const guilds = body.guilds;
+    if (!guilds || typeof guilds !== "object") return json(res, 400, { error: "guilds required" });
+    const next = new Map<string, Set<string>>();
+    for (const [gid, ids] of Object.entries(guilds as Record<string, unknown>)) {
+      if (Array.isArray(ids)) next.set(String(gid), new Set(ids.map(String)));
+    }
+    exiles = next;
+    for (const room of rooms.all()) room.updateJail(isExiled);
+    return json(res, 200, { ok: true });
+  }
+
   if (method === "GET" || method === "HEAD") return serveStatic(req, res, path);
   res.writeHead(405).end();
 }
@@ -235,12 +258,17 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   const roomKey = key;
-  wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, user, roomKey));
+  const guildParam = url.searchParams.get("guild") || "";
+  const guild = /^\d{5,20}$/.test(guildParam) ? guildParam : null;
+  // Zindanı denemek için: yalnızca misafirler kendini zindana koyabilir.
+  const forceJail = user.guest && url.searchParams.get("jail") === "1";
+  const jailed = forceJail || (!user.guest && isExiled(user.id, guild));
+  wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, user, roomKey, { guild, jailed, forceJail }));
 });
 
-function onConnection(ws: WebSocket, user: SessionUser, key: string): void {
+function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions): void {
   const room = rooms.get(key);
-  const sid = room.join(user, ws);
+  const sid = room.join(user, ws, Date.now(), opts);
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   alive.add(ws);
 
