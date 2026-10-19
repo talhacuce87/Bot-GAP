@@ -15,3 +15,17 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+
+  # GAP Dünyası: 3D Discord Activity (web/). Coolify'da bu servise domain verilir.
+  world:
+    build: ./web
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - SERVICE_FQDN_WORLD_3000
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
