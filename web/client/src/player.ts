@@ -1,6 +1,6 @@
 // Yerel oyuncu: anında tepki veren hareket (sunucuyu beklemez), oturma ve 3. şahıs kamera.
 import * as THREE from "three";
-import { FLAG_SEATED, FLAG_WALKING, PLAYER_RADIUS, WALK_SPEED } from "../../shared/constants";
+import { clampToJail, FLAG_SEATED, FLAG_WALKING, PLAYER_RADIUS, WALK_SPEED } from "../../shared/constants";
 import type { PlayerState } from "../../shared/protocol";
 import type { AvatarView } from "./avatars/avatars";
 import type { Input } from "./input/input";
@@ -27,6 +27,8 @@ export class Player implements AvatarView, PlayerState {
   color: THREE.Color;
   /** Oturma menzilindeki koltuk (UI ipucu için), yoksa null. */
   nearSeat: Seat | null = null;
+  /** Sürgünde: zindan hücresinden çıkamaz. */
+  jailed = false;
 
   private vx = 0;
   private vz = 0;
@@ -79,6 +81,7 @@ export class Player implements AvatarView, PlayerState {
     this.x += this.vx * dt;
     this.z += this.vz * dt;
     this.world.colliders.resolve(this, PLAYER_RADIUS);
+    if (this.jailed) clampToJail(this);
 
     const speed = Math.hypot(this.vx, this.vz);
     if (speed > 0.3) this.rot = dampAngle(this.rot, Math.atan2(this.vx, this.vz), 1 - Math.exp(-dt * 12));
@@ -86,6 +89,18 @@ export class Player implements AvatarView, PlayerState {
 
     this.nearSeat = this.findSeat();
     if (action && this.nearSeat) this.sitOn(this.nearSeat);
+  }
+
+  /** Sunucunun belirlediği yere ışınlanır (zindana giriş/çıkış). */
+  teleport(x: number, z: number, rot: number): void {
+    this.seat = null;
+    this.x = x;
+    this.z = z;
+    this.rot = rot;
+    this.vx = this.vz = 0;
+    this.flags = 0;
+    this.yaw = rot + Math.PI;
+    this.target.set(x, 1.45, z);
   }
 
   private findSeat(): Seat | null {
@@ -130,10 +145,12 @@ export class Player implements AvatarView, PlayerState {
     this.target.y += (ty - this.target.y) * k;
     this.target.z += (this.z - this.target.z) * k;
     const cp = Math.cos(this.pitch);
+    // Zindanda kamera duvarların ötesine çıkmasın: parmaklıklardan dışarı bakılır.
+    const dist = this.jailed ? Math.min(this.dist, 3.4) : this.dist;
     camera.position.set(
-      this.target.x + Math.sin(this.yaw) * cp * this.dist,
-      this.target.y + Math.sin(this.pitch) * this.dist,
-      this.target.z + Math.cos(this.yaw) * cp * this.dist,
+      this.target.x + Math.sin(this.yaw) * cp * dist,
+      this.target.y + Math.sin(this.pitch) * dist,
+      this.target.z + Math.cos(this.yaw) * cp * dist,
     );
     camera.lookAt(this.target);
   }

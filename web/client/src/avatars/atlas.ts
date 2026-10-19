@@ -46,12 +46,12 @@ export class AvatarAtlas {
   }
 
   /** Bir hücre ayırır; dolduysa -1 (avatar yüzsüz ve isimsiz çizilir). */
-  alloc(id: string, name: string, avatar: string | null, color: THREE.Color): number {
+  alloc(id: string, name: string, avatar: string | null, color: THREE.Color, jailed = false): number {
     const cell = this.free.pop();
     if (cell === undefined) return -1;
     const ver = ++this.version[cell];
     this.drawInitial(cell, name, color);
-    this.drawName(cell, name);
+    this.drawName(cell, name, jailed);
     if (avatar && !id.startsWith("guest-")) {
       const img = new Image();
       img.decoding = "async";
@@ -90,7 +90,12 @@ export class AvatarAtlas {
     this.faceTex.needsUpdate = true;
   }
 
-  private drawName(cell: number, text: string): void {
+  /** İsim etiketini yeniden çizer (ör. sürgün durumu değişince). */
+  setName(cell: number, text: string, jailed: boolean): void {
+    if (cell >= 0) this.drawName(cell, text, jailed);
+  }
+
+  private drawName(cell: number, text: string, jailed = false): void {
     const x = (cell % NAME_GRID[0]) * NAME_W;
     const y = Math.floor(cell / NAME_GRID[0]) * NAME_H;
     const g = this.name;
@@ -101,7 +106,7 @@ export class AvatarAtlas {
     if (label !== text) label = `${label.slice(0, -1)}…`;
     const w = Math.min(NAME_W - 4, g.measureText(label).width + 24);
     const cx = x + NAME_W / 2;
-    g.fillStyle = "rgba(15, 20, 30, 0.7)";
+    g.fillStyle = jailed ? "rgba(150, 28, 28, 0.85)" : "rgba(15, 20, 30, 0.7)";
     g.beginPath();
     g.roundRect(cx - w / 2, y + 10, w, NAME_H - 20, (NAME_H - 20) / 2);
     g.fill();

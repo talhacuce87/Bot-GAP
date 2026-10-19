@@ -206,7 +206,8 @@ def test_command_names_and_aliases():
 
 async def test_exile_and_unexile_commands(db):
     audits: list = []
-    cog = exile.ExileCog(SimpleNamespace(get_cog=lambda name: None))
+    dispatched: list = []
+    cog = exile.ExileCog(SimpleNamespace(get_cog=lambda name: None, dispatch=lambda *a: dispatched.append(a)))
     cog._audit = lambda ctx, event, target, **meta: audits.append((event, target.id, meta))
     ctx = _Ctx()
     target = _Member(ctx.guild, 5, "Ahmet")
@@ -232,6 +233,7 @@ async def test_exile_and_unexile_commands(db):
     await _cmd("sürgünsonlandır").callback(cog, ctx, target)
     assert "zaten sürgünde değil" in ctx.sent[-1]
     assert [a[0] for a in audits] == ["admin_exile", "admin_exile", "admin_exile_end"]
+    assert dispatched == [("exile_change", 1, 5)] * 3  # GAP Dünyası zindanı hemen güncellensin
 
 
 async def test_bots_cannot_be_exiled(db):

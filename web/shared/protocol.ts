@@ -19,6 +19,8 @@ export interface PlayerInfo {
   name: string;
   avatar: string | null;
   spectator: boolean;
+  /** Sürgünde: zindan hücresinde tutulur. */
+  jailed: boolean;
 }
 
 /** Sunucunun gönderdiği JSON olaylar. */
@@ -26,6 +28,7 @@ export type ServerEvent =
   | { t: "welcome"; you: number; room: string; players: PlayerInfo[] }
   | { t: "join"; player: PlayerInfo }
   | { t: "leave"; sid: number }
+  | { t: "jail"; sid: number; jailed: boolean; x: number; z: number; rot: number }
   | { t: "pong"; c: number; s: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */

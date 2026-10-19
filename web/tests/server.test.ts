@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ROOM_MAX_PLAYERS, WORLD_RADIUS } from "../shared/constants";
+import { JAIL, JAIL_SPAWN, RELEASE_SPAWN, ROOM_MAX_PLAYERS, WORLD_RADIUS } from "../shared/constants";
 import { readSnapshot, type ServerEvent } from "../shared/protocol";
 import { SESSION_TTL_MS, type SessionUser, signSession, verifySession } from "../server/src/auth";
 import { type Conn, Room } from "../server/src/room";
 
 const user = (id: string): SessionUser => ({ id, name: id, avatar: null, guest: true });
+const member = (id: string): SessionUser => ({ id, name: id, avatar: null, guest: false });
 
 class FakeConn implements Conn {
   bufferedAmount = 0;
@@ -103,5 +104,47 @@ describe("Room", () => {
     slow.bufferedAmount = 1 << 20;
     room.tick(1, true);
     expect(slow.binary.length).toBe(0);
+  });
+});
+
+describe("jail", () => {
+  it("spawns exiled players in the cell and keeps them inside", () => {
+    const room = new Room("d:x");
+    const sid = room.join(member("1"), new FakeConn(), 0, { jailed: true });
+    const p = room.players.get(sid)!;
+    expect(p.state.x).toBe(JAIL_SPAWN.x);
+    for (let t = 100; t < 10000; t += 100) room.applyState(sid, { x: 0, z: 5, rot: 0, flags: 1 }, t);
+    expect(p.state.x).toBeLessThanOrEqual(JAIL.maxX);
+    expect(p.state.z).toBeGreaterThanOrEqual(JAIL.minZ);
+  });
+
+  it("jails and releases live, announcing the teleport to everyone", () => {
+    const room = new Room("d:x");
+    const watcher = new FakeConn();
+    room.join(member("2"), watcher, 0, { guild: "123456" });
+    const sid = room.join(member("1"), new FakeConn(), 0, { guild: "123456" });
+    const exiled = new Set(["1"]);
+    room.updateJail((id, guild) => guild === "123456" && exiled.has(id));
+    let ev = watcher.text.at(-1)!;
+    expect(ev).toMatchObject({ t: "jail", sid, jailed: true, x: JAIL_SPAWN.x, z: JAIL_SPAWN.z });
+
+    const before = watcher.text.length;
+    room.updateJail((id) => exiled.has(id)); // değişiklik yok → olay yok
+    expect(watcher.text.length).toBe(before);
+
+    exiled.clear();
+    room.updateJail(() => false);
+    ev = watcher.text.at(-1)!;
+    expect(ev).toMatchObject({ t: "jail", sid, jailed: false, x: RELEASE_SPAWN.x });
+  });
+
+  it("never jails guests unless they asked for the test cell", () => {
+    const room = new Room("g:x");
+    const a = room.join(user("guest-a"), new FakeConn());
+    const b = room.join(user("guest-b"), new FakeConn(), 0, { jailed: true, forceJail: true });
+    room.updateJail(() => true);
+    expect(room.players.get(a)!.info.jailed).toBe(false);
+    room.updateJail(() => false);
+    expect(room.players.get(b)!.info.jailed).toBe(true);
   });
 });

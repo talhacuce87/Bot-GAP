@@ -11,6 +11,7 @@ Yüklenecek cog'lar:
   - ExileCog       (exile.py) — !sürgün XP cezası ve !sürgünler kartı
   - SummaryCog     (summary.py) — haftalık özet ve aylık Wrapped kartları
   - AchievementCog (achievement_cog.py) — başarımlar, !başarımlar fuları, !kartdüzen
+  - WorldCog       (world_cog.py) — GAP Dünyası: sürgündekileri 3D dünyadaki zindana yollar
   - AICog          (ai/)      — isteğe bağlı hafızalı sohbet (AI_ENABLED=true ise)
 """
 
@@ -34,6 +35,7 @@ from leaderboard import LeaderboardCog
 from summary import SummaryCog
 from textutils import fold
 from usercard import UserCardCog
+from world_cog import WorldCog
 from xp import XPTrackerCog
 
 if os.name == "nt":
@@ -152,6 +154,7 @@ class GapBot(commands.Bot):
         await self.add_cog(ExileCog(self))
         await self.add_cog(SummaryCog(self))
         await self.add_cog(AchievementCog(self))
+        await self.add_cog(WorldCog(self))
         await self._load_ai()
 
     async def _load_ai(self) -> None:

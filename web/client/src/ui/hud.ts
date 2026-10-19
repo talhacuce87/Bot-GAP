@@ -24,6 +24,7 @@ export class Hud {
   private debug: HTMLDivElement | null = null;
   private debugText: HTMLDivElement | null = null;
   private promptState = "";
+  private jail: HTMLDivElement;
   private lastDebug = 0;
 
   constructor(
@@ -37,6 +38,8 @@ export class Hud {
     this.list = el("ul", "", players);
     this.status = el("div", "panel status", root);
     this.prompt = el("button", "prompt", root);
+    this.jail = el("div", "panel jail-banner", root);
+    this.jail.textContent = "⛓️ Sürgündesin — cezan bitene kadar zindandasın.";
     this.prompt.addEventListener("click", onAction);
     el("div", "hint", root).textContent = touch
       ? "Sol: yürü • Sağ: kamera • İki parmak: yakınlaştır"
@@ -59,6 +62,10 @@ export class Hud {
         return li;
       }),
     );
+  }
+
+  setJailed(on: boolean): void {
+    this.jail.classList.toggle("show", on);
   }
 
   /** "sit" | "stand" | "" — sadece değişince DOM'a yazar. */

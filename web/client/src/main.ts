@@ -1,6 +1,6 @@
 // GAP Dünyası istemcisi: giriş → dünya → ana döngü.
 import * as THREE from "three";
-import { INTERP_DELAY_MS } from "../../shared/constants";
+import { INTERP_DELAY_MS, JAIL_SPAWN, RELEASE_SPAWN } from "../../shared/constants";
 import { AvatarAtlas } from "./avatars/atlas";
 import { AvatarRenderer, colorFor, MAX_AVATARS } from "./avatars/avatars";
 import { Bots } from "./avatars/bots";
@@ -44,7 +44,7 @@ async function start(): Promise<void> {
     return;
   }
   renderer.setSize(innerWidth, innerHeight, false);
-  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 120);
+  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 170);
   const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, 1.5), !params.has("noadapt"));
 
   let session: Session;
@@ -64,10 +64,23 @@ async function start(): Promise<void> {
   const me = new Player(world, colorFor(session.user.id));
   me.cell = atlas.alloc(session.user.id, session.user.name, session.user.avatar, me.color);
 
+  // Debug: `?at=x,z,yön` ile istenen noktada başla (ekran görüntüsü, bölge testi).
+  const at = params.has("debug") ? (params.get("at") || "").split(",").map(Number) : [];
+  if (at.length >= 2 && at.every(Number.isFinite)) me.teleport(at[0], at[1], at[2] ?? Math.PI);
+
   const input = new Input(canvas, hudRoot);
   const hud = new Hud(hudRoot, session.user.name, input.touch, () => input.triggerAction());
   const net = new Net(session.wsUrl, remotes);
   net.onStatus = (s) => hud.setStatus(s);
+  net.onJail = (jailed, x, z, rot) => {
+    const was = me.jailed;
+    me.jailed = jailed;
+    atlas.setName(me.cell, session.user.name, jailed);
+    hud.setJailed(jailed);
+    if (!Number.isNaN(x)) me.teleport(x, z, rot);
+    else if (jailed && !was) me.teleport(JAIL_SPAWN.x, JAIL_SPAWN.z, JAIL_SPAWN.rot);
+    else if (!jailed && was) me.teleport(RELEASE_SPAWN.x, RELEASE_SPAWN.z, RELEASE_SPAWN.rot);
+  };
   hud.setStatus(net.status);
   if (params.has("debug")) hud.enableDebug(() => void openYoutubeTest(hudRoot, session));
 
@@ -88,6 +101,7 @@ async function start(): Promise<void> {
     const t0 = performance.now();
     const time = now / 1000;
 
+    world.update(time);
     input.poll();
     me.update(dt, input);
     net.update(dt, me);

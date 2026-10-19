@@ -66,6 +66,14 @@ export class Remote implements AvatarView {
     }
   }
 
+  /** Tamponu sıfırlayıp tek örnekle başlatır: aradaki yol boyunca kaymasın. */
+  teleport(x: number, z: number, rot: number): void {
+    // Zaman 0: sonraki her snapshot daha yeni sayılır, interpolasyon hemen yeni konuma oturur.
+    this.n = 0;
+    this.head = 0;
+    this.push(0, x, z, rot, 0);
+  }
+
   /** `renderTime` anına (sunucu saati) göre konumu hesaplar. */
   sample(renderTime: number, dt: number): void {
     this.alpha = this.leaving ? Math.max(0, this.alpha - dt * FADE_PER_SEC) : Math.min(1, this.alpha + dt * FADE_PER_SEC);
@@ -117,10 +125,20 @@ export class Remotes {
     const existing = this.map.get(info.sid);
     if (existing && !existing.leaving) return existing;
     if (existing) this.drop(info.sid);
-    const r = new Remote(info, this.atlas.alloc(info.id, info.name, info.avatar, colorFor(info.id)));
+    const r = new Remote(info, this.atlas.alloc(info.id, info.name, info.avatar, colorFor(info.id), info.jailed));
     this.map.set(info.sid, r);
     this.changed = true;
     return r;
+  }
+
+  /** Sürgün durumu değişti: etiketi güncelle, ışınlanmayı interpolasyonsuz uygula. */
+  setJailed(sid: number, jailed: boolean, x: number, z: number, rot: number): void {
+    const r = this.map.get(sid);
+    if (!r) return;
+    r.info.jailed = jailed;
+    this.atlas.setName(r.cell, r.info.name, jailed);
+    r.teleport(x, z, rot);
+    this.changed = true;
   }
 
   leave(sid: number): void {

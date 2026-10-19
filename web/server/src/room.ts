@@ -1,5 +1,14 @@
 // Oda başına oyuncu durumu ve 15 Hz snapshot yayını.
-import { FLAG_SEATED, FLAG_WALKING, ROOM_MAX_PLAYERS, WALK_SPEED, WORLD_RADIUS } from "../../shared/constants";
+import {
+  clampToJail,
+  FLAG_SEATED,
+  FLAG_WALKING,
+  JAIL_SPAWN,
+  RELEASE_SPAWN,
+  ROOM_MAX_PLAYERS,
+  WALK_SPEED,
+  WORLD_RADIUS,
+} from "../../shared/constants";
 import {
   type PlayerInfo,
   type PlayerState,
@@ -18,6 +27,11 @@ export interface Conn {
 
 interface Player {
   info: PlayerInfo;
+  user: SessionUser;
+  /** Activity'nin açıldığı sunucu (sürgün sunucu bazında). */
+  guild: string | null;
+  /** Test için zorla zindana konmuş misafir (`?jail=1`). */
+  forceJail: boolean;
   state: PlayerState;
   lastUpdate: number;
   joinedAt: number;
@@ -45,7 +59,7 @@ export class Room {
     return n;
   }
 
-  join(user: SessionUser, conn: Conn, now = Date.now()): number {
+  join(user: SessionUser, conn: Conn, now = Date.now(), opts: JoinOptions = {}): number {
     // 60000 ve üstü istemcide yerel sahte oyunculara ayrılmış.
     while (this.players.has(this.nextSid)) this.nextSid = (this.nextSid % 59999) + 1;
     const sid = this.nextSid;
@@ -56,6 +70,7 @@ export class Room {
       name: user.name,
       avatar: user.avatar,
       spectator: this.activeCount() >= ROOM_MAX_PLAYERS,
+      jailed: !!opts.jailed,
     };
     const a = Math.random() * Math.PI * 2;
     const state: PlayerState = {
@@ -64,8 +79,18 @@ export class Room {
       rot: Math.PI,
       flags: 0,
     };
+    if (info.jailed) Object.assign(state, JAIL_SPAWN);
     const others = [...this.players.values()].map((p) => p.info);
-    this.players.set(sid, { info, state, lastUpdate: now, joinedAt: now, conn });
+    this.players.set(sid, {
+      info,
+      user,
+      guild: opts.guild ?? null,
+      forceJail: !!opts.forceJail,
+      state,
+      lastUpdate: now,
+      joinedAt: now,
+      conn,
+    });
     this.sendTo(conn, { t: "welcome", you: sid, room: this.key, players: [info, ...others] });
     this.broadcast({ t: "join", player: info }, sid);
     this.dirty = true;
@@ -113,10 +138,29 @@ export class Room {
     }
     p.state.x = x;
     p.state.z = z;
+    if (p.info.jailed) clampToJail(p.state);
     p.state.rot = s.rot;
     p.state.flags = s.flags & (FLAG_WALKING | FLAG_SEATED);
     p.lastUpdate = now;
     this.dirty = true;
+  }
+
+  /**
+   * Sürgün listesi değişince çağrılır: durumu değişen oyuncuyu zindana alır ya da çıkarır.
+   * Konumu sunucu belirler ve herkese bildirir; istemci kendini oraya ışınlar.
+   */
+  updateJail(isExiled: (userId: string, guild: string | null) => boolean, now = Date.now()): void {
+    for (const [sid, p] of this.players) {
+      const jailed = p.forceJail || (!p.user.guest && isExiled(p.user.id, p.guild));
+      if (jailed === p.info.jailed) continue;
+      p.info.jailed = jailed;
+      Object.assign(p.state, jailed ? JAIL_SPAWN : RELEASE_SPAWN);
+      p.state.flags = 0;
+      p.lastUpdate = now;
+      const { x, z, rot } = p.state;
+      this.broadcast({ t: "jail", sid, jailed, x, z, rot });
+      this.dirty = true;
+    }
   }
 
   /** Değişiklik varsa (ya da her saniye) tüm aktif oyuncuların konumunu yayınlar. */
@@ -153,10 +197,17 @@ export class Room {
         id: p.info.id,
         name: p.info.name,
         spectator: p.info.spectator,
+        jailed: p.info.jailed,
         since: p.joinedAt,
       })),
     };
   }
+}
+
+export interface JoinOptions {
+  guild?: string | null;
+  jailed?: boolean;
+  forceJail?: boolean;
 }
 
 export class Rooms {

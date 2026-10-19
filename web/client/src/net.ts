@@ -15,6 +15,8 @@ export class Net {
   rtt = 0;
   you = -1;
   onStatus: (s: NetStatus) => void = () => {};
+  /** Kendi sürgün durumumuz değişti (girişte ya da canlı). */
+  onJail: (jailed: boolean, x: number, z: number, rot: number) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -90,11 +92,17 @@ export class Net {
         this.you = ev.you;
         this.remotes.clear();
         for (const p of ev.players) if (p.sid !== ev.you && !p.spectator) this.remotes.add(p);
+        const me = ev.players.find((p) => p.sid === ev.you);
+        if (me) this.onJail(me.jailed, NaN, NaN, NaN);
         this.lastSent.flags = -1; // hemen tam durum gönder
         this.setStatus("online");
         break;
       case "join":
         if (ev.player.sid !== this.you && !ev.player.spectator) this.remotes.add(ev.player);
+        break;
+      case "jail":
+        if (ev.sid === this.you) this.onJail(ev.jailed, ev.x, ev.z, ev.rot);
+        else this.remotes.setJailed(ev.sid, ev.jailed, ev.x, ev.z, ev.rot);
         break;
       case "leave":
         this.remotes.leave(ev.sid);

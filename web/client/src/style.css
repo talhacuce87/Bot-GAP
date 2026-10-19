@@ -193,3 +193,19 @@ body {
   border-radius: 8px;
   background: #000;
 }
+
+.jail-banner {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(120, 22, 22, 0.85);
+  font-weight: 600;
+  display: none;
+  max-width: calc(100% - 32px);
+  text-align: center;
+}
+
+.jail-banner.show {
+  display: block;
+}
