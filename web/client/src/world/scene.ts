@@ -8,7 +8,8 @@ import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
 import { FameBoard, fameStatics } from "./fame";
 import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, windMaterial } from "./geo";
-import { dungeon, GROVE, grove, GROVE_SIGN, pond, signPost } from "./zones";
+import { dungeon, GROVE, grove, GROVE_SIGN, POND, pond, signPost, steppingStones } from "./zones";
+import { FAME } from "./fame";
 
 export type { Seat };
 
@@ -25,10 +26,11 @@ export interface World {
   update(time: number): void;
 }
 
-const SCREEN_Z = -22;
-const SCREEN_W = 12;
-const SCREEN_H = SCREEN_W * (9 / 16);
-const AMPHI_CENTER_Z = -22;
+export const SCREEN_Z = -46;
+export const SCREEN_W = 20;
+export const SCREEN_H = SCREEN_W * (9 / 16);
+const AMPHI_CENTER_Z = -46;
+const AMPHI_ROWS = 6;
 const SKY = new THREE.Color("#a9cfee");
 const SKY_TOP = new THREE.Color("#5b8fd6");
 
@@ -59,38 +61,64 @@ function screenTexture(): THREE.CanvasTexture {
     g.fillText("GAP SİNEMASI", 256, 140);
     g.font = "400 26px system-ui, sans-serif";
     g.fillStyle = "#c9cffd";
-    g.fillText("watch party yakında", 256, 190);
+    g.fillText("Discord'da !izle <link> yaz, perdede oynasın", 256, 190);
   });
 }
 
-/** İki tabela tek dokuda: üst yarı ZİNDAN, alt yarı mangal. Tek draw call. */
-function signsMesh(dungeonAt: THREE.Matrix4, groveAt: THREE.Matrix4): THREE.Mesh {
-  const tex = canvasTexture(512, 256, (g) => {
-    const board = (y: number, bg: string, edge: string, text: string, color: string, font: string) => {
+/** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
+const DIRECTIONS = ["↑ SİNEMA", "← ZİNDAN", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "GÖLET ↘"];
+const SIGN_DUNGEON = 0;
+const SIGN_GROVE = 1;
+const SIGN_DIR = 2;
+
+interface SignSpec {
+  at: THREE.Matrix4;
+  w: number;
+  h: number;
+  cell: number;
+}
+
+/** Bütün tabelalar tek dokuda (2 sütun × 8 satır, 512×128 hücre) ve tek draw call. */
+function signsMesh(specs: SignSpec[]): THREE.Mesh {
+  const tex = canvasTexture(1024, 1024, (g) => {
+    const board = (cell: number, bg: string, edge: string, text: string, color: string, font: string) => {
+      const x = (cell % 2) * 512, y = Math.floor(cell / 2) * 128;
       g.fillStyle = edge;
-      g.fillRect(0, y, 512, 128);
+      g.fillRect(x, y, 512, 128);
       g.fillStyle = bg;
-      g.fillRect(8, y + 8, 496, 112);
+      g.fillRect(x + 8, y + 8, 496, 112);
       g.fillStyle = color;
       g.font = font;
       g.textAlign = "center";
       g.textBaseline = "middle";
-      g.fillText(text, 256, y + 66);
+      let size = parseInt(font.match(/(\d+)px/)![1], 10);
+      while (size > 20 && g.measureText(text).width > 470) g.font = font.replace(/\d+px/, `${--size}px`);
+      g.fillText(text, x + 256, y + 66);
     };
-    board(0, "#2a2c31", "#141518", "ZİNDAN", "#e8d9b0", "900 78px system-ui, sans-serif");
-    board(128, "#a8743e", "#5b3f25", "LAGER'İN MANGALI", "#fff3dc", "800 52px system-ui, sans-serif");
+    board(SIGN_DUNGEON, "#2a2c31", "#141518", "ZİNDAN", "#e8d9b0", "900 78px system-ui, sans-serif");
+    board(SIGN_GROVE, "#a8743e", "#5b3f25", "LAGER'İN MANGALI", "#fff3dc", "800 52px system-ui, sans-serif");
+    DIRECTIONS.forEach((t, i) => board(SIGN_DIR + i, "#d0a56c", "#6b4a2b", t, "#2b1d10", "800 54px system-ui, sans-serif"));
   });
-  const plane = (at: THREE.Matrix4, w: number, h: number, v0: number) => {
+  const plane = ({ at, w, h, cell }: SignSpec) => {
     const g = new THREE.PlaneGeometry(w, h);
+    const u0 = (cell % 2) * 0.5, v0 = 1 - (Math.floor(cell / 2) + 1) / 8;
     const uv = g.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setY(i, v0 + uv.getY(i) * 0.5);
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, u0 + uv.getX(i) * 0.5, v0 + uv.getY(i) / 8);
     g.applyMatrix4(at);
     return g;
   };
-  const geo = mergeGeometries([plane(dungeonAt, 2.8, 0.7, 0.5), plane(groveAt, 2.2, 0.55, 0)]);
-  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex }));
+  const mesh = new THREE.Mesh(mergeGeometries(specs.map(plane)), new THREE.MeshBasicMaterial({ map: tex }));
   mesh.matrixAutoUpdate = false;
   return mesh;
+}
+
+/** Meydandaki yön tabelası: doğma noktasına bakan, üst üste oklu levhalar. */
+function directionPost(b: Builder): SignSpec[] {
+  const x = 3.6, z = 5.2;
+  b.add(part(new THREE.CylinderGeometry(0.08, 0.1, 3.1, 6), "#5b3f25", mat(x, 1.55, z)));
+  b.add(part(new THREE.ConeGeometry(0.16, 0.25, 6), "#5b3f25", mat(x, 3.2, z)));
+  b.colliders.circle(x, z, 0.15);
+  return DIRECTIONS.map((_, i) => ({ at: mat(x, 2.75 - i * 0.48, z + 0.09), w: 1.7, h: 0.425, cell: SIGN_DIR + i }));
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +132,7 @@ function groundColor(x: number, z: number, out: THREE.Color): THREE.Color {
   out.offsetHSL(n * 0.012, 0, n * 0.035);
   const dg = Math.hypot(x - GROVE.x, z - GROVE.z);
   if (dg < 14) out.lerp(tmp.set("#557c36"), (1 - dg / 14) * 0.7);
-  const dd = Math.hypot(x + 25, z - 5);
+  const dd = Math.hypot(x + 55, z - 5);
   if (dd < 11) out.lerp(tmp.set("#6b6f55"), (1 - dd / 11) * 0.6);
   return out;
 }
@@ -117,7 +145,7 @@ function heightAt(x: number, z: number): number {
 }
 
 function ground(b: Builder): void {
-  const geo = new THREE.RingGeometry(0.01, 75, 72, 24);
+  const geo = new THREE.RingGeometry(0.01, 210, 80, 28);
   geo.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
@@ -138,9 +166,10 @@ function plaza(b: Builder): void {
   // Merkez desen: iç içe halkalar
   b.add(part(new THREE.RingGeometry(3.2, 3.6, 24, 1), "#b3a383", flatMat(0, 0.025, 0)));
   b.add(part(new THREE.RingGeometry(6.4, 6.7, 28, 1), "#b3a383", flatMat(0, 0.025, 0)));
-  b.add(part(new THREE.PlaneGeometry(3, 11), "#c9b99a", flatMat(0, 0.02, -14.5), 0.06, b.rand));
+  // Sinemaya giden taş döşeli yol (amfinin orta koridoruna kadar)
+  b.add(part(new THREE.PlaneGeometry(3, 23), "#c9b99a", flatMat(0, 0.02, -22), 0.06, b.rand));
   b.clearCircle(0, 0, 11.2);
-  b.clearBox(-1.8, 1.8, -21, -9);
+  b.clearBox(-2.2, 2.2, -34, -9);
 
   // Çeşme
   b.add(part(new THREE.CylinderGeometry(2.2, 2.4, 0.6, 14), "#9aa3ad", mat(0, 0.3, 0)));
@@ -154,7 +183,7 @@ function plaza(b: Builder): void {
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
     const x = Math.sin(a) * 9.2, z = Math.cos(a) * 9.2;
-    if (z < -8 || Math.abs(z - 5) < 1.5 || (Math.abs(x) < 2 && z > 0)) continue; // yolları ve doğma noktasını kapatma
+    if (z < -8 || Math.abs(z - 5) < 1.5 || (Math.abs(x) < 2 && z > 0) || x > 8) continue; // yolları, doğma noktasını kapatma
     b.add(part(new THREE.CylinderGeometry(0.45, 0.35, 0.5, 8), "#b5643c", mat(x, 0.25, z)));
     b.prop("bush", mat(x, 0.62, z, a, 0.5, 0.45, 0.5));
     b.colliders.circle(x, z, 0.45);
@@ -172,16 +201,17 @@ function plaza(b: Builder): void {
 }
 
 function amphitheatre(b: Builder): THREE.Mesh {
-  b.add(part(new THREE.BoxGeometry(18, 0.6, 4), "#8a6f55", mat(0, 0.3, SCREEN_Z - 0.5)));
+  b.add(part(new THREE.BoxGeometry(28, 0.6, 5), "#8a6f55", mat(0, 0.3, SCREEN_Z - 0.5)));
   b.add(part(new THREE.BoxGeometry(SCREEN_W + 0.8, SCREEN_H + 0.8, 0.4), "#2a2f3a", mat(0, 1.2 + SCREEN_H / 2, SCREEN_Z - 1.6)));
   for (const sx of [-1, 1]) {
     b.add(part(new THREE.BoxGeometry(0.6, SCREEN_H + 2, 0.6), "#3a3f4c", mat(sx * (SCREEN_W / 2 + 0.7), (SCREEN_H + 2) / 2, SCREEN_Z - 1.6)));
     // Hoparlörler
-    b.add(part(new THREE.BoxGeometry(1, 1.6, 0.8), "#23262d", mat(sx * 8, 1.4, SCREEN_Z - 0.9)));
-    b.add(part(new THREE.CylinderGeometry(0.3, 0.3, 0.05, 10), "#4a4f5a", mat(sx * 8, 1.7, SCREEN_Z - 0.48).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))));
+    b.add(part(new THREE.BoxGeometry(1.4, 2.4, 1), "#23262d", mat(sx * 12.8, 1.8, SCREEN_Z - 0.9)));
+    b.add(part(new THREE.CylinderGeometry(0.45, 0.45, 0.05, 12), "#4a4f5a", mat(sx * 12.8, 2.2, SCREEN_Z - 0.38).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))));
+    b.add(part(new THREE.CylinderGeometry(0.25, 0.25, 0.05, 10), "#4a4f5a", mat(sx * 12.8, 1.2, SCREEN_Z - 0.38).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))));
   }
-  b.colliders.segment(-9, SCREEN_Z - 0.5, 9, SCREEN_Z - 0.5, 2);
-  b.clearBox(-20, 20, -27, -6);
+  b.colliders.segment(-14, SCREEN_Z - 0.5, 14, SCREEN_Z - 0.5, 2.5);
+  b.clearBox(-22, 22, -52, -17);
 
   const bench = mergeGeometries([
     part(new THREE.BoxGeometry(2.2, 0.12, 0.5), "#a0703f", mat(0, 0.45, 0)),
@@ -190,9 +220,9 @@ function amphitheatre(b: Builder): THREE.Mesh {
     part(new THREE.BoxGeometry(0.1, 0.45, 0.45), "#5b3f25", mat(0.95, 0.22, 0)),
   ]);
   const mats: THREE.Matrix4[] = [];
-  for (let row = 0; row < 4; row++) {
-    const R = 9 + row * 2.4;
-    const half = THREE.MathUtils.degToRad(40);
+  for (let row = 0; row < AMPHI_ROWS; row++) {
+    const R = 13 + row * 2.6;
+    const half = THREE.MathUtils.degToRad(42);
     const aisle = 1.5 / R; // ortada yürüme koridoru
     const n = Math.floor(((half - aisle) * R) / 2.5);
     for (let k = 0; k < n * 2; k++) {
@@ -211,40 +241,54 @@ function amphitheatre(b: Builder): THREE.Mesh {
   return instanced(bench, new THREE.MeshLambertMaterial({ vertexColors: true }), mats);
 }
 
-/** Ağaç, kaya ve çalıları serper: dış sınır halkası + açık alanlara iç ağaçlar. */
+/** Orman kümeleri: harita büyüyünce boş çayır yerine yer yer sık ağaçlık. [x, z, yarıçap] */
+const FOREST_CLUSTERS: [number, number, number][] = [
+  [48, -48, 13], [-50, -42, 12], [-62, 60, 13], [62, 46, 11], [0, -84, 14], [-84, -8, 10], [84, -18, 10], [-16, 82, 11],
+];
+
+/** Ağaç, kaya ve çalıları serper: dış sınır halkası, orman kümeleri, açık alanlara dağınık ağaçlar. */
 function nature(b: Builder): void {
-  for (let i = 0; i < 96; i++) {
-    const a = (i / 96) * Math.PI * 2 + b.rand() * 0.06;
-    const r = WORLD_RADIUS + 2 + b.rand() * 12;
-    const x = Math.sin(a) * r, z = Math.cos(a) * r;
-    const s = 0.9 + b.rand() * 0.9;
-    b.prop(b.rand() > 0.3 ? "pine" : "oak", mat(x, heightAt(x, z) - 0.1, z, b.rand() * 6, s));
-    if (r < WORLD_RADIUS + 4) b.shadow(x, z, 1.5 * s);
+  const tree = (x: number, z: number, s: number, collide: boolean) => {
+    b.prop(b.rand() > 0.45 ? "pine" : "oak", mat(x, heightAt(x, z) - 0.1, z, b.rand() * 6, s));
+    if (collide) b.colliders.circle(x, z, 0.35 * s);
+    if (Math.hypot(x, z) < WORLD_RADIUS + 4) b.shadow(x, z, 1.4 * s);
+    b.clearCircle(x, z, 0.6);
+  };
+  // Dış sınır: iki sıra, arkadaki daha seyrek
+  for (let i = 0; i < 170; i++) {
+    const a = (i / 170) * Math.PI * 2 + b.rand() * 0.03;
+    const r = WORLD_RADIUS + 2 + b.rand() * (i % 3 ? 8 : 18);
+    tree(Math.sin(a) * r, Math.cos(a) * r, 0.9 + b.rand() * 1.0, false);
   }
-  let placed = 0;
-  for (let tries = 0; placed < 22 && tries < 800; tries++) {
+  for (const [cx, cz, cr] of FOREST_CLUSTERS) {
+    const n = Math.round(cr * 2.1);
+    for (let k = 0, placed = 0; placed < n && k < n * 6; k++) {
+      const a = b.rand() * Math.PI * 2, d = Math.sqrt(b.rand()) * cr;
+      const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+      if (!b.isClear(x, z)) continue;
+      tree(x, z, 0.85 + b.rand() * 0.7, true);
+      placed++;
+    }
+  }
+  for (let placed = 0, tries = 0; placed < 90 && tries < 2000; tries++) {
     const a = b.rand() * Math.PI * 2;
-    const r = 13 + b.rand() * (WORLD_RADIUS - 15);
+    const r = 14 + b.rand() * (WORLD_RADIUS - 16);
     const x = Math.sin(a) * r, z = Math.cos(a) * r;
     if (!b.isClear(x, z) || Math.hypot(x, z - 8) < 6) continue;
-    const s = 0.8 + b.rand() * 0.5;
-    b.prop(b.rand() > 0.5 ? "pine" : "oak", mat(x, 0, z, b.rand() * 6, s));
-    b.colliders.circle(x, z, 0.35 * s);
-    b.shadow(x, z, 1.4 * s);
-    b.clearCircle(x, z, 0.6);
+    tree(x, z, 0.8 + b.rand() * 0.5, true);
     placed++;
   }
-  for (let i = 0, n = 0; n < 28 && i < 400; i++) {
+  for (let i = 0, n = 0; n < 90 && i < 1500; i++) {
     const a = b.rand() * Math.PI * 2;
-    const r = 12 + b.rand() * (WORLD_RADIUS - 10);
+    const r = 12 + b.rand() * (WORLD_RADIUS - 8);
     const x = Math.sin(a) * r, z = Math.cos(a) * r;
     if (!b.isClear(x, z)) continue;
-    const s = 0.5 + b.rand() * 1.1;
+    const s = 0.5 + b.rand() * 1.2;
     b.prop("rock", mat(x, 0.15 * s, z, b.rand() * 6, s, s * 0.7, s));
     if (r < WORLD_RADIUS) b.colliders.circle(x, z, 0.5 * s);
     n++;
   }
-  for (let i = 0, n = 0; n < 46 && i < 600; i++) {
+  for (let i = 0, n = 0; n < 160 && i < 2500; i++) {
     const a = b.rand() * Math.PI * 2;
     const r = 12 + b.rand() * (WORLD_RADIUS - 8);
     const x = Math.sin(a) * r, z = Math.cos(a) * r;
@@ -257,20 +301,45 @@ function nature(b: Builder): void {
   }
   // Amfinin iki yanında çalı sırası
   for (const sx of [-1, 1]) {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
       const s = 0.6 + b.rand() * 0.3;
-      b.prop("bush", mat(sx * (17 + b.rand()), 0.25 * s, -12 - i * 2.6, b.rand() * 6, s, s * 0.75, s));
+      b.prop("bush", mat(sx * (23 + b.rand()), 0.25 * s, -20 - i * 3.2, b.rand() * 6, s, s * 0.75, s));
     }
   }
 }
 
+/** Meydandan her bölgeye taş yol; kenarında aralıklı lambalar. */
+function paths(b: Builder): void {
+  const lampEvery = 13;
+  const path = (ax: number, az: number, bx: number, bz: number) => {
+    steppingStones(b, ax, az, bx, bz);
+    const len = Math.hypot(bx - ax, bz - az);
+    const ux = (bx - ax) / len, uz = (bz - az) / len;
+    for (let d = lampEvery * 0.6, k = 0; d < len - 3; d += lampEvery, k++) {
+      const side = k % 2 ? 1.7 : -1.7; // zikzak: iki yanı da aydınlansın
+      const x = ax + ux * d - uz * side, z = az + uz * d + ux * side;
+      b.prop("post", mat(x, 0, z));
+      b.prop("bulb", mat(x, 2.7, z));
+      b.colliders.circle(x, z, 0.15);
+    }
+  };
+  const radial = (tx: number, tz: number, endPad: number) => {
+    const d = Math.hypot(tx, tz), ux = tx / d, uz = tz / d;
+    path(ux * 10.9, uz * 10.9, tx - ux * endPad, tz - uz * endPad);
+  };
+  path(-9.7, 5, -48.6, 5); // zindan
+  path(9.7, 5, GROVE.x - 7, GROVE.z); // mangal ormanı
+  radial(POND.x, POND.z, 9.2);
+  radial(FAME.x, FAME.z, 3.6);
+}
+
 function grassAndFlowers(b: Builder, scene: THREE.Scene): void {
-  // Çimen tutamı: 4 ince üçgen, dipte koyu uçta açık
+  // Çimen tutamı: 3 ince üçgen, dipte koyu uçta açık
   const blades: number[] = [];
   const cols: number[] = [];
   const base = new THREE.Color("#4d7a30"), tip = new THREE.Color("#9cc35a");
-  for (let k = 0; k < 4; k++) {
-    const a = (k / 4) * Math.PI + 0.3;
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI + 0.3;
     const h = 0.28 + (k % 2) * 0.1;
     const dx = Math.cos(a) * 0.05, dz = Math.sin(a) * 0.05;
     const lean = (k - 1.5) * 0.04;
@@ -288,7 +357,8 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene): void {
   const flowers: THREE.Matrix4[] = [];
   const flowerColors: THREE.Color[] = [];
   const palette = ["#f4f1e6", "#f7d64a", "#e85a6f", "#b48ae8", "#f59a3c"].map((c) => new THREE.Color(c));
-  for (let i = 0; i < 2600 && grass.length < 1400; i++) {
+  // Büyük haritada yoğunluk aynı; uzaktakiler shader'da gömüldüğü için maliyet sınırlı.
+  for (let i = 0; i < 14000 && grass.length < 6500; i++) {
     const a = b.rand() * Math.PI * 2;
     const r = Math.sqrt(b.rand()) * (WORLD_RADIUS + 3);
     const x = Math.sin(a) * r, z = Math.cos(a) * r;
@@ -297,7 +367,7 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene): void {
     grass.push(mat(x, 0, z, b.rand() * 6, s));
   }
   // Çiçekler küme küme
-  for (let c = 0; c < 40; c++) {
+  for (let c = 0; c < 80; c++) {
     const a = b.rand() * Math.PI * 2;
     const r = 11 + b.rand() * (WORLD_RADIUS - 10);
     const cx = Math.sin(a) * r, cz = Math.cos(a) * r;
@@ -309,24 +379,25 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene): void {
       flowerColors.push(color);
     }
   }
-  scene.add(instanced(tuft, windMaterial(0.28, { side: THREE.DoubleSide }), grass));
+  scene.add(instanced(tuft, windMaterial(0.28, { side: THREE.DoubleSide }, [32, 44]), grass));
 
   const head = part(new THREE.OctahedronGeometry(0.075, 0), "#ffffff", new THREE.Matrix4().makeScale(1, 0.6, 1));
-  const fm = instanced(head, windMaterial(0.5), flowers);
+  const fm = instanced(head, windMaterial(0.5, {}, [40, 52]), flowers);
   flowerColors.forEach((c, i) => fm.setColorAt(i, c));
   scene.add(fm);
 }
 
 function propMeshes(b: Builder, scene: THREE.Scene): void {
   const r = b.rand;
+  // Ağaçlarda alt kapaklar hiç görünmez (kamera zeminin altına inmez): openEnded ile üçgen sayısı yarıya iner.
   const geos: Record<PropKind, THREE.BufferGeometry> = {
     pine: mergeGeometries([
-      part(new THREE.CylinderGeometry(0.18, 0.25, 1.4, 6), "#6b4a2f", mat(0, 0.7, 0)),
-      part(new THREE.ConeGeometry(1.3, 2.2, 7), "#3f7a3a", mat(0, 2.2, 0), 0.25, r),
-      part(new THREE.ConeGeometry(0.95, 1.8, 7), "#4c8c42", mat(0, 3.2, 0), 0.25, r),
+      part(new THREE.CylinderGeometry(0.18, 0.25, 1.4, 6, 1, true), "#6b4a2f", mat(0, 0.7, 0)),
+      part(new THREE.ConeGeometry(1.3, 2.2, 6, 1, true), "#3f7a3a", mat(0, 2.2, 0), 0.25, r),
+      part(new THREE.ConeGeometry(0.95, 1.8, 6, 1, true), "#4c8c42", mat(0, 3.2, 0), 0.25, r),
     ]),
     oak: mergeGeometries([
-      part(new THREE.CylinderGeometry(0.16, 0.26, 1.8, 6), "#6e4b2e", mat(0, 0.9, 0)),
+      part(new THREE.CylinderGeometry(0.16, 0.26, 1.8, 6, 1, true), "#6e4b2e", mat(0, 0.9, 0)),
       part(new THREE.IcosahedronGeometry(1.25, 0), "#5c9a3f", mat(0, 2.6, 0, 0, 1, 0.9, 1), 0.3, r),
       part(new THREE.IcosahedronGeometry(0.85, 0), "#6aa847", mat(0.6, 3.2, 0.3), 0.3, r),
       part(new THREE.IcosahedronGeometry(0.7, 0), "#4f8a37", mat(-0.6, 2.9, -0.4), 0.3, r),
@@ -345,8 +416,8 @@ function propMeshes(b: Builder, scene: THREE.Scene): void {
   const lambert = new THREE.MeshLambertMaterial({ vertexColors: true });
   const flat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const materials: Record<PropKind, THREE.Material> = {
-    pine: windMaterial(0.012),
-    oak: windMaterial(0.018),
+    pine: windMaterial(0.012, { side: THREE.DoubleSide }),
+    oak: windMaterial(0.018, { side: THREE.DoubleSide }),
     rock: flat,
     bush: windMaterial(0.04),
     stone: flat,
@@ -379,11 +450,11 @@ function shadowsMesh(b: Builder): THREE.InstancedMesh {
 function mountains(b: Builder): THREE.Mesh {
   const parts: THREE.BufferGeometry[] = [];
   const haze = new THREE.Color("#8fb0bf"), dark = new THREE.Color("#6f8f86"), snow = new THREE.Color("#f2f5f7");
-  for (let i = 0; i < 44; i++) {
-    const a = (i / 44) * Math.PI * 2 + b.rand() * 0.1;
-    const dist = 105 + b.rand() * 25;
-    const h = 14 + b.rand() * 26;
-    const rad = 14 + b.rand() * 14;
+  for (let i = 0; i < 52; i++) {
+    const a = (i / 52) * Math.PI * 2 + b.rand() * 0.1;
+    const dist = 175 + b.rand() * 35;
+    const h = 24 + b.rand() * 40;
+    const rad = 22 + b.rand() * 22;
     const g = new THREE.ConeGeometry(rad, h, 5, 2).toNonIndexed();
     g.deleteAttribute("uv");
     g.applyMatrix4(mat(Math.sin(a) * dist, h / 2 - 2, Math.cos(a) * dist, b.rand() * 6));
@@ -392,7 +463,7 @@ function mountains(b: Builder): THREE.Mesh {
     for (let v = 0; v < pos.count; v++) {
       const t = (pos.getY(v) + 2) / h;
       tmp.copy(dark).lerp(haze, 0.4 + b.rand() * 0.1);
-      if (h > 28 && t > 0.72) tmp.copy(snow);
+      if (h > 42 && t > 0.72) tmp.copy(snow);
       tmp.toArray(cols, v * 3);
     }
     g.setAttribute("color", new THREE.BufferAttribute(cols, 3));
@@ -410,10 +481,10 @@ function clouds(b: Builder): THREE.InstancedMesh {
     part(new THREE.IcosahedronGeometry(2.2, 0), "#f4f7fb", mat(-3, -0.5, -0.4, 0, 1.2, 0.6, 1)),
   ]);
   const mats: THREE.Matrix4[] = [];
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 26; i++) {
     const a = b.rand() * Math.PI * 2;
-    const r = 35 + b.rand() * 60;
-    mats.push(mat(Math.sin(a) * r, 38 + b.rand() * 18, Math.cos(a) * r, b.rand() * 6, 0.8 + b.rand() * 0.9));
+    const r = 30 + b.rand() * 140;
+    mats.push(mat(Math.sin(a) * r, 55 + b.rand() * 25, Math.cos(a) * r, b.rand() * 6, 1 + b.rand() * 1.2));
   }
   const m = instanced(puff, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, fog: false, emissive: "#9aa9bd" }), mats);
   m.matrixAutoUpdate = true;
@@ -469,7 +540,7 @@ export function buildWorld(): World {
   const b = new Builder();
   const scene = new THREE.Scene();
   scene.background = SKY;
-  scene.fog = new THREE.Fog(SKY, 45, 105);
+  scene.fog = new THREE.Fog(SKY, 55, 140);
 
   scene.add(new THREE.HemisphereLight("#dcefff", "#56683a", 1.6));
   const sun = new THREE.DirectionalLight("#fff1d6", 1.7);
@@ -477,10 +548,10 @@ export function buildWorld(): World {
   scene.add(sun);
 
   // Gökyüzü kubbesi (tek draw call, sisten etkilenmez)
-  const skyGeo = new THREE.SphereGeometry(150, 16, 8);
+  const skyGeo = new THREE.SphereGeometry(240, 16, 8);
   const skyCols = new Float32Array(skyGeo.attributes.position.count * 3);
   for (let i = 0; i < skyGeo.attributes.position.count; i++) {
-    const y = skyGeo.attributes.position.getY(i) / 150;
+    const y = skyGeo.attributes.position.getY(i) / 240;
     tmp.copy(SKY).lerp(SKY_TOP, Math.max(0, y) ** 0.7).toArray(skyCols, i * 3);
   }
   skyGeo.setAttribute("color", new THREE.BufferAttribute(skyCols, 3));
@@ -496,6 +567,8 @@ export function buildWorld(): World {
   signPost(b, GROVE_SIGN.x + 0.1, GROVE_SIGN.z, 2.1);
   pond(b);
   fameStatics(b);
+  const dirSigns = directionPost(b);
+  paths(b);
   nature(b);
 
   const statics = new THREE.Mesh(mergeGeometries(b.statics), new THREE.MeshLambertMaterial({ vertexColors: true }));
@@ -507,7 +580,13 @@ export function buildWorld(): World {
   scene.add(mountains(b));
   const cloudMesh = clouds(b);
   scene.add(cloudMesh);
-  scene.add(signsMesh(dz.signAt, gr.signAt));
+  scene.add(
+    signsMesh([
+      { at: dz.signAt, w: 2.8, h: 0.7, cell: SIGN_DUNGEON },
+      { at: gr.signAt, w: 2.2, h: 0.55, cell: SIGN_GROVE },
+      ...dirSigns,
+    ]),
+  );
   scene.add(gr.coals);
   const fame = new FameBoard();
   scene.add(fame.group);

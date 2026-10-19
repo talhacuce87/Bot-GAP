@@ -456,14 +456,16 @@ Tarayıcıda Discord olmadan misafir olarak açılır. Kullanılabilecek paramet
 | `?debug=1&at=x,z` | Belirtilen noktada başlatır |
 
 **Bölgeler:**
-- **Meydan:** Çeşme ve doğma noktası.
-- **Amfi ve perde:** Kuzeyde.
+- **Meydan:** Çeşme, doğma noktası ve yön tabelası.
+- **Sinema:** Kuzeyde. 20 m'lik perde ve 6 sıralık amfi.
 - **Zindan:** Batıda. `!sürgün` ile cezalandırılanlar dünyaya girince hücrede doğar ve çıkamaz. Ceza bitince parmaklıkların önüne çıkarılır; bot listeyi 20 sn'de bir, komut verildiğinde ise hemen dünyaya gönderir (`world_cog.py`). Bunun için iki serviste de aynı `WORLD_SHARED_SECRET` tanımlı olmalı.
 - **LAGER'in Mangalı:** Doğuda, ormanın içinde. Mangal, kütük oturaklar, piknik masası ve ışık zinciri var.
 - **Gölet:** Güneyde, kenarında bir bank var.
 - **Şöhret Kürsüsü:** Meydanın güneybatısında. XP sıralamasının ilk 10'u bir panoda gösterilir; önündeki podyumda ilk 3 için altın, gümüş ve bronz heykeller durur. Bot sıralamayı 5 dakikada bir gönderir, pano sayfa yenilenmeden güncellenir.
 
-**Kontroller:** WASD ile yürü, sürükleyerek kamerayı çevir, tekerlekle yakınlaştır, E ile koltuğa otur. Dokunmatik cihazlarda ekranın sol yarısı joystick, sağ yarısı kamera.
+**Kontroller:** WASD ile yürü, Shift ile koş, sürükleyerek kamerayı çevir, tekerlekle yakınlaştır, E ile koltuğa otur. Dokunmatik cihazlarda ekranın sol yarısı joystick (sonuna kadar itince koşar), sağ yarısı kamera.
+
+Harita yaklaşık 200 m çapında. Meydandan her bölgeye lambalı taş yollar gidiyor, meydandaki yön tabelası hepsini gösteriyor. Aralarda orman kümeleri var.
 
 **Kurulum (Coolify + Discord)**
 

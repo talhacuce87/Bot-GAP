@@ -27,6 +27,7 @@ export class Builder {
   /** Çimen/çiçek serpilmeyecek alanlar. */
   private keepOut: { x: number; z: number; r: number }[] = [];
   private keepOutBoxes: { minX: number; maxX: number; minZ: number; maxZ: number }[] = [];
+  private keepOutSegs: number[] = []; // ax, az, bx, bz, r
 
   add(geo: THREE.BufferGeometry): void {
     this.statics.push(geo);
@@ -48,9 +49,22 @@ export class Builder {
     this.keepOutBoxes.push({ minX, maxX, minZ, maxZ });
   }
 
+  /** Bir yol şeridini (iki nokta arası, yarıçaplı) boş tutar. */
+  clearSegment(ax: number, az: number, bx: number, bz: number, r: number): void {
+    this.keepOutSegs.push(ax, az, bx, bz, r);
+  }
+
   isClear(x: number, z: number): boolean {
     for (const c of this.keepOut) if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return false;
     for (const b of this.keepOutBoxes) if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ) return false;
+    const s = this.keepOutSegs;
+    for (let i = 0; i < s.length; i += 5) {
+      const ex = s[i + 2] - s[i], ez = s[i + 3] - s[i + 1];
+      const len2 = ex * ex + ez * ez || 1;
+      const t = Math.max(0, Math.min(1, ((x - s[i]) * ex + (z - s[i + 1]) * ez) / len2));
+      const dx = x - (s[i] + ex * t), dz = z - (s[i + 1] + ez * t);
+      if (dx * dx + dz * dz < s[i + 4] * s[i + 4]) return false;
+    }
     return true;
   }
 }

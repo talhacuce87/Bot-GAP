@@ -28,22 +28,25 @@ export function steppingStones(b: Builder, ax: number, az: number, bx: number, b
     b.prop("stone", mat(x, 0.03, z, b.rand() * 6, s, 1, s * (0.8 + b.rand() * 0.4)));
   }
   // Yol kenarı da açık kalsın: ağaç/çalı manzarayı kapatmasın.
-  b.clearBox(Math.min(ax, bx) - 1.8, Math.max(ax, bx) + 1.8, Math.min(az, bz) - 2.2, Math.max(az, bz) + 2.2);
+  b.clearSegment(ax, az, bx, bz, 2.2);
 }
+
+/** Zindanın eski (küçük harita) konumuna göre kayması; hücre sınırları shared/constants JAIL ile aynı. */
+const DX = -29.5;
 
 // ---------------------------------------------------------------------------
 // Zindan: üç tarafı taş duvar, meydana bakan yüzü demir parmaklık. Üstü açık (kamera görsün).
 // ---------------------------------------------------------------------------
 
 export function dungeon(b: Builder): { signAt: THREE.Matrix4 } {
-  const x0 = -30, x1 = -21; // dış kenarlar
+  const x0 = -30 + DX, x1 = -21 + DX; // dış kenarlar
   const z0 = 0.8, z1 = 9.2;
-  const barsX = -21.4;
+  const barsX = -21.4 + DX;
   const H = 3.2;
   const cz = (z0 + z1) / 2;
 
   // Zemin: koyu taş döşeme + çevresinde kararmış toprak
-  b.add(part(new THREE.CircleGeometry(7.5, 20), "#585d50", flatMat(-24.5, 0.012, cz), 0.15, b.rand));
+  b.add(part(new THREE.CircleGeometry(7.5, 20), "#585d50", flatMat(-24.5 + DX, 0.012, cz), 0.15, b.rand));
   box(b, x1 - x0 + 0.4, 0.12, z1 - z0 + 0.4, "#4a4d52", (x0 + x1) / 2, 0.06, cz, 0, 0.12);
 
   // Duvarlar (taş blok dokusu için parçalı)
@@ -77,8 +80,8 @@ export function dungeon(b: Builder): { signAt: THREE.Matrix4 } {
   // Hücre içi: taş sedir (oturulabilir), saman, kova, duvara asılı zincirler
   box(b, 0.6, 0.45, 3, STONE_DARK, x0 + 1.2, 0.22, cz, 0, 0.1);
   for (const o of [-0.8, 0.8]) b.seats.push({ x: x0 + 1.35, z: cz + o, rot: Math.PI / 2 });
-  b.add(part(new THREE.IcosahedronGeometry(0.7, 0), "#c9a94f", mat(-23.2, 0.15, z0 + 1.8, 0.4, 1.2, 0.35, 1), 0.25, b.rand));
-  b.add(part(new THREE.CylinderGeometry(0.22, 0.18, 0.35, 8), "#6b5a3e", mat(-22.6, 0.3, z1 - 1.5)));
+  b.add(part(new THREE.IcosahedronGeometry(0.7, 0), "#c9a94f", mat(-23.2 + DX, 0.15, z0 + 1.8, 0.4, 1.2, 0.35, 1), 0.25, b.rand));
+  b.add(part(new THREE.CylinderGeometry(0.22, 0.18, 0.35, 8), "#6b5a3e", mat(-22.6 + DX, 0.3, z1 - 1.5)));
   for (const cz2 of [cz - 1.6, cz + 1.6]) {
     for (let i = 0; i < 5; i++) {
       b.add(part(new THREE.TorusGeometry(0.07, 0.022, 4, 6), IRON, mat(x0 + 0.86, 2.4 - i * 0.13, cz2, (i % 2) * (Math.PI / 2))));
@@ -104,21 +107,20 @@ export function dungeon(b: Builder): { signAt: THREE.Matrix4 } {
   // Çevre: kuru ağaç, kayalar, kemik yığını
   b.clearBox(x0 - 0.5, x1 + 5, z0 - 2, z1 + 2); // önünde ziyaretçi alanı
   const dead = new THREE.CylinderGeometry(0.12, 0.2, 2.6, 5);
-  b.add(part(dead, "#4b3b2c", mat(-31.5, 1.3, 11, 0, 1)));
-  b.add(part(new THREE.CylinderGeometry(0.05, 0.08, 1.2, 4), "#4b3b2c", mat(-31.2, 2.1, 11, 0.6).multiply(new THREE.Matrix4().makeRotationZ(-0.9))));
-  b.add(part(new THREE.CylinderGeometry(0.04, 0.07, 1, 4), "#4b3b2c", mat(-31.8, 1.7, 11.2, 2.1).multiply(new THREE.Matrix4().makeRotationZ(0.8))));
-  b.colliders.circle(-31.5, 11, 0.25);
+  b.add(part(dead, "#4b3b2c", mat(-31.5 + DX, 1.3, 11, 0, 1)));
+  b.add(part(new THREE.CylinderGeometry(0.05, 0.08, 1.2, 4), "#4b3b2c", mat(-31.2 + DX, 2.1, 11, 0.6).multiply(new THREE.Matrix4().makeRotationZ(-0.9))));
+  b.add(part(new THREE.CylinderGeometry(0.04, 0.07, 1, 4), "#4b3b2c", mat(-31.8 + DX, 1.7, 11.2, 2.1).multiply(new THREE.Matrix4().makeRotationZ(0.8))));
+  b.colliders.circle(-31.5 + DX, 11, 0.25);
   for (let i = 0; i < 6; i++) {
     const a = b.rand() * 0.6;
-    b.add(part(new THREE.IcosahedronGeometry(0.09, 0), "#e8e2cf", mat(-28.4 + a, 0.15 + (i % 3) * 0.05, 8.1 - a, 0, 1)));
+    b.add(part(new THREE.IcosahedronGeometry(0.09, 0), "#e8e2cf", mat(-28.4 + a + DX, 0.15 + (i % 3) * 0.05, 8.1 - a, 0, 1)));
   }
-  b.add(part(new THREE.IcosahedronGeometry(0.16, 0), "#efe9d8", mat(-28.1, 0.32, 7.9, 0, 1, 0.9, 1.1)));
-  for (const [rx, rz, s] of [[-19.5, -0.5, 0.8], [-20, 11, 1.1], [-32.5, 3, 1.3], [-31.8, -1.5, 0.9]]) {
+  b.add(part(new THREE.IcosahedronGeometry(0.16, 0), "#efe9d8", mat(-28.1 + DX, 0.32, 7.9, 0, 1, 0.9, 1.1)));
+  for (const [rx, rz, s] of [[-19.5 + DX, -0.5, 0.8], [-20 + DX, 11, 1.1], [-32.5 + DX, 3, 1.3], [-31.8 + DX, -1.5, 0.9]]) {
     b.prop("rock", mat(rx, 0.15 * s, rz, b.rand() * 6, s, s * 0.7, s));
     b.colliders.circle(rx, rz, 0.5 * s);
   }
 
-  steppingStones(b, -9.4, 5, -19.6, 5);
   // Tabela: parmaklığın üstünde, meydana bakar; arkasında pano
   box(b, 0.1, 0.85, 3.0, "#1c1d21", x1 - 0.06, H + 0.55, cz);
   return { signAt: mat(x1 + 0.02, H + 0.55, cz, Math.PI / 2) };
@@ -128,7 +130,7 @@ export function dungeon(b: Builder): { signAt: THREE.Matrix4 } {
 // LAGER'in mangalı: doğuda, sık ağaçların arasında bir açıklık.
 // ---------------------------------------------------------------------------
 
-export const GROVE = { x: 24, z: 5 };
+export const GROVE = { x: 58, z: 5 };
 /** Mangal tabelası: orman girişinde, yolun kenarında. Çevresine ağaç dikilmez. */
 export const GROVE_SIGN = { x: GROVE.x - 6.4, z: GROVE.z - 1.9 };
 const SIGN_CLEAR = 3.2;
@@ -233,7 +235,6 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
     b.prop("bush", mat(x, 0.2 * s, z, b.rand() * 6, s, s * 0.8, s));
   }
 
-  steppingStones(b, 9.4, 5, 17.4, 5);
   return {
     signAt: mat(GROVE_SIGN.x, 1.75, GROVE_SIGN.z, -Math.PI / 2),
     coals,
@@ -252,8 +253,11 @@ export function signPost(b: Builder, x: number, z: number, h: number): void {
 // Gölet: güneyde, kenarında bir bank.
 // ---------------------------------------------------------------------------
 
+export const POND = { x: 24, z: 56 };
+
 export function pond(b: Builder): void {
-  const px = 9, pz = 22, r = 3.8;
+  const { x: px, z: pz } = POND;
+  const r = 6.5;
   b.add(part(new THREE.CircleGeometry(r + 0.8, 24), "#d6c48e", flatMat(px, 0.012, pz), 0.08, b.rand));
   b.add(part(new THREE.CircleGeometry(r, 24), "#4f97cf", flatMat(px, 0.03, pz), 0.05, b.rand));
   b.add(part(new THREE.CircleGeometry(r * 0.55, 18), "#3f86c0", flatMat(px + 0.4, 0.035, pz - 0.3)));

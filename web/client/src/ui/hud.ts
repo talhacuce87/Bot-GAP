@@ -42,8 +42,8 @@ export class Hud {
     this.jail.textContent = "⛓️ Sürgündesin — cezan bitene kadar zindandasın.";
     this.prompt.addEventListener("click", onAction);
     el("div", "hint", root).textContent = touch
-      ? "Sol: yürü • Sağ: kamera • İki parmak: yakınlaştır"
-      : "WASD: yürü • Sürükle: kamera • Tekerlek: yakınlaştır • E: otur";
+      ? "Sol: yürü (sonuna kadar it: koş) • Sağ: kamera • İki parmak: yakınlaştır"
+      : "WASD: yürü • Shift: koş • Sürükle: kamera • Tekerlek: yakınlaştır • E: otur";
   }
 
   setStatus(s: NetStatus): void {

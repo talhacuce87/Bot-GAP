@@ -6,10 +6,9 @@ import type { BoardEntry } from "../../../shared/protocol";
 import { colorFor } from "../avatars/avatars";
 import type { Builder } from "./builder";
 import { mat, part } from "./geo";
-import { steppingStones } from "./zones";
 
 /** Kürsünün yeri: meydanın güneybatısı, yüzü meydana dönük. */
-export const FAME = { x: -12, z: 19 };
+export const FAME = { x: -34, z: 42 };
 const RY = Math.atan2(-FAME.x, -FAME.z);
 
 const TEX = 1024;
@@ -64,9 +63,6 @@ export function fameStatics(b: Builder): void {
   b.shadow(FAME.x, FAME.z, 2.8);
   b.clearCircle(FAME.x, FAME.z, 6);
 
-  // Meydandan kürsüye taş yol
-  const dir = new THREE.Vector2(FAME.x, FAME.z).normalize();
-  steppingStones(b, dir.x * 10.9, dir.y * 10.9, FAME.x - dir.x * 3.4, FAME.z - dir.y * 3.4);
 }
 
 function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {

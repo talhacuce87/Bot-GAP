@@ -6,6 +6,7 @@ import {
   JAIL_SPAWN,
   RELEASE_SPAWN,
   ROOM_MAX_PLAYERS,
+  RUN_MULTIPLIER,
   WALK_SPEED,
   WORLD_RADIUS,
 } from "../../shared/constants";
@@ -120,7 +121,7 @@ export class Room {
     const p = this.players.get(sid);
     if (!p || p.info.spectator) return;
     const dt = Math.min(1, Math.max(0, (now - p.lastUpdate) / 1000));
-    const maxStep = WALK_SPEED * dt * 1.5 + 0.5;
+    const maxStep = WALK_SPEED * RUN_MULTIPLIER * dt * 1.3 + 0.5;
     let dx = s.x - p.state.x;
     let dz = s.z - p.state.z;
     const d = Math.hypot(dx, dz);

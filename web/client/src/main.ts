@@ -44,7 +44,7 @@ async function start(): Promise<void> {
     return;
   }
   renderer.setSize(innerWidth, innerHeight, false);
-  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 170);
+  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 260);
   const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, 1.5), !params.has("noadapt"));
 
   let session: Session;

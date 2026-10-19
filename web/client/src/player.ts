@@ -1,6 +1,6 @@
 // Yerel oyuncu: anında tepki veren hareket (sunucuyu beklemez), oturma ve 3. şahıs kamera.
 import * as THREE from "three";
-import { clampToJail, FLAG_SEATED, FLAG_WALKING, PLAYER_RADIUS, WALK_SPEED } from "../../shared/constants";
+import { clampToJail, FLAG_SEATED, FLAG_WALKING, PLAYER_RADIUS, RUN_MULTIPLIER, WALK_SPEED } from "../../shared/constants";
 import type { PlayerState } from "../../shared/protocol";
 import type { AvatarView } from "./avatars/avatars";
 import type { Input } from "./input/input";
@@ -76,8 +76,9 @@ export class Player implements AvatarView, PlayerState {
     const mx = -sy * input.moveY + cy * input.moveX;
     const mz = -cy * input.moveY - sy * input.moveX;
     const accel = 1 - Math.exp(-dt * 12);
-    this.vx += (mx * WALK_SPEED - this.vx) * accel;
-    this.vz += (mz * WALK_SPEED - this.vz) * accel;
+    const speedMax = WALK_SPEED * (input.run ? RUN_MULTIPLIER : 1);
+    this.vx += (mx * speedMax - this.vx) * accel;
+    this.vz += (mz * speedMax - this.vz) * accel;
     this.x += this.vx * dt;
     this.z += this.vz * dt;
     this.world.colliders.resolve(this, PLAYER_RADIUS);
