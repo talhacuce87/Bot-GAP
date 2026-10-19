@@ -10,6 +10,7 @@ Yüklenecek cog'lar:
   - AuditCog       (audit.py) — olay kaydı, hile tespiti, analiz komutları
   - ExileCog       (exile.py) — !sürgün XP cezası ve !sürgünler kartı
   - SummaryCog     (summary.py) — haftalık özet ve aylık Wrapped kartları
+  - AchievementCog (achievement_cog.py) — başarımlar, !başarımlar fuları, !kartdüzen
   - AICog          (ai/)      — isteğe bağlı hafızalı sohbet (AI_ENABLED=true ise)
 """
 
@@ -24,6 +25,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 import activitylog
+from achievement_cog import AchievementCog
 from audit import AuditCog
 from bestfriend import BestFriendCog
 from exile import ExileCog
@@ -129,6 +131,7 @@ class GapBot(commands.Bot):
         await self.add_cog(AuditCog(self))
         await self.add_cog(ExileCog(self))
         await self.add_cog(SummaryCog(self))
+        await self.add_cog(AchievementCog(self))
         await self._load_ai()
 
     async def _load_ai(self) -> None:

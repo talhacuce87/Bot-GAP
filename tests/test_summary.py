@@ -217,7 +217,17 @@ async def test_auto_post_once_per_period(tmp_path, monkeypatch):
     async def fake_server_card(guild, period):
         return io.BytesIO(b"png")
 
+    async def fake_stats(guild, period):
+        return summary.PeriodStats()
+
     monkeypatch.setattr(c, "build_server_card", fake_server_card)
+    monkeypatch.setattr(c, "_stats", fake_stats)
+    recorded: list = []
+
+    async def fake_awards(guild_id, period, awards):
+        recorded.append(period)
+
+    monkeypatch.setattr(summary.db, "add_summary_awards", fake_awards)
 
     assert await c.post_due(SUNDAY.replace(hour=20)) == []               # saat 21'den önce değil
     assert await c.post_due(MONDAY.replace(hour=22)) == []               # pazartesi değil
@@ -227,10 +237,11 @@ async def test_auto_post_once_per_period(tmp_path, monkeypatch):
     both = datetime.datetime(2027, 2, 28, 21, 5, tzinfo=TZ)               # hem pazar hem ay sonu
     assert await c.post_due(both) == ["week", "month"]
     assert "Haftanın özeti" in sent[0] and "!haftalik" in sent[0] and "Wrapped" in sent[1]
+    assert recorded == ["week:2026-W43", "month:2026-10", "week:2027-W08", "month:2027-02"]
 
 
 async def test_no_channel_no_post(tmp_path, monkeypatch):
-    c = summary.SummaryCog(SimpleNamespace(get_channel=lambda cid: None), state_path=tmp_path / "s.json")
+    c = summary.SummaryCog(SimpleNamespace(get_channel=lambda cid: None, guilds=[]), state_path=tmp_path / "s.json")
     monkeypatch.setattr(summary, "SUMMARY_CHANNEL_ID", 0)
     monkeypatch.setattr(summary, "ANNOUNCE_CHANNEL_ID", 0)
     assert await c.post_due(SUNDAY) == []
@@ -310,3 +321,21 @@ def test_commands_registered():
     names = {c.name: c for c in summary.SummaryCog.__cog_commands__}
     assert {"haftalık", "weekly"} <= set(names["haftalik"].aliases)
     assert {"aylik", "aylık"} <= set(names["wrapped"].aliases)
+
+
+async def test_awards_recorded_even_without_channel(db, tmp_path, monkeypatch):
+    guild = _Guild()
+    _member(guild, 1, "Talha")
+    _member(guild, 2, "Barış")
+    t = datetime.datetime(2026, 10, 22, 2, 0, tzinfo=TZ).timestamp()
+    await db.insert_activity_rows([
+        (t, 1, 1, "xp_voice", 9, 1, None, json.dumps({"peers": [2]})),
+        (t, 1, 2, "xp_voice", 9, 1, None, json.dumps({"peers": [1]})),
+        (t, 1, 2, "message", 9, None, None, None),
+    ])
+    monkeypatch.setattr(summary, "SUMMARY_CHANNEL_ID", 0)
+    monkeypatch.setattr(summary, "ANNOUNCE_CHANNEL_ID", 0)
+    c = summary.SummaryCog(SimpleNamespace(get_channel=lambda cid: None, guilds=[guild]), state_path=tmp_path / "s.json")
+    assert await c.post_due(SUNDAY) == ["week"]
+    assert await c.post_due(SUNDAY) == []
+    assert await db.count_summary_awards(1) == {1: {"week_duo": 1}, 2: {"week_duo": 1, "week_night": 1}}

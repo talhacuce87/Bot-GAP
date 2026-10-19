@@ -520,10 +520,18 @@ class AICog(commands.Cog, name="AICog"):
         assert self.orchestrator is not None
         try:
             async with channel.typing():
-                return await self.orchestrator.answer(req)
+                resp = await self.orchestrator.answer(req)
         except discord.HTTPException:
             # typing() başarısız olsa bile cevap üretmeyi dene.
-            return await self.orchestrator.answer(req)
+            resp = await self.orchestrator.answer(req)
+        if resp.ok:
+            # Başarımlar ("Robotla Dertleşen") için başarılı sohbetler sayılır
+            try:
+                import activitylog
+                activitylog.record("ai_chat", req.guild_id, req.user_id, channel_id=req.channel_id)
+            except Exception:
+                log.debug("activitylog kaydı yazılamadı", exc_info=True)
+        return resp
 
     async def _respond_to_message(self, message: discord.Message) -> None:
         reason = self.unavailable_reason(message.guild.id)

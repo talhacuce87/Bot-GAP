@@ -90,7 +90,8 @@ class InfoCog(commands.Cog):
                 "• `!xp` — Hızlı metin tabanlı XP ve aktif boost durumu\n"
                 "• `!streak` — Günlük mesaj serisi ve XP çarpanı bonusu\n"
                 "• `!haftalik` — Kişisel haftalık özet kartın (sadece pazar, haftada bir)\n"
-                "• `!wrapped` — Kişisel aylık Wrapped kartın (sadece ayın son günü, ayda bir)"
+                "• `!wrapped` — Kişisel aylık Wrapped kartın (sadece ayın son günü, ayda bir)\n"
+                "• `!başarımlar [@üye]` — Rozetlerin izci fuları üzerinde · `!kartdüzen` — Kartında görünecek 3 rozeti seç"
             ),
             inline=False,
         )
@@ -143,6 +144,7 @@ class InfoCog(commands.Cog):
                     "• `!boost @üye <çarpan> [saat] <sebep>` — Belirtilen süre için geçici XP boost tanımlar\n"
                     "• `!sürgün @üye <süre|kalıcı> <sebep>` — XP 0.5x, boost ve seri işlemez (örn. `3g`, `12sa`)\n"
                     "• `!sürgünsonlandır @üye` — Sürgünü erken bitirir\n"
+                    "• `!basarimver` / `!basarimal @üye <başarım>` — Elle başarım ver (Fikir Babası) / geri al\n"
                     "• *XP komutlarında sebep zorunludur; tüm işlemler kayıt altına alınır*\n"
                     "• `!xpsenkronize` — Sunucu üyelerinin XP rollerini kontrol edip eşitler\n"
                     "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır"
@@ -192,9 +194,19 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "Haftalık özet ve aylık Wrapped geldi! 📊"
+                "Başarımlar, haftalık özet ve aylık Wrapped geldi! 🏅📊"
             ),
             color=discord.Color.from_rgb(0, 212, 255),
+        )
+
+        embed.add_field(
+            name="🏅 Başarımlar",
+            value=(
+                "• 27 başarım: ses, sohbet, arkadaşlık, özetler, sadakat, özel günler ve **gizliler**\n"
+                "• Çoğu **Gümüş → Altın → Platin** kademeli; geçmiş aktiviten de sayıldı\n"
+                "• `!başarımlar` — rozetlerin izci fuları üzerinde · `!kartdüzen` — `!kart`'ında 3 rozet göster"
+            ),
+            inline=False,
         )
 
         embed.add_field(
