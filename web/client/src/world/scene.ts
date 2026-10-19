@@ -7,7 +7,7 @@ import { WORLD_RADIUS } from "../../../shared/constants";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
 import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, windMaterial } from "./geo";
-import { dungeon, GROVE, grove, pond, signPost } from "./zones";
+import { dungeon, GROVE, grove, GROVE_SIGN, pond, signPost } from "./zones";
 
 export type { Seat };
 
@@ -490,7 +490,7 @@ export function buildWorld(): World {
   scene.add(amphitheatre(b));
   const dz = dungeon(b);
   const gr = grove(b);
-  signPost(b, GROVE.x - 6.3, GROVE.z - 1.9, 2.1);
+  signPost(b, GROVE_SIGN.x + 0.1, GROVE_SIGN.z, 2.1);
   pond(b);
   nature(b);
 
