@@ -1,5 +1,6 @@
 // Uzak oyuncular: snapshot halka tamponu + INTERP_DELAY_MS geriden interpolasyon.
 import type * as THREE from "three";
+import { JUMP_MASK, JUMP_SHIFT, JUMP_TIME, jumpHeight } from "../../../shared/constants";
 import type { PlayerInfo } from "../../../shared/protocol";
 import type { AvatarAtlas } from "./atlas";
 import { type AvatarView, colorFor } from "./avatars";
@@ -25,6 +26,9 @@ export class Remote implements AvatarView {
   alpha = 0;
   emote = -1;
   emoteAt = 0;
+  jumpY = 0;
+  private lastJumpSeq = -1;
+  private jumpT = JUMP_TIME;
   leaving = false;
   readonly color: THREE.Color;
   readonly phase: number;
@@ -76,8 +80,18 @@ export class Remote implements AvatarView {
     this.push(0, x, z, rot, 0);
   }
 
-  /** `renderTime` anına (sunucu saati) göre konumu hesaplar. */
+  /** `renderTime` anına (sunucu saati) göre konumu ve zıplamayı hesaplar. */
   sample(renderTime: number, dt: number): void {
+    this.interp(renderTime, dt);
+    // Sayaç değiştiyse yeni zıplama: yay herkes için aynı olduğu için yerelde çizilir.
+    const seq = (this.flags & JUMP_MASK) >> JUMP_SHIFT;
+    if (this.lastJumpSeq >= 0 && seq !== this.lastJumpSeq) this.jumpT = 0;
+    if (this.n > 0) this.lastJumpSeq = seq;
+    this.jumpT += dt;
+    this.jumpY = jumpHeight(this.jumpT);
+  }
+
+  private interp(renderTime: number, dt: number): void {
     this.alpha = this.leaving ? Math.max(0, this.alpha - dt * FADE_PER_SEC) : Math.min(1, this.alpha + dt * FADE_PER_SEC);
     if (this.n === 0) return;
     const newest = (this.head + BUF - 1) % BUF;

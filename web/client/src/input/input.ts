@@ -17,6 +17,7 @@ export class Input {
   private lookY = 0;
   private zoom = 0;
   private action = false;
+  private jump = false;
   private emote = -1;
 
   private joyId = -1;
@@ -46,7 +47,11 @@ export class Input {
       if (e.repeat) return;
       if (e.target instanceof HTMLInputElement) return;
       const k = e.key.toLocaleLowerCase("en");
-      if (k === "e" || k === " ") this.action = true;
+      if (k === "e") this.action = true;
+      if (k === " ") {
+        this.jump = true;
+        e.preventDefault(); // sayfa kaymasın, odaktaki düğme tetiklenmesin
+      }
       if (k >= "1" && k <= "6") this.emote = Number(k) - 1;
       this.keys.add(k);
     });
@@ -198,7 +203,7 @@ export class Input {
     return z;
   }
 
-  /** Otur/kalk tuşu (E veya boşluk) ya da dokunmatik düğme. */
+  /** Otur/kalk tuşu (E) ya da dokunmatik düğme. */
   consumeAction(): boolean {
     const a = this.action;
     this.action = false;
@@ -214,6 +219,16 @@ export class Input {
 
   triggerEmote(i: number): void {
     this.emote = i;
+  }
+
+  consumeJump(): boolean {
+    const j = this.jump;
+    this.jump = false;
+    return j;
+  }
+
+  triggerJump(): void {
+    this.jump = true;
   }
 
   triggerAction(): void {

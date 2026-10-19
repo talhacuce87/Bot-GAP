@@ -1,6 +1,18 @@
 // Yerel oyuncu: anında tepki veren hareket (sunucuyu beklemez), oturma ve 3. şahıs kamera.
 import * as THREE from "three";
-import { clampToJail, FLAG_SEATED, FLAG_WALKING, PLAYER_RADIUS, RUN_MULTIPLIER, WALK_SPEED } from "../../shared/constants";
+import {
+  clampToJail,
+  FLAG_RUNNING,
+  FLAG_SEATED,
+  FLAG_WALKING,
+  GRAVITY,
+  JUMP_MASK,
+  JUMP_SHIFT,
+  JUMP_VELOCITY,
+  PLAYER_RADIUS,
+  RUN_MULTIPLIER,
+  WALK_SPEED,
+} from "../../shared/constants";
 import type { PlayerState } from "../../shared/protocol";
 import type { AvatarView } from "./avatars/avatars";
 import type { Input } from "./input/input";
@@ -26,6 +38,10 @@ export class Player implements AvatarView, PlayerState {
   phase = 0;
   emote = -1;
   emoteAt = 0;
+  /** Zemin üstü yükseklik (zıplarken). */
+  jumpY = 0;
+  private vy = 0;
+  private jumpSeq = 0;
   color: THREE.Color;
   /** Oturma menzilindeki koltuk (UI ipucu için), yoksa null. */
   nearSeat: Seat | null = null;
@@ -66,11 +82,24 @@ export class Player implements AvatarView, PlayerState {
     this.dist = THREE.MathUtils.clamp(this.dist + input.consumeZoom() * 0.6, 2.5, 12);
 
     const action = input.consumeAction();
+    let jump = input.consumeJump();
     const moving = Math.abs(input.moveX) > 0.15 || Math.abs(input.moveY) > 0.15;
 
     if (this.seat) {
-      if (action || moving) this.standUp();
+      if (action || moving || jump) this.standUp();
       else return;
+      jump = false; // kalkarken zıplama
+    }
+
+    // Zıplama: sabit hız ve yerçekimi; uzak istemciler aynı yayı sayaçtan çizer.
+    if (jump && this.jumpY === 0) {
+      this.vy = JUMP_VELOCITY;
+      this.jumpSeq = (this.jumpSeq + 1) & 3;
+    }
+    if (this.vy !== 0 || this.jumpY > 0) {
+      this.jumpY += this.vy * dt;
+      this.vy -= GRAVITY * dt;
+      if (this.jumpY <= 0) this.jumpY = this.vy = 0;
     }
 
     // Kameraya göre hareket yönü: ileri = kameranın baktığı yatay yön.
@@ -88,7 +117,7 @@ export class Player implements AvatarView, PlayerState {
 
     const speed = Math.hypot(this.vx, this.vz);
     if (speed > 0.3) this.rot = dampAngle(this.rot, Math.atan2(this.vx, this.vz), 1 - Math.exp(-dt * 12));
-    this.flags = speed > 0.6 ? FLAG_WALKING : 0;
+    this.flags = (speed > 0.6 ? FLAG_WALKING : 0) | (speed > WALK_SPEED * 1.15 ? FLAG_RUNNING : 0) | this.jumpBits();
 
     this.nearSeat = this.findSeat();
     if (action && this.nearSeat) this.sitOn(this.nearSeat);
@@ -97,11 +126,12 @@ export class Player implements AvatarView, PlayerState {
   /** Sunucunun belirlediği yere ışınlanır (zindana giriş/çıkış). */
   teleport(x: number, z: number, rot: number): void {
     this.seat = null;
+    this.jumpY = this.vy = 0;
     this.x = x;
     this.z = z;
     this.rot = rot;
     this.vx = this.vz = 0;
-    this.flags = 0;
+    this.flags = this.jumpBits();
     this.yaw = rot + Math.PI;
     this.target.set(x, 1.45, z);
   }
@@ -120,7 +150,13 @@ export class Player implements AvatarView, PlayerState {
     return best;
   }
 
+  /** Sayaç her durumda korunur; sıfırlanırsa uzak istemciler sahte bir zıplama görür. */
+  private jumpBits(): number {
+    return (this.jumpSeq << JUMP_SHIFT) & JUMP_MASK;
+  }
+
   private sitOn(s: Seat): void {
+    this.jumpY = this.vy = 0;
     this.seat = s;
     this.standX = this.x;
     this.standZ = this.z;
@@ -128,7 +164,7 @@ export class Player implements AvatarView, PlayerState {
     this.z = s.z;
     this.rot = s.rot;
     this.vx = this.vz = 0;
-    this.flags = FLAG_SEATED;
+    this.flags = FLAG_SEATED | this.jumpBits();
     this.nearSeat = null;
     // Kamerayı perdeye doğru, oturanın arkasına çevir.
     this.yaw = s.rot + Math.PI;
@@ -138,12 +174,13 @@ export class Player implements AvatarView, PlayerState {
     this.seat = null;
     this.x = this.standX;
     this.z = this.standZ;
-    this.flags = 0;
+    this.flags = this.jumpBits();
   }
 
   updateCamera(camera: THREE.PerspectiveCamera, dt: number): void {
     const k = 1 - Math.exp(-dt * 14);
-    const ty = this.seat ? 1.15 : 1.45;
+    // Zıplarken kamera yarısı kadar yükselir: sarsmadan takip eder.
+    const ty = (this.seat ? 1.15 : 1.45) + this.jumpY * 0.5;
     this.target.x += (this.x - this.target.x) * k;
     this.target.y += (ty - this.target.y) * k;
     this.target.z += (this.z - this.target.z) * k;

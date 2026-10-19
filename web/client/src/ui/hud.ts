@@ -45,7 +45,7 @@ export class Hud {
     this.prompt.addEventListener("click", onAction);
     el("div", "hint", root).textContent = touch
       ? "Sol: yürü (sonuna kadar it: koş) • Sağ: kamera • İki parmak: yakınlaştır"
-      : "WASD: yürü • Shift: koş • Sürükle: kamera • Tekerlek: yakınlaştır • E: otur";
+      : "WASD: yürü • Shift: koş • Space: zıpla • E: otur • 1–6: emote • Sürükle: kamera";
   }
 
   /** Sağ kenarda emote düğmeleri (masaüstünde 1–6 tuşları da çalışır). */
@@ -56,6 +56,17 @@ export class Hud {
       b.textContent = em.emoji;
       b.title = touch ? em.name : `${em.name} (${i + 1})`;
       b.addEventListener("click", () => onEmote(i));
+    });
+  }
+
+  /** Dokunmatikte zıplama düğmesi (masaüstünde Space). */
+  jumpButton(onJump: () => void): void {
+    const b = el("button", "jump-btn", this.root);
+    b.textContent = "⤒";
+    b.title = "Zıpla";
+    b.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      onJump();
     });
   }
 

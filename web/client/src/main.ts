@@ -125,6 +125,7 @@ async function start(): Promise<void> {
   }
 
   hud.emoteBar(input.touch, (i) => input.triggerEmote(i));
+  if (input.touch) hud.jumpButton(() => input.triggerJump());
   let lastEmote = 0;
 
   const botCount = Math.min(MAX_AVATARS - 1, Math.max(0, Number(params.get("bots")) || 0));

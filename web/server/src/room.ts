@@ -1,8 +1,7 @@
 // Oda başına oyuncu durumu ve 15 Hz snapshot yayını.
 import {
   clampToJail,
-  FLAG_SEATED,
-  FLAG_WALKING,
+  FLAG_MASK,
   JAIL_SPAWN,
   RELEASE_SPAWN,
   ROOM_MAX_PLAYERS,
@@ -141,7 +140,7 @@ export class Room {
     p.state.z = z;
     if (p.info.jailed) clampToJail(p.state);
     p.state.rot = s.rot;
-    p.state.flags = s.flags & (FLAG_WALKING | FLAG_SEATED);
+    p.state.flags = s.flags & FLAG_MASK;
     p.lastUpdate = now;
     this.dirty = true;
   }

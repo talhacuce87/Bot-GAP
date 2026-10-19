@@ -22,6 +22,21 @@ export const ROOM_MAX_PLAYERS = 100;
 /** Oyuncu durum bitleri. */
 export const FLAG_WALKING = 1;
 export const FLAG_SEATED = 2;
+/** 2 bitlik zıplama sayacı: her yeni zıplamada artar, böylece arka arkaya zıplamalar da kaçmaz. */
+export const JUMP_SHIFT = 2;
+export const JUMP_MASK = 0b1100;
+export const FLAG_RUNNING = 16;
+export const FLAG_MASK = FLAG_WALKING | FLAG_SEATED | JUMP_MASK | FLAG_RUNNING;
+
+/** Herkesin zıplaması aynı: uzak istemciler yayı yükseklik göndermeden aynen çizer. */
+export const JUMP_VELOCITY = 6.2;
+export const GRAVITY = 19;
+export const JUMP_TIME = (2 * JUMP_VELOCITY) / GRAVITY;
+
+/** Zıplamanın başından `t` sn sonraki yükseklik (havada değilse 0). */
+export function jumpHeight(t: number): number {
+  return t > 0 && t < JUMP_TIME ? JUMP_VELOCITY * t - 0.5 * GRAVITY * t * t : 0;
+}
 
 /** Konumlar santimetre hassasiyetinde int16 olarak gönderilir. */
 export const POS_SCALE = 100;
