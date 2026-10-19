@@ -461,6 +461,7 @@ Tarayıcıda Discord olmadan misafir olarak açılır. Kullanılabilecek paramet
 - **Zindan:** Batıda. `!sürgün` ile cezalandırılanlar dünyaya girince hücrede doğar ve çıkamaz. Ceza bitince parmaklıkların önüne çıkarılır; bot listeyi 20 sn'de bir, komut verildiğinde ise hemen dünyaya gönderir (`world_cog.py`). Bunun için iki serviste de aynı `WORLD_SHARED_SECRET` tanımlı olmalı.
 - **LAGER'in Mangalı:** Doğuda, ormanın içinde. Mangal, kütük oturaklar, piknik masası ve ışık zinciri var.
 - **Gölet:** Güneyde, kenarında bir bank var.
+- **Şöhret Kürsüsü:** Meydanın güneybatısında. XP sıralamasının ilk 10'u bir panoda gösterilir; önündeki podyumda ilk 3 için altın, gümüş ve bronz heykeller durur. Bot sıralamayı 5 dakikada bir gönderir, pano sayfa yenilenmeden güncellenir.
 
 **Kontroller:** WASD ile yürü, sürükleyerek kamerayı çevir, tekerlekle yakınlaştır, E ile koltuğa otur. Dokunmatik cihazlarda ekranın sol yarısı joystick, sağ yarısı kamera.
 
@@ -474,7 +475,7 @@ Tarayıcıda Discord olmadan misafir olarak açılır. Kullanılabilecek paramet
    - YouTube testi için ek mapping'ler: `/youtube` → `www.youtube.com`, `/ytimg` → `i.ytimg.com`.
 4. Ses kanalında 🚀 Activities menüsünden uygulamayı başlat. Aynı kanalda başlatan herkes aynı odaya düşer.
 
-**Sunucu uç noktaları:** `/health`, `/api/config`, `/api/token` (OAuth code değişimi), `/api/guest`, `/avatar/<id>/<hash>` (Discord CDN proxy'si), `/ws` (oyun bağlantısı), `/internal/sessions` (`x-world-secret` başlığı gerekir; bot entegrasyonu için).
+**Sunucu uç noktaları:** `/health`, `/api/config`, `/api/token` (OAuth code değişimi), `/api/guest`, `/avatar/<id>/<hash>` (Discord CDN proxy'si), `/ws` (oyun bağlantısı), `/internal/sessions`, `/internal/exiles`, `/internal/leaderboard` (üçü de `x-world-secret` başlığı ister; bot entegrasyonu için).
 
 ---
 

@@ -1,6 +1,6 @@
 // WebSocket istemcisi: 15 Hz konum gönderimi, snapshot alımı, saat senkronu ve yeniden bağlanma.
 import { SEND_HZ } from "../../shared/constants";
-import { encodeState, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES } from "../../shared/protocol";
+import { type BoardEntry, encodeState, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
 
 export type NetStatus = "connecting" | "online" | "offline" | "denied";
@@ -17,6 +17,7 @@ export class Net {
   onStatus: (s: NetStatus) => void = () => {};
   /** Kendi sürgün durumumuz değişti (girişte ya da canlı). */
   onJail: (jailed: boolean, x: number, z: number, rot: number) => void = () => {};
+  onBoard: (entries: BoardEntry[], updated: number) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -103,6 +104,9 @@ export class Net {
       case "jail":
         if (ev.sid === this.you) this.onJail(ev.jailed, ev.x, ev.z, ev.rot);
         else this.remotes.setJailed(ev.sid, ev.jailed, ev.x, ev.z, ev.rot);
+        break;
+      case "board":
+        this.onBoard(ev.entries, ev.updated);
         break;
       case "leave":
         this.remotes.leave(ev.sid);

@@ -70,7 +70,9 @@ async function start(): Promise<void> {
 
   const input = new Input(canvas, hudRoot);
   const hud = new Hud(hudRoot, session.user.name, input.touch, () => input.triggerAction());
+  world.fame.setAvatarUrl((id, hash) => `${session.base}/avatar/${id}/${hash}`);
   const net = new Net(session.wsUrl, remotes);
+  net.onBoard = (entries, updated) => world.fame.set(entries, updated);
   net.onStatus = (s) => hud.setStatus(s);
   net.onJail = (jailed, x, z, rot) => {
     const was = me.jailed;

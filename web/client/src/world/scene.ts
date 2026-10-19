@@ -6,6 +6,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { WORLD_RADIUS } from "../../../shared/constants";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
+import { FameBoard, fameStatics } from "./fame";
 import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, windMaterial } from "./geo";
 import { dungeon, GROVE, grove, GROVE_SIGN, pond, signPost } from "./zones";
 
@@ -15,6 +16,8 @@ export interface World {
   scene: THREE.Scene;
   colliders: Colliders;
   seats: Seat[];
+  /** Şöhret Kürsüsü: bot'un gönderdiği XP sıralaması. */
+  fame: FameBoard;
   /** Watch party perdesinin dünya konumu (Faz 3). */
   screen: THREE.Mesh;
   spawn: { x: number; z: number; rot: number };
@@ -492,6 +495,7 @@ export function buildWorld(): World {
   const gr = grove(b);
   signPost(b, GROVE_SIGN.x + 0.1, GROVE_SIGN.z, 2.1);
   pond(b);
+  fameStatics(b);
   nature(b);
 
   const statics = new THREE.Mesh(mergeGeometries(b.statics), new THREE.MeshLambertMaterial({ vertexColors: true }));
@@ -505,6 +509,8 @@ export function buildWorld(): World {
   scene.add(cloudMesh);
   scene.add(signsMesh(dz.signAt, gr.signAt));
   scene.add(gr.coals);
+  const fame = new FameBoard();
+  scene.add(fame.group);
   scene.add(smoke(gr.smokeAt));
 
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(SCREEN_W, SCREEN_H), new THREE.MeshBasicMaterial({ map: screenTexture(), fog: false }));
@@ -520,6 +526,7 @@ export function buildWorld(): World {
     scene,
     colliders: b.colliders,
     seats: b.seats,
+    fame,
     screen,
     spawn: { x: 0, z: 8, rot: Math.PI },
     update(time: number) {
