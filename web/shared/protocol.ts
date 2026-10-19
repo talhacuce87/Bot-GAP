@@ -45,6 +45,16 @@ export interface WatchState {
   op: string;
 }
 
+/** Gölden çıkan balık (bot zarı atar): boost `hours` saat 2x XP, `luck` efsanevi şansına eklenen yüzde. */
+export interface FishCatch {
+  rarity: "common" | "uncommon" | "rare" | "epic" | "legendary";
+  label: string;
+  fish: string;
+  hours: number;
+  streak: number;
+  luck: number;
+}
+
 /** Sunucunun gönderdiği JSON olaylar. */
 export type ServerEvent =
   | { t: "welcome"; you: number; room: string; players: PlayerInfo[] }
@@ -56,6 +66,7 @@ export type ServerEvent =
   | { t: "notice"; text: string }
   | { t: "emote"; sid: number; e: number }
   | { t: "act"; sid: number; a: Act }
+  | { t: "fish"; sid: number; name: string; catch: FishCatch }
   | { t: "pong"; c: number; s: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */
@@ -64,7 +75,8 @@ export type ClientEvent =
   | { t: "wcmd"; op: "play" | "pause" | "seek"; pos?: number }
   | { t: "wload"; url: string }
   | { t: "emote"; e: number }
-  | { t: "act"; a: Act };
+  | { t: "act"; a: Act }
+  | { t: "fish" };
 
 export const STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;

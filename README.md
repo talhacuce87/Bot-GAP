@@ -175,6 +175,7 @@ XP komutlarında sebep zorunludur (en az 5 karakter) ve her işlem olay kaydına
 | **Günlük seri** | O gün yazılan ilk mesaj seriyi ilerletir. Her seri günü mesaj XP'sine **+%2** ekler (en fazla **+%50**). |
 | **Seri ödülleri** | 7 gün +50 · 14 gün +120 · 30 gün +300 · 60 gün +700 · 100 gün +1500 XP |
 | **Boost** | Yöneticinin verdiği süreli çarpan; mesaj ve ses XP'sine uygulanır. |
+| **Balık** | GAP Dünyası'ndaki gölde günde bir balık: nadirliğine göre süreli **2x** boost. Yönetici boost'undan ayrı tutulur, geçerli olan büyük çarpandır. Bkz. [Gölde balık tutma](#gölde-balık-tutma). |
 | **Sürgün** | Sürgündeki üye tüm XP'yi sabit **0.5x** kazanır; boost ve seri çarpanı yok sayılır. |
 
 Seviye, toplam XP'nin geçtiği rol eşiğidir: 0, 150, 400, 800, 1.400, 2.300, 3.500, 5.200, 7.600, 10.500, 14.500, 19.500, 25.500, 32.500, 40.000, 100.000, 250.000, 500.000 ve 1.000.000 XP (19 seviye). Eşik geçilince rol otomatik verilir; `!roller` haritayı gösterir.
@@ -478,8 +479,25 @@ Tarayıcıda Discord olmadan misafir olarak açılır. Kullanılabilecek paramet
 - **Sinema:** Kuzeyde. 20 m'lik perde ve 6 sıralık amfi.
 - **Zindan:** Batıda. `!sürgün` ile cezalandırılanlar dünyaya girince hücrede doğar ve çıkamaz. Ceza bitince parmaklıkların önüne çıkarılır; bot listeyi 20 sn'de bir, komut verildiğinde ise hemen dünyaya gönderir (`world_cog.py`). Bunun için iki serviste de aynı `WORLD_SHARED_SECRET` tanımlı olmalı.
 - **LAGER'in Mangalı:** Doğuda, ormanın içinde. Mangal, kütük oturaklar, piknik masası ve ışık zinciri var.
-- **Gölet:** Güneyde, kenarında bir bank var.
+- **Gölet:** Güneyde, kenarında bir bank var. Gölde ördekler yüzer; kenarında F ile günde bir balık tutulur (aşağıda).
+- **Sakura Bahçesi:** Kuzeydoğuda, torii kapıdan girilir. Gür çimen, sakura ağaçları, gece loş yanan taş fenerler, ortadaki büyük sakuraya bakan iki bank. İçeri girince ekran pembe parlayıp söner, yukarıdan sakura yaprakları süzülür, esinti ve rüzgâr çanı sesi gelir (ses Web Audio ile üretilir). Yürürken yerdeki yapraklar ayağının dibinde havalanır. Yoğunluk ve boyutlar `web/client/src/world/sakura.ts` içindeki `SAKURA_CONFIG`'te.
 - **Şöhret Kürsüsü:** Meydanın güneybatısında. XP sıralamasının ilk 10'u bir panoda gösterilir; önündeki podyumda ilk 3 için altın, gümüş ve bronz heykeller durur. Bot sıralamayı 5 dakikada bir gönderir, pano sayfa yenilenmeden güncellenir.
+
+#### Gölde balık tutma
+
+Gölün kenarında **F · Balık tut 🎣**. Türkiye saatiyle günde bir kez; zar botta atılır (`fishing.py`), dünya yalnızca gölün yanında olup olmadığını doğrular. Misafirler ve sürgündekiler tutamaz.
+
+| Nadirlik | Balık | İhtimal | Ödül |
+|---|---|---|---|
+| Yaygın | Sazan | %70 | 1 saat 2x XP |
+| Az Bulunur | Kızılkanat | %20 | 2 saat 2x XP |
+| Nadir | Turna | %7.5 | 4 saat 2x XP |
+| Epik | Yayın Balığı | %2 | 8 saat 2x XP |
+| Efsanevi | Altın Sazan | %0.5 | 24 saat 2x XP |
+
+- **Şans serisi:** Art arda balık tutulan her gün efsanevi ihtimalini **+%0.1** artırır (fark yaygından düşülür), en fazla **%5**'e kadar. Bir gün atlanırsa seri sıfırlanır.
+- **Boost:** Yeni balığın süresi süren balık boost'unun üstüne eklenir. Yöneticinin `!boost`'u ayrı tutulur; ikisinden büyük çarpan geçerlidir, `!xp`'de görünür.
+- **Kurulum:** Dünya, botun iç HTTP ucuna (`BOT_INTERNAL_URL`, varsayılan `http://bot-gap:8081`) `WORLD_SHARED_SECRET` ile istek atar.
 
 **Kontroller:** WASD ile yürü, Shift ile koş, sürükleyerek kamerayı çevir, tekerlekle yakınlaştır, E ile koltuğa otur. Dokunmatik cihazlarda ekranın sol yarısı joystick (sonuna kadar itince koşar), sağ yarısı kamera.
 

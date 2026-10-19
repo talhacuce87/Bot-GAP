@@ -10,8 +10,16 @@ const DURATION = 1.8;
 const GRID: [number, number] = [4, 4]; // 512×512 atlas, 128px hücre
 
 /** Emote'lardan sonraki hücreler: etkileşim efektleri. */
-export const FX_CELL = { skewer: EMOTES.length, tomato: EMOTES.length + 1, tea: EMOTES.length + 2, splat: EMOTES.length + 3 };
-const FX_EMOJI = ["🍢", "🍅", "🍵", "💥"];
+export const FX_CELL = {
+  skewer: EMOTES.length,
+  tomato: EMOTES.length + 1,
+  tea: EMOTES.length + 2,
+  splat: EMOTES.length + 3,
+  rod: EMOTES.length + 4,
+  fish: EMOTES.length + 5,
+  sparkle: EMOTES.length + 6,
+};
+const FX_EMOJI = ["🍢", "🍅", "🍵", "💥", "🎣", "🐟", "✨"];
 const CELL = 128;
 /** Emoji isim etiketinin üstünden çıkar: yüzü ve ismi kapatmasın. */
 const HEAD_Y = 2.6;

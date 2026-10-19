@@ -81,6 +81,11 @@ export const ACT_COOLDOWN_MS = 1200;
 /** Atılan çay/domatesin, sürgünde kimse yoksa düştüğü yer: hücrenin ortası. */
 export const JAIL_CENTER = { x: (JAIL.minX + JAIL.maxX) / 2, z: (JAIL.minZ + JAIL.maxZ) / 2 };
 
+/** Gölde balık tutma: gölün çevresinde (zones.ts POND, su yarıçapı 6.5). Zar ve günlük sınır botta. */
+export const FISH_SPOT = { x: 24, z: 56, r: 9 };
+/** Bot'a sorulmadan önce kişi başı bekleme: yanıt gelene kadar tekrar basılmasın. */
+export const FISH_COOLDOWN_MS = 3000;
+
 export function actSpot(a: Act): { x: number; z: number; r: number } {
   return a === "grill" ? ACT_SPOTS.grill : ACT_SPOTS.bars;
 }

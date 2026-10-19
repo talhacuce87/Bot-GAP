@@ -10,18 +10,24 @@ doğrudan video dosyası olabilir. Bot "İzlemeye katıl" düğmesini kanala ata
 düğme dünyayı tarayıcıda açar ve video sinema perdesinde herkes için senkron oynar. Dünya iç ağda
 `WORLD_INTERNAL_URL` (varsayılan http://world:3000) adresindedir ve istekler
 `WORLD_SHARED_SECRET` ile doğrulanır. Secret yoksa cog hiçbir şey yapmaz.
+
+Ters yön: dünya, gölde balık tutulunca botun iç HTTP ucuna (`WORLD_BOT_PORT`,
+varsayılan 8081) `POST /internal/fish` atar; zar, seri ve boost botta (fishing.py).
 """
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 
 import discord
 import httpx
+from aiohttp import web
 from discord.ext import commands, tasks
 
 import database as db
+import fishing
 from font_utils import clean_display_name
 
 log = logging.getLogger("gap.world")
@@ -78,7 +84,9 @@ class WorldCog(commands.Cog):
         self.bot = bot
         self.secret = os.getenv("WORLD_SHARED_SECRET", "").strip()
         self.url = os.getenv("WORLD_INTERNAL_URL", "http://world:3000").rstrip("/")
+        self.port = int(os.getenv("WORLD_BOT_PORT", "8081"))
         self._client: httpx.AsyncClient | None = None
+        self._runner: web.AppRunner | None = None
         self._failing = False
 
     async def cog_load(self) -> None:
@@ -88,12 +96,40 @@ class WorldCog(commands.Cog):
         self._client = httpx.AsyncClient(timeout=5, headers={"x-world-secret": self.secret})
         self.push_loop.start()
         self.board_loop.start()
+        app = web.Application(client_max_size=4096)
+        app.router.add_post("/internal/fish", self.handle_fish)
+        self._runner = web.AppRunner(app, access_log=None)
+        await self._runner.setup()
+        await web.TCPSite(self._runner, "0.0.0.0", self.port).start()
 
     async def cog_unload(self) -> None:
         self.push_loop.cancel()
         self.board_loop.cancel()
         if self._client is not None:
             await self._client.aclose()
+        if self._runner is not None:
+            await self._runner.cleanup()
+
+    async def handle_fish(self, request: web.Request) -> web.Response:
+        """Dünyadan: {"guild", "user"} → günün balığı ya da neden tutulamadığı."""
+        if not hmac.compare_digest(request.headers.get("x-world-secret", ""), self.secret):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+            guild_id, user_id = int(body["guild"]), int(body["user"])
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild and user required"}, status=400)
+        guild = self.bot.get_guild(guild_id)
+        if guild is None or guild.get_member(user_id) is None:
+            return web.json_response({"ok": False, "reason": "not_member"})
+        exile = await db.get_exile(guild_id, user_id)
+        if exile is not None and not db.exile_expired(exile):
+            return web.json_response({"ok": False, "reason": "exiled"})
+        result = await fishing.catch(guild_id, user_id)
+        if result is None:
+            return web.json_response({"ok": False, "reason": "already"})
+        log.info("Balık: %s %s (%s saat, seri %s)", user_id, result["rarity"], result["hours"], result["streak"])
+        return web.json_response({"ok": True, **result})
 
     async def push_exiles(self) -> None:
         if self._client is None:

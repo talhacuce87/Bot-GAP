@@ -91,10 +91,15 @@ export function windMaterial(
         #else
           vec2 ip = vec2(0.0);
         #endif
-        float sway = sin(uTime * 1.6 + ip.x * 0.31 + ip.y * 0.23) + 0.4 * sin(uTime * 3.1 + ip.x * 0.7);
+        // Haritayı yavaşça geçen rüzgâr dalgası: ağaçlar sırayla eğilir.
+        float gust = 0.55 + 0.45 * sin(uTime * 0.35 - ip.x * 0.045 - ip.y * 0.03);
+        float sway = gust * (sin(uTime * 1.6 + ip.x * 0.31 + ip.y * 0.23) + 0.4 * sin(uTime * 3.1 + ip.x * 0.7));
         float h = max(position.y, 0.0);
-        transformed.x += sway * ${strength.toFixed(4)} * h;
-        transformed.z += sway * ${(strength * 0.6).toFixed(4)} * h;
+        // Yaprak hışırtısı: yerel konuma bağlı, ortak köşeler aynı yer değiştirir, yüzeyler kopmaz.
+        float flutter = sin(uTime * 6.0 + position.x * 4.0 + position.z * 3.0 + ip.x) * gust * ${(strength * 0.35).toFixed(4)} * h;
+        transformed.x += sway * ${strength.toFixed(4)} * h + flutter;
+        transformed.y += flutter * 0.5;
+        transformed.z += sway * ${(strength * 0.6).toFixed(4)} * h - flutter;
         ${fade ? `
         #ifdef USE_INSTANCING
           vec4 wp = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);

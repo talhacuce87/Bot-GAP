@@ -1,8 +1,9 @@
 // Meydan dışındaki bölgeler: zindan (batı), LAGER'in mangalı (doğu, orman içi), gölet (güney).
-// Hepsi Builder'a parça ekler; kendi draw call'ları yalnızca animasyonlu kısımlar (köz, duman).
+// Hepsi Builder'a parça ekler; kendi draw call'ları yalnızca animasyonlu kısımlar (köz, duman, su, ördekler).
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { Builder } from "./builder";
-import { flatMat, mat, part } from "./geo";
+import { flatMat, mat, part, timeUniform } from "./geo";
 
 const STONE = "#6f7378";
 const STONE_DARK = "#55595f";
@@ -255,12 +256,75 @@ export function signPost(b: Builder, x: number, z: number, h: number): void {
 
 export const POND = { x: 24, z: 56 };
 
-export function pond(b: Builder): void {
+/**
+ * Su yüzeyi: dalga, parıltı, kıyı köpüğü ve `ring` noktasının çevresinde yayılan halkalar
+ * (gölde ördek, çeşmede suyun düştüğü yer); hepsi fragment shader'da. `ringR` > 0 ise halkalar
+ * noktadan değil o yarıçaptaki çemberden yayılır; `hole` halkanın tam ortasını boş bırakır.
+ */
+export function waterMaterial(
+  cx: number,
+  cz: number,
+  r: number,
+  ring: { value: THREE.Vector2 },
+  ringR = 0,
+  hole = 0.25,
+): THREE.MeshLambertMaterial {
+  const m = new THREE.MeshLambertMaterial();
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = timeUniform;
+    shader.uniforms.uDuck = ring;
+    shader.uniforms.uDeep = { value: new THREE.Color("#3a7fba") };
+    shader.uniforms.uShallow = { value: new THREE.Color("#5ea8db") };
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vWater;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWater = (modelMatrix * vec4(transformed, 1.0)).xz;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nuniform float uTime;\nuniform vec2 uDuck;\nuniform vec3 uDeep;\nuniform vec3 uShallow;\nvarying vec2 vWater;")
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+        vec2 q = vWater - vec2(${cx.toFixed(2)}, ${cz.toFixed(2)});
+        float d = length(q) / ${r.toFixed(2)};
+        diffuseColor.rgb = mix(uDeep, uShallow, smoothstep(0.15, 1.0, d));
+        float w = sin(vWater.x * 1.9 + uTime * 1.2) * sin(vWater.y * 2.3 - uTime * 0.9)
+                + 0.5 * sin((vWater.x - vWater.y) * 3.7 + uTime * 1.8);
+        diffuseColor.rgb += w * 0.03 + smoothstep(1.1, 1.45, w) * 0.22;
+        float dd = abs(distance(vWater, uDuck) - ${ringR.toFixed(2)});
+        diffuseColor.rgb += max(sin(dd * 10.0 - uTime * 5.0), 0.0) * exp(-dd * 1.5) * smoothstep(${hole.toFixed(2)}, ${(hole + 0.2).toFixed(2)}, dd) * 0.16;
+        float shore = smoothstep(0.88, 1.0, d + 0.03 * sin(atan(q.y, q.x) * 7.0 + uTime * 1.5));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.9, 0.95), shore * 0.5);`,
+      );
+  };
+  m.customProgramCacheKey = () => `water-${cx}-${cz}-${r}-${ringR}-${hole}`;
+  return m;
+}
+
+/** Ana ördek + iki yavru, tek InstancedMesh. Model +z'ye bakar, su çizgisi y=0. */
+function duckMesh(): THREE.InstancedMesh {
+  const white = "#f4f1e8";
+  const geo = mergeGeometries([
+    part(new THREE.SphereGeometry(1, 7, 5), white, mat(0, 0.1, 0, 0, 0.22, 0.15, 0.32)),
+    part(new THREE.ConeGeometry(0.08, 0.18, 5), white, new THREE.Matrix4().makeRotationX(-1).setPosition(0, 0.16, -0.3)),
+    part(new THREE.CylinderGeometry(0.06, 0.08, 0.18, 6), white, mat(0, 0.22, 0.17)),
+    part(new THREE.SphereGeometry(0.12, 7, 5), white, mat(0, 0.33, 0.2)),
+    part(new THREE.BoxGeometry(0.09, 0.04, 0.13), "#f29a2e", mat(0, 0.31, 0.35)),
+    part(new THREE.BoxGeometry(0.22, 0.03, 0.03), "#1a1a1a", mat(0, 0.36, 0.25)),
+  ]);
+  const m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 3);
+  m.setColorAt(0, new THREE.Color(1, 1, 1));
+  for (const i of [1, 2]) m.setColorAt(i, new THREE.Color("#ffd84a"));
+  m.frustumCulled = false;
+  return m;
+}
+
+export function pond(b: Builder): { water: THREE.Mesh; ducks: THREE.InstancedMesh; update(time: number): void } {
   const { x: px, z: pz } = POND;
   const r = 6.5;
   b.add(part(new THREE.CircleGeometry(r + 0.8, 24), "#d6c48e", flatMat(px, 0.012, pz), 0.08, b.rand));
-  b.add(part(new THREE.CircleGeometry(r, 24), "#4f97cf", flatMat(px, 0.03, pz), 0.05, b.rand));
-  b.add(part(new THREE.CircleGeometry(r * 0.55, 18), "#3f86c0", flatMat(px + 0.4, 0.035, pz - 0.3)));
+  const duckAt = { value: new THREE.Vector2(px, pz) };
+  const water = new THREE.Mesh(new THREE.CircleGeometry(r, 32).applyMatrix4(flatMat(px, 0.03, pz)), waterMaterial(px, pz, r, duckAt));
+  water.matrixAutoUpdate = false;
+  const ducks = duckMesh();
   for (let i = 0; i < 6; i++) {
     const a = b.rand() * Math.PI * 2, d = b.rand() * r * 0.75;
     b.add(part(new THREE.CircleGeometry(0.22 + b.rand() * 0.12, 7, 0.5, Math.PI * 1.8), "#4f9a45", flatMat(px + Math.cos(a) * d, 0.045, pz + Math.sin(a) * d, 1, 1, b.rand() * 6)));
@@ -281,4 +345,31 @@ export function pond(b: Builder): void {
   b.colliders.segment(bx - 0.85, bz, bx + 0.85, bz, 0.3);
   for (const o of [-0.45, 0.45]) b.seats.push({ x: bx + o, z: bz, rot: 0 });
   b.shadow(bx, bz, 1.2);
+
+  // Ördekler gölü dalgalı bir halkada turlar; yavrular aynı yolu biraz geriden izler.
+  const path = (t: number, out: THREE.Vector2) =>
+    out.set(px + Math.cos(t * 0.1) * r * (0.55 + 0.12 * Math.sin(t * 0.23)), pz + Math.sin(t * 0.1) * r * (0.55 + 0.12 * Math.sin(t * 0.23)));
+  const p0 = new THREE.Vector2(), p1 = new THREE.Vector2();
+  const euler = new THREE.Euler(0, 0, 0, "YXZ"), q = new THREE.Quaternion();
+  const pos = new THREE.Vector3(), scale = new THREE.Vector3(), m4 = new THREE.Matrix4();
+  return {
+    water,
+    ducks,
+    update(time) {
+      for (let i = 0; i < 3; i++) {
+        const t = time - i * 2.2;
+        path(t, p0);
+        path(t + 0.05, p1);
+        // Ana ördek ~14 sn'de bir başını suya daldırır
+        const cyc = time % 14;
+        const dip = i === 0 && cyc < 1.6 ? Math.sin((cyc / 1.6) * Math.PI) : 0;
+        euler.set(dip * 1.0, Math.atan2(p1.x - p0.x, p1.y - p0.y) + 0.15 * Math.sin(time * 1.7 + i), 0.06 * Math.sin(time * 2.1 + i));
+        const s = i ? 0.5 : 1;
+        pos.set(p0.x, 0.03 + 0.015 * Math.sin(time * 2.4 + i * 1.3), p0.y);
+        ducks.setMatrixAt(i, m4.compose(pos, q.setFromEuler(euler), scale.set(s, s, s)));
+        if (i === 0) duckAt.value.copy(p0);
+      }
+      ducks.instanceMatrix.needsUpdate = true;
+    },
+  };
 }

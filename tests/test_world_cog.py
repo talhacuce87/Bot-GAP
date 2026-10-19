@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from types import SimpleNamespace
 
@@ -156,3 +157,27 @@ async def test_watch_command_rejects_unsupported_and_survives_world_down(monkeyp
 
     await world_cog.WorldCog.watch_command.callback(cog, ctx, None)
     assert "Kullanım" in ctx.sent[-1]["content"]
+
+
+async def test_fish_endpoint_checks_secret_membership_and_daily_limit(db, monkeypatch):
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    guild = SimpleNamespace(get_member=lambda uid: object() if uid == 5 else None)
+    bot = SimpleNamespace(get_guild=lambda gid: guild if gid == 1 else None)
+    cog = world_cog.WorldCog(bot)
+
+    def req(body, secret="s3cret"):
+        async def _json():
+            return body
+        return SimpleNamespace(headers={"x-world-secret": secret}, json=_json)
+
+    async def call(*a, **kw):
+        r = await cog.handle_fish(req(*a, **kw))
+        return r.status, json.loads(r.text)
+
+    assert (await call({"guild": "1", "user": "5"}, secret="wrong"))[0] == 404
+    assert (await call({"guild": "1"}))[0] == 400
+    assert (await call({"guild": "1", "user": "6"}))[1] == {"ok": False, "reason": "not_member"}
+
+    status, first = await call({"guild": "1", "user": "5"})
+    assert status == 200 and first["ok"] and first["hours"] >= 1
+    assert (await call({"guild": "1", "user": "5"}))[1] == {"ok": False, "reason": "already"}

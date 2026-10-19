@@ -13,7 +13,7 @@ import logging
 import time
 from itertools import combinations
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aiosqlite
 
@@ -142,6 +142,15 @@ CREATE TABLE IF NOT EXISTS summary_awards (
     user_id  INTEGER NOT NULL,
     PRIMARY KEY (guild_id, period, award, user_id)
 );
+
+-- Gölde balık tutma (fishing.py): son tutulan gün ve art arda gün serisi
+CREATE TABLE IF NOT EXISTS fishing (
+    guild_id  INTEGER NOT NULL,
+    user_id   INTEGER NOT NULL,
+    last_date TEXT    NOT NULL,
+    streak    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id)
+);
 """
 
 _MIGRATIONS: list[str] = [
@@ -152,6 +161,8 @@ _MIGRATIONS: list[str] = [
     "ALTER TABLE user_xp ADD COLUMN voice_seconds INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE user_xp ADD COLUMN active_voice_started_at REAL",
     "ALTER TABLE user_xp ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0",
+    # Balık boost'u (sabit 2x) yönetici boost'undan ayrı tutulur
+    "ALTER TABLE user_xp ADD COLUMN fish_boost_expires_at REAL",
 ]
 
 
@@ -218,7 +229,7 @@ async def get_user_row(guild_id: int, user_id: int) -> aiosqlite.Row | None:
                 text_xp, voice_xp, voice_seconds,
                 active_voice_started_at, message_count,
                 (text_xp + voice_xp) AS total_xp,
-                xp_boost_multiplier, xp_boost_expires_at,
+                xp_boost_multiplier, xp_boost_expires_at, fish_boost_expires_at,
                 streak_days, last_message_date
             FROM user_xp
             WHERE guild_id = ? AND user_id = ?
@@ -521,18 +532,86 @@ async def get_active_multiplier(guild_id: int, user_id: int) -> float:
     row = await get_user_row(guild_id, user_id)
     if row is None:
         return 1.0
-    mult = float(row["xp_boost_multiplier"])
-    # Bozuk değerlere karşı koruma
-    return mult if 1.0 <= mult <= 10.0 else 1.0
+    return active_boost(row)[0]
+
+
+FISH_BOOST_MULTIPLIER = 2.0
 
 
 def active_boost(row: aiosqlite.Row) -> tuple[float, float | None]:
-    """Satırdaki boost hâlâ geçerliyse (çarpan, bitiş) döner, değilse (1.0, None)."""
+    """
+    Geçerli boost (çarpan, bitiş); yoksa (1.0, None). Yönetici boost'u ile balık
+    boost'undan (2x) büyük olanı geçerlidir.
+    """
+    now = time.time()
     mult = float(row["xp_boost_multiplier"])
     expires = row["xp_boost_expires_at"]
-    if expires is None or expires <= time.time() or not (1.0 < mult <= 10.0):
-        return 1.0, None
-    return mult, float(expires)
+    best: tuple[float, float | None] = (1.0, None)
+    # Bozuk değerlere karşı koruma
+    if expires is not None and expires > now and 1.0 < mult <= 10.0:
+        best = (mult, float(expires))
+    fish = row["fish_boost_expires_at"]
+    if fish is not None and fish > now and FISH_BOOST_MULTIPLIER >= best[0]:
+        best = (FISH_BOOST_MULTIPLIER, float(fish))
+    return best
+
+
+async def record_fish_catch(
+    guild_id: int,
+    user_id: int,
+    roll: Callable[[int], Any],
+    duration: Callable[[Any], int],
+) -> tuple[Any, int, float] | None:
+    """
+    Günün balığını tek işlemde kaydeder: bugün zaten tutulduysa None.
+    `roll(önceki_seri)` balığı seçer, `duration(balık)` boost süresini (sn) verir;
+    süre mevcut balık boost'unun üstüne eklenir. Döner: (balık, yeni_seri, boost_bitişi).
+    """
+    today_date = _today()
+    today = today_date.isoformat()
+    yesterday = (today_date - datetime.timedelta(days=1)).isoformat()
+    await ensure_user(guild_id, user_id)
+
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            async with db.execute(
+                "SELECT last_date, streak FROM fishing WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ) as cur:
+                row = await cur.fetchone()
+            if row is not None and row["last_date"] == today:
+                await db.commit()
+                return None
+            prev = int(row["streak"]) if row is not None and row["last_date"] == yesterday else 0
+            fish = roll(prev)
+
+            async with db.execute(
+                "SELECT fish_boost_expires_at FROM user_xp WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ) as cur:
+                current = (await cur.fetchone())["fish_boost_expires_at"]
+            now = time.time()
+            boost_until = max(current or now, now) + duration(fish)
+
+            await db.execute(
+                """
+                INSERT INTO fishing (guild_id, user_id, last_date, streak) VALUES (?, ?, ?, ?)
+                ON CONFLICT (guild_id, user_id) DO UPDATE SET last_date = excluded.last_date, streak = excluded.streak
+                """,
+                (guild_id, user_id, today, prev + 1),
+            )
+            await db.execute(
+                "UPDATE user_xp SET fish_boost_expires_at = ? WHERE guild_id = ? AND user_id = ?",
+                (boost_until, guild_id, user_id),
+            )
+            await db.commit()
+            return fish, prev + 1, boost_until
+        except Exception:
+            await db.rollback()
+            raise
+
 
 
 # ---------------------------------------------------------------------------

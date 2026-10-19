@@ -6,8 +6,8 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
-import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, TICK_HZ } from "../../shared/constants";
-import { decodeState, type PlayerState } from "../../shared/protocol";
+import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
+import { decodeState, type FishCatch, type PlayerState } from "../../shared/protocol";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
 import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
@@ -25,6 +25,8 @@ const PUBLIC_URL = (process.env.WORLD_PUBLIC_URL || "").replace(/\/+$/, "");
 /** Discord ayarlıysa izleme odalarına yalnızca Discord ile giriş yapanlar girer. */
 const LOGIN_REQUIRED = !!(CLIENT_ID && CLIENT_SECRET);
 const SESSION_COOKIE = "gw_session";
+/** Botun iç HTTP ucu: balık zarı, seri ve XP boost'u orada (fishing.py). */
+const BOT_URL = (process.env.BOT_INTERNAL_URL || "http://bot-gap:8081").replace(/\/+$/, "");
 
 const STATIC_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)), "../client");
 
@@ -398,6 +400,41 @@ function onWatchMessage(ws: WebSocket, room: Room, w: Watch, user: SessionUser, 
   }
 }
 
+const FISH_REFUSED: Record<string, string> = {
+  already: "🎣 Bugünkü balığını tuttun. Yarın tekrar gel, serin bozulmasın!",
+  exiled: "⛓️ Sürgündeyken balık tutamazsın.",
+  not_member: "🎣 Balık tutmak için bu sunucunun üyesi olmalısın.",
+};
+
+/** Bot'a günün balığını sorar; tutulduysa odaya duyurur, tutulamadıysa yalnızca tutana söyler. */
+async function fish(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null): Promise<void> {
+  const notice = (text: string) => ws.send(JSON.stringify({ t: "notice", text }));
+  if (user.guest || !guild) return notice("🎣 Balık tutmak için dünyaya Discord'dan (ses kanalındaki Activity ile) gir.");
+  if (!SHARED_SECRET) return notice("🎣 Göl şu an kapalı (bot bağlı değil).");
+  try {
+    const r = await fetch(`${BOT_URL}/internal/fish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-world-secret": SHARED_SECRET },
+      body: JSON.stringify({ guild, user: user.id }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const body = (await r.json()) as { ok?: boolean; reason?: string } & Partial<FishCatch>;
+    if (!r.ok || !body.ok) return notice(FISH_REFUSED[body.reason ?? ""] ?? "🎣 Olta takıldı, biraz sonra tekrar dene.");
+    const c: FishCatch = {
+      rarity: body.rarity!,
+      label: String(body.label),
+      fish: String(body.fish),
+      hours: Number(body.hours),
+      streak: Number(body.streak),
+      luck: Number(body.luck),
+    };
+    room.broadcast({ t: "fish", sid, name: user.name, catch: c });
+  } catch (err) {
+    console.warn("[fish]", (err as Error).message);
+    notice("🎣 Olta takıldı, biraz sonra tekrar dene.");
+  }
+}
+
 function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions, watch?: Watch): void {
   const room = rooms.get(key);
   const sid = room.join(user, ws, Date.now(), opts);
@@ -406,6 +443,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   const limiter = { last: 0 };
   let lastEmote = 0;
   let lastAct = 0;
+  let lastFish = 0;
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   alive.add(ws);
 
@@ -431,6 +469,14 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (near && !p.info.spectator && !(a !== "grill" && p.info.jailed) && now - lastAct >= ACT_COOLDOWN_MS) {
           lastAct = now;
           room.broadcast({ t: "act", sid, a }, sid);
+        }
+      } else if (msg?.t === "fish") {
+        const p = room.players.get(sid);
+        const now = Date.now();
+        const near = p && Math.hypot(p.state.x - FISH_SPOT.x, p.state.z - FISH_SPOT.z) <= FISH_SPOT.r + 1;
+        if (near && !p.info.spectator && !p.info.jailed && now - lastFish >= FISH_COOLDOWN_MS) {
+          lastFish = now;
+          void fish(ws, room, sid, user, opts.guild ?? null);
         }
       } else if (msg?.t === "emote") {
         const e = msg.e;

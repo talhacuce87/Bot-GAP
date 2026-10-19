@@ -6,6 +6,10 @@ import {
   type Act,
   EMOTE_COOLDOWN_MS,
   EMOTES,
+  FISH_COOLDOWN_MS,
+  FLAG_RUNNING,
+  FLAG_WALKING,
+  FISH_SPOT,
   INTERP_DELAY_MS,
   JAIL_CENTER,
   JAIL_SPAWN,
@@ -22,6 +26,7 @@ import { Net } from "./net";
 import { PerfGovernor } from "./perf";
 import { Player } from "./player";
 import { Hud } from "./ui/hud";
+import { sakuraEntrance } from "./ui/sakuraFx";
 import { openYoutubeTest } from "./ui/youtube";
 import { ScreenVideo } from "./watch/screen";
 import { WatchSync } from "./watch/sync";
@@ -105,6 +110,7 @@ async function start(): Promise<void> {
     emoteFx.emit(r.x, 0, r.z, e, t);
   };
   net.onStatus = (s) => hud.setStatus(s);
+  net.onNotice = (text) => hud.toast(text);
   net.onJail = (jailed, x, z, rot) => {
     const was = me.jailed;
     me.jailed = jailed;
@@ -163,10 +169,27 @@ async function start(): Promise<void> {
     const r = remotes.map.get(sid);
     if (r?.hasData) perform(a, r.x, r.z, r.info.name, performance.now() / 1000, false);
   };
-  const nearActs = (): { key: "f" | "g"; label: string; act: Act }[] => {
+  // Balık: zar botta; sonuç herkese "fish" olayıyla gelir. Nadirlik arttıkça daha çok balık fışkırır.
+  const FISH_BURST = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 6 } as const;
+  net.onFish = (sid, name, c) => {
+    const self = sid === net.you;
+    const r = remotes.map.get(sid);
+    const [x, z] = self ? [me.x, me.z] : r?.hasData ? [r.x, r.z] : [FISH_SPOT.x, FISH_SPOT.z];
+    const time = performance.now() / 1000;
+    emoteFx.emit(x, 0, z, FX_CELL.fish, time, undefined, FISH_BURST[c.rarity] ?? 1);
+    if (c.rarity === "epic" || c.rarity === "legendary") emoteFx.emit(x, 0.4, z, FX_CELL.sparkle, time + 0.3, undefined, 4);
+    if (self) {
+      const luck = c.luck > 0 ? ` · şans +%${c.luck.toFixed(1)}` : "";
+      hud.toast(`🐟 ${c.label}: ${c.fish}! ${c.hours} saat 2x XP · seri ${c.streak} gün${luck}`);
+    } else if (c.rarity === "epic" || c.rarity === "legendary") {
+      hud.toast(`🎣 ${name} ${c.label.toLowerCase()} bir ${c.fish} tuttu!`);
+    }
+  };
+  const nearActs = (): { key: "f" | "g"; label: string; act: Act | "fish" }[] => {
     if (me.jailed) return [];
     const g = ACT_SPOTS.grill, bars = ACT_SPOTS.bars;
     if (Math.hypot(me.x - g.x, me.z - g.z) <= g.r) return [{ key: "f", label: "Şiş çevir 🍢", act: "grill" }];
+    if (Math.hypot(me.x - FISH_SPOT.x, me.z - FISH_SPOT.z) <= FISH_SPOT.r) return [{ key: "f", label: "Balık tut 🎣", act: "fish" }];
     if (Math.hypot(me.x - bars.x, me.z - bars.z) <= bars.r) {
       return [
         { key: "f", label: "Çay ver 🍵", act: "tea" },
@@ -176,6 +199,10 @@ async function start(): Promise<void> {
     return [];
   };
   let lastAct = -Infinity;
+  // Sakura Bahçesi: içeri girince karşılama (kenarda gidip gelirken tekrar tekrar patlamasın)
+  const SAKURA_FX_COOLDOWN_MS = 30_000;
+  let inGarden = world.sakura.inside(me.x, me.z);
+  let lastGardenFx = -Infinity;
   if (input.touch) hud.jumpButton(() => input.triggerJump());
   let lastEmote = 0;
 
@@ -208,12 +235,25 @@ async function start(): Promise<void> {
       net.send({ t: "emote", e: emote });
     }
     me.update(dt, input);
+    world.sakura.kick(me.x, me.z, me.flags & FLAG_RUNNING ? 1 : me.flags & FLAG_WALKING ? 0.6 : 0);
+    if (!inGarden && world.sakura.inside(me.x, me.z, 0.5)) {
+      inGarden = true;
+      if (now - lastGardenFx >= SAKURA_FX_COOLDOWN_MS) {
+        lastGardenFx = now;
+        sakuraEntrance();
+        hud.toast("🌸 Sakura Bahçesi");
+      }
+    } else if (inGarden && !world.sakura.inside(me.x, me.z, -1.5)) inGarden = false;
 
     const acts = nearActs();
     hud.setActs(acts, input.touch, (k) => input.triggerAct(k));
     const actKey = input.consumeAct();
     const act = actKey ? acts.find((a) => a.key === actKey)?.act : undefined;
-    if (act && now - lastAct >= ACT_COOLDOWN_MS) {
+    if (act === "fish" && now - lastAct >= FISH_COOLDOWN_MS) {
+      lastAct = now;
+      emoteFx.emit(me.x, 0, me.z, FX_CELL.rod, time, undefined, 1);
+      net.send({ t: "fish" });
+    } else if (act && act !== "fish" && now - lastAct >= ACT_COOLDOWN_MS) {
       lastAct = now;
       perform(act, me.x, me.z, session.user.name, time, true);
       net.send({ t: "act", a: act });

@@ -11,7 +11,7 @@ export interface Seat {
 }
 
 /** Tekrarlanan objeler: her biri tek InstancedMesh olarak çizilir. */
-export type PropKind = "pine" | "oak" | "rock" | "bush" | "stone" | "post" | "bulb" | "flame" | "log";
+export type PropKind = "pine" | "oak" | "sakura" | "rock" | "bush" | "stone" | "post" | "bulb" | "flame" | "log";
 
 export class Builder {
   readonly rand = rng(0x6a7);
@@ -20,7 +20,7 @@ export class Builder {
   readonly colliders = new Colliders();
   readonly seats: Seat[] = [];
   readonly props: Record<PropKind, THREE.Matrix4[]> = {
-    pine: [], oak: [], rock: [], bush: [], stone: [], post: [], bulb: [], flame: [], log: [],
+    pine: [], oak: [], sakura: [], rock: [], bush: [], stone: [], post: [], bulb: [], flame: [], log: [],
   };
   /** Zemin gölgeleri: x, z, yarıçap. */
   readonly shadows: number[] = [];

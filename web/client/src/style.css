@@ -342,7 +342,8 @@ body {
   transform: translateX(-50%);
   opacity: 0;
   transition: opacity 0.25s;
-  white-space: nowrap;
+  max-width: calc(100vw - 32px);
+  text-align: center;
 }
 
 .toast.show {
@@ -453,4 +454,59 @@ body {
 
 .act-btn:active {
   transform: scale(0.95);
+}
+
+/* Sakura Bahçesi girişi: pembe parlama yavaşça söner, yapraklar yukarıdan süzülür */
+.sakura-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, #fff7f8 0%, #fedfe1 55%, #f9c6cf 100%);
+  animation: sakura-flash 1.9s ease-out forwards;
+}
+
+.sakura-flash.calm {
+  animation-duration: 0.9s;
+  opacity: 0.4;
+}
+
+@keyframes sakura-flash {
+  0% { opacity: 0.95; }
+  15% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+
+.sakura-petals {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.sakura-fall {
+  position: absolute;
+  top: -24px;
+  animation: sakura-fall linear forwards;
+  opacity: 0;
+}
+
+.sakura-petal {
+  display: block;
+  border-radius: 150% 0 150% 0;
+  box-shadow: inset -2px -2px 3px rgba(214, 120, 145, 0.35);
+  animation: sakura-sway ease-in-out infinite alternate;
+}
+
+@keyframes sakura-fall {
+  0% { transform: translate(0, 0); opacity: 0; }
+  8% { opacity: 0.95; }
+  80% { opacity: 0.85; }
+  100% { transform: translate(14vw, 108vh); opacity: 0; }
+}
+
+@keyframes sakura-sway {
+  0% { transform: translateX(-18px) rotate(-25deg) rotateY(0deg); }
+  100% { transform: translateX(18px) rotate(35deg) rotateY(160deg); }
 }
