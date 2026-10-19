@@ -19,8 +19,8 @@ import achievement_cog
 import achievements as ach
 import activitylog
 import database
-from achievements import ACHIEVEMENTS, BY_KEY, MemberFacts, aggregate, evaluate, revived, special_day
-from badges import SashEntry, draw_patch, render_sash_card
+from achievements import ACHIEVEMENTS, BY_KEY, MemberFacts, aggregate, evaluate, revived, special_days
+from badges import SashEntry, draw_patch, render_sash_card, sash_size
 from summary_stats import STREAK_TZ
 
 H = 3600
@@ -51,14 +51,20 @@ def _facts(**kw) -> MemberFacts:
 # ---------------------------------------------------------------------------
 
 def test_catalog_matches_requests():
-    assert len(ACHIEVEMENTS) == 27 and len(BY_KEY) == 27
-    assert {"podyum", "zirve", "hizli_yukselis", "kefil"}.isdisjoint(BY_KEY)
+    assert len(ACHIEVEMENTS) == 47 and len(BY_KEY) == 47
+    assert {"podyum", "zirve", "hizli_yukselis", "kefil", "kurucu_kadro", "kanal_hoplayan", "sohbet_baslatan",
+            "can_dostu"}.isdisjoint(BY_KEY)
+    assert BY_KEY["ses_kurdu"].tiers == (250, 1000, 2000) and BY_KEY["maraton"].tiers == (12, 17, 24)
+    assert BY_KEY["gece_nobeti"].tiers == (25, 50, 150) and BY_KEY["kalabalik_sever"].tiers == (10, 50, 150)
+    assert BY_KEY["sosyal_kelebek"].tiers == (15, 20, 30) and BY_KEY["koleksiyoncu"].tiers == (10, 20, 30)
+    assert BY_KEY["platin_avcisi"].tiers == (3, 7, 10) and BY_KEY["ataturkun_evlatlari"].name == "Atatürk'ün Evlatları"
+    assert len({a.icon for a in ACHIEVEMENTS}) == 47                       # her rozetin kendi simgesi
     assert BY_KEY["yayinci"].tiers[0] == 100 and BY_KEY["yuzumuz_ortada"].tiers[0] == 5
     assert BY_KEY["kulak_misafiri"].tiers[0] == 50
     assert BY_KEY["kapiyi_acan"].tiers[0] == 40 and BY_KEY["isiklari_kapatan"].tiers[0] == 40
     assert BY_KEY["sunucu_destekcisi"].tiers == (3, 6, 12)
     spammy = {"meme_lordu", "sticker_canavari", "muhabbetin_ortasi", "destan_yazdi", "gezgin", "ikinci_dusunce",
-              "kimlik_krizi", "firari", "robotla_dertlesen"}
+              "kimlik_krizi", "firari", "robotla_dertlesen", "pismanlik", "sabikali", "islah_oldum", "hayalet"}
     assert {a.key for a in ACHIEVEMENTS if a.hidden} == spammy
     for a in ACHIEVEMENTS:
         assert list(a.tiers) == sorted(a.tiers)
@@ -92,7 +98,8 @@ def test_aggregate():
         _row(1, "message_edit"), _row(1, "nick_change"), _row(1, "ai_chat"),
         _row(None, "message"),
     ]
-    inc, sets = aggregate(rows, 120)
+    agg = aggregate(rows, 120)
+    inc, sets = agg.inc, {k for k, v in agg.assign.items() if k[2].startswith("ch:")}
     week = ach.week_key(rows[0]["ts"])
     assert inc[1, 1, "stream"] == inc[1, 1, "video"] == inc[1, 1, "muted"] == 120
     assert inc[1, 1, f"duo:{week}:2"] == 240 and inc[1, 1, f"duo:{week}:3"] == 120
@@ -142,7 +149,14 @@ def test_duo_needs_30h_in_same_week():
     ],
 )
 def test_special_days(when, expected):
-    assert special_day(when) == expected
+    assert special_days(when) == ([expected] if expected else [])
+
+
+def test_republic_day_and_gap_birthday():
+    day = datetime.datetime(2026, 10, 29, 20, 0, tzinfo=STREAK_TZ)
+    assert special_days(day) == ["republic"]
+    assert special_days(day, founded=datetime.date(2019, 10, 29)) == ["republic", "gapbday"]
+    assert special_days(day, founded=datetime.date(2026, 10, 29)) == ["republic"]     # kuruluş günü yıldönümü değil
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +363,7 @@ async def test_guide_shows_visible_achievements_and_status(db):
     assert "Yayıncı** · ✅ Altın" in text and "100 / 250 / 500 saat" in text
     assert "Kapıyı Açan** · ▫️" in text and "(yönetici verir)" in text
     assert "Meme Lordu" not in text and "Sticker" not in text                  # gizliler ele verilmez
-    assert "**9** gizli başarım var, **1** tanesini buldun" in text
+    assert "**13** gizli başarım var, **1** tanesini buldun" in text
     assert all(len(f.value) <= 1024 for f in embed.fields) and len(embed) <= 6000
 
 
@@ -385,7 +399,8 @@ def test_patch_renders(state):
 def test_sash_card_renders():
     entries = [SashEntry(a, 1 if i % 3 == 0 else 0, not a.hidden) for i, a in enumerate(ACHIEVEMENTS)]
     card = render_sash_card("Çok uzun bir isim 🔥", None, entries, [])
-    assert card.size == (1400, 1040)
+    assert card.size == sash_size(len(ACHIEVEMENTS)) and card.size[0] == 1400
+    assert sash_size(60)[1] > sash_size(47)[1]                              # rozet arttıkça kart uzar
 
 
 async def test_sash_card_from_cog(db):
@@ -394,4 +409,127 @@ async def test_sash_card_from_cog(db):
     cog = _cog(guild)
     await cog.run_once()
     img = Image.open(await cog.build_sash(member))
-    assert img.size == (1400, 1040)
+    assert img.size == sash_size(len(ACHIEVEMENTS))
+
+
+
+# ---------------------------------------------------------------------------
+# Yeni başarımlar
+# ---------------------------------------------------------------------------
+
+def _ts(day: int, hour: int, minute: int = 0) -> float:
+    return datetime.datetime(2026, 10, day, hour, minute, tzinfo=STREAK_TZ).timestamp()
+
+
+def test_aggregate_new_counters():
+    crowd = list(range(2, 11))                                              # kendisiyle 10 kişi
+    rows = [
+        _row(1, "xp_voice", {"peers": [2]}, ts=_ts(5, 3, 30)),             # 03:30 gece nöbeti
+        _row(1, "xp_voice", {"peers": crowd}, ts=_ts(5, 21)),
+        _row(1, "xp_voice", {"peers": crowd}, ts=_ts(5, 22)),               # aynı gün ikinci kez sayılmaz
+        _row(1, "xp_voice", {"peers": crowd[:8]}, ts=_ts(6, 21)),           # 9 kişilik: sayılmaz
+        _row(1, "xp_message"), _row(1, "xp_message"),
+        _row(1, "message", {"len": 5}, ts=_ts(5, 7, 59)),                   # 08:00 öncesi: günaydın sayılmaz
+        _row(2, "message", {"len": 5}, ts=_ts(5, 8, 5)),                    # günün ilk 08:00 sonrası mesajı
+        _row(1, "message", {"len": 5}, ts=_ts(5, 9, 0)),
+        _row(1, "message_delete"), _row(1, "message_delete"),
+        _row(1, "voice_leave", {"seconds": 13 * H}), _row(1, "voice_leave", {"seconds": 2 * H}),
+    ]
+    agg = aggregate(rows, 120)
+    assert agg.inc[1, 1, "night_voice"] == 120
+    assert {k[2] for k in agg.assign if k[2].startswith("crowd:")} == {"crowd:2026-10-05"}
+    assert agg.inc[1, 1, "xpmsg"] == 2 and agg.inc[1, 1, "deleted"] == 2
+    assert agg.inc[1, 1, "morning"] == 1 and agg.inc[1, 2, "morning"] == 1
+    assert agg.first_messages[1, "2026-10-05"][1] == 2
+    assert agg.maxes[1, 1, "max_session"] == 13 * H
+
+
+def test_newcomer_voice_counts_only_first_30_days():
+    joined = {(1, 2): _ts(1, 12), (1, 3): _ts(1, 12) - 40 * 86400}
+    rows = [_row(1, "xp_voice", {"peers": [2, 3]}, ts=_ts(10, 20))]
+    agg = aggregate(rows, 120, joined)
+    assert agg.inc[1, 1, "new:2"] == 120 and (1, 1, "new:3") not in agg.inc
+
+
+def test_reform_needs_10_hour_exile_and_30_clean_days():
+    start = _ts(1, 10)
+    short = aggregate([_row(1, "admin_exile", {"yeni": True}, ts=start),
+                       _row(1, "admin_exile_end", ts=start + 9 * H)], 120)
+    assert short.assign[1, 1, "reform_from"] == 0                           # 10 saatten kısa: sayılmaz
+    long = aggregate([_row(1, "exile_expired", ts=start + 11 * H)], 120, exile_starts={(1, 1): start})
+    assert long.assign[1, 1, "reform_from"] == start + 11 * H               # önceki turdan kalan başlangıç
+    update = aggregate([_row(1, "admin_exile", {"yeni": False}, ts=start)], 120)
+    assert (1, 1, "exiled") not in update.inc                               # süre güncellemesi yeni sürgün değil
+
+    end = start + 11 * H
+    now = datetime.datetime.fromtimestamp(end + 31 * 86400, datetime.timezone.utc)
+    assert evaluate(_facts(counters={"reform_from": end, "exiled": 1}, now=now), {})["islah_oldum"] == 1
+    early = datetime.datetime.fromtimestamp(end + 10 * 86400, datetime.timezone.utc)
+    assert "islah_oldum" not in evaluate(_facts(counters={"reform_from": end}, now=early), {})
+
+
+def test_streak_level_voice_ghost_and_social():
+    days = [f"2026-08-{d:02d}" for d in range(1, 9)] + ["2026-10-01"]        # 8 gün seri, sonra 50+ gün yok
+    new = evaluate(_facts(message_days=days, active_days=days, voice_seconds=260 * H, level=10,
+                          friends_5h=16, counters={"max_session": 17 * H, "night_voice": 26 * H, "gm": 10,
+                                                   "xpmsg": 1000, "morning": 100, "new:5": 5 * H,
+                                                   **{f"crowd:2026-09-{d:02d}": 1 for d in range(1, 11)}}), {})
+    assert new["atesli_seri"] == 1 and new["yukselen_yildiz"] == 2 and new["ses_kurdu"] == 1
+    assert new["hayalet"] == 1 and new["sosyal_kelebek"] == 1 and new["maraton"] == 2
+    assert new["gece_nobeti"] == 1 and new["gunaydin"] == 1 and new["klavye_ustasi"] == 1
+    assert new["sabahci"] == 1 and new["hos_geldin_komitesi"] == 1 and new["kalabalik_sever"] == 1
+    assert evaluate(_facts(current_streak=31), {})["atesli_seri"] == 2
+
+
+def test_collection_achievements_count_other_badges():
+    earned = {k: BY_KEY[k].max_tier for k in ("yayinci", "kulak_misafiri", "gap_emektari")}
+    earned.update({k: 1 for k in ("sadik", "dirilis", "gezgin", "destan_yazdi", "sabikali", "hayalet")})
+    new = evaluate(_facts(counters={"door": 40}), earned)                  # +Kapıyı Açan = 10 başarım
+    assert new["kapiyi_acan"] == 1 and new["koleksiyoncu"] == 1 and new["platin_avcisi"] == 1
+    assert "koleksiyoncu" not in evaluate(_facts(), {k: 1 for k in list(earned)[:5]})
+
+
+async def test_first_message_of_day_is_claimed_once(db):
+    guild = _Guild()
+    _member(guild, 1)
+    _member(guild, 2)
+    await db.insert_activity_rows([
+        (_ts(5, 8, 1), 1, 2, "message", 10, None, None, None),
+        (_ts(5, 9), 1, 1, "message", 10, None, None, None),
+    ])
+    cog = _cog(guild)
+    await cog.run_once()
+    await db.insert_activity_rows([(_ts(5, 8, 0), 1, 1, "message", 10, None, None, None)])   # geç işlenen ama erken mesaj
+    await cog.run_once()
+    counters = await db.get_achievement_counters(1)
+    assert counters[2]["gm"] == 1 and "gm" not in counters.get(1, {})       # o gün zaten kapıldı
+
+
+async def test_weekly_mvp_award_counts(db):
+    from summary_stats import PeriodStats, period_awards
+
+    stats = PeriodStats()
+    stats.xp.update({5: 100, 6: 300})
+    assert period_awards(stats, "week")["week_mvp"] == [6]
+    await db.add_summary_awards(1, "week:2026-W43", {"week_mvp": [6]})
+    assert (await db.count_summary_awards(1))[6]["week_mvp"] == 1
+
+
+
+async def test_facts_use_xp_streak_and_voice_from_user_rows(db):
+    """Gerçek kullanıcı satırlarından seviye, toplam ses ve seri okunur (Yükselen Yıldız, Ses Kurdu, Ateşli Seri)."""
+    guild = _Guild()
+    _member(guild, 1)
+    await db.add_text_xp(1, 1, 1500)
+    await db.add_voice_xp(1, 1, 1000)                                       # toplam 2.500 XP → seviye 6
+    async with database._db() as conn:
+        today = database._today().isoformat()
+        await conn.execute("UPDATE user_xp SET voice_seconds = ?, streak_days = 8, last_message_date = ? "
+                           "WHERE user_id = 1", (300 * H, today))
+        await conn.commit()
+    cog = _cog(guild)
+    facts = (await cog._facts(guild))[1]
+    assert facts.level == 6 and facts.voice_seconds == 300 * H and facts.current_streak == 8
+    await cog.run_once()
+    got = (await db.get_achievements(1))[1]
+    assert got["yukselen_yildiz"][0] == 1 and got["ses_kurdu"][0] == 1 and got["atesli_seri"][0] == 1

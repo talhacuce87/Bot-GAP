@@ -135,10 +135,20 @@ class Goal:
     ratio: float
 
 
-W, H = 1400, 1040
-COLS, ROWS = 9, 3
-CELL_W, CELL_H = 140, 182
-PATCH = 100
+W = 1400
+HEADER_H = 210
+COLS = 10                      # satır sayısı rozet sayısına göre artar
+CELL_W, CELL_H = 124, 166
+PATCH = 88
+
+
+def sash_size(count: int) -> tuple[int, int]:
+    """Kartın boyutu: rozet sayısına göre yükseklik büyür."""
+    rows = max(1, -(-count // COLS))
+    band_w, band_h = COLS * CELL_W + 420, rows * CELL_H + 70
+    rad = math.radians(6)
+    rotated_h = int(band_w * math.sin(rad) + band_h * math.cos(rad))
+    return W, HEADER_H + rotated_h - 40
 
 
 def _fabric(width: int, height: int) -> Image.Image:
@@ -172,6 +182,8 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, width: int) -> list[str]:
 
 
 def render_sash_card(name: str, avatar: bytes | None, entries: list[SashEntry], goals: list[Goal]) -> Image.Image:
+    _, H = sash_size(len(entries))
+    rows = max(1, -(-len(entries) // COLS))
     card = Image.new("RGBA", (W, H))
     draw = ImageDraw.Draw(card)
     for y in range(H):
@@ -182,11 +194,11 @@ def render_sash_card(name: str, avatar: bytes | None, entries: list[SashEntry], 
 
     # Fular: rozetler önce düz banda dikilir, sonra bant çapraz döndürülür
     band_w = COLS * CELL_W + 420  # kumaş kenarlardan taşar, rozetler içeride kalır
-    band_h = ROWS * CELL_H + 70
+    band_h = rows * CELL_H + 70
     band = _fabric(band_w, band_h)
     bdraw = ImageDraw.Draw(band)
     x0 = (band_w - COLS * CELL_W) // 2
-    for i, e in enumerate(entries[: COLS * ROWS]):
+    for i, e in enumerate(entries):
         col, row = i % COLS, i // COLS
         cx = x0 + col * CELL_W + CELL_W // 2
         top = 38 + row * CELL_H
@@ -194,19 +206,19 @@ def render_sash_card(name: str, avatar: bytes | None, entries: list[SashEntry], 
         patch = draw_patch(e.achievement, max(e.tier, 1), PATCH, state=state)
         band.alpha_composite(patch, (cx - patch.width // 2, top))
         label = e.achievement.name if e.visible or e.tier else "???"
-        f = load_font(16, bold=True)
-        lines = _wrap(bdraw, label, f, CELL_W - 10)
+        f = load_font(15, bold=True)
+        lines = _wrap(bdraw, label, f, CELL_W - 8)
         for j, line in enumerate(lines):
-            bdraw.text((cx, top + PATCH + 16 + j * 19), line, font=f,
+            bdraw.text((cx, top + PATCH + 16 + j * 18), line, font=f,
                        fill=TEXT if e.tier else (150, 166, 178), anchor="mm")
         if e.tier:
-            bdraw.text((cx, top + PATCH + 18 + len(lines) * 19), tier_label(e.achievement, e.tier),
-                       font=load_font(14, bold=True), fill=tier_color(e.achievement, e.tier), anchor="mm")
+            bdraw.text((cx, top + PATCH + 17 + len(lines) * 18), tier_label(e.achievement, e.tier),
+                       font=load_font(13, bold=True), fill=tier_color(e.achievement, e.tier), anchor="mm")
     rotated = band.rotate(6, resample=Image.BICUBIC, expand=True)
     shadow = Image.new("RGBA", rotated.size, (0, 0, 0, 0))
     shadow.putalpha(rotated.getchannel("A").point(lambda v: 110 if v else 0))
     shadow = shadow.filter(ImageFilter.GaussianBlur(12))
-    ox, oy = (W - rotated.width) // 2, 210 + (H - 210 - rotated.height) // 2 + 10
+    ox, oy = (W - rotated.width) // 2, HEADER_H + (H - HEADER_H - rotated.height) // 2 + 10
     card.alpha_composite(shadow, (ox + 6, oy + 14))
     card.alpha_composite(rotated, (ox, oy))
 

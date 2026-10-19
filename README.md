@@ -33,7 +33,7 @@ Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanma
 | 💬 **Mesaj ve ses XP'si** | Mesaj başına rastgele XP (20 sn bekleme), seste 2 dakikada bir XP. Günlük seri ve süreli boost çarpanları. |
 | 🏅 **Seviye rolleri** | 19 kademe; XP eşiği geçilince rol otomatik verilir. |
 | ⛓️ **Sürgün** | Yöneticilerin XP cezası: süreli ya da kalıcı 0.5x XP, hapishane temalı `!sürgünler` kartı. |
-| 🏅 **Başarımlar** | 27 başarım (çoğu Gümüş/Altın/Platin kademeli, bir kısmı gizli), izci fuları kartı, `!kart`'ta 3 rozet. |
+| 🏅 **Başarımlar** | 47 başarım (çoğu Gümüş/Altın/Platin kademeli, bir kısmı gizli), izci fuları kartı, `!kart`'ta 3 rozet. |
 | 📊 **Haftalık özet & Wrapped** | Pazar akşamı haftanın, ayın son günü ayın kartı kendiliğinden paylaşılır; herkes kendi kartını da alabilir. |
 | 🎴 **Görsel kartlar** | `!kart` profil kartı, `!liderlik` ilk 10, `!roller` rol haritası, `!bf` arkadaşlık kartı. |
 | 👥 **Arkadaşlık tier'ları** | Birlikte seste geçirilen süreye göre 6 kademe: Tanıdık → Ruh İkizi. |
@@ -205,12 +205,14 @@ Bot, olay kaydındaki veriden (XP, mesajlar, ses XP'si ve o sırada seste kimler
 
 ## 🏅 Başarımlar
 
-27 başarım var. Kademeli olanlar **Gümüş → Altın → Platin** ilerler, tek kademeliler açılınca "Özel" olur. Kademe hiçbir zaman düşmez.
+47 başarım var. Kademeli olanlar **Gümüş → Altın → Platin** ilerler, tek kademeliler açılınca "Özel" olur. Kademe hiçbir zaman düşmez.
 
 - **`!başarımlar [@üye]`:** Rozetler kartı çaprazlama geçen bir izci fuları üzerinde görünür. Açılanlar işlemeli ve kademe renginde, kilitliler soluk, **gizli** kilitliler "???" olur. Sağ üstte "sıradaki hedefler" ve ilerleme çubukları yer alır.
 - **`!kartdüzen`:** Kazanılan başarımlardan en fazla **3**'ü bir menüden seçilir; `!kart`'taki "Badges" kutusunda görünür.
 - **Gizli başarımlar:** Spam'e açık olan başarımlar (mesaj, dosya, sticker, yanıt, düzenleme, takma ad…) gizlidir. Açılana kadar adı ve koşulu görünmez, böylece kasılamaz.
-- **Spam koruması:** Kapıyı Açan, ancak boş kanalı açtıktan sonra 30 dakika içinde biri gelirse sayılır. Işıkları Kapatan, ancak kanalda biriyle birlikte olunduysa sayılır.
+- **Spam koruması:** Kapıyı Açan, ancak boş kanalı açtıktan sonra 30 dakika içinde biri gelirse sayılır. Işıkları Kapatan, ancak kanalda biriyle birlikte olunduysa sayılır. Kalabalık Sever günde en fazla bir kez sayılır. Günaydın, 08:00'den sonra sunucuda o günün ilk mesajını atana verilir. Islah Oldum yalnızca aralıksız en az 10 saat süren bir sürgünden sonra 30 gün temiz kalana verilir.
+- **Koleksiyon:** Koleksiyoncu ve Platin Avcısı diğer başarımlara bakar; kendileri sayılmaz.
+- **Özel günler:** Gap'in Doğum Günü, sunucunun Discord'daki kuruluş tarihinin yıldönümünde; Atatürk'ün Evlatları, 29 Ekim'de seste olanlara verilir.
 - **Hesaplama:** Başarımlar olay kaydından 5 dakikada bir hesaplanır. İlk çalıştırmada geçmiş kayıt geriye dönük işlenir ve bu ilk açılışlar duyurulmaz. `ACHIEVEMENT_CHANNEL_ID` ayarlıysa sonraki yeni başarımlar orada duyurulur.
 - **`!başarımrehberi`:** Gizli olmayan başarımların koşulları, kademe eşikleri ve kullanıcının hangilerine sahip olduğu listelenir. Gizliler sadece sayı olarak görünür.
 - **Yönetici:** `!basarimver @üye <başarım> [kademe]` her başarımı verir. Kademe yazılmazsa bir üst kademe verilir; Fikir Babası yalnızca böyle açılır. Yanlış verilen bir başarım `!basarimal` ile geri alınır. Başarım adlarında Türkçe karakter ve büyük/küçük harf fark etmez (`fikir babasi`, `yayinci altin`).
@@ -219,14 +221,28 @@ Bot, olay kaydındaki veriden (XP, mesajlar, ses XP'si ve o sırada seste kimler
 
 | Kategori | Başarım | Koşul | Kademeler (Gümüş / Altın / Platin) |
 |---|---|---|---|
+| Ses | **Ses Kurdu** | Toplam N saat seste | 250 / 1.000 / 2.000 saat |
+| Ses | **Maraton** | Tek seferde aralıksız N saat seste | 12 / 17 / 24 saat |
+| Ses | **Gece Nöbeti** | 03:00–05:00 arası toplam N saat seste | 25 / 50 / 150 saat |
+| Ses | **Kalabalık Sever** | 10+ kişilik seste N farklı gün bulunmak | 10 / 50 / 150 gün |
 | Ses | **Yayıncı** | Seste N saat ekran paylaşımı | 100 / 250 / 500 saat |
 | Ses | **Yüzümüz Ortada** | Kamerası açık N saat seste | 5 / 25 / 100 saat |
 | Ses | **Kulak Misafiri** | Mikrofonu kapalı N saat seste | 50 / 200 / 500 saat |
 | Ses | **Kapıyı Açan** | Boş ses kanalını N kez açıp arkadaşlarını beklemek | 40 / 150 / 400 |
 | Ses | **Işıkları Kapatan** | Bir muhabbetten N kez en son çıkan olmak | 40 / 150 / 400 |
+| Sohbet | **Klavye Ustası** | XP kazandıran N mesaj | 1.000 / 5.000 / 20.000 |
+| Sohbet | **Günaydın** | 08:00'den sonra sunucudaki günün ilk mesajını N kez atmak | 10 / 50 / 150 |
+| Sohbet | **Sabahçı** | 08:00–10:00 arası N mesaj | 100 / 500 / 1.500 |
 | Arkadaşlık | **Ayrılmaz İkili** | Aynı kişiyle bir haftada 30+ saat seste | Tek |
 | Arkadaşlık | **Üç Silahşörler** | Aynı üç kişi birlikte N saat seste | 50 / 200 / 500 saat |
 | Arkadaşlık | **Herkesin Kankası** | 5 farklı kişiyle Arkadaş tier'ına ulaşmak | Tek |
+| Arkadaşlık | **Sosyal Kelebek** | N farklı kişiyle en az 5'er saat seste | 15 / 20 / 30 kişi |
+| Arkadaşlık | **Hoş Geldin Komitesi** | Yeni gelen N kişiyle ilk 30 gününde 5'er saat seste | 1 / 5 / 10 kişi |
+| İlerleme | **Ateşli Seri** | N günlük seri | 7 / 30 / 100 gün |
+| İlerleme | **Yükselen Yıldız** | Seviye N | 5 / 10 / 15 |
+| İlerleme | **Koleksiyoncu** | N başarım toplamak | 10 / 20 / 30 |
+| İlerleme | **Platin Avcısı** | N başarımda Platin kademe | 3 / 7 / 10 |
+| Özet | **Haftanın MVP'si** | N kez haftanın MVP'si olmak | 1 / 5 / 15 |
 | Özet | **Haftanın İkilisi** | N kez haftanın ikilisi olmak | 1 / 5 / 15 |
 | Özet | **Haftanın Gece Kuşu** | N kez haftanın gece kuşu olmak | 1 / 5 / 15 |
 | Özet | **Wrapped Yıldızı** | N kez ayın MVP'si olmak | 1 / 3 / 6 |
@@ -236,9 +252,11 @@ Bot, olay kaydındaki veriden (XP, mesajlar, ses XP'si ve o sırada seste kimler
 | Sadakat | **Sunucu Destekçisi** | Sunucuya N ay boost | 3 / 6 / 12 ay |
 | Özel Gün | **Yılbaşı Gecesi** | Yılbaşı gecesi (23:30–00:30) seste olmak | Tek |
 | Özel Gün | **Bayram Ziyareti** | Bayramın ilk günü seste olmak | Tek |
+| Özel Gün | **Atatürk'ün Evlatları** | 29 Ekim'de seste olmak | Tek |
+| Özel Gün | **Gap'in Doğum Günü** | Sunucunun kuruluş yıldönümünde seste olmak | Tek |
 | Özel | **Fikir Babası** | Önerdiği bir özelliğin bota gelmesi | Tek |
 
-Bunlara ek olarak **9 gizli başarım** var; adları ve koşulları açılana kadar görünmez (tanımlar `achievements.py` içinde).
+Bunlara ek olarak **13 gizli başarım** var; adları ve koşulları açılana kadar görünmez (tanımlar `achievements.py` içinde).
 
 Rozet simgeleri [Twemoji](https://github.com/jdecked/twemoji)'dendir (CC-BY 4.0), bkz. `assets/badges/KAYNAK.md`.
 
