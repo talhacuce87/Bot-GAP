@@ -72,7 +72,12 @@ export const timeUniform = { value: 0 };
  * Rüzgâr: yerel yüksekliğe orantılı, örnek konumuna göre faz kaydırmalı salınım.
  * Tamamen vertex shader'da; CPU maliyeti yok.
  */
-export function windMaterial(strength: number, params: THREE.MeshLambertMaterialParameters = {}): THREE.MeshLambertMaterial {
+export function windMaterial(
+  strength: number,
+  params: THREE.MeshLambertMaterialParameters = {},
+  /** [başla, bitir] metre: bu mesafede örnek toprağa gömülür (çimen/çiçek için ucuz LOD). */
+  fade?: [number, number],
+): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, ...params });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = timeUniform;
@@ -89,10 +94,15 @@ export function windMaterial(strength: number, params: THREE.MeshLambertMaterial
         float sway = sin(uTime * 1.6 + ip.x * 0.31 + ip.y * 0.23) + 0.4 * sin(uTime * 3.1 + ip.x * 0.7);
         float h = max(position.y, 0.0);
         transformed.x += sway * ${strength.toFixed(4)} * h;
-        transformed.z += sway * ${(strength * 0.6).toFixed(4)} * h;`,
+        transformed.z += sway * ${(strength * 0.6).toFixed(4)} * h;
+        ${fade ? `
+        #ifdef USE_INSTANCING
+          vec4 wp = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          transformed *= 1.0 - smoothstep(${fade[0].toFixed(1)}, ${fade[1].toFixed(1)}, distance(wp.xz, cameraPosition.xz));
+        #endif` : ""}`,
       );
   };
-  m.customProgramCacheKey = () => `wind-${strength}`;
+  m.customProgramCacheKey = () => `wind-${strength}-${fade ?? ""}`;
   return m;
 }
 

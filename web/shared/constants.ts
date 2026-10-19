@@ -8,9 +8,11 @@ export const SEND_HZ = 15;
 export const INTERP_DELAY_MS = 100;
 
 /** Yürünebilir alanın yarıçapı (metre). */
-export const WORLD_RADIUS = 36;
+export const WORLD_RADIUS = 100;
 /** Oyuncu yürüme hızı (m/sn). */
 export const WALK_SPEED = 4.2;
+/** Koşarken (Shift / joystick sonuna kadar) hız çarpanı. */
+export const RUN_MULTIPLIER = 1.9;
 /** Avatar gövdesinin çarpışma yarıçapı. */
 export const PLAYER_RADIUS = 0.4;
 
@@ -28,10 +30,10 @@ export const POS_SCALE = 100;
  * Zindan hücresinin iç alanı (oyuncu merkezinin gidebileceği sınırlar, yarıçap düşülmüş).
  * Sürgündekiler burada doğar; sunucu da istemci de bu kutunun dışına çıkmalarına izin vermez.
  */
-export const JAIL = { minX: -28.8, maxX: -21.9, minZ: 2.0, maxZ: 8.0 };
-export const JAIL_SPAWN = { x: -25.3, z: 5, rot: Math.PI / 2 };
+export const JAIL = { minX: -58.3, maxX: -51.4, minZ: 2.0, maxZ: 8.0 };
+export const JAIL_SPAWN = { x: -54.8, z: 5, rot: Math.PI / 2 };
 /** Sürgün bitince parmaklıkların önüne çıkarılır. */
-export const RELEASE_SPAWN = { x: -18.8, z: 5, rot: Math.PI / 2 };
+export const RELEASE_SPAWN = { x: -48.3, z: 5, rot: Math.PI / 2 };
 
 export function clampToJail(p: { x: number; z: number }): void {
   p.x = Math.min(JAIL.maxX, Math.max(JAIL.minX, p.x));

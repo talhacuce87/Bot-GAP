@@ -8,6 +8,8 @@ export class Input {
   moveX = 0;
   /** -1..1, ileri pozitif */
   moveY = 0;
+  /** Shift basılı ya da joystick sonuna kadar itilmiş. */
+  run = false;
   readonly touch: boolean;
 
   private keys = new Set<string>();
@@ -178,6 +180,7 @@ export class Input {
     }
     this.moveX = x;
     this.moveY = y;
+    this.run = this.joyId >= 0 ? len > 0.92 : k.has("shift");
   }
 
   /** Bu kare biriken kamera bakış hareketi (piksel). */
