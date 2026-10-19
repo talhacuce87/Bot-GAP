@@ -20,6 +20,7 @@ Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanma
 - [Haftalık özet ve aylık Wrapped](#-haftalık-özet-ve-aylık-wrapped)
 - [Başarımlar](#-başarımlar)
 - [Yapay zekâ sohbet ve hafıza](#-yapay-zekâ-sohbet-ve-hafıza-isteğe-bağlı)
+- [GAP Dünyası (3D Activity)](#-gap-dünyası-3d-activity)
 - [Loglama ve hile analizi](#-loglama-ve-hile-analizi)
 - [Veri ve yedekleme](#-veri-ve-yedekleme)
 - [Geliştirme](#-geliştirme)
@@ -443,6 +444,46 @@ Loglar `data/logs/bot.log` içinde (`gap.ai.*`). API anahtarları ve prompt içe
 - Planlanan: semantik arama, LLM ile hafıza özetleme. Sesli kanal ve görsel girdi kapsam dışı.
 
 </details>
+
+---
+
+## 🌍 GAP Dünyası (3D Activity)
+
+Ses kanalındakilerin Discord içinde avatar olarak buluştuğu low-poly 3D dünya (`web/`). Bottan bağımsız ikinci bir servis olarak çalışır. Öncelik her cihazda 60 fps: tüm sahne ~12 draw call'dan oluşur, gerçek zamanlı gölge kullanılmaz, kare düşerse çözünürlük kendiliğinden azalır.
+
+**Yerel geliştirme**
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173  (Vite + sunucu)
+npm test           # vitest
+```
+
+Tarayıcıda Discord olmadan misafir olarak açılır. Kullanılabilecek parametreler:
+
+| Parametre | İşlevi |
+|---|---|
+| `?room=ad` | Ayrı bir oda açar |
+| `?name=Ali` | İsim belirler |
+| `?debug=1` | fps / draw call paneli ve YouTube testi |
+| `?bots=20` | 20 sahte oyuncu ekler (performans testi) |
+| `?low` | Kenar yumuşatmayı (antialias) kapatır |
+| `?noadapt` | Çözünürlüğü sabit tutar |
+
+**Kontroller:** WASD ile yürü, sürükleyerek kamerayı çevir, tekerlekle yakınlaştır, E ile koltuğa otur. Dokunmatik cihazlarda ekranın sol yarısı joystick, sağ yarısı kamera.
+
+**Kurulum (Coolify + Discord)**
+
+1. Coolify'da compose'u yeniden yükle (Reload Compose File). `world` servisine domain ver: `https://world.<domain>:3000`. `bot-gap` servisinin domain alanını boş bırak.
+2. Ortam değişkenleri: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `WORLD_SHARED_SECRET`. Açıklamaları `.env.example` içinde.
+3. Developer Portal'da yapılacaklar:
+   - **Activities → Settings:** Activity'yi etkinleştir.
+   - **Activities → URL Mappings:** `/` → `world.<domain>`.
+   - YouTube testi için ek mapping'ler: `/youtube` → `www.youtube.com`, `/ytimg` → `i.ytimg.com`.
+4. Ses kanalında 🚀 Activities menüsünden uygulamayı başlat. Aynı kanalda başlatan herkes aynı odaya düşer.
+
+**Sunucu uç noktaları:** `/health`, `/api/config`, `/api/token` (OAuth code değişimi), `/api/guest`, `/avatar/<id>/<hash>` (Discord CDN proxy'si), `/ws` (oyun bağlantısı), `/internal/sessions` (`x-world-secret` başlığı gerekir; bot entegrasyonu için).
 
 ---
 
