@@ -40,6 +40,22 @@ export function verifySession(token: string, secret: string, now = Date.now()): 
   }
 }
 
+/** OAuth `state` gibi küçük değerleri imzalar: dönüşte değiştirilmediği doğrulanır. */
+export function signValue(value: string, secret: string): string {
+  const body = Buffer.from(value).toString("base64url");
+  return `${body}.${hmac(`v:${body}`, secret)}`;
+}
+
+export function verifyValue(token: string, secret: string): string | null {
+  const dot = token.indexOf(".");
+  if (dot <= 0) return null;
+  const body = token.slice(0, dot);
+  const given = Buffer.from(token.slice(dot + 1));
+  const expected = Buffer.from(hmac(`v:${body}`, secret));
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+  return Buffer.from(body, "base64url").toString();
+}
+
 export function cleanName(raw: unknown, fallback: string): string {
   const s = typeof raw === "string" ? raw.replace(/[\u0000-\u001f]/g, "").trim() : "";
   return (s || fallback).slice(0, 32);
@@ -57,6 +73,8 @@ export async function exchangeCode(
   code: string,
   clientId: string,
   clientSecret: string,
+  /** Tarayıcı girişinde (Activity dışında) zorunlu; authorize isteğindekiyle aynı olmalı. */
+  redirectUri?: string,
 ): Promise<{ accessToken: string; user: SessionUser }> {
   const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
     method: "POST",
@@ -66,6 +84,7 @@ export async function exchangeCode(
       client_secret: clientSecret,
       grant_type: "authorization_code",
       code,
+      ...(redirectUri ? { redirect_uri: redirectUri } : {}),
     }),
   });
   if (!tokenRes.ok) throw new Error(`token exchange failed: ${tokenRes.status}`);

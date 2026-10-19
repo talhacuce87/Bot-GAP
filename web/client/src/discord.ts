@@ -2,13 +2,21 @@
 import type { DiscordSDK } from "@discord/embedded-app-sdk";
 
 export interface Session {
-  mode: "discord" | "guest";
+  /** discord: Activity içinde • watch: tarayıcıda izleme odası (/w/<id>) • guest: geliştirme/test */
+  mode: "discord" | "watch" | "guest";
   session: string;
   user: { id: string; name: string; avatar: string | null };
   /** WebSocket ve API istekleri için önek ("/.proxy" ya da ""). */
   base: string;
   wsUrl: string;
   sdk?: DiscordSDK;
+  /** İzleme odasının kimliği (mode === "watch"). */
+  watchId?: string;
+}
+
+/** Bot'un attığı izleme linki: https://<dünya>/w/<oda> */
+export function watchIdFromPath(): string | null {
+  return /^\/w\/([\w-]{6,16})\/?$/.exec(location.pathname)?.[1] ?? null;
 }
 
 /** Discord, Activity'yi `frame_id` ve `instance_id` sorgu parametreleriyle açar. */
@@ -29,6 +37,8 @@ function wsBase(base: string): string {
 }
 
 export async function login(): Promise<Session> {
+  const watchId = watchIdFromPath();
+  if (watchId) return watchLogin(watchId);
   if (!inDiscord()) return guestLogin();
 
   const base = "/.proxy";
@@ -49,6 +59,23 @@ export async function login(): Promise<Session> {
   const q = new URLSearchParams({ session: res.session, instance: sdk.instanceId });
   if (sdk.guildId) q.set("guild", sdk.guildId);
   return { mode: "discord", session: res.session, user: res.user, base, wsUrl: `${wsBase(base)}?${q}`, sdk };
+}
+
+/** Tarayıcıda izleme odası: çerezdeki Discord oturumu; yoksa girişe yönlendir (geliştirmede misafir). */
+async function watchLogin(watchId: string): Promise<Session> {
+  const base = { mode: "watch" as const, base: "", watchId };
+  const me = await fetch("/api/me");
+  if (me.ok) {
+    const { user } = await me.json();
+    return { ...base, session: "", user, wsUrl: `${wsBase("")}?watch=${watchId}` };
+  }
+  const { loginRequired } = await me.json().catch(() => ({ loginRequired: true }));
+  if (loginRequired) {
+    location.href = `/auth/login?next=${encodeURIComponent(location.pathname)}`;
+    return new Promise(() => {}); // yönlendirme sürerken bekle
+  }
+  const guest = await guestLogin();
+  return { ...base, session: guest.session, user: guest.user, wsUrl: `${wsBase("")}?watch=${watchId}&session=${encodeURIComponent(guest.session)}` };
 }
 
 async function guestLogin(): Promise<Session> {

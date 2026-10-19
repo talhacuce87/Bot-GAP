@@ -18,6 +18,7 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       "/api": server,
+      "/auth": server,
       "/avatar": server,
       "/health": server,
       "/ws": { target: server, ws: true },

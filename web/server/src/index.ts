@@ -8,9 +8,10 @@ import { gzipSync } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { TICK_HZ } from "../../shared/constants";
 import { decodeState, type PlayerState } from "../../shared/protocol";
-import { cleanName, exchangeCode, type SessionUser, signSession, verifySession } from "./auth";
+import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
-import { type Conn, type JoinOptions, Rooms } from "./room";
+import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
+import { resolveMedia, type Watch, Watches } from "./watch";
 
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
@@ -19,10 +20,16 @@ const SHARED_SECRET = process.env.WORLD_SHARED_SECRET || "";
 const ALLOW_GUESTS = (process.env.WORLD_ALLOW_GUESTS ?? "true").toLowerCase() !== "false";
 // Ortak secret yoksa oturumlar sadece bu süreç ömrü boyunca geçerlidir.
 const SESSION_SECRET = SHARED_SECRET || randomBytes(32).toString("hex");
+/** Tarayıcıdan erişilen adres (bot'un attığı izleme linkleri ve OAuth dönüşü için). */
+const PUBLIC_URL = (process.env.WORLD_PUBLIC_URL || "").replace(/\/+$/, "");
+/** Discord ayarlıysa izleme odalarına yalnızca Discord ile giriş yapanlar girer. */
+const LOGIN_REQUIRED = !!(CLIENT_ID && CLIENT_SECRET);
+const SESSION_COOKIE = "gw_session";
 
 const STATIC_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)), "../client");
 
 const rooms = new Rooms();
+const watches = new Watches();
 
 const boards = new Boards();
 
@@ -58,6 +65,27 @@ async function readJson(req: IncomingMessage, limit = 4096): Promise<Record<stri
   }
   const parsed = JSON.parse(Buffer.concat(chunks).toString() || "{}");
   return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+function cookies(req: IncomingMessage): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of String(req.headers.cookie || "").split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+
+/** İsteğin geldiği dış adres: WORLD_PUBLIC_URL, yoksa (geliştirme) Host başlığı. */
+function publicBase(req: IncomingMessage): string {
+  if (PUBLIC_URL) return PUBLIC_URL;
+  const proto = String(req.headers["x-forwarded-proto"] || "http").split(",")[0];
+  return `${proto}://${req.headers["x-forwarded-host"] || req.headers.host}`;
+}
+
+function redirect(res: ServerResponse, to: string, headers: Record<string, string | string[]> = {}): void {
+  res.writeHead(302, { Location: to, "Cache-Control": "no-store", ...headers });
+  res.end();
 }
 
 /** `/.proxy/` önekini (Discord Activity proxy'si) yok sayar. */
@@ -206,6 +234,49 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { session: signSession(user, SESSION_SECRET), user });
   }
 
+  // ---- Tarayıcıdan Discord girişi (izleme odaları Activity dışında açılır) ----
+  if (path === "/auth/login" && method === "GET") {
+    const next = new URL(req.url || "/", "http://x").searchParams.get("next") || "/";
+    const safeNext = /^\/[\w\-/?=&.]*$/.test(next) && !next.startsWith("//") ? next : "/";
+    if (!LOGIN_REQUIRED) return redirect(res, safeNext);
+    const q = new URLSearchParams({
+      client_id: CLIENT_ID,
+      response_type: "code",
+      redirect_uri: `${publicBase(req)}/auth/callback`,
+      scope: "identify",
+      prompt: "none",
+      state: signValue(`${Date.now()}|${safeNext}`, SESSION_SECRET),
+    });
+    return redirect(res, `https://discord.com/oauth2/authorize?${q}`);
+  }
+
+  if (path === "/auth/callback" && method === "GET") {
+    const q = new URL(req.url || "/", "http://x").searchParams;
+    const state = verifyValue(q.get("state") || "", SESSION_SECRET);
+    const [ts, next] = state ? [Number(state.split("|")[0]), state.slice(state.indexOf("|") + 1)] : [0, "/"];
+    if (!state || Date.now() - ts > 10 * 60 * 1000 || !q.get("code")) return redirect(res, "/?login=failed");
+    try {
+      const { user } = await exchangeCode(q.get("code")!, CLIENT_ID, CLIENT_SECRET, `${publicBase(req)}/auth/callback`);
+      const secure = publicBase(req).startsWith("https:") ? "; Secure" : "";
+      const cookie = `${SESSION_COOKIE}=${encodeURIComponent(signSession(user, SESSION_SECRET))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200${secure}`;
+      return redirect(res, next, { "Set-Cookie": cookie });
+    } catch (err) {
+      console.warn("[auth]", (err as Error).message);
+      return redirect(res, "/?login=failed");
+    }
+  }
+
+  if (path === "/api/me" && method === "GET") {
+    const user = verifySession(cookies(req)[SESSION_COOKIE] || "", SESSION_SECRET);
+    return user ? json(res, 200, { user, loginRequired: LOGIN_REQUIRED }) : json(res, 401, { loginRequired: LOGIN_REQUIRED });
+  }
+
+  const watchInfo = /^\/api\/watch\/([\w-]{6,16})$/.exec(path);
+  if (watchInfo && method === "GET") {
+    const w = watches.get(watchInfo[1]);
+    return w ? json(res, 200, { id: w.id, title: w.state.title }) : json(res, 404, { error: "not found" });
+  }
+
   const avatar = /^\/avatar\/(\d+)\/([0-9a-f_]+)(?:\.png)?$/.exec(path);
   if (avatar && method === "GET") return serveAvatar(res, avatar[1], avatar[2]);
 
@@ -237,6 +308,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { ok: true });
   }
 
+  if (path === "/internal/watch" && method === "POST") {
+    if (!secretMatches(req.headers["x-world-secret"])) return json(res, 404, { error: "not found" });
+    const body = await readJson(req);
+    const media = typeof body.url === "string" ? await resolveMedia(body.url) : null;
+    if (!media) return json(res, 400, { error: "unsupported" });
+    const guild = typeof body.guild === "string" && /^\d{5,20}$/.test(body.guild) ? body.guild : null;
+    const by = cleanName((body.by as Record<string, unknown> | undefined)?.name, "Biri");
+    const w = watches.create(guild, by, media.source, media.title);
+    return json(res, 200, { id: w.id, url: `${PUBLIC_URL || "http://localhost:5173"}/w/${w.id}`, title: media.title, kind: media.source.kind });
+  }
+
   if (method === "GET" || method === "HEAD") return serveStatic(req, res, path);
   res.writeHead(405).end();
 }
@@ -253,7 +335,7 @@ const server = createServer((req, res) => {
 // WebSocket
 // ---------------------------------------------------------------------------
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
 const alive = new WeakSet<WebSocket>();
 
 server.on("upgrade", (req, socket, head) => {
@@ -262,30 +344,66 @@ server.on("upgrade", (req, socket, head) => {
     socket.destroy();
     return;
   }
-  const user = verifySession(url.searchParams.get("session") || "", SESSION_SECRET);
+  // Activity sorgu parametresiyle, tarayıcı çerezle gelir.
+  const token = url.searchParams.get("session") || cookies(req)[SESSION_COOKIE] || "";
+  const user = verifySession(token, SESSION_SECRET);
   const instance = url.searchParams.get("instance") || "";
   const roomName = url.searchParams.get("room") || "lobi";
+  const watch = watches.get(url.searchParams.get("watch") || "");
+  const close = (code: number, reason: string) => wss.handleUpgrade(req, socket, head, (ws) => ws.close(code, reason));
   let key: string | null = null;
-  if (user && !user.guest && /^[\w-]{1,100}$/.test(instance)) key = `d:${instance}`;
+  if (url.searchParams.has("watch")) {
+    if (!watch) return close(4004, "watch not found");
+    if (user && (!user.guest || !LOGIN_REQUIRED)) key = `w:${watch.id}`;
+  } else if (user && !user.guest && /^[\w-]{1,100}$/.test(instance)) key = `d:${instance}`;
   else if (user?.guest && /^[\w-]{1,32}$/.test(roomName)) key = `g:${roomName}`;
   if (!user || !key) {
     // HTTP 401 tarayıcıda 1006 olarak görünür; 4001 ile kapatırsak istemci yeniden denemeyi bırakır.
-    wss.handleUpgrade(req, socket, head, (ws) => ws.close(4001, "unauthorized"));
-    return;
+    return close(4001, "unauthorized");
   }
   const roomKey = key;
   const guildParam = url.searchParams.get("guild") || "";
-  const guild = /^\d{5,20}$/.test(guildParam) ? guildParam : null;
+  const guild = watch?.guild ?? (/^\d{5,20}$/.test(guildParam) ? guildParam : null);
   // Zindanı denemek için: yalnızca misafirler kendini zindana koyabilir.
   const forceJail = user.guest && url.searchParams.get("jail") === "1";
   const jailed = forceJail || (!user.guest && isExiled(user.id, guild));
-  wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, user, roomKey, { guild, jailed, forceJail }));
+  wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, user, roomKey, { guild, jailed, forceJail }, watch));
 });
 
-function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions): void {
+function sendWatch(target: Room | WebSocket, w: Watch): void {
+  const ev = { t: "watch" as const, ...w.state };
+  if (target instanceof WebSocket) target.send(JSON.stringify(ev));
+  else target.broadcast(ev);
+}
+
+/** İzleme odası komutları: herkes oynatıp durdurabilir, sarabilir ve link değiştirebilir. */
+function onWatchMessage(ws: WebSocket, room: Room, w: Watch, user: SessionUser, msg: Record<string, unknown>, limiter: { last: number }): void {
+  const now = Date.now();
+  if (msg.t === "wcmd") {
+    const op = msg.op;
+    if ((op === "play" || op === "pause" || op === "seek") && w.apply({ op, pos: msg.pos as number | undefined }, user.name, now)) {
+      sendWatch(room, w);
+    }
+  } else if (msg.t === "wload" && typeof msg.url === "string" && msg.url.length < 2048) {
+    if (now - limiter.last < 3000) return;
+    limiter.last = now;
+    void resolveMedia(msg.url).then((media) => {
+      if (!media) {
+        ws.send(JSON.stringify({ t: "notice", text: "Bu link açılamıyor. YouTube, Twitch, Kick ya da .mp4/.webm/.m3u8 linki dene." }));
+        return;
+      }
+      w.load(media.source, media.title, user.name, Date.now());
+      sendWatch(room, w);
+    });
+  }
+}
+
+function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions, watch?: Watch): void {
   const room = rooms.get(key);
   const sid = room.join(user, ws, Date.now(), opts);
   sendBoard(ws, boards.for(opts.guild ?? null));
+  if (watch) sendWatch(ws, watch);
+  const limiter = { last: 0 };
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   alive.add(ws);
 
@@ -301,6 +419,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
       const msg = JSON.parse(data.toString());
       if (msg?.t === "ping" && typeof msg.c === "number") {
         ws.send(JSON.stringify({ t: "pong", c: msg.c, s: Date.now() }));
+      } else if (watch && msg && typeof msg === "object") {
+        onWatchMessage(ws, room, watch, user, msg, limiter);
       }
     } catch {
       // bozuk mesaj yok sayılır
@@ -311,6 +431,9 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
     rooms.release(room);
   });
 }
+
+// Boş ve eskimiş izleme odalarını temizle.
+setInterval(() => watches.sweep((id) => (rooms.find(`w:${id}`)?.size ?? 0) === 0), 10 * 60 * 1000);
 
 // Ölü bağlantıları temizle.
 setInterval(() => {
