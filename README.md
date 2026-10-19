@@ -135,6 +135,7 @@ Tüm komutların kısa listesi Discord'da `!yardim` ile görülebilir.
 | `!wrapped` (`!aylik`) | Kişisel aylık Wrapped kartı — yalnızca **ayın son günü**, ayda bir kez |
 | `!başarımlar [@üye]` (`!basarimlar`, `!rozetler`) | Başarımlar, izci fuları üzerinde rozetler olarak |
 | `!kartdüzen` (`!kartduzen`) | `!kart`'ta görünecek en fazla 3 rozeti seçme menüsü |
+| `!başarımrehberi` (`!nasilkazanilir`) | Gizli olmayan başarımların nasıl kazanıldığı, kademe eşikleri ve senin durumun |
 
 ### Arkadaşlık
 
@@ -156,7 +157,7 @@ Tier'lar birlikte seste geçirilen süreye göre belirlenir: 🌱 Tanıdık 5 sa
 | `!boost @üye <çarpan> [saat] <sebep>` | Süreli XP çarpanı (1–10x, en fazla 720 saat) |
 | `!sürgün @üye <süre\|kalıcı> <sebep>` (`!surgun`) | Üyeyi sürgüne gönderir; bkz. [Sürgün](#sürgün) |
 | `!sürgünsonlandır @üye` (`!surgunsonlandir`) | Sürgünü erken bitirir |
-| `!basarimver @üye <başarım>` · `!basarimal @üye <başarım>` | Elle verilen başarımı (Fikir Babası) verir / bir başarımı geri alır |
+| `!basarimver @üye <başarım> [gümüş\|altın\|platin]` · `!basarimal @üye <başarım>` | Başarım verir (kademe yazılmazsa bir üst kademe) / geri alır |
 | `!xpsenkronize` | Tüm üyelerin seviye rollerini XP'lerine göre düzeltir |
 | `!yedekle` (`!backup`) | Veritabanının anlık yedeğini alır |
 
@@ -211,7 +212,9 @@ Bot, olay kaydındaki veriden (XP, mesajlar, ses XP'si ve o sırada seste kimler
 - **Gizli başarımlar:** Spam'e açık olan başarımlar (mesaj, dosya, sticker, yanıt, düzenleme, takma ad…) gizlidir. Açılana kadar adı ve koşulu görünmez, böylece kasılamaz.
 - **Spam koruması:** Kapıyı Açan, ancak boş kanalı açtıktan sonra 30 dakika içinde biri gelirse sayılır. Işıkları Kapatan, ancak kanalda biriyle birlikte olunduysa sayılır.
 - **Hesaplama:** Başarımlar olay kaydından 5 dakikada bir hesaplanır. İlk çalıştırmada geçmiş kayıt geriye dönük işlenir ve bu ilk açılışlar duyurulmaz. `ACHIEVEMENT_CHANNEL_ID` ayarlıysa sonraki yeni başarımlar orada duyurulur.
-- **Yönetici:** Fikir Babası yalnızca `!basarimver` ile verilir; yanlış verilen bir başarım `!basarimal` ile geri alınır.
+- **`!başarımrehberi`:** Gizli olmayan başarımların koşulları, kademe eşikleri ve kullanıcının hangilerine sahip olduğu listelenir. Gizliler sadece sayı olarak görünür.
+- **Yönetici:** `!basarimver @üye <başarım> [kademe]` her başarımı verir. Kademe yazılmazsa bir üst kademe verilir; Fikir Babası yalnızca böyle açılır. Yanlış verilen bir başarım `!basarimal` ile geri alınır. Başarım adlarında Türkçe karakter ve büyük/küçük harf fark etmez (`fikir babasi`, `yayinci altin`).
+- **Komut yazımı:** Tüm komutlar Türkçe karakterli ya da karaktersiz yazılabilir (`!başarımlar`, `!basarimlar`, `!basarımlar`).
 - **Bayram tarihleri:** Bayram Ziyareti, `achievements.py` içindeki Diyanet bayram tarihlerini kullanır (2028 sonrası tahminidir).
 
 | Kategori | Başarım | Koşul | Kademeler (Gümüş / Altın / Platin) |

@@ -157,3 +157,22 @@ def test_deployment_preserves_ai_database():
     assert "data/" in dockerignore and ".env" in dockerignore  # imaja veri/sır girmez
     gitignore = (ROOT / ".gitignore").read_text()
     assert "data/*.db" in gitignore and ".env" in gitignore
+
+
+
+async def test_turkish_insensitive_command_lookup(isolated, monkeypatch):
+    """!basarımlar, !basarimlar, !BAŞARIMLAR … hepsi !başarımlar'ı bulur."""
+    monkeypatch.setenv("AI_ENABLED", "false")
+    from Main import GapBot
+
+    bot = GapBot(command_prefix="!", intents=discord.Intents.default(), help_command=None, case_insensitive=True)
+    await bot._async_setup_hook()
+    await bot.setup_hook()
+    try:
+        target = bot.get_command("başarımlar")
+        for typed in ("basarımlar", "basarimlar", "başarimlar", "BAŞARIMLAR", "basarimver", "basarımver", "surgun"):
+            assert bot._folded_lookup(typed) is not None, typed
+        assert bot._folded_lookup("basarımlar") is target
+        assert bot._folded_lookup("olmayankomut") is None
+    finally:
+        await bot.close()
