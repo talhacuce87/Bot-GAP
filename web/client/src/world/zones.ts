@@ -129,6 +129,9 @@ export function dungeon(b: Builder): { signAt: THREE.Matrix4 } {
 // ---------------------------------------------------------------------------
 
 export const GROVE = { x: 24, z: 5 };
+/** Mangal tabelası: orman girişinde, yolun kenarında. Çevresine ağaç dikilmez. */
+export const GROVE_SIGN = { x: GROVE.x - 6.4, z: GROVE.z - 1.9 };
+const SIGN_CLEAR = 3.2;
 
 export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; smokeAt: THREE.Vector3 } {
   const { x: gx, z: gz } = GROVE;
@@ -138,6 +141,7 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
   b.add(part(new THREE.CircleGeometry(7, 22), "#5f8a3d", flatMat(gx, 0.012, gz), 0.1, b.rand));
   b.add(part(new THREE.CircleGeometry(3.6, 18), "#8d7350", flatMat(grillX, 0.02, grillZ), 0.12, b.rand));
   b.clearCircle(gx, gz, 6.2);
+  b.clearCircle(GROVE_SIGN.x, GROVE_SIGN.z, SIGN_CLEAR);
 
   // Mangal: ayaklar, gövde, ızgara teli, şişler
   const metal = "#2c2d31";
@@ -214,6 +218,7 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
     if (da < 0.45) continue;
     const r = 7.2 + b.rand() * 4.5;
     const x = gx + Math.cos(a) * r, z = gz + Math.sin(a) * r;
+    if (Math.hypot(x - GROVE_SIGN.x, z - GROVE_SIGN.z) < SIGN_CLEAR) continue;
     const s = 0.85 + b.rand() * 0.6;
     b.prop(b.rand() > 0.45 ? "pine" : "oak", mat(x, 0, z, b.rand() * 6, s));
     b.colliders.circle(x, z, 0.32 * s);
@@ -223,12 +228,14 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
     const a = b.rand() * Math.PI * 2;
     const r = 6 + b.rand() * 1.5;
     const s = 0.6 + b.rand() * 0.5;
-    b.prop("bush", mat(gx + Math.cos(a) * r, 0.2 * s, gz + Math.sin(a) * r, b.rand() * 6, s, s * 0.8, s));
+    const x = gx + Math.cos(a) * r, z = gz + Math.sin(a) * r;
+    if (Math.hypot(x - GROVE_SIGN.x, z - GROVE_SIGN.z) < SIGN_CLEAR - 1) continue;
+    b.prop("bush", mat(x, 0.2 * s, z, b.rand() * 6, s, s * 0.8, s));
   }
 
   steppingStones(b, 9.4, 5, 17.4, 5);
   return {
-    signAt: mat(gx - 6.4, 1.75, gz - 1.9, -Math.PI / 2),
+    signAt: mat(GROVE_SIGN.x, 1.75, GROVE_SIGN.z, -Math.PI / 2),
     coals,
     smokeAt: new THREE.Vector3(grillX, 1.15, grillZ),
   };
