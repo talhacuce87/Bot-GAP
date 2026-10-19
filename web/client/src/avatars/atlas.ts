@@ -2,9 +2,9 @@
 // Her avatar bir hücre alır; GPU'ya sadece bir hücre değiştiğinde yükleme yapılır.
 import * as THREE from "three";
 
-export const ATLAS_CELLS = 64;
-export const FACE_GRID: [number, number] = [8, 8]; // 512×512, 64px hücre
-export const NAME_GRID: [number, number] = [4, 16]; // 1024×1024, 256×64 hücre
+export const ATLAS_CELLS = 128;
+export const FACE_GRID: [number, number] = [16, 8]; // 1024×512, 64px hücre
+export const NAME_GRID: [number, number] = [8, 16]; // 2048×1024, 256×64 hücre
 
 const FACE_PX = 64;
 const NAME_W = 256;

@@ -15,7 +15,7 @@ export const WALK_SPEED = 4.2;
 export const PLAYER_RADIUS = 0.4;
 
 /** Bir odada konumu yayınlanan en fazla oyuncu; fazlası izleyici olarak girer. */
-export const ROOM_MAX_PLAYERS = 25;
+export const ROOM_MAX_PLAYERS = 100;
 
 /** Oyuncu durum bitleri. */
 export const FLAG_WALKING = 1;
