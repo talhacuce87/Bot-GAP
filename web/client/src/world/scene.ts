@@ -6,6 +6,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { WORLD_RADIUS } from "../../../shared/constants";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
+import { DayNight } from "./daynight";
 import { FameBoard, fameStatics } from "./fame";
 import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, windMaterial } from "./geo";
 import { dungeon, GROVE, grove, GROVE_SIGN, POND, pond, signPost, steppingStones } from "./zones";
@@ -24,6 +25,13 @@ export interface World {
   spawn: { x: number; z: number; rot: number };
   /** Kare başına: shader saati ve birkaç ucuz animasyon. */
   update(time: number): void;
+  /** Biri şiş çevirdi: duman kabarır, köz parlar (`time`: döngü saati, sn). */
+  grillBoost(time: number): void;
+}
+
+export interface WorldOptions {
+  /** Gece/gündüz testi için saat (?hour=21); verilmezse Türkiye saati. */
+  hour?: number;
 }
 
 export const SCREEN_Z = -46;
@@ -107,7 +115,8 @@ function signsMesh(specs: SignSpec[]): THREE.Mesh {
     g.applyMatrix4(at);
     return g;
   };
-  const mesh = new THREE.Mesh(mergeGeometries(specs.map(plane)), new THREE.MeshBasicMaterial({ map: tex }));
+  // Işıktan etkilenir: gündüz aynı, gece loş ama okunur (Basic olsa karanlıkta neon gibi parlar).
+  const mesh = new THREE.Mesh(mergeGeometries(specs.map(plane)), new THREE.MeshLambertMaterial({ map: tex, emissive: "#222222", emissiveMap: tex }));
   mesh.matrixAutoUpdate = false;
   return mesh;
 }
@@ -387,7 +396,7 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene): void {
   scene.add(fm);
 }
 
-function propMeshes(b: Builder, scene: THREE.Scene): void {
+function propMeshes(b: Builder, scene: THREE.Scene): { bulbMaterial: THREE.MeshBasicMaterial } {
   const r = b.rand;
   // Ağaçlarda alt kapaklar hiç görünmez (kamera zeminin altına inmez): openEnded ile üçgen sayısı yarıya iner.
   const geos: Record<PropKind, THREE.BufferGeometry> = {
@@ -422,13 +431,14 @@ function propMeshes(b: Builder, scene: THREE.Scene): void {
     bush: windMaterial(0.04),
     stone: flat,
     post: lambert,
-    bulb: new THREE.MeshBasicMaterial({ color: "#ffe9a8" }),
+    bulb: new THREE.MeshBasicMaterial({ color: "#ffe9a8", fog: false }),
     flame: flickerMaterial("#ffa12e"),
     log: flat,
   };
   for (const kind of Object.keys(geos) as PropKind[]) {
     if (b.props[kind].length) scene.add(instanced(geos[kind], materials[kind], b.props[kind]));
   }
+  return { bulbMaterial: materials.bulb as THREE.MeshBasicMaterial };
 }
 
 function shadowsMesh(b: Builder): THREE.InstancedMesh {
@@ -499,18 +509,19 @@ function smoke(at: THREE.Vector3): THREE.InstancedMesh {
   for (let i = 0; i < n; i++) seeds[i] = i / n;
   geo.setAttribute("aSeed", new THREE.InstancedBufferAttribute(seeds, 1));
   const material = new THREE.ShaderMaterial({
-    uniforms: { uTime: timeUniform },
+    uniforms: { uTime: timeUniform, uBoost: { value: 0 } },
     vertexShader: /* glsl */ `
       attribute float aSeed;
       uniform float uTime;
+      uniform float uBoost;
       varying vec2 vLocal;
       varying float vAlpha;
       void main() {
         float t = fract(uTime * 0.22 + aSeed);
         vec3 p = vec3(sin(aSeed * 40.0 + uTime * 0.7) * 0.35 * t, t * 3.4, cos(aSeed * 23.0) * 0.3 * t);
         vec4 center = modelViewMatrix * instanceMatrix * vec4(p, 1.0);
-        float size = 0.35 + t * 1.1;
-        vAlpha = smoothstep(0.0, 0.12, t) * (1.0 - t) * 0.42;
+        float size = (0.35 + t * 1.1) * (1.0 + uBoost * 0.8);
+        vAlpha = smoothstep(0.0, 0.12, t) * (1.0 - t) * 0.42 * (1.0 + uBoost * 1.2);
         vLocal = uv * 2.0 - 1.0;
         gl_Position = projectionMatrix * (center + vec4(position.xy * size, 0.0, 0.0));
       }
@@ -536,13 +547,14 @@ function smoke(at: THREE.Vector3): THREE.InstancedMesh {
 
 // ---------------------------------------------------------------------------
 
-export function buildWorld(): World {
+export function buildWorld(opts: WorldOptions = {}): World {
   const b = new Builder();
   const scene = new THREE.Scene();
-  scene.background = SKY;
+  scene.background = SKY.clone();
   scene.fog = new THREE.Fog(SKY, 55, 140);
 
-  scene.add(new THREE.HemisphereLight("#dcefff", "#56683a", 1.6));
+  const hemi = new THREE.HemisphereLight("#dcefff", "#56683a", 1.6);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight("#fff1d6", 1.7);
   sun.position.set(20, 30, 12);
   scene.add(sun);
@@ -574,7 +586,7 @@ export function buildWorld(): World {
   const statics = new THREE.Mesh(mergeGeometries(b.statics), new THREE.MeshLambertMaterial({ vertexColors: true }));
   statics.matrixAutoUpdate = false;
   scene.add(statics);
-  propMeshes(b, scene);
+  const { bulbMaterial } = propMeshes(b, scene);
   grassAndFlowers(b, scene);
   scene.add(shadowsMesh(b));
   scene.add(mountains(b));
@@ -590,7 +602,23 @@ export function buildWorld(): World {
   scene.add(gr.coals);
   const fame = new FameBoard();
   scene.add(fame.group);
-  scene.add(smoke(gr.smokeAt));
+  const smokeMesh = smoke(gr.smokeAt);
+  scene.add(smokeMesh);
+  const smokeBoost = (smokeMesh.material as THREE.ShaderMaterial).uniforms.uBoost;
+  const dayNight = new DayNight(
+    {
+      scene,
+      skyGeometry: skyGeo,
+      skyRadius: 240,
+      hemi,
+      sun,
+      bulbMaterial,
+      cloudMaterial: cloudMesh.material as THREE.MeshLambertMaterial,
+      bulbMatrices: b.props.bulb,
+    },
+    opts.hour,
+  );
+  let boostUntil = 0;
 
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(SCREEN_W, SCREEN_H), new THREE.MeshBasicMaterial({ map: screenTexture(), fog: false }));
   screen.position.set(0, 1.2 + SCREEN_H / 2, SCREEN_Z - 1.38);
@@ -611,7 +639,16 @@ export function buildWorld(): World {
     update(time: number) {
       timeUniform.value = time;
       cloudMesh.rotation.y = time * 0.004;
-      coalColor.copy(coalA).lerp(coalB, 0.5 + 0.5 * Math.sin(time * 7) * Math.sin(time * 3.3));
+      const boost = Math.min(1, Math.max(0, (boostUntil - time) / 4));
+      smokeBoost.value = boost;
+      // Şiş çevrilince köz daha hızlı ve parlak titrer
+      const flick = 0.5 + 0.5 * Math.sin(time * (7 + boost * 9)) * Math.sin(time * 3.3);
+      coalColor.copy(coalA).lerp(coalB, Math.min(1, flick + boost * 0.5));
+      dayNight.update(Date.now());
+    },
+    grillBoost(time: number) {
+      boostUntil = Math.max(boostUntil, time) + 4;
+      if (boostUntil - time > 10) boostUntil = time + 10;
     },
   };
 }

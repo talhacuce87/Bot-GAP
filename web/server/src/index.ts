@@ -6,7 +6,7 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
-import { EMOTE_COOLDOWN_MS, EMOTES, TICK_HZ } from "../../shared/constants";
+import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, TICK_HZ } from "../../shared/constants";
 import { decodeState, type PlayerState } from "../../shared/protocol";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
@@ -405,6 +405,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   if (watch) sendWatch(ws, watch);
   const limiter = { last: 0 };
   let lastEmote = 0;
+  let lastAct = 0;
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   alive.add(ws);
 
@@ -420,6 +421,17 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
       const msg = JSON.parse(data.toString());
       if (msg?.t === "ping" && typeof msg.c === "number") {
         ws.send(JSON.stringify({ t: "pong", c: msg.c, s: Date.now() }));
+      } else if (msg?.t === "act" && ACTS.includes(msg.a)) {
+        // Yalnızca o noktanın yanındaysa; sürgündekiler parmaklıktan bir şey atamaz.
+        const a = msg.a as Act;
+        const p = room.players.get(sid);
+        const spot = actSpot(a);
+        const now = Date.now();
+        const near = p && Math.hypot(p.state.x - spot.x, p.state.z - spot.z) <= spot.r + 1;
+        if (near && !p.info.spectator && !(a !== "grill" && p.info.jailed) && now - lastAct >= ACT_COOLDOWN_MS) {
+          lastAct = now;
+          room.broadcast({ t: "act", sid, a }, sid);
+        }
       } else if (msg?.t === "emote") {
         const e = msg.e;
         const now = Date.now();
