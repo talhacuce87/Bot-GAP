@@ -1,5 +1,5 @@
 // WebSocket istemcisi: 15 Hz konum gönderimi, snapshot alımı, saat senkronu ve yeniden bağlanma.
-import { SEND_HZ } from "../../shared/constants";
+import { type Act, SEND_HZ } from "../../shared/constants";
 import { type BoardEntry, type ClientEvent, encodeState, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES, type WatchState } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
 
@@ -21,6 +21,7 @@ export class Net {
   onWatch: (s: WatchState) => void = () => {};
   onNotice: (text: string) => void = () => {};
   onEmote: (sid: number, e: number) => void = () => {};
+  onAct: (sid: number, a: Act) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -121,6 +122,9 @@ export class Net {
         break;
       case "emote":
         this.onEmote(ev.sid, ev.e);
+        break;
+      case "act":
+        this.onAct(ev.sid, ev.a);
         break;
       case "leave":
         this.remotes.leave(ev.sid);

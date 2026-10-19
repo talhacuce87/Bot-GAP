@@ -18,6 +18,7 @@ export class Input {
   private zoom = 0;
   private action = false;
   private jump = false;
+  private act: "f" | "g" | null = null;
   private emote = -1;
 
   private joyId = -1;
@@ -48,6 +49,7 @@ export class Input {
       if (e.target instanceof HTMLInputElement) return;
       const k = e.key.toLocaleLowerCase("en");
       if (k === "e") this.action = true;
+      if (k === "f" || k === "g") this.act = k;
       if (k === " ") {
         this.jump = true;
         e.preventDefault(); // sayfa kaymasın, odaktaki düğme tetiklenmesin
@@ -219,6 +221,17 @@ export class Input {
 
   triggerEmote(i: number): void {
     this.emote = i;
+  }
+
+  /** Etkileşim tuşu (F / G) ya da ekrandaki etkileşim düğmesi. */
+  consumeAct(): "f" | "g" | null {
+    const a = this.act;
+    this.act = null;
+    return a;
+  }
+
+  triggerAct(k: "f" | "g"): void {
+    this.act = k;
   }
 
   consumeJump(): boolean {

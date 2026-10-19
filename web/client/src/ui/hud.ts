@@ -28,6 +28,10 @@ export class Hud {
   private promptState = "";
   private jail: HTMLDivElement;
   private lastDebug = 0;
+  private acts: HTMLDivElement;
+  private actsKey = "";
+  private toastEl: HTMLDivElement;
+  private toastTimer = 0;
 
   constructor(
     private root: HTMLElement,
@@ -43,9 +47,11 @@ export class Hud {
     this.jail = el("div", "panel jail-banner", root);
     this.jail.textContent = "⛓️ Sürgündesin — cezan bitene kadar zindandasın.";
     this.prompt.addEventListener("click", onAction);
+    this.acts = el("div", "acts", root);
+    this.toastEl = el("div", "panel toast", root);
     el("div", "hint", root).textContent = touch
       ? "Sol: yürü (sonuna kadar it: koş) • Sağ: kamera • İki parmak: yakınlaştır"
-      : "WASD: yürü • Shift: koş • Space: zıpla • E: otur • 1–6: emote • Sürükle: kamera";
+      : "WASD: yürü • Shift: koş • Space: zıpla • E: otur • F/G: etkileşim • 1–6: emote";
   }
 
   /** Sağ kenarda emote düğmeleri (masaüstünde 1–6 tuşları da çalışır). */
@@ -68,6 +74,29 @@ export class Hud {
       e.preventDefault();
       onJump();
     });
+  }
+
+  /** Yakındaki etkileşimler (mangal, zindan). Yalnızca liste değişince DOM'a yazılır. */
+  setActs(list: { key: "f" | "g"; label: string }[], touch: boolean, onAct: (k: "f" | "g") => void): void {
+    const key = list.map((a) => a.key + a.label).join("|");
+    if (key === this.actsKey) return;
+    this.actsKey = key;
+    this.acts.replaceChildren(
+      ...list.map((a) => {
+        const b = document.createElement("button");
+        b.className = "act-btn";
+        b.textContent = touch ? a.label : `${a.key.toUpperCase()} · ${a.label}`;
+        b.addEventListener("click", () => onAct(a.key));
+        return b;
+      }),
+    );
+  }
+
+  toast(text: string): void {
+    this.toastEl.textContent = text;
+    this.toastEl.classList.add("show");
+    window.clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove("show"), 3500);
   }
 
   setStatus(s: NetStatus): void {

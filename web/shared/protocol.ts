@@ -1,5 +1,5 @@
 // Tel protokolü. Sık mesajlar (konum, snapshot) binary; seyrek olaylar JSON metin.
-import { POS_SCALE } from "./constants";
+import { type Act, POS_SCALE } from "./constants";
 import type { Source } from "./media";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
@@ -55,6 +55,7 @@ export type ServerEvent =
   | ({ t: "watch" } & WatchState)
   | { t: "notice"; text: string }
   | { t: "emote"; sid: number; e: number }
+  | { t: "act"; sid: number; a: Act }
   | { t: "pong"; c: number; s: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */
@@ -62,7 +63,8 @@ export type ClientEvent =
   | { t: "ping"; c: number }
   | { t: "wcmd"; op: "play" | "pause" | "seek"; pos?: number }
   | { t: "wload"; url: string }
-  | { t: "emote"; e: number };
+  | { t: "emote"; e: number }
+  | { t: "act"; a: Act };
 
 export const STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;

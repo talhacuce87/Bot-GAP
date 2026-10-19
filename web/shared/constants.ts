@@ -66,3 +66,21 @@ export const EMOTES = [
 ] as const;
 /** Kişi başı emote aralığı (sunucu da uygular). */
 export const EMOTE_COOLDOWN_MS = 600;
+
+/**
+ * Etkileşim noktaları (sunucu mesafeyi doğrular): mangal ve zindan parmaklıklarının önü.
+ * Konumlar sahnedeki yerleşimle aynı olmalı (zones.ts: GROVE + 0.6, zindan parmaklığı x=-50.9).
+ */
+export const ACT_SPOTS = {
+  grill: { x: 58.6, z: 5, r: 3 },
+  bars: { x: -48.6, z: 5, r: 4.5 },
+} as const;
+export const ACTS = ["grill", "tea", "tomato"] as const;
+export type Act = (typeof ACTS)[number];
+export const ACT_COOLDOWN_MS = 1200;
+/** Atılan çay/domatesin, sürgünde kimse yoksa düştüğü yer: hücrenin ortası. */
+export const JAIL_CENTER = { x: (JAIL.minX + JAIL.maxX) / 2, z: (JAIL.minZ + JAIL.maxZ) / 2 };
+
+export function actSpot(a: Act): { x: number; z: number; r: number } {
+  return a === "grill" ? ACT_SPOTS.grill : ACT_SPOTS.bars;
+}

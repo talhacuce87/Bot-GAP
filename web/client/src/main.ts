@@ -1,10 +1,20 @@
 // GAP Dünyası istemcisi: giriş → dünya → ana döngü.
 import * as THREE from "three";
-import { EMOTE_COOLDOWN_MS, EMOTES, INTERP_DELAY_MS, JAIL_SPAWN, RELEASE_SPAWN } from "../../shared/constants";
+import {
+  ACT_COOLDOWN_MS,
+  ACT_SPOTS,
+  type Act,
+  EMOTE_COOLDOWN_MS,
+  EMOTES,
+  INTERP_DELAY_MS,
+  JAIL_CENTER,
+  JAIL_SPAWN,
+  RELEASE_SPAWN,
+} from "../../shared/constants";
 import { AvatarAtlas } from "./avatars/atlas";
 import { AvatarRenderer, colorFor, MAX_AVATARS } from "./avatars/avatars";
 import { Bots } from "./avatars/bots";
-import { EmoteFx } from "./avatars/emotes";
+import { EmoteFx, FX_CELL, ThrowFx } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
 import { login, type Session, watchIdFromPath } from "./discord";
 import { Input } from "./input/input";
@@ -35,7 +45,8 @@ function fail(msg: string): void {
 }
 
 async function start(): Promise<void> {
-  const world = buildWorld();
+  const hourParam = params.get("hour");
+  const world = buildWorld({ hour: hourParam !== null && hourParam !== "" ? Number(hourParam) : undefined });
 
   let renderer: THREE.WebGLRenderer;
   try {
@@ -69,6 +80,8 @@ async function start(): Promise<void> {
   const remotes = new Remotes(atlas);
   const emoteFx = new EmoteFx();
   world.scene.add(emoteFx.mesh);
+  const throwFx = new ThrowFx(emoteFx);
+  world.scene.add(throwFx.mesh);
 
   const me = new Player(world, colorFor(session.user.id));
   me.cell = atlas.alloc(session.user.id, session.user.name, session.user.avatar, me.color);
@@ -125,6 +138,44 @@ async function start(): Promise<void> {
   }
 
   hud.emoteBar(input.touch, (i) => input.triggerEmote(i));
+
+  // ---- Etkileşimler: mangalda şiş çevir, zindanda çay ver / domates at ----
+  const HEART = 2; // EMOTES içindeki ❤️
+  const perform = (a: Act, x: number, z: number, name: string, time: number, self: boolean) => {
+    if (a === "grill") {
+      world.grillBoost(time);
+      emoteFx.emit(ACT_SPOTS.grill.x, 1.1, ACT_SPOTS.grill.z, FX_CELL.skewer, time, 0, 3);
+      return;
+    }
+    // Atanın konumuna en yakın sürgündeki kişi; içeride kimse yoksa hücrenin ortası.
+    let tx = JAIL_CENTER.x, tz = JAIL_CENTER.z, best = Infinity, toMe = false;
+    const consider = (px: number, pz: number, isMe: boolean) => {
+      const d = (px - x) ** 2 + (pz - z) ** 2;
+      if (d < best) [best, tx, tz, toMe] = [d, px, pz, isMe];
+    };
+    if (me.jailed) consider(me.x, me.z, true);
+    for (const r of remotes.map.values()) if (r.info.jailed && r.hasData && !r.leaving) consider(r.x, r.z, false);
+    const tea = a === "tea";
+    throwFx.launch(x, 1.5, z, tx, 1.3, tz, tea ? FX_CELL.tea : FX_CELL.tomato, time, tea ? HEART : FX_CELL.splat);
+    if (toMe && !self) hud.toast(tea ? `${name} sana çay uzattı 🍵` : `${name} sana domates attı 🍅`);
+  };
+  net.onAct = (sid, a) => {
+    const r = remotes.map.get(sid);
+    if (r?.hasData) perform(a, r.x, r.z, r.info.name, performance.now() / 1000, false);
+  };
+  const nearActs = (): { key: "f" | "g"; label: string; act: Act }[] => {
+    if (me.jailed) return [];
+    const g = ACT_SPOTS.grill, bars = ACT_SPOTS.bars;
+    if (Math.hypot(me.x - g.x, me.z - g.z) <= g.r) return [{ key: "f", label: "Şiş çevir 🍢", act: "grill" }];
+    if (Math.hypot(me.x - bars.x, me.z - bars.z) <= bars.r) {
+      return [
+        { key: "f", label: "Çay ver 🍵", act: "tea" },
+        { key: "g", label: "Domates at 🍅", act: "tomato" },
+      ];
+    }
+    return [];
+  };
+  let lastAct = -Infinity;
   if (input.touch) hud.jumpButton(() => input.triggerJump());
   let lastEmote = 0;
 
@@ -157,6 +208,17 @@ async function start(): Promise<void> {
       net.send({ t: "emote", e: emote });
     }
     me.update(dt, input);
+
+    const acts = nearActs();
+    hud.setActs(acts, input.touch, (k) => input.triggerAct(k));
+    const actKey = input.consumeAct();
+    const act = actKey ? acts.find((a) => a.key === actKey)?.act : undefined;
+    if (act && now - lastAct >= ACT_COOLDOWN_MS) {
+      lastAct = now;
+      perform(act, me.x, me.z, session.user.name, time, true);
+      net.send({ t: "act", a: act });
+    }
+    throwFx.update(time);
     net.update(dt, me);
     const serverNow = net.serverNow();
     bots?.update(dt, serverNow);
