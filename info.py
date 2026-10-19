@@ -91,7 +91,8 @@ class InfoCog(commands.Cog):
                 "• `!streak` — Günlük mesaj serisi ve XP çarpanı bonusu\n"
                 "• `!haftalik` — Kişisel haftalık özet kartın (sadece pazar, haftada bir)\n"
                 "• `!wrapped` — Kişisel aylık Wrapped kartın (sadece ayın son günü, ayda bir)\n"
-                "• `!başarımlar [@üye]` — Rozetlerin izci fuları üzerinde · `!kartdüzen` — Kartında görünecek 3 rozeti seç"
+                "• `!başarımlar [@üye]` — Rozetlerin izci fuları üzerinde · `!başarımrehberi` — Nasıl kazanılır\n"
+                "• `!kartdüzen` — Kartında görünecek 3 rozeti seç"
             ),
             inline=False,
         )
@@ -144,7 +145,7 @@ class InfoCog(commands.Cog):
                     "• `!boost @üye <çarpan> [saat] <sebep>` — Belirtilen süre için geçici XP boost tanımlar\n"
                     "• `!sürgün @üye <süre|kalıcı> <sebep>` — XP 0.5x, boost ve seri işlemez (örn. `3g`, `12sa`)\n"
                     "• `!sürgünsonlandır @üye` — Sürgünü erken bitirir\n"
-                    "• `!basarimver` / `!basarimal @üye <başarım>` — Elle başarım ver (Fikir Babası) / geri al\n"
+                    "• `!basarimver @üye <başarım> [gümüş|altın|platin]` / `!basarimal @üye <başarım>` — Başarım ver / geri al\n"
                     "• *XP komutlarında sebep zorunludur; tüm işlemler kayıt altına alınır*\n"
                     "• `!xpsenkronize` — Sunucu üyelerinin XP rollerini kontrol edip eşitler\n"
                     "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır"

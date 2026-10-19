@@ -23,8 +23,8 @@ from discord.ext import commands, tasks
 import activitylog
 import database as db
 from achievements import (
-    ACHIEVEMENTS, BY_KEY, FRIEND_TIER_SECONDS, MemberFacts, aggregate, evaluate, progress, special_day, tier_label,
-    week_key,
+    ACHIEVEMENTS, BY_KEY, CATEGORIES, FRIEND_TIER_SECONDS, TIER_NAMES, MemberFacts, aggregate, emoji, evaluate, find,
+    parse_tier, progress, special_day, tier_label, week_key,
 )
 from badges import Goal, SashEntry, png, render_sash_card
 from cardutils import fetch_avatar_bytes
@@ -271,7 +271,50 @@ class AchievementCog(commands.Cog):
             return
         async with ctx.typing():
             buf = await self.build_sash(target)
-        await ctx.send(file=discord.File(buf, filename="basarimlar.png"))
+        await ctx.send("Nasıl kazanılır? `!başarımrehberi` · Kartına rozet seç: `!kartdüzen`",
+                       file=discord.File(buf, filename="basarimlar.png"))
+
+    @commands.command(name="başarımrehberi", aliases=[
+        "basarimrehberi", "başarımrehber", "basarimrehber", "rozetrehberi", "nasılkazanılır", "nasilkazanilir",
+    ])
+    @commands.guild_only()
+    async def guide_command(self, ctx: commands.Context) -> None:
+        """Gizli olmayan başarımların nasıl kazanıldığını ve senin durumunu gösterir."""
+        earned = {k: tier for k, (tier, _) in (await db.get_achievements(ctx.guild.id, ctx.author.id)).get(ctx.author.id, {}).items()}
+        embed = discord.Embed(
+            title="🏅 Başarım Rehberi",
+            description=(
+                f"Kademeli başarımlar **{' → '.join(TIER_NAMES)}** ilerler, tek kademeliler açılınca **Özel** olur. "
+                "Kademe hiç düşmez.\n✅ = sende var (kademesiyle) · ▫️ = henüz yok"
+            ),
+            color=discord.Color.from_rgb(88, 225, 193),
+        )
+        for category in CATEGORIES:
+            lines = []
+            for a in ACHIEVEMENTS:
+                if a.category != category or a.hidden:
+                    continue
+                tier = earned.get(a.key, 0)
+                mark = f"✅ {tier_label(a, tier)}" if tier else "▫️"
+                if a.tiered:
+                    unit = f" {a.unit}" if a.unit else ""
+                    steps = " / ".join(f"{int(t):,}".replace(",", ".") for t in a.tiers)
+                    how = f"{a.desc.replace('{n}', 'N')} — N: {steps}{unit}"
+                else:
+                    how = a.desc + (" (yönetici verir)" if a.manual else "")
+                lines.append(f"{emoji(a)} **{a.name}** · {mark}\n┗ {how}")
+            if lines:
+                embed.add_field(name=category, value="\n".join(lines)[:1024], inline=False)
+        hidden = [a for a in ACHIEVEMENTS if a.hidden]
+        found = sum(1 for a in hidden if a.key in earned)
+        embed.add_field(
+            name="🤫 Gizli başarımlar",
+            value=f"**{len(hidden)}** gizli başarım var, **{found}** tanesini buldun. "
+                  "Adları ve koşulları açılana kadar görünmez; bulduklarını `!başarımlar` kartında görürsün.",
+            inline=False,
+        )
+        embed.set_footer(text="!başarımlar — rozetlerin · !kartdüzen — kartında 3 rozet göster")
+        await ctx.send(embed=embed)
 
     @commands.command(name="kartdüzen", aliases=["kartduzen", "kartdüzenle", "kartduzenle", "rozetseç", "rozetsec"])
     @commands.guild_only()
@@ -287,36 +330,50 @@ class AchievementCog(commands.Cog):
             "🎖️ `!kart`'ında görünecek en fazla **3** başarımı seç:", view=view,
         )
 
-    def _resolve(self, text: str):
-        text = text.strip().lower()
-        for a in ACHIEVEMENTS:
-            if text in {a.key, a.name.lower(), a.name.lower().replace(" ", "")}:
-                return a
-        return None
+    @staticmethod
+    def _names() -> str:
+        return ", ".join(f"`{a.name}`" for a in ACHIEVEMENTS)
 
-    @commands.command(name="basarimver", aliases=["başarımver"], usage="@üye <başarım>")
+    @commands.command(name="basarimver", aliases=["başarımver", "rozetver"], usage="@üye <başarım> [gümüş|altın|platin]")
     @commands.guild_only()
     @commands.has_permissions(administrator=True)
     async def grant_command(self, ctx: commands.Context, member: discord.Member, *, name: str) -> None:
-        """Elle verilen başarımı verir (ör. Fikir Babası)."""
-        a = self._resolve(name)
-        if a is None or not a.manual:
-            manual = ", ".join(f"`{x.name}`" for x in ACHIEVEMENTS if x.manual)
-            await ctx.send(f"❌ Elle verilebilen başarımlar: {manual}")
+        """
+        Başarımı elle verir. Kademe yazılmazsa bir üst kademe verilir (yoksa ilk kademe).
+        Örn: !basarimver @üye Fikir Babası · !basarimver @üye Yayıncı altın
+        """
+        words = name.split()
+        tier = parse_tier(words[-1]) if len(words) > 1 else None
+        a = find(" ".join(words[:-1]) if tier else name)
+        if a is None:
+            await ctx.send(f"❌ `{name}` diye bir başarım bulamadım. Başarımlar: {self._names()}")
             return
-        await db.set_achievement(ctx.guild.id, member.id, a.key, 1)
-        activitylog.record("admin_achievement_grant", ctx.guild.id, member.id, actor_id=ctx.author.id, key=a.key)
-        await ctx.send(f"🏅 {member.mention} artık **{a.name}**! ({a.desc})",
+        if member.bot:
+            await ctx.send("🤖 Botlara başarım verilmez.")
+            return
+        current = (await db.get_achievements(ctx.guild.id, member.id)).get(member.id, {}).get(a.key, (0, 0))[0]
+        if tier is None:
+            tier = min(current + 1, a.max_tier)
+        elif not a.tiered:
+            tier = 1
+        if tier == current:
+            await ctx.send(f"ℹ️ {member.display_name} zaten **{a.name}** ({tier_label(a, tier)}).")
+            return
+        await db.set_achievement(ctx.guild.id, member.id, a.key, tier)
+        activitylog.record("admin_achievement_grant", ctx.guild.id, member.id, actor_id=ctx.author.id,
+                           key=a.key, tier=tier, before=current)
+        label = f" · **{tier_label(a, tier)}**" if a.tiered else ""
+        await ctx.send(f"🏅 {member.mention} artık **{a.name}**{label}! ({a.describe(tier)})",
                        allowed_mentions=discord.AllowedMentions(users=[member]))
 
-    @commands.command(name="basarimal", aliases=["başarımal"], usage="@üye <başarım>")
+    @commands.command(name="basarimal", aliases=["başarımal", "rozetal"], usage="@üye <başarım>")
     @commands.guild_only()
     @commands.has_permissions(administrator=True)
     async def revoke_command(self, ctx: commands.Context, member: discord.Member, *, name: str) -> None:
         """Bir başarımı geri alır (yanlışlıkla verildiyse)."""
-        a = self._resolve(name)
+        a = find(name)
         if a is None:
-            await ctx.send("❌ Böyle bir başarım yok.")
+            await ctx.send(f"❌ `{name}` diye bir başarım bulamadım. Başarımlar: {self._names()}")
             return
         removed = await db.delete_achievement(ctx.guild.id, member.id, a.key)
         activitylog.record("admin_achievement_revoke", ctx.guild.id, member.id, actor_id=ctx.author.id, key=a.key)
@@ -344,7 +401,7 @@ class BadgePicker(discord.ui.View):
             discord.SelectOption(
                 label=BY_KEY[key].name, value=key, default=key in chosen,
                 description=f"{tier_label(BY_KEY[key], tier)} · {BY_KEY[key].describe(tier)}"[:100],
-                emoji="".join(chr(int(cp, 16)) for cp in BY_KEY[key].icon.split("-")),
+                emoji=emoji(BY_KEY[key]),
             )
             for key, (tier, _) in ordered
         ]

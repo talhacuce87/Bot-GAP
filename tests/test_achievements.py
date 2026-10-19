@@ -284,16 +284,73 @@ async def test_grant_and_revoke(db):
     sent: list[str] = []
     ctx = SimpleNamespace(guild=guild, author=SimpleNamespace(id=9), send=lambda m, **k: _store(sent, m))
     cog = _cog(guild)
-    await achievement_cog.AchievementCog.grant_command.callback(cog, ctx, target, name="yayıncı")
-    assert "Elle verilebilen" in sent[-1]
-    await achievement_cog.AchievementCog.grant_command.callback(cog, ctx, target, name="Fikir Babası")
-    assert "fikir_babasi" in (await db.get_achievements(1))[1]
-    await achievement_cog.AchievementCog.revoke_command.callback(cog, ctx, target, name="fikir_babasi")
-    assert await db.get_achievements(1) == {} and "alındı" in sent[-1]
+    grant = achievement_cog.AchievementCog.grant_command.callback
+    tier = lambda key: _tier(db, key)  # noqa: E731
+
+    await grant(cog, ctx, target, name="fikir babasi")                    # Türkçe karakter olmadan
+    assert await tier("fikir_babasi") == 1 and "Fikir Babası" in sent[-1]
+    await grant(cog, ctx, target, name="Fikir Babası")
+    assert "zaten" in sent[-1]
+
+    await grant(cog, ctx, target, name="yayinci")                         # kademe yazılmazsa ilk kademe
+    assert await tier("yayinci") == 1
+    await grant(cog, ctx, target, name="Yayıncı platin")
+    assert await tier("yayinci") == 3 and "Platin" in sent[-1]
+    await grant(cog, ctx, target, name="yayıncı 2")                       # yönetici düzeltmesi: düşürebilir
+    assert await tier("yayinci") == 2
+    await grant(cog, ctx, target, name="Haftanın Gece Kuşu altın")
+    assert await tier("haftanin_gece_kusu") == 2
+    await grant(cog, ctx, target, name="sadık altın")                     # tek kademelide kademe yok sayılır
+    assert await tier("sadik") == 1
+
+    await grant(cog, ctx, target, name="olmayan başarım")
+    assert "bulamadım" in sent[-1] and "Yayıncı" in sent[-1]
+    await achievement_cog.AchievementCog.revoke_command.callback(cog, ctx, target, name="FİKİR BABASI")
+    assert await tier("fikir_babasi") == 0 and "alındı" in sent[-1]
 
 
 async def _store(store, msg):
     store.append(msg)
+
+
+async def _tier(db, key):
+    return (await db.get_achievements(1)).get(1, {}).get(key, (0, 0))[0]
+
+
+@pytest.mark.parametrize(
+    ("text", "key"),
+    [("fikir babasi", "fikir_babasi"), ("FİKİR BABASI", "fikir_babasi"), ("ikinci dusunce", "ikinci_dusunce"),
+     ("yüzümüz", "yuzumuz_ortada"), ("gece kusu", "haftanin_gece_kusu"), ("kapiyi_acan", "kapiyi_acan"),
+     ("haftanın", None), ("", None), ("xyz", None)],
+)
+def test_find(text, key):
+    found = ach.find(text)
+    assert (found.key if found else None) == key
+
+
+def test_parse_tier():
+    assert [ach.parse_tier(x) for x in ("gümüş", "ALTIN", "altin", "3", "4", "x")] == [1, 2, 2, 3, None, None]
+
+
+async def test_guide_shows_visible_achievements_and_status(db):
+    guild = _Guild()
+    _member(guild, 1)
+    await db.set_achievement(1, 1, "yayinci", 2)
+    await db.set_achievement(1, 1, "meme_lordu", 1)
+    sent: list = []
+
+    async def send(content=None, embed=None, **_):
+        sent.append(embed)
+
+    ctx = SimpleNamespace(guild=guild, author=SimpleNamespace(id=1), send=send)
+    await achievement_cog.AchievementCog.guide_command.callback(_cog(guild), ctx)
+    embed = sent[0]
+    text = "\n".join(f"{f.name}\n{f.value}" for f in embed.fields)
+    assert "Yayıncı** · ✅ Altın" in text and "100 / 250 / 500 saat" in text
+    assert "Kapıyı Açan** · ▫️" in text and "(yönetici verir)" in text
+    assert "Meme Lordu" not in text and "Sticker" not in text                  # gizliler ele verilmez
+    assert "**9** gizli başarım var, **1** tanesini buldun" in text
+    assert all(len(f.value) <= 1024 for f in embed.fields) and len(embed) <= 6000
 
 
 async def test_badge_picker_limits_and_saves(db):

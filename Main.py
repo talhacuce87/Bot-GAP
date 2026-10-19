@@ -32,6 +32,7 @@ from exile import ExileCog
 from info import InfoCog
 from leaderboard import LeaderboardCog
 from summary import SummaryCog
+from textutils import fold
 from usercard import UserCardCog
 from xp import XPTrackerCog
 
@@ -122,6 +123,25 @@ def _validate() -> None:
 
 
 class GapBot(commands.Bot):
+    _folded_commands: dict[str, commands.Command] = {}
+    _folded_count = -1
+
+    async def get_context(self, origin, /, *, cls=commands.Context):
+        """Komut bulunamazsa Türkçe karakterlere duyarsız tekrar arar (!basarımlar → !başarımlar)."""
+        ctx = await super().get_context(origin, cls=cls)
+        if ctx.command is None and ctx.invoked_with:
+            ctx.command = self._folded_lookup(ctx.invoked_with)
+        return ctx
+
+    def _folded_lookup(self, name: str) -> commands.Command | None:
+        if self._folded_count != len(self.all_commands):
+            folded: dict[str, commands.Command] = {}
+            for command in self.walk_commands():
+                for alias in (command.name, *command.aliases):
+                    folded.setdefault(fold(alias), command)
+            self._folded_commands, self._folded_count = folded, len(self.all_commands)
+        return self._folded_commands.get(fold(name))
+
     async def setup_hook(self) -> None:
         await self.add_cog(XPTrackerCog(self))
         await self.add_cog(BestFriendCog(self))

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from itertools import combinations
 
 from database import STREAK_TZ
+from textutils import fold
 
 TIER_NAMES = ("Gümüş", "Altın", "Platin")
 TIER_COLORS = ("#C9D3E0", "#FFC857", "#9BE8FF")
@@ -125,6 +126,34 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
     Achievement("fikir_babasi", "Fikir Babası", "Özel", "1f4a1", "Önerdiği bir özelliğin bota gelmesi", manual=True),
 )
 BY_KEY = {a.key: a for a in ACHIEVEMENTS}
+CATEGORIES = tuple(dict.fromkeys(a.category for a in ACHIEVEMENTS))
+
+
+def find(text: str) -> Achievement | None:
+    """İsimden/anahtardan başarım; Türkçe karakter ve boşluk farkı önemsiz, tek eşleşen kısmi ad da olur."""
+    wanted = fold(text)
+    if not wanted:
+        return None
+    for a in ACHIEVEMENTS:
+        if wanted in (fold(a.key), fold(a.name)):
+            return a
+    partial = [a for a in ACHIEVEMENTS if wanted in fold(a.name)]
+    return partial[0] if len(partial) == 1 else None
+
+
+def parse_tier(text: str) -> int | None:
+    """"altın", "2", "Platin" → kademe numarası; değilse None."""
+    t = fold(text)
+    if t.isdigit() and 1 <= int(t) <= len(TIER_NAMES):
+        return int(t)
+    for i, name in enumerate(TIER_NAMES, start=1):
+        if t == fold(name):
+            return i
+    return None
+
+
+def emoji(a: Achievement) -> str:
+    return "".join(chr(int(cp, 16)) for cp in a.icon.split("-"))
 
 
 def tier_label(achievement: Achievement, tier: int) -> str:
