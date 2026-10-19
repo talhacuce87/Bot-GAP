@@ -30,7 +30,7 @@ from cardutils import (
 from font_utils import clean_display_name, clean_text
 from summary_stats import (
     SUMMARY_EVENTS, WEEKDAYS, Period, PeriodStats, compute, format_hours, hour_range, is_month_end, is_week_end,
-    month_period, now_local, persona, top, week_period,
+    month_period, now_local, period_awards, persona, top, week_period,
 )
 from xp import VOICE_XP_INTERVAL_MINUTES
 from xproles import XPRoleManager
@@ -445,12 +445,19 @@ class SummaryCog(commands.Cog):
         return self.bot.get_channel(channel_id) if channel_id else None
 
     async def post_due(self, now: datetime.datetime | None = None) -> list[str]:
-        """Zamanı gelmiş ve henüz paylaşılmamış özetleri gönderir. Döner: gönderilen türler."""
+        """
+        Zamanı gelmiş ve henüz işlenmemiş dönemler için ödülleri (başarımlar) kaydeder ve kanal
+        ayarlıysa özet kartını gönderir. Döner: işlenen türler.
+        """
         now = now or now_local()
         if now.hour < POST_HOUR:
             return []
         channel = self._channel()
-        if channel is None or getattr(channel, "guild", None) is None:
+        if channel is not None and getattr(channel, "guild", None) is not None:
+            guilds = [channel.guild]
+        else:
+            channel, guilds = None, list(getattr(self.bot, "guilds", []))
+        if not guilds:
             return []
         sent: list[str] = []
         async with self._lock:
@@ -459,6 +466,14 @@ class SummaryCog(commands.Cog):
                 ("month", is_month_end(now.date()), month_period(now)),
             ):
                 if not due or self.state.was_posted(kind, period.key):
+                    continue
+                for guild in guilds:
+                    await db.add_summary_awards(
+                        guild.id, f"{kind}:{period.key}", period_awards(await self._stats(guild, period), kind),
+                    )
+                if channel is None:
+                    self.state.mark_posted(kind, period.key)
+                    sent.append(kind)
                     continue
                 try:
                     buf = await self.build_server_card(channel.guild, period)

@@ -100,6 +100,48 @@ CREATE TABLE IF NOT EXISTS exiles (
     streak_at_start INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, user_id)
 );
+
+-- Başarımlar: kazanılan kademe (tek kademelilerde 1)
+CREATE TABLE IF NOT EXISTS achievements (
+    guild_id    INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    key         TEXT    NOT NULL,
+    tier        INTEGER NOT NULL,
+    unlocked_at REAL    NOT NULL,
+    PRIMARY KEY (guild_id, user_id, key)
+);
+
+-- Başarım sayaçları (olay kaydı silinse de kalıcı). Kümeler için değer 1 (ör. "ch:<kanal>").
+CREATE TABLE IF NOT EXISTS achievement_counters (
+    guild_id INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    key      TEXT    NOT NULL,
+    value    REAL    NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, key)
+);
+
+-- Olay kaydının başarımlara işlenen son satırı
+CREATE TABLE IF NOT EXISTS achievement_state (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    last_id INTEGER NOT NULL DEFAULT 0
+);
+
+-- !kart'ta gösterilecek (en fazla 3) başarım
+CREATE TABLE IF NOT EXISTS card_badges (
+    guild_id INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    keys     TEXT    NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+-- Haftalık özet / aylık Wrapped ödülleri (haftanın ikilisi, gece kuşu, ayın MVP'si)
+CREATE TABLE IF NOT EXISTS summary_awards (
+    guild_id INTEGER NOT NULL,
+    period   TEXT    NOT NULL,
+    award    TEXT    NOT NULL,
+    user_id  INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, period, award, user_id)
+);
 """
 
 _MIGRATIONS: list[str] = [
@@ -814,6 +856,180 @@ async def get_guild_events_between(
             (guild_id, start_ts, end_ts, *events),
         ) as cur:
             return await cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Başarımlar
+# ---------------------------------------------------------------------------
+
+async def get_activity_after(last_id: int, limit: int = 5000) -> list[aiosqlite.Row]:
+    """Başarım işleyicisi için: id'si last_id'den büyük olay satırları (artan sırada)."""
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, ts, guild_id, user_id, event, channel_id, amount, meta FROM activity_log "
+            "WHERE id > ? ORDER BY id ASC LIMIT ?",
+            (last_id, limit),
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def get_achievement_cursor() -> int:
+    async with _db() as db:
+        async with db.execute("SELECT last_id FROM achievement_state WHERE id = 1") as cur:
+            row = await cur.fetchone()
+    return int(row[0]) if row else 0
+
+
+async def set_achievement_cursor(last_id: int) -> None:
+    async with _db() as db:
+        await db.execute(
+            "INSERT INTO achievement_state (id, last_id) VALUES (1, ?) "
+            "ON CONFLICT (id) DO UPDATE SET last_id = excluded.last_id",
+            (last_id,),
+        )
+        await db.commit()
+
+
+async def add_achievement_counters(rows: list[tuple[int, int, str, float]], *, assign: bool = False) -> None:
+    """(guild, user, key, değer) satırlarını sayaçlara ekler; assign=True ise değeri yazar (kümeler için)."""
+    if not rows:
+        return
+    op = "excluded.value" if assign else "achievement_counters.value + excluded.value"
+    async with _db() as db:
+        await db.executemany(
+            "INSERT INTO achievement_counters (guild_id, user_id, key, value) VALUES (?, ?, ?, ?) "
+            f"ON CONFLICT (guild_id, user_id, key) DO UPDATE SET value = {op}",
+            rows,
+        )
+        await db.commit()
+
+
+async def get_achievement_counters(guild_id: int) -> dict[int, dict[str, float]]:
+    out: dict[int, dict[str, float]] = {}
+    async with _db() as db:
+        async with db.execute(
+            "SELECT user_id, key, value FROM achievement_counters WHERE guild_id = ?", (guild_id,),
+        ) as cur:
+            async for user_id, key, value in cur:
+                out.setdefault(user_id, {})[key] = value
+    return out
+
+
+async def prune_duo_counters(keep_weeks: set[str]) -> None:
+    """Haftalık ikili sayaçlarından ("duo:<hafta>:<üye>") yalnızca verilen haftalar kalır."""
+    weeks = sorted(keep_weeks)
+    async with _db() as db:
+        await db.execute(
+            f"DELETE FROM achievement_counters WHERE key LIKE 'duo:%' "
+            f"AND substr(key, 5, 8) NOT IN ({','.join('?' * len(weeks))})",
+            weeks,
+        )
+        await db.commit()
+
+
+async def get_achievements(guild_id: int, user_id: int | None = None) -> dict[int, dict[str, tuple[int, float]]]:
+    """Kullanıcı → {başarım: (kademe, açılma zamanı)}."""
+    sql = "SELECT user_id, key, tier, unlocked_at FROM achievements WHERE guild_id = ?"
+    params: list[Any] = [guild_id]
+    if user_id is not None:
+        sql += " AND user_id = ?"
+        params.append(user_id)
+    out: dict[int, dict[str, tuple[int, float]]] = {}
+    async with _db() as db:
+        async with db.execute(sql, params) as cur:
+            async for uid, key, tier, unlocked_at in cur:
+                out.setdefault(uid, {})[key] = (tier, unlocked_at)
+    return out
+
+
+async def set_achievement(guild_id: int, user_id: int, key: str, tier: int) -> None:
+    async with _db() as db:
+        await db.execute(
+            "INSERT INTO achievements (guild_id, user_id, key, tier, unlocked_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (guild_id, user_id, key) DO UPDATE SET tier = excluded.tier, unlocked_at = excluded.unlocked_at",
+            (guild_id, user_id, key, tier, time.time()),
+        )
+        await db.commit()
+
+
+async def delete_achievement(guild_id: int, user_id: int, key: str) -> bool:
+    async with _db() as db:
+        cur = await db.execute(
+            "DELETE FROM achievements WHERE guild_id = ? AND user_id = ? AND key = ?", (guild_id, user_id, key),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def get_card_badges(guild_id: int, user_id: int) -> list[str]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT keys FROM card_badges WHERE guild_id = ? AND user_id = ?", (guild_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+    return [k for k in (row[0].split(",") if row and row[0] else []) if k]
+
+
+async def set_card_badges(guild_id: int, user_id: int, keys: list[str]) -> None:
+    async with _db() as db:
+        await db.execute(
+            "INSERT INTO card_badges (guild_id, user_id, keys) VALUES (?, ?, ?) "
+            "ON CONFLICT (guild_id, user_id) DO UPDATE SET keys = excluded.keys",
+            (guild_id, user_id, ",".join(keys)),
+        )
+        await db.commit()
+
+
+async def add_summary_awards(guild_id: int, period: str, awards: dict[str, list[int]]) -> None:
+    rows = [(guild_id, period, award, uid) for award, uids in awards.items() for uid in uids]
+    if not rows:
+        return
+    async with _db() as db:
+        await db.executemany(
+            "INSERT OR IGNORE INTO summary_awards (guild_id, period, award, user_id) VALUES (?, ?, ?, ?)", rows,
+        )
+        await db.commit()
+
+
+async def count_summary_awards(guild_id: int) -> dict[int, dict[str, int]]:
+    out: dict[int, dict[str, int]] = {}
+    async with _db() as db:
+        async with db.execute(
+            "SELECT user_id, award, COUNT(*) FROM summary_awards WHERE guild_id = ? GROUP BY user_id, award",
+            (guild_id,),
+        ) as cur:
+            async for uid, award, count in cur:
+                out.setdefault(uid, {})[award] = count
+    return out
+
+
+async def get_active_days(guild_id: int, since_ts: float, events: tuple[str, ...]) -> dict[int, list[str]]:
+    """Kullanıcı → aktif olduğu günler (Türkiye saati, artan sırada)."""
+    offset = int(STREAK_TZ.utcoffset(None).total_seconds())
+    out: dict[int, list[str]] = {}
+    async with _db() as db:
+        async with db.execute(
+            f"""
+            SELECT DISTINCT user_id, date(ts + ?, 'unixepoch') AS day FROM activity_log
+            WHERE guild_id = ? AND ts >= ? AND user_id IS NOT NULL
+              AND event IN ({','.join('?' * len(events))})
+            ORDER BY user_id, day
+            """,
+            (offset, guild_id, since_ts, *events),
+        ) as cur:
+            async for uid, day in cur:
+                out.setdefault(uid, []).append(day)
+    return out
+
+
+async def get_all_pair_seconds(guild_id: int) -> list[tuple[int, int, int]]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT user_low_id, user_high_id, shared_seconds FROM voice_pair_stats WHERE guild_id = ?",
+            (guild_id,),
+        ) as cur:
+            return [tuple(r) for r in await cur.fetchall()]
 
 
 async def get_all_user_rows(guild_id: int) -> list[aiosqlite.Row]:

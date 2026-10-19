@@ -157,6 +157,19 @@ def compute(rows, voice_interval_seconds: int, *, bots: set[int] = frozenset()) 
     return stats
 
 
+def period_awards(stats: PeriodStats, kind: str) -> dict[str, list[int]]:
+    """Başarımlara sayılan dönem ödülleri: haftanın ikilisi ve gece kuşu, ayın MVP'si."""
+    awards: dict[str, list[int]] = {}
+    if kind == "week":
+        if duo := top(stats.pairs):
+            awards["week_duo"] = list(duo[0][0])
+        if night := top(stats.night_messages):
+            awards["week_night"] = [night[0][0]]
+    elif mvp := top(stats.xp):
+        awards["month_mvp"] = [mvp[0][0]]
+    return awards
+
+
 def top(counter: Counter, n: int = 1) -> list[tuple[int, int]]:
     """En yüksek n kayıt; eşitlikte küçük ID önce (sonuç kararlı olsun)."""
     return sorted(((k, v) for k, v in counter.items() if v > 0), key=lambda kv: (-kv[1], kv[0]))[:n]

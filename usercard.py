@@ -16,6 +16,8 @@ from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 import database as dbmod
+from achievements import BY_KEY
+from badges import draw_patch
 from cardutils import load_font
 from font_utils import clean_display_name, clean_text
 from xp import XPTrackerCog
@@ -30,6 +32,7 @@ CARD_HEIGHT = 600
 AVATAR_SIZE = 150
 AVATAR_POSITION = (76, 120)
 RANK_CENTER = (886, 136)
+BADGE_BOX = (800, 262, 972, 424)  # !kartdüzen ile seçilen 3 başarım
 BAR_BOX = (285, 482, 948, 526)
 BAR_INNER_PADDING = 6
 
@@ -271,6 +274,7 @@ class UserCardCog(commands.Cog):
             ((270, 314, 505, 424), 24),
             ((530, 314, 765, 424), 24),
             ((800, 70, 972, 242), 30),
+            (BADGE_BOX, 26),
         ]:
             self._draw_panel(draw, box, r, theme["panel_fill"], str(theme["panel_outline"]))
         return card
@@ -351,6 +355,9 @@ class UserCardCog(commands.Cog):
         dt(draw, RANK_CENTER, str(rank), f_rank, tp, sh, anchor="mm")
         dt(draw, (886, 188), f"Level {level}", f_label, ac, sh, anchor="mm")
 
+        await self._draw_badges(card, member, theme)
+        draw = ImageDraw.Draw(card)
+
         self._draw_progress_bar(card, ratio, theme)
         dt(draw, (286, 452), f"Level {level}", f_level, tp, sh, anchor="lm")
         next_label = "MAX" if ceiling <= floor else f"Level {next_level}"
@@ -363,6 +370,30 @@ class UserCardCog(commands.Cog):
         card.convert("RGB").save(buf, format="PNG")
         buf.seek(0)
         return buf
+
+    async def _draw_badges(self, card: Image.Image, member: discord.Member, theme: dict[str, object]) -> None:
+        """Rütbe kutusunun altında !kartdüzen ile seçilen en fazla 3 başarım rozeti."""
+        x0, y0, x1, y1 = BADGE_BOX
+        cx = (x0 + x1) // 2
+        draw = ImageDraw.Draw(card)
+        self._draw_text(draw, (cx, y0 + 26), "Badges", _load_font(19), str(theme["text_muted"]), str(theme["shadow"]), anchor="mm")
+        earned = (await dbmod.get_achievements(member.guild.id, member.id)).get(member.id, {})
+        chosen = [k for k in await dbmod.get_card_badges(member.guild.id, member.id) if k in earned and k in BY_KEY][:3]
+        if not chosen:
+            for i, line in enumerate(("Rozet seçmek için", "!kartdüzen")):
+                draw.text((cx, y0 + 82 + i * 26), line, font=_load_font(17, bold=i == 1),
+                          fill=str(theme["text_secondary"] if i else theme["text_muted"]), anchor="mm")
+            return
+        size = 50
+        gap = 54
+        start = cx - (len(chosen) - 1) * gap / 2
+        for i, key in enumerate(chosen):
+            patch = draw_patch(BY_KEY[key], earned[key][0], size)
+            card.alpha_composite(patch, (int(start + i * gap - patch.width / 2), y0 + 64))
+        if len(chosen) == 1:
+            draw = ImageDraw.Draw(card)
+            name = self._fit_text(draw, BY_KEY[chosen[0]].name, _load_font(15), x1 - x0 - 16)
+            draw.text((cx, y1 - 26), name, font=_load_font(15), fill=str(theme["text_secondary"]), anchor="mm")
 
     # ------------------------------------------------------------------
     # Komut

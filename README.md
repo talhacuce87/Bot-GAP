@@ -18,6 +18,7 @@ Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanma
 - [Komutlar](#-komutlar)
 - [XP sistemi](#-xp-sistemi)
 - [Haftalık özet ve aylık Wrapped](#-haftalık-özet-ve-aylık-wrapped)
+- [Başarımlar](#-başarımlar)
 - [Yapay zekâ sohbet ve hafıza](#-yapay-zekâ-sohbet-ve-hafıza-isteğe-bağlı)
 - [Loglama ve hile analizi](#-loglama-ve-hile-analizi)
 - [Veri ve yedekleme](#-veri-ve-yedekleme)
@@ -32,6 +33,7 @@ Bot yalnızca The Gap için yazıldı; herkese açık bir bot olarak yayınlanma
 | 💬 **Mesaj ve ses XP'si** | Mesaj başına rastgele XP (20 sn bekleme), seste 2 dakikada bir XP. Günlük seri ve süreli boost çarpanları. |
 | 🏅 **Seviye rolleri** | 19 kademe; XP eşiği geçilince rol otomatik verilir. |
 | ⛓️ **Sürgün** | Yöneticilerin XP cezası: süreli ya da kalıcı 0.5x XP, hapishane temalı `!sürgünler` kartı. |
+| 🏅 **Başarımlar** | 27 başarım (çoğu Gümüş/Altın/Platin kademeli, bir kısmı gizli), izci fuları kartı, `!kart`'ta 3 rozet. |
 | 📊 **Haftalık özet & Wrapped** | Pazar akşamı haftanın, ayın son günü ayın kartı kendiliğinden paylaşılır; herkes kendi kartını da alabilir. |
 | 🎴 **Görsel kartlar** | `!kart` profil kartı, `!liderlik` ilk 10, `!roller` rol haritası, `!bf` arkadaşlık kartı. |
 | 👥 **Arkadaşlık tier'ları** | Birlikte seste geçirilen süreye göre 6 kademe: Tanıdık → Ruh İkizi. |
@@ -77,6 +79,7 @@ Tam liste ve açıklamalar `.env.example` içinde. Temel ayarlar:
 | `LOG_CHANNEL_ID` | | Şüpheli hareket ve admin işlemi uyarılarının gideceği kanal |
 | `ANNOUNCE_CHANNEL_ID` | | Yeni sürüm açıldığında güncelleme notlarının paylaşılacağı kanal |
 | `SUMMARY_CHANNEL_ID` | | Haftalık özet ve aylık Wrapped kartlarının paylaşılacağı kanal (boşsa `ANNOUNCE_CHANNEL_ID`) |
+| `ACHIEVEMENT_CHANNEL_ID` | | Yeni başarımların duyurulacağı kanal (boşsa sessizce açılır) |
 | `SUMMARY_POST_HOUR` | | Özetlerin paylaşılacağı saat, Türkiye saati (varsayılan 21) |
 | `LOG_FILE_RETENTION_DAYS` / `EVENT_RETENTION_DAYS` | | Log dosyası / olay kaydı saklama süresi (varsayılan 90 / 365 gün) |
 | `AI_ENABLED` | | Yapay zekâ eklentisi (varsayılan kapalı). Ayarlar için [Yapay zekâ](#-yapay-zekâ-sohbet-ve-hafıza-isteğe-bağlı) |
@@ -130,6 +133,8 @@ Tüm komutların kısa listesi Discord'da `!yardim` ile görülebilir.
 | `!sürgünler` | Sürgündekiler, sebepleri ve kalan süreleri (kart) |
 | `!haftalik` | Kişisel haftalık özet kartı — yalnızca **pazar**, haftada bir kez |
 | `!wrapped` (`!aylik`) | Kişisel aylık Wrapped kartı — yalnızca **ayın son günü**, ayda bir kez |
+| `!başarımlar [@üye]` (`!basarimlar`, `!rozetler`) | Başarımlar, izci fuları üzerinde rozetler olarak |
+| `!kartdüzen` (`!kartduzen`) | `!kart`'ta görünecek en fazla 3 rozeti seçme menüsü |
 
 ### Arkadaşlık
 
@@ -151,6 +156,7 @@ Tier'lar birlikte seste geçirilen süreye göre belirlenir: 🌱 Tanıdık 5 sa
 | `!boost @üye <çarpan> [saat] <sebep>` | Süreli XP çarpanı (1–10x, en fazla 720 saat) |
 | `!sürgün @üye <süre\|kalıcı> <sebep>` (`!surgun`) | Üyeyi sürgüne gönderir; bkz. [Sürgün](#sürgün) |
 | `!sürgünsonlandır @üye` (`!surgunsonlandir`) | Sürgünü erken bitirir |
+| `!basarimver @üye <başarım>` · `!basarimal @üye <başarım>` | Elle verilen başarımı (Fikir Babası) verir / bir başarımı geri alır |
 | `!xpsenkronize` | Tüm üyelerin seviye rollerini XP'lerine göre düzeltir |
 | `!yedekle` (`!backup`) | Veritabanının anlık yedeğini alır |
 
@@ -193,6 +199,45 @@ Bot, olay kaydındaki veriden (XP, mesajlar, ses XP'si ve o sırada seste kimler
 - **Sunucu kartı:** Dönemin MVP'si (en çok XP) ve ilk 4, seste en çok kalan, en çok yazan, dönemin ikilisi (birlikte en çok seste kalan iki kişi), en uzun seri, gece kuşu (00:00–05:00 arası en çok yazan), seviye atlayanlar, toplam mesaj/ses ve en hareketli gün-saat.
 - **Kişisel kart:** `!haftalik` yalnızca **pazar**, `!wrapped` yalnızca **ayın son günü** çalışır ve herkes dönemde **bir kez** alabilir. Başka günlerde bot bir sonraki tarihi söyler. Kartta: kazanılan XP ve sunucudaki sıra, mesaj ve ses süresi, en çok takıldığın kişi, en aktif saat ve gün, seviye değişimi, seri ve dönemin "hâli" (Gece Kuşu, Sosyal Kelebek, Ses Bağımlısı, Klavye Delikanlısı, Sessiz Gölge, Dengeli Gapçı).
 - Ses süresi, ses XP'si kazanılan süredir: yanında en az bir kişi varken, sağır değilken ve AFK kanalında değilken.
+
+---
+
+## 🏅 Başarımlar
+
+27 başarım var. Kademeli olanlar **Gümüş → Altın → Platin** ilerler, tek kademeliler açılınca "Özel" olur. Kademe hiçbir zaman düşmez.
+
+- **`!başarımlar [@üye]`:** Rozetler kartı çaprazlama geçen bir izci fuları üzerinde görünür. Açılanlar işlemeli ve kademe renginde, kilitliler soluk, **gizli** kilitliler "???" olur. Sağ üstte "sıradaki hedefler" ve ilerleme çubukları yer alır.
+- **`!kartdüzen`:** Kazanılan başarımlardan en fazla **3**'ü bir menüden seçilir; `!kart`'taki "Badges" kutusunda görünür.
+- **Gizli başarımlar:** Spam'e açık olan başarımlar (mesaj, dosya, sticker, yanıt, düzenleme, takma ad…) gizlidir. Açılana kadar adı ve koşulu görünmez, böylece kasılamaz.
+- **Spam koruması:** Kapıyı Açan, ancak boş kanalı açtıktan sonra 30 dakika içinde biri gelirse sayılır. Işıkları Kapatan, ancak kanalda biriyle birlikte olunduysa sayılır.
+- **Hesaplama:** Başarımlar olay kaydından 5 dakikada bir hesaplanır. İlk çalıştırmada geçmiş kayıt geriye dönük işlenir ve bu ilk açılışlar duyurulmaz. `ACHIEVEMENT_CHANNEL_ID` ayarlıysa sonraki yeni başarımlar orada duyurulur.
+- **Yönetici:** Fikir Babası yalnızca `!basarimver` ile verilir; yanlış verilen bir başarım `!basarimal` ile geri alınır.
+- **Bayram tarihleri:** Bayram Ziyareti, `achievements.py` içindeki Diyanet bayram tarihlerini kullanır (2028 sonrası tahminidir).
+
+| Kategori | Başarım | Koşul | Kademeler (Gümüş / Altın / Platin) |
+|---|---|---|---|
+| Ses | **Yayıncı** | Seste N saat ekran paylaşımı | 100 / 250 / 500 saat |
+| Ses | **Yüzümüz Ortada** | Kamerası açık N saat seste | 5 / 25 / 100 saat |
+| Ses | **Kulak Misafiri** | Mikrofonu kapalı N saat seste | 50 / 200 / 500 saat |
+| Ses | **Kapıyı Açan** | Boş ses kanalını N kez açıp arkadaşlarını beklemek | 40 / 150 / 400 |
+| Ses | **Işıkları Kapatan** | Bir muhabbetten N kez en son çıkan olmak | 40 / 150 / 400 |
+| Arkadaşlık | **Ayrılmaz İkili** | Aynı kişiyle bir haftada 30+ saat seste | Tek |
+| Arkadaşlık | **Üç Silahşörler** | Aynı üç kişi birlikte N saat seste | 50 / 200 / 500 saat |
+| Arkadaşlık | **Herkesin Kankası** | 5 farklı kişiyle Arkadaş tier'ına ulaşmak | Tek |
+| Özet | **Haftanın İkilisi** | N kez haftanın ikilisi olmak | 1 / 5 / 15 |
+| Özet | **Haftanın Gece Kuşu** | N kez haftanın gece kuşu olmak | 1 / 5 / 15 |
+| Özet | **Wrapped Yıldızı** | N kez ayın MVP'si olmak | 1 / 3 / 6 |
+| Sadakat | **Gap Emektarı** | Sunucuda N yıl | 1 / 2 / 3 yıl |
+| Sadakat | **Sadık** | Son 365 günün 300'ünde aktif olmak | Tek |
+| Sadakat | **Diriliş** | Bozulan seriyi yeniden 14 güne çıkarmak | Tek |
+| Sadakat | **Sunucu Destekçisi** | Sunucuya N ay boost | 3 / 6 / 12 ay |
+| Özel Gün | **Yılbaşı Gecesi** | Yılbaşı gecesi (23:30–00:30) seste olmak | Tek |
+| Özel Gün | **Bayram Ziyareti** | Bayramın ilk günü seste olmak | Tek |
+| Özel | **Fikir Babası** | Önerdiği bir özelliğin bota gelmesi | Tek |
+
+Bunlara ek olarak **9 gizli başarım** var; adları ve koşulları açılana kadar görünmez (tanımlar `achievements.py` içinde).
+
+Rozet simgeleri [Twemoji](https://github.com/jdecked/twemoji)'dendir (CC-BY 4.0), bkz. `assets/badges/KAYNAK.md`.
 
 ---
 
@@ -441,6 +486,9 @@ Bot-GAP/
 ├── exile.py             # !sürgün XP cezası ve !sürgünler kartı
 ├── summary.py           # Haftalık özet / aylık Wrapped: otomatik paylaşım, komutlar, kartlar
 ├── summary_stats.py     # Özet istatistikleri (dönemler, sayımlar, kişilik etiketi)
+├── achievements.py      # Başarım tanımları, kademeler ve hesaplama
+├── achievement_cog.py   # Başarım işleyicisi, canlı takip, !başarımlar / !kartdüzen
+├── badges.py            # İzci rozeti ve fular kartı çizimi
 ├── cardutils.py         # Kartların ortak Pillow yardımcıları
 ├── font_utils.py        # Emoji ve desteklenmeyen karakter temizleme
 ├── info.py              # !yardim, !yenilikler, !ping, sürüm duyurusu
@@ -450,7 +498,7 @@ Bot-GAP/
 ├── ai/                  # İsteğe bağlı yapay zekâ eklentisi
 ├── persona/default.md   # Düzenlenebilir bot kişiliği
 ├── tests/               # pytest testleri
-├── assets/              # Banner, logo, DejaVu fontları
+├── assets/              # Banner, logo, DejaVu fontları, rozet simgeleri (badges/)
 ├── requirements.txt     # Bağımlılıklar
 ├── requirements-dev.txt # Test bağımlılıkları
 ├── Dockerfile
