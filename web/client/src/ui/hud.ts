@@ -7,7 +7,8 @@ const STATUS_TEXT: Record<NetStatus, string> = {
   connecting: "bağlanıyor…",
   online: "çevrimiçi",
   offline: "bağlantı koptu, yeniden deneniyor…",
-  denied: "oturum geçersiz — Activity'yi yeniden aç",
+  denied: "oturum geçersiz — sayfayı yenile",
+  notfound: "izleme odası bulunamadı (süresi dolmuş olabilir) — Discord'da yeniden !izle yaz",
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {

@@ -495,7 +495,25 @@ Harita yaklaşık 200 m çapında. Meydandan her bölgeye lambalı taş yollar g
    - YouTube testi için ek mapping'ler: `/youtube` → `www.youtube.com`, `/ytimg` → `i.ytimg.com`.
 4. Ses kanalında 🚀 Activities menüsünden uygulamayı başlat. Aynı kanalda başlatan herkes aynı odaya düşer.
 
-**Sunucu uç noktaları:** `/health`, `/api/config`, `/api/token` (OAuth code değişimi), `/api/guest`, `/avatar/<id>/<hash>` (Discord CDN proxy'si), `/ws` (oyun bağlantısı), `/internal/sessions`, `/internal/exiles`, `/internal/leaderboard` (üçü de `x-world-secret` başlığı ister; bot entegrasyonu için).
+**Watch party (`!izle <link>`):**
+- **Nasıl çalışır:** Discord'da `!izle <link>` yazılır, bot bir izleme odası açıp "İzlemeye katıl" düğmesini kanala atar. Düğmeye basan kişi tarayıcıda dünyayı açar, Discord ile giriş yapar ve sinemanın koridorunda doğar.
+- **Senkron:** Video 20 m'lik perdede herkes için senkron oynar. Durumu sunucu tutar, sapma 1 saniyeyi geçince oynatıcı doğru yere sarılır.
+- **Kontroller:** Odadaki herkes oynatabilir, durdurabilir, sarabilir ve alttaki kutuya yeni link yapıştırabilir. Perdeden uzaklaştıkça ses kısılır.
+- **Desteklenen kaynaklar:** YouTube (video ve canlı), Twitch (canlı ve video), Kick (canlı) ve doğrudan dosyalar (.mp4, .webm, .m3u8).
+- **Desteklenmeyenler:** DRM'li siteler (Netflix, Disney+ vb.) teknik olarak oynatılamaz.
+- **Kick:** Kick'in oynatıcısında bir kontrol arayüzü (API) yok. Sesi açmak için paneldeki 🖱 etkileşim düğmesiyle oynatıcıya doğrudan tıklanır.
+- **Activity farkı:** İzleme odaları Discord Activity'nin içinde değil, normal tarayıcı sekmesinde açılır. Activity'nin YouTube, Twitch ve Kick'i engelleyen güvenlik kısıtları orada yok.
+- **Ömür:** Oda boş kaldıktan 6 saat sonra kapanır.
+- **Kurulum:**
+  - Coolify'da `WORLD_PUBLIC_URL=https://world.<domain>` tanımla.
+  - Developer Portal → **OAuth2 → Redirects** bölümüne `https://world.<domain>/auth/callback` ekle.
+- **Yerelde deneme:** Discord ayarlı değilse misafir olarak girilir:
+  ```bash
+  curl -X POST localhost:3000/internal/watch -H 'x-world-secret: <secret>' \
+    -H 'Content-Type: application/json' -d '{"url":"https://youtu.be/aqz-KE-bpKQ"}'
+  ```
+
+**Sunucu uç noktaları:** `/health`, `/api/config`, `/api/token` (OAuth code değişimi), `/api/guest`, `/avatar/<id>/<hash>` (Discord CDN proxy'si), `/ws` (oyun bağlantısı), `/auth/login`, `/auth/callback`, `/api/me` (tarayıcıdan Discord girişi), `/w/<oda>` (izleme odası), `/internal/sessions`, `/internal/exiles`, `/internal/leaderboard`, `/internal/watch` (`/internal/*` uç noktaları `x-world-secret` başlığı ister; bot entegrasyonu için).
 
 ---
 

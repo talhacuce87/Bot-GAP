@@ -3,7 +3,11 @@ world_cog.py — GAP Dünyası (3D Activity, web/) entegrasyonu.
 
 Sürgündekilerin listesini 20 sn'de bir dünya sunucusuna gönderir; dünya onları
 zindan hücresine koyar, sürgün bitince serbest bırakır. XP sıralamasının ilk
-10'unu da 5 dakikada bir gönderir; dünyadaki Şöhret Kürsüsü panosu bununla dolar. Dünya iç ağda
+10'unu da 5 dakikada bir gönderir; dünyadaki Şöhret Kürsüsü panosu bununla dolar.
+
+!izle <link> bir watch party odası açar: link YouTube, Twitch, Kick ya da
+doğrudan video dosyası olabilir. Bot "İzlemeye katıl" düğmesini kanala atar;
+düğme dünyayı tarayıcıda açar ve video sinema perdesinde herkes için senkron oynar. Dünya iç ağda
 `WORLD_INTERNAL_URL` (varsayılan http://world:3000) adresindedir ve istekler
 `WORLD_SHARED_SECRET` ile doğrulanır. Secret yoksa cog hiçbir şey yapmaz.
 """
@@ -21,6 +25,15 @@ import database as db
 from font_utils import clean_display_name
 
 log = logging.getLogger("gap.world")
+
+WATCH_KIND_LABELS = {
+    "youtube": "YouTube",
+    "twitch": "Twitch (canlı)",
+    "twitch-vod": "Twitch video",
+    "kick": "Kick (canlı)",
+    "file": "Video dosyası",
+}
+WATCH_USAGE = "!izle <link> — YouTube, Twitch, Kick ya da .mp4/.webm/.m3u8 linki"
 
 PUSH_SECONDS = 20
 BOARD_MINUTES = 5
@@ -127,6 +140,53 @@ class WorldCog(commands.Cog):
     @board_loop.before_loop
     async def _before_board(self) -> None:
         await self.bot.wait_until_ready()
+
+    async def create_watch(self, guild_id: int, author: discord.abc.User, url: str) -> dict | None:
+        """Dünyada bir izleme odası açar. Link desteklenmiyorsa None; dünyaya ulaşılamazsa httpx hatası."""
+        assert self._client is not None
+        r = await self._client.post(f"{self.url}/internal/watch", json={
+            "guild": str(guild_id),
+            "by": {"id": str(author.id), "name": getattr(author, "display_name", author.name)},
+            "url": url,
+        })
+        if r.status_code == 400:
+            return None
+        r.raise_for_status()
+        return r.json()
+
+    @commands.command(name="izle", aliases=["watch", "wp", "watchparty"], usage="<link>")
+    @commands.guild_only()
+    async def watch_command(self, ctx: commands.Context, url: str | None = None) -> None:
+        """Watch party: linki GAP Dünyası'ndaki sinema perdesinde herkesle senkron izle."""
+        if self._client is None:
+            await ctx.send("ℹ️ GAP Dünyası bu botta bağlı değil.")
+            return
+        if not url:
+            await ctx.send(f"Kullanım: `{WATCH_USAGE}`")
+            return
+        url = url.strip("<>")  # Discord önizlemesini kapatmak için <link> yazılabilir
+        try:
+            room = await self.create_watch(ctx.guild.id, ctx.author, url)
+        except httpx.HTTPError as e:
+            log.warning("İzleme odası açılamadı: %s", e)
+            await ctx.send("❌ GAP Dünyası'na şu an ulaşılamıyor, biraz sonra tekrar dene.")
+            return
+        if room is None:
+            await ctx.send(f"❌ Bu linki açamıyorum. Kullanım: `{WATCH_USAGE}`")
+            return
+
+        embed = discord.Embed(
+            title="🎬 Watch party başladı",
+            description=(
+                f"**{room['title']}**\n{WATCH_KIND_LABELS.get(room['kind'], '')}\n\n"
+                "Düğmeye bas, Discord ile giriş yap; video GAP Dünyası'ndaki sinema perdesinde herkes için senkron oynar."
+            ),
+            color=discord.Color.from_rgb(88, 101, 242),
+        )
+        embed.set_footer(text=f"Başlatan: {ctx.author.display_name} · Odada kimse kalmazsa 6 saat sonra kapanır")
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(label="İzlemeye katıl", emoji="🍿", url=room["url"]))
+        await ctx.send(embed=embed, view=view)
 
     @commands.Cog.listener()
     async def on_exile_end(self, guild_id: int, user_id: int, row, _by) -> None:

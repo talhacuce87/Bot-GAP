@@ -228,6 +228,10 @@ export class Rooms {
     return r;
   }
 
+  find(key: string): Room | undefined {
+    return this.rooms.get(key);
+  }
+
   release(room: Room): void {
     if (room.size === 0) this.rooms.delete(room.key);
   }

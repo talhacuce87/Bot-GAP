@@ -28,6 +28,7 @@ body {
 #scene {
   position: fixed;
   inset: 0;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: block;
@@ -208,4 +209,155 @@ body {
 
 .jail-banner.show {
   display: block;
+}
+
+/* ---- Watch party ---- */
+.screen-layer {
+  position: fixed !important;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.screen-host {
+  background: #000;
+}
+
+.screen-host iframe,
+.screen-host video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.watch {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 28px);
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 32px));
+  pointer-events: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.watch-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.watch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.watch-btn {
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--text);
+  font: inherit;
+  min-width: 40px;
+  height: 32px;
+  cursor: pointer;
+}
+
+.watch-btn.small {
+  min-width: 32px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.watch-btn.on {
+  background: #e0a030;
+}
+
+.watch-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.watch-seek {
+  flex: 1;
+  min-width: 0;
+}
+
+.watch-vol {
+  width: 90px;
+}
+
+.watch-time {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.watch.live .watch-time {
+  color: #ff6b6b;
+}
+
+.watch-label {
+  font-size: 14px;
+}
+
+.watch-link {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font: inherit;
+  padding: 0 10px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.watch-start {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 26px;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.toast {
+  position: absolute;
+  left: 50%;
+  top: calc(max(10px, env(safe-area-inset-top)) + 46px);
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 0.25s;
+  white-space: nowrap;
+}
+
+.toast.show {
+  opacity: 1;
+}
+
+@media (max-width: 520px) {
+  .watch-vol {
+    width: 60px;
+  }
+  .hint {
+    display: none;
+  }
+}
+
+.has-watch .prompt {
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 150px);
 }

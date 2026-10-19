@@ -1,5 +1,6 @@
 // Tel protokolü. Sık mesajlar (konum, snapshot) binary; seyrek olaylar JSON metin.
 import { POS_SCALE } from "./constants";
+import type { Source } from "./media";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
 export const MSG_SNAPSHOT = 2; // sunucu → istemci: odadaki herkesin konumu
@@ -32,6 +33,18 @@ export interface BoardEntry {
   xp: number;
 }
 
+/** Watch party'nin otoriter durumu: `position` saniyesi `updatedAt` (sunucu ms) anındadır. */
+export interface WatchState {
+  source: Source | null;
+  title: string;
+  playing: boolean;
+  position: number;
+  updatedAt: number;
+  /** Son değişikliği yapanın adı ve yaptığı ("load" | "play" | "pause" | "seek"). */
+  by: string;
+  op: string;
+}
+
 /** Sunucunun gönderdiği JSON olaylar. */
 export type ServerEvent =
   | { t: "welcome"; you: number; room: string; players: PlayerInfo[] }
@@ -39,10 +52,15 @@ export type ServerEvent =
   | { t: "leave"; sid: number }
   | { t: "jail"; sid: number; jailed: boolean; x: number; z: number; rot: number }
   | { t: "board"; updated: number; entries: BoardEntry[] }
+  | ({ t: "watch" } & WatchState)
+  | { t: "notice"; text: string }
   | { t: "pong"; c: number; s: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */
-export type ClientEvent = { t: "ping"; c: number };
+export type ClientEvent =
+  | { t: "ping"; c: number }
+  | { t: "wcmd"; op: "play" | "pause" | "seek"; pos?: number }
+  | { t: "wload"; url: string };
 
 export const STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;

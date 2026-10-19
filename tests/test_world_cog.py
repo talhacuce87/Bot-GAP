@@ -103,3 +103,56 @@ async def test_leaderboard_posted_to_world(db, monkeypatch):
     await cog.push_leaderboard()
     assert seen[0].url.path == "/internal/leaderboard"
     assert b'"111111"' in seen[0].content
+
+
+class _Ctx:
+    def __init__(self):
+        self.guild = SimpleNamespace(id=1)
+        self.author = SimpleNamespace(id=42, name="ali", display_name="Ali")
+        self.sent: list[dict] = []
+
+    async def send(self, content=None, **kwargs):
+        self.sent.append({"content": content, **kwargs})
+
+
+def _watch_cog(monkeypatch, handler):
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    cog = world_cog.WorldCog(SimpleNamespace(guilds=[]))
+    cog._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://world.test")
+    cog.url = "http://world.test"
+    return cog
+
+
+async def test_watch_command_posts_room_link(monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"id": "abc123", "url": "https://world.example/w/abc123", "title": "Film", "kind": "youtube"})
+
+    cog = _watch_cog(monkeypatch, handler)
+    ctx = _Ctx()
+    await world_cog.WorldCog.watch_command.callback(cog, ctx, "<https://youtu.be/dQw4w9WgXcQ>")
+
+    body = seen[0].read()
+    assert b'"https://youtu.be/dQw4w9WgXcQ"' in body and b'"Ali"' in body
+    msg = ctx.sent[0]
+    assert "Film" in msg["embed"].description
+    assert msg["view"].children[0].url == "https://world.example/w/abc123"
+
+
+async def test_watch_command_rejects_unsupported_and_survives_world_down(monkeypatch):
+    cog = _watch_cog(monkeypatch, lambda r: httpx.Response(400, json={"error": "unsupported"}))
+    ctx = _Ctx()
+    await world_cog.WorldCog.watch_command.callback(cog, ctx, "https://netflix.com/watch/1")
+    assert "açamıyorum" in ctx.sent[0]["content"]
+
+    def down(request):
+        raise httpx.ConnectError("down")
+
+    cog = _watch_cog(monkeypatch, down)
+    await world_cog.WorldCog.watch_command.callback(cog, ctx, "https://youtu.be/dQw4w9WgXcQ")
+    assert "ulaşılamıyor" in ctx.sent[-1]["content"]
+
+    await world_cog.WorldCog.watch_command.callback(cog, ctx, None)
+    assert "Kullanım" in ctx.sent[-1]["content"]

@@ -1,9 +1,9 @@
 // WebSocket istemcisi: 15 Hz konum gönderimi, snapshot alımı, saat senkronu ve yeniden bağlanma.
 import { SEND_HZ } from "../../shared/constants";
-import { type BoardEntry, encodeState, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES } from "../../shared/protocol";
+import { type BoardEntry, type ClientEvent, encodeState, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES, type WatchState } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
 
-export type NetStatus = "connecting" | "online" | "offline" | "denied";
+export type NetStatus = "connecting" | "online" | "offline" | "denied" | "notfound";
 
 const KEEPALIVE_MS = 1000;
 const PING_MS = 2000;
@@ -18,6 +18,8 @@ export class Net {
   /** Kendi sürgün durumumuz değişti (girişte ya da canlı). */
   onJail: (jailed: boolean, x: number, z: number, rot: number) => void = () => {};
   onBoard: (entries: BoardEntry[], updated: number) => void = () => {};
+  onWatch: (s: WatchState) => void = () => {};
+  onNotice: (text: string) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -68,8 +70,8 @@ export class Net {
       this.ws = null;
       this.you = -1;
       // Upgrade reddi tarayıcıda 1006 olarak görünür; hiç açılmadan kapanırsa yine dene ama yavaşla.
-      if (e.code === 4001) {
-        this.setStatus("denied");
+      if (e.code === 4001 || e.code === 4004) {
+        this.setStatus(e.code === 4001 ? "denied" : "notfound");
         return;
       }
       this.setStatus("offline");
@@ -108,6 +110,14 @@ export class Net {
       case "board":
         this.onBoard(ev.entries, ev.updated);
         break;
+      case "watch": {
+        const { t: _t, ...state } = ev;
+        this.onWatch(state);
+        break;
+      }
+      case "notice":
+        this.onNotice(ev.text);
+        break;
       case "leave":
         this.remotes.leave(ev.sid);
         break;
@@ -124,6 +134,10 @@ export class Net {
         break;
       }
     }
+  }
+
+  send(ev: ClientEvent): void {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(ev));
   }
 
   /** Her kare çağrılır; durum değiştiyse SEND_HZ'de, değişmediyse saniyede bir gönderir. */

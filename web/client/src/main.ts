@@ -5,14 +5,17 @@ import { AvatarAtlas } from "./avatars/atlas";
 import { AvatarRenderer, colorFor, MAX_AVATARS } from "./avatars/avatars";
 import { Bots } from "./avatars/bots";
 import { Remotes } from "./avatars/remotes";
-import { login, type Session } from "./discord";
+import { login, type Session, watchIdFromPath } from "./discord";
 import { Input } from "./input/input";
 import { Net } from "./net";
 import { PerfGovernor } from "./perf";
 import { Player } from "./player";
 import { Hud } from "./ui/hud";
 import { openYoutubeTest } from "./ui/youtube";
-import { buildWorld } from "./world/scene";
+import { ScreenVideo } from "./watch/screen";
+import { WatchSync } from "./watch/sync";
+import { WatchPanel } from "./ui/watchPanel";
+import { buildWorld, SCREEN_W, SCREEN_Z } from "./world/scene";
 
 const params = new URLSearchParams(location.search);
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -20,6 +23,8 @@ const hudRoot = document.getElementById("hud")!;
 const loading = document.getElementById("loading")!;
 
 const touch = matchMedia("(pointer: coarse)").matches;
+/** Tarayıcıda izleme odası: perdede video oynar (canvas'ın saydam olabilmesi gerekir). */
+const watchRoom = watchIdFromPath() !== null;
 // Zayıf cihazlarda MSAA kapalı: en pahalı ama en az fark edilen kalite ayarı.
 const lowPower = params.has("low") || touch || (navigator.hardwareConcurrency || 4) <= 4;
 
@@ -36,6 +41,7 @@ async function start(): Promise<void> {
     renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: !lowPower,
+      alpha: watchRoom,
       powerPreference: "high-performance",
       stencil: false,
     });
@@ -65,7 +71,8 @@ async function start(): Promise<void> {
   me.cell = atlas.alloc(session.user.id, session.user.name, session.user.avatar, me.color);
 
   // Debug: `?at=x,z,yön` ile istenen noktada başla (ekran görüntüsü, bölge testi).
-  const at = params.has("debug") ? (params.get("at") || "").split(",").map(Number) : [];
+  const atParam = params.has("debug") ? params.get("at") : null;
+  const at = atParam ? atParam.split(",").map(Number) : [];
   if (at.length >= 2 && at.every(Number.isFinite)) me.teleport(at[0], at[1], at[2] ?? Math.PI);
 
   const input = new Input(canvas, hudRoot);
@@ -85,6 +92,26 @@ async function start(): Promise<void> {
   };
   hud.setStatus(net.status);
   if (params.has("debug")) hud.enableDebug(() => void openYoutubeTest(hudRoot, session));
+
+  // Watch party: video perdede, kontroller altta. Odaya giren sinemanın koridorunda başlar.
+  let watch: { sync: WatchSync; screen: ScreenVideo; panel: WatchPanel } | null = null;
+  if (session.mode === "watch") {
+    const screen = new ScreenVideo(world.screen, SCREEN_W);
+    const sync = new WatchSync(screen, () => net.serverNow());
+    const panel = new WatchPanel(hudRoot, sync, {
+      command: (op, pos) => net.send({ t: "wcmd", op, pos }),
+      load: (url) => net.send({ t: "wload", url }),
+      setInteractive: (on) => screen.setInteractive(on, canvas),
+    });
+    net.onWatch = (s) => {
+      sync.apply(s);
+      panel.onState(s);
+    };
+    net.onNotice = (text) => panel.notice(text);
+    watch = { sync, screen, panel };
+    hudRoot.classList.add("has-watch");
+    if (!at.length) me.teleport(0, SCREEN_Z + 20, Math.PI);
+  }
 
   const botCount = Math.min(MAX_AVATARS - 1, Math.max(0, Number(params.get("bots")) || 0));
   const bots = botCount ? new Bots(remotes, botCount, world.seats) : null;
@@ -120,7 +147,14 @@ async function start(): Promise<void> {
     hud.setPrompt(me.seated ? "stand" : me.nearSeat ? "sit" : "");
     if (remotes.consumeChanged()) hud.renderPlayers(remotes);
 
+    if (watch) {
+      watch.sync.update(dt);
+      watch.sync.setDistance(Math.hypot(me.x, me.z - SCREEN_Z));
+      watch.panel.update(now);
+    }
+
     renderer.render(world.scene, camera);
+    watch?.screen.render(camera);
     perf.frame(dtMs, performance.now() - t0);
     hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);
   };
