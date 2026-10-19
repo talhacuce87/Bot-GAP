@@ -34,6 +34,11 @@ export class Remote implements AvatarView {
   private head = 0; // bir sonraki yazılacak yer
   private n = 0;
 
+  /** Henüz hiç konum gelmediyse çizilmez (yoksa dünya merkezinde belirir). */
+  get hasData(): boolean {
+    return this.n > 0;
+  }
+
   constructor(
     readonly info: PlayerInfo,
     readonly cell: number,

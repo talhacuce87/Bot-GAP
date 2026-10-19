@@ -83,6 +83,19 @@ describe("Room", () => {
     expect(last.binary.length).toBe(2);
   });
 
+  it("promotes the oldest spectator when an active player leaves", () => {
+    const room = new Room("g:test");
+    const sids: number[] = [];
+    for (let i = 0; i < ROOM_MAX_PLAYERS + 2; i++) sids.push(room.join(user(`u${i}`), new FakeConn()));
+    const watcher = new FakeConn();
+    room.join(user("watcher"), watcher); // izleyici, olayları dinler
+    room.leave(sids[0]);
+    const firstSpectator = sids[ROOM_MAX_PLAYERS];
+    expect(room.players.get(firstSpectator)!.info.spectator).toBe(false);
+    expect(room.players.get(sids[ROOM_MAX_PLAYERS + 1])!.info.spectator).toBe(true);
+    expect(watcher.text.some((e) => e.t === "join" && e.player.sid === firstSpectator && !e.player.spectator)).toBe(true);
+  });
+
   it("skips snapshots for backed-up connections", () => {
     const room = new Room("g:test");
     const slow = new FakeConn();

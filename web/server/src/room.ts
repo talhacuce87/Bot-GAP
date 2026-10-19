@@ -73,8 +73,20 @@ export class Room {
   }
 
   leave(sid: number): void {
-    if (!this.players.delete(sid)) return;
+    const p = this.players.get(sid);
+    if (!p) return;
+    this.players.delete(sid);
     this.broadcast({ t: "leave", sid });
+    // Boşalan yere en eski izleyici geçer; istemciler onu yeni katılan gibi görür.
+    if (!p.info.spectator) {
+      for (const q of this.players.values()) {
+        if (!q.info.spectator) continue;
+        q.info.spectator = false;
+        q.lastUpdate = Date.now();
+        this.broadcast({ t: "join", player: q.info });
+        break;
+      }
+    }
     this.dirty = true;
   }
 

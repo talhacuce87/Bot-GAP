@@ -89,12 +89,12 @@ export class Net {
       case "welcome":
         this.you = ev.you;
         this.remotes.clear();
-        for (const p of ev.players) if (p.sid !== ev.you) this.remotes.add(p);
+        for (const p of ev.players) if (p.sid !== ev.you && !p.spectator) this.remotes.add(p);
         this.lastSent.flags = -1; // hemen tam durum gönder
         this.setStatus("online");
         break;
       case "join":
-        if (ev.player.sid !== this.you) this.remotes.add(ev.player);
+        if (ev.player.sid !== this.you && !ev.player.spectator) this.remotes.add(ev.player);
         break;
       case "leave":
         this.remotes.leave(ev.sid);

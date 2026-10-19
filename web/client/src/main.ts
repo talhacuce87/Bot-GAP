@@ -71,7 +71,7 @@ async function start(): Promise<void> {
   hud.setStatus(net.status);
   if (params.has("debug")) hud.enableDebug(() => void openYoutubeTest(hudRoot, session));
 
-  const botCount = Math.min(MAX_AVATARS - 24, Math.max(0, Number(params.get("bots")) || 0));
+  const botCount = Math.min(MAX_AVATARS - 1, Math.max(0, Number(params.get("bots")) || 0));
   const bots = botCount ? new Bots(remotes, botCount, world.seats) : null;
 
   addEventListener("resize", () => {
@@ -97,7 +97,7 @@ async function start(): Promise<void> {
 
     avatars.begin();
     avatars.push(me, time);
-    for (const r of remotes.map.values()) avatars.push(r, time);
+    for (const r of remotes.map.values()) if (r.hasData) avatars.push(r, time);
     avatars.end();
     me.updateCamera(camera, dt);
 
