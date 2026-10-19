@@ -338,4 +338,4 @@ async def test_awards_recorded_even_without_channel(db, tmp_path, monkeypatch):
     c = summary.SummaryCog(SimpleNamespace(get_channel=lambda cid: None, guilds=[guild]), state_path=tmp_path / "s.json")
     assert await c.post_due(SUNDAY) == ["week"]
     assert await c.post_due(SUNDAY) == []
-    assert await db.count_summary_awards(1) == {1: {"week_duo": 1}, 2: {"week_duo": 1, "week_night": 1}}
+    assert await db.count_summary_awards(1) == {1: {"week_duo": 1, "week_mvp": 1}, 2: {"week_duo": 1, "week_night": 1}}

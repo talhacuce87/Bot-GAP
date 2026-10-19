@@ -23,14 +23,15 @@ from discord.ext import commands, tasks
 import activitylog
 import database as db
 from achievements import (
-    ACHIEVEMENTS, BY_KEY, CATEGORIES, FRIEND_TIER_SECONDS, TIER_NAMES, MemberFacts, aggregate, emoji, evaluate, find,
-    parse_tier, progress, special_day, tier_label, week_key,
+    ACHIEVEMENTS, BY_KEY, CATEGORIES, FRIEND_TIER_SECONDS, SOCIAL_SECONDS, TIER_NAMES, MemberFacts, aggregate, emoji,
+    evaluate, find, parse_tier, progress, special_days, tier_label, week_key,
 )
 from badges import Goal, SashEntry, png, render_sash_card
 from cardutils import fetch_avatar_bytes
 from font_utils import clean_display_name
-from summary_stats import now_local
+from summary_stats import STREAK_TZ, now_local
 from xp import VOICE_XP_INTERVAL_MINUTES
+from xproles import XPRoleManager
 
 log = logging.getLogger("gap.achievements")
 
@@ -58,6 +59,7 @@ class AchievementCog(commands.Cog):
         self.bot = bot
         self._rooms: dict[int, Room] = {}
         self._lock = asyncio.Lock()
+        self._roles = XPRoleManager()
 
     async def cog_load(self) -> None:
         self.process_loop.start()
@@ -74,13 +76,21 @@ class AchievementCog(commands.Cog):
         await activitylog.flush()
         cursor = await db.get_achievement_cursor()
         first_run = cursor == 0
+        joined = {
+            (g.id, m.id): m.joined_at.timestamp()
+            for g in getattr(self.bot, "guilds", []) for m in g.members if getattr(m, "joined_at", None)
+        }
         while True:
             rows = await db.get_activity_after(cursor, BATCH)
             if not rows:
                 break
-            inc, sets = aggregate(rows, VOICE_XP_INTERVAL_MINUTES * 60)
-            await db.add_achievement_counters([(g, u, k, v) for (g, u, k), v in inc.items()])
-            await db.add_achievement_counters([(g, u, k, 1) for g, u, k in sets], assign=True)
+            agg = aggregate(rows, VOICE_XP_INTERVAL_MINUTES * 60, joined, await db.get_counter_values("exile_start"))
+            await db.add_achievement_counters([(g, u, k, v) for (g, u, k), v in agg.inc.items()])
+            await db.add_achievement_counters([(g, u, k, v) for (g, u, k), v in agg.maxes.items()], mode="max")
+            await db.add_achievement_counters([(g, u, k, v) for (g, u, k), v in agg.assign.items()], mode="assign")
+            for (gid, day), (_, uid) in sorted(agg.first_messages.items(), key=lambda kv: kv[1][0]):
+                if await db.claim_day(gid, f"gm:{day}"):                     # günün ilk mesajı (08:00 sonrası)
+                    await db.add_achievement_counters([(gid, uid, "gm", 1)])
             cursor = rows[-1]["id"]
             await db.set_achievement_cursor(cursor)
             if len(rows) < BATCH:
@@ -94,13 +104,21 @@ class AchievementCog(commands.Cog):
         active = await db.get_active_days(guild.id, since, ("message", "xp_voice"))
         message_days = await db.get_active_days(guild.id, since, ("message",))
         friends: dict[int, int] = {}
+        social: dict[int, int] = {}
         for a, b, seconds in await db.get_all_pair_seconds(guild.id):
-            if seconds >= FRIEND_TIER_SECONDS:
-                friends[a] = friends.get(a, 0) + 1
-                friends[b] = friends.get(b, 0) + 1
+            for uid in (a, b):
+                if seconds >= FRIEND_TIER_SECONDS:
+                    friends[uid] = friends.get(uid, 0) + 1
+                if seconds >= SOCIAL_SECONDS:
+                    social[uid] = social.get(uid, 0) + 1
+        rows = {r["user_id"]: r for r in await db.get_all_user_rows(guild.id)}
         now = discord.utils.utcnow()
-        return {
-            m.id: MemberFacts(
+        facts = {}
+        for m in guild.members:
+            if m.bot:
+                continue
+            row = rows.get(m.id)
+            facts[m.id] = MemberFacts(
                 counters=counters.get(m.id, {}),
                 awards=awards.get(m.id, {}),
                 active_days_365=len(active.get(m.id, [])),
@@ -109,9 +127,13 @@ class AchievementCog(commands.Cog):
                 joined_at=m.joined_at,
                 premium_since=m.premium_since,
                 now=now,
+                active_days=active.get(m.id, []),
+                friends_5h=social.get(m.id, 0),
+                voice_seconds=int(row["voice_seconds"]) if row else 0,
+                current_streak=db.current_streak(row) if row else 0,
+                level=self._roles.get_progress_data(int(row["text_xp"]) + int(row["voice_xp"]))[0] if row else 0,
             )
-            for m in guild.members if not m.bot
-        }
+        return facts
 
     async def evaluate_guild(self, guild: discord.Guild, *, announce: bool) -> dict[int, dict[str, int]]:
         """Üyelerin yükselen başarımlarını kaydeder. Döner: {üye: {başarım: yeni kademe}}."""
@@ -128,12 +150,15 @@ class AchievementCog(commands.Cog):
         return changes
 
     async def _award_special_day(self, guild: discord.Guild) -> None:
-        key = special_day(now_local())
-        if key is None:
+        created = getattr(guild, "created_at", None)
+        founded = created.astimezone(STREAK_TZ).date() if created else None
+        keys = special_days(now_local(), founded)
+        if not keys:
             return
         afk = guild.afk_channel.id if guild.afk_channel else None
         rows = [
             (guild.id, m.id, key, 1)
+            for key in keys
             for channel in guild.voice_channels if channel.id != afk
             for m in _humans(channel)
         ]
@@ -245,7 +270,7 @@ class AchievementCog(commands.Cog):
                 if a.hidden or a.manual:
                     continue
                 tier = earned.get(a.key, 0)
-                if (p := progress(a, facts, tier)) is None:
+                if (p := progress(a, facts, tier, earned)) is None:
                     continue
                 value, target = p
                 if value <= 0:

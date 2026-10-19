@@ -13,7 +13,7 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.7.0"
+BOT_VERSION = "2.8.0"
 LAST_DEPLOY_DATE = "19 Ekim 2026"
 
 # Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
@@ -203,7 +203,11 @@ class InfoCog(commands.Cog):
         embed.add_field(
             name="🏅 Başarımlar",
             value=(
-                "• 27 başarım: ses, sohbet, arkadaşlık, özetler, sadakat, özel günler ve **gizliler**\n"
+                "• 47 başarım: ses, sohbet, arkadaşlık, ilerleme, özetler, sadakat, özel günler ve **gizliler**\n"
+                "• Yeni: Ses Kurdu, Maraton, Gece Nöbeti, Kalabalık Sever, Klavye Ustası, Günaydın, Sabahçı, "
+                "Sosyal Kelebek, Hoş Geldin Komitesi, Ateşli Seri, Yükselen Yıldız, Haftanın MVP'si, Koleksiyoncu, "
+                "Platin Avcısı, Gap'in Doğum Günü, Atatürk'ün Evlatları ve yeni gizliler\n"
+                "• `!başarımrehberi` — gizli olmayan başarımlar nasıl kazanılır\n"
                 "• Çoğu **Gümüş → Altın → Platin** kademeli; geçmiş aktiviten de sayıldı\n"
                 "• `!başarımlar` — rozetlerin izci fuları üzerinde · `!kartdüzen` — `!kart`'ında 3 rozet göster"
             ),

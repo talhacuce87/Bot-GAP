@@ -891,11 +891,21 @@ async def set_achievement_cursor(last_id: int) -> None:
         await db.commit()
 
 
-async def add_achievement_counters(rows: list[tuple[int, int, str, float]], *, assign: bool = False) -> None:
-    """(guild, user, key, değer) satırlarını sayaçlara ekler; assign=True ise değeri yazar (kümeler için)."""
+async def add_achievement_counters(
+    rows: list[tuple[int, int, str, float]], *, assign: bool = False, mode: str = "add",
+) -> None:
+    """
+    (guild, user, key, değer) satırlarını sayaçlara yazar.
+    mode: add (ekle) · assign (üzerine yaz; kümeler için) · max (büyük olan kalır).
+    """
     if not rows:
         return
-    op = "excluded.value" if assign else "achievement_counters.value + excluded.value"
+    mode = "assign" if assign else mode
+    op = {
+        "add": "achievement_counters.value + excluded.value",
+        "assign": "excluded.value",
+        "max": "MAX(achievement_counters.value, excluded.value)",
+    }[mode]
     async with _db() as db:
         await db.executemany(
             "INSERT INTO achievement_counters (guild_id, user_id, key, value) VALUES (?, ?, ?, ?) "
@@ -914,6 +924,26 @@ async def get_achievement_counters(guild_id: int) -> dict[int, dict[str, float]]
             async for user_id, key, value in cur:
                 out.setdefault(user_id, {})[key] = value
     return out
+
+
+async def get_counter_values(key: str) -> dict[tuple[int, int], float]:
+    """Tüm sunucularda bir sayacın sıfırdan farklı değerleri: (guild, user) → değer."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT guild_id, user_id, value FROM achievement_counters WHERE key = ? AND value != 0", (key,),
+        ) as cur:
+            return {(g, u): v for g, u, v in await cur.fetchall()}
+
+
+async def claim_day(guild_id: int, key: str) -> bool:
+    """Sunucu genelinde bir kez olabilecek olayı (ör. günün ilk mesajı) kapar. Döner: ilk kapan mı."""
+    async with _db() as db:
+        cur = await db.execute(
+            "INSERT OR IGNORE INTO achievement_counters (guild_id, user_id, key, value) VALUES (?, 0, ?, 1)",
+            (guild_id, key),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 async def prune_duo_counters(keep_weeks: set[str]) -> None:
