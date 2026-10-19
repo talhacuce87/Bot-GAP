@@ -1,9 +1,10 @@
 // GAP Dünyası istemcisi: giriş → dünya → ana döngü.
 import * as THREE from "three";
-import { INTERP_DELAY_MS, JAIL_SPAWN, RELEASE_SPAWN } from "../../shared/constants";
+import { EMOTE_COOLDOWN_MS, EMOTES, INTERP_DELAY_MS, JAIL_SPAWN, RELEASE_SPAWN } from "../../shared/constants";
 import { AvatarAtlas } from "./avatars/atlas";
 import { AvatarRenderer, colorFor, MAX_AVATARS } from "./avatars/avatars";
 import { Bots } from "./avatars/bots";
+import { EmoteFx } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
 import { login, type Session, watchIdFromPath } from "./discord";
 import { Input } from "./input/input";
@@ -66,6 +67,8 @@ async function start(): Promise<void> {
   const avatars = new AvatarRenderer(atlas);
   world.scene.add(avatars.group);
   const remotes = new Remotes(atlas);
+  const emoteFx = new EmoteFx();
+  world.scene.add(emoteFx.mesh);
 
   const me = new Player(world, colorFor(session.user.id));
   me.cell = atlas.alloc(session.user.id, session.user.name, session.user.avatar, me.color);
@@ -80,6 +83,14 @@ async function start(): Promise<void> {
   world.fame.setAvatarUrl((id, hash) => `${session.base}/avatar/${id}/${hash}`);
   const net = new Net(session.wsUrl, remotes);
   net.onBoard = (entries, updated) => world.fame.set(entries, updated);
+  net.onEmote = (sid, e) => {
+    const r = remotes.map.get(sid);
+    if (!r || !r.hasData || e < 0 || e >= EMOTES.length) return;
+    const t = performance.now() / 1000;
+    r.emote = e;
+    r.emoteAt = t;
+    emoteFx.emit(r.x, 0, r.z, e, t);
+  };
   net.onStatus = (s) => hud.setStatus(s);
   net.onJail = (jailed, x, z, rot) => {
     const was = me.jailed;
@@ -113,8 +124,12 @@ async function start(): Promise<void> {
     if (!at.length) me.teleport(0, SCREEN_Z + 20, Math.PI);
   }
 
+  hud.emoteBar(input.touch, (i) => input.triggerEmote(i));
+  let lastEmote = 0;
+
   const botCount = Math.min(MAX_AVATARS - 1, Math.max(0, Number(params.get("bots")) || 0));
   const bots = botCount ? new Bots(remotes, botCount, world.seats) : null;
+  if (bots) bots.onEmote = (sid, e) => net.onEmote(sid, e);
 
   addEventListener("resize", () => {
     camera.aspect = innerWidth / innerHeight;
@@ -132,6 +147,14 @@ async function start(): Promise<void> {
 
     world.update(time);
     input.poll();
+    const emote = input.consumeEmote();
+    if (emote >= 0 && now - lastEmote >= EMOTE_COOLDOWN_MS) {
+      lastEmote = now;
+      me.emote = emote;
+      me.emoteAt = time;
+      emoteFx.emit(me.x, 0, me.z, emote, time);
+      net.send({ t: "emote", e: emote });
+    }
     me.update(dt, input);
     net.update(dt, me);
     const serverNow = net.serverNow();

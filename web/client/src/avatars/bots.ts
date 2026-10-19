@@ -1,5 +1,5 @@
 // `?bots=N`: performans testi için yerel sahte oyuncular. Gerçek ağ yolunu (Remotes + interpolasyon) kullanır.
-import { FLAG_SEATED, FLAG_WALKING, SEND_HZ, WALK_SPEED, WORLD_RADIUS } from "../../../shared/constants";
+import { EMOTES, FLAG_SEATED, FLAG_WALKING, SEND_HZ, WALK_SPEED, WORLD_RADIUS } from "../../../shared/constants";
 import type { Seat } from "../world/scene";
 import { LOCAL_SID_BASE, type Remotes } from "./remotes";
 
@@ -17,6 +17,8 @@ interface Bot {
 export class Bots {
   private bots: Bot[] = [];
   private acc = 0;
+  /** Sahte oyuncular ara sıra emote atar (ağdan gelmiş gibi). */
+  onEmote: (sid: number, e: number) => void = () => {};
 
   constructor(
     private remotes: Remotes,
@@ -77,6 +79,7 @@ export class Bots {
     if (this.acc < 1 / SEND_HZ) return;
     this.acc = 0;
     for (const b of this.bots) {
+      if (Math.random() < 0.012) this.onEmote(b.sid, Math.floor(Math.random() * EMOTES.length));
       const flags = b.wait > 0 ? (b.seated ? FLAG_SEATED : 0) : FLAG_WALKING;
       this.remotes.map.get(b.sid)?.push(serverNow, b.x, b.z, b.rot, flags);
     }

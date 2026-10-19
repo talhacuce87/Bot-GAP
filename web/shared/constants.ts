@@ -39,3 +39,15 @@ export function clampToJail(p: { x: number; z: number }): void {
   p.x = Math.min(JAIL.maxX, Math.max(JAIL.minX, p.x));
   p.z = Math.min(JAIL.maxZ, Math.max(JAIL.minZ, p.z));
 }
+
+/** Emote'lar: sıra önemli (1–6 tuşları ve tel protokolündeki indeks). */
+export const EMOTES = [
+  { emoji: "👋", name: "El salla", anim: "wave" },
+  { emoji: "😂", name: "Gül", anim: "hop" },
+  { emoji: "❤️", name: "Kalp", anim: "hop" },
+  { emoji: "🔥", name: "Ateş", anim: "hop" },
+  { emoji: "👏", name: "Alkış", anim: "hop" },
+  { emoji: "💃", name: "Dans", anim: "dance" },
+] as const;
+/** Kişi başı emote aralığı (sunucu da uygular). */
+export const EMOTE_COOLDOWN_MS = 600;

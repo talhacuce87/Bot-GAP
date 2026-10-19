@@ -54,13 +54,15 @@ export type ServerEvent =
   | { t: "board"; updated: number; entries: BoardEntry[] }
   | ({ t: "watch" } & WatchState)
   | { t: "notice"; text: string }
+  | { t: "emote"; sid: number; e: number }
   | { t: "pong"; c: number; s: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */
 export type ClientEvent =
   | { t: "ping"; c: number }
   | { t: "wcmd"; op: "play" | "pause" | "seek"; pos?: number }
-  | { t: "wload"; url: string };
+  | { t: "wload"; url: string }
+  | { t: "emote"; e: number };
 
 export const STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;

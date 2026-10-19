@@ -361,3 +361,41 @@ body {
 .has-watch .prompt {
   bottom: calc(max(20px, env(safe-area-inset-bottom)) + 150px);
 }
+
+/* ---- Emote'lar ---- */
+.emotes {
+  position: absolute;
+  right: max(10px, env(safe-area-inset-right));
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.emote-btn {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--panel);
+  font-size: 22px;
+  line-height: 42px;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.emote-btn:active {
+  transform: scale(0.88);
+}
+
+@media (max-height: 420px) {
+  .emotes {
+    flex-direction: row;
+    top: auto;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 24px);
+    transform: none;
+  }
+}

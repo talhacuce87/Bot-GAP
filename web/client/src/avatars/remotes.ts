@@ -23,6 +23,8 @@ export class Remote implements AvatarView {
   rot = 0;
   flags = 0;
   alpha = 0;
+  emote = -1;
+  emoteAt = 0;
   leaving = false;
   readonly color: THREE.Color;
   readonly phase: number;

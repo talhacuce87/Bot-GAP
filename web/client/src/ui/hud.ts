@@ -1,4 +1,5 @@
 // Sade DOM arayüzü. Kare başına DOM'a dokunulmaz: liste olaylarda, debug saniyede iki kez güncellenir.
+import { EMOTES } from "../../../shared/constants";
 import type { Remotes } from "../avatars/remotes";
 import type { NetStatus } from "../net";
 import type { PerfStats } from "../perf";
@@ -45,6 +46,17 @@ export class Hud {
     el("div", "hint", root).textContent = touch
       ? "Sol: yürü (sonuna kadar it: koş) • Sağ: kamera • İki parmak: yakınlaştır"
       : "WASD: yürü • Shift: koş • Sürükle: kamera • Tekerlek: yakınlaştır • E: otur";
+  }
+
+  /** Sağ kenarda emote düğmeleri (masaüstünde 1–6 tuşları da çalışır). */
+  emoteBar(touch: boolean, onEmote: (i: number) => void): void {
+    const bar = el("div", "emotes", this.root);
+    EMOTES.forEach((em, i) => {
+      const b = el("button", "emote-btn", bar);
+      b.textContent = em.emoji;
+      b.title = touch ? em.name : `${em.name} (${i + 1})`;
+      b.addEventListener("click", () => onEmote(i));
+    });
   }
 
   setStatus(s: NetStatus): void {

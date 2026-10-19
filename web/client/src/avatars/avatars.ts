@@ -2,7 +2,7 @@
 // Yüz/isim billboard'ları kameraya vertex shader'da döner ve uzakta solar (CPU'suz LOD).
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { FLAG_SEATED, FLAG_WALKING } from "../../../shared/constants";
+import { EMOTES, FLAG_SEATED, FLAG_WALKING } from "../../../shared/constants";
 import { ATLAS_CELLS, type AvatarAtlas, FACE_GRID, NAME_GRID } from "./atlas";
 
 export const MAX_AVATARS = ATLAS_CELLS;
@@ -18,7 +18,13 @@ export interface AvatarView {
   color: THREE.Color;
   /** Yürüme sallanması için faz ofseti (avatarlar aynı anda zıplamasın). */
   phase: number;
+  /** Son emote (EMOTES indeksi, yoksa -1) ve başladığı an (sn, döngü saati). */
+  emote: number;
+  emoteAt: number;
 }
+
+/** Emote gövde animasyonlarının süresi (sn). */
+const EMOTE_ANIM = { wave: 1.2, hop: 0.45, dance: 2.6 } as const;
 
 const BILLBOARD_VERT = /* glsl */ `
   attribute float aCell;
@@ -136,6 +142,7 @@ export class AvatarRenderer {
   private up = new THREE.Vector3(0, 1, 0);
   private tilt = new THREE.Quaternion();
   private xAxis = new THREE.Vector3(1, 0, 0);
+  private zAxis = new THREE.Vector3(0, 0, 1);
   private count = 0;
 
   constructor(atlas: AvatarAtlas) {
@@ -187,12 +194,29 @@ export class AvatarRenderer {
     const walking = (v.flags & FLAG_WALKING) !== 0 && !seated;
     const bob = walking ? Math.abs(Math.sin(time * 9 + v.phase)) * 0.09 : 0;
     const sway = walking ? Math.sin(time * 9 + v.phase) * 0.06 : 0;
-    const y = (seated ? -SEAT_DROP : 0) + bob;
+    // Emote: dans döner, el sallama yana yatar, diğerleri zıplar.
+    let spin = 0, lean = 0, hop = 0;
+    const et = time - v.emoteAt;
+    if (v.emote >= 0 && et >= 0) {
+      const anim = EMOTES[v.emote].anim;
+      if (et < EMOTE_ANIM[anim]) {
+        if (anim === "dance") {
+          spin = et * 6;
+          hop = Math.abs(Math.sin(et * 8)) * 0.16;
+        } else if (anim === "wave") {
+          lean = Math.sin(et * 14) * 0.2 * (1 - et / EMOTE_ANIM.wave);
+        } else {
+          hop = Math.sin((et / EMOTE_ANIM.hop) * Math.PI) * 0.32;
+        }
+      }
+    }
+    const y = (seated ? -SEAT_DROP : 0) + bob + hop;
     // Belirip kaybolurken alfa yerine ölçek: gövde opak kalır, sıralama sorunu olmaz.
     const s = v.alpha < 1 ? 0.3 + 0.7 * v.alpha : 1;
 
-    this.quat.setFromAxisAngle(this.up, v.rot);
+    this.quat.setFromAxisAngle(this.up, v.rot + spin);
     if (sway !== 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, sway * 0.5));
+    if (lean !== 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, lean));
     this.pos.set(v.x, y, v.z);
     this.scl.set(s, s, s);
     this.m.compose(this.pos, this.quat, this.scl);

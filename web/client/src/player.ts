@@ -24,6 +24,8 @@ export class Player implements AvatarView, PlayerState {
   alpha = 1;
   cell = -1;
   phase = 0;
+  emote = -1;
+  emoteAt = 0;
   color: THREE.Color;
   /** Oturma menzilindeki koltuk (UI ipucu için), yoksa null. */
   nearSeat: Seat | null = null;

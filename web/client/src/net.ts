@@ -20,6 +20,7 @@ export class Net {
   onBoard: (entries: BoardEntry[], updated: number) => void = () => {};
   onWatch: (s: WatchState) => void = () => {};
   onNotice: (text: string) => void = () => {};
+  onEmote: (sid: number, e: number) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -117,6 +118,9 @@ export class Net {
       }
       case "notice":
         this.onNotice(ev.text);
+        break;
+      case "emote":
+        this.onEmote(ev.sid, ev.e);
         break;
       case "leave":
         this.remotes.leave(ev.sid);
