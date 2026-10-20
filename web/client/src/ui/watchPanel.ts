@@ -114,6 +114,12 @@ export class WatchPanel {
     });
   }
 
+  /** Activity'de sinema yalnızca dosya/HLS oynarken görünür (YouTube vb. tarayıcıda izlenir). */
+  setVisible(on: boolean): void {
+    this.root.style.display = on ? "" : "none";
+    this.start.style.display = on ? "" : "none";
+  }
+
   notice(text: string): void {
     this.toast.textContent = text;
     this.toast.classList.add("show");

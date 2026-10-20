@@ -13,7 +13,11 @@ import { type Board, Boards } from "./board";
 import { CHAT_COOLDOWN_MS, CHAT_HISTORY, CINEMA_COOLDOWN_MS, cleanChat, parseCommand, runCommand } from "./chat";
 import { type BotPost, fetchLook, fetchWardrobe, OUTFIT_COOLDOWN_MS, sanitizeLook, saveLook, WARDROBE_COOLDOWN_MS } from "./looks";
 import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
+import { MediaProxy } from "./mediaProxy";
 import { resolveMedia, type Watch, Watches } from "./watch";
+
+/** Sinema videosu (dosya/HLS) sunucu üzerinden: Activity'de perdede oynar. */
+const mediaProxy = new MediaProxy();
 
 /** İzleme odasının tarayıcı adresi. */
 function watchLink(w: Watch): string {
@@ -306,6 +310,22 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return w ? json(res, 200, { id: w.id, title: w.state.title }) : json(res, 404, { error: "not found" });
   }
 
+  const media = /^\/media\/([\w-]{6,16})\/p$/.exec(path);
+  if (media && method === "GET") {
+    const w = watches.get(media[1]);
+    if (!w || w.state.source?.kind !== "file") return json(res, 404, { error: "not found" });
+    mediaProxy.allow(w.id, w.state.source.url);
+    const u = new URL(req.url || "/", "http://x").searchParams.get("u");
+    return mediaProxy.handle(res, w.id, u, typeof req.headers.range === "string" ? req.headers.range : undefined);
+  }
+
+  if (path === "/internal/stats" && method === "GET") {
+    if (!secretMatches(req.headers["x-world-secret"])) return json(res, 404, { error: "not found" });
+    let players = 0;
+    for (const r of rooms.all()) players += r.size;
+    return json(res, 200, { media: mediaProxy.stats(), rooms: [...rooms.all()].length, players });
+  }
+
   const thumb = /^\/thumb\/([\w-]{11})$/.exec(path);
   if (thumb && method === "GET") return serveThumb(res, thumb[1]);
 
@@ -404,6 +424,8 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 function sendWatch(target: Room | WebSocket, w: Watch): void {
+  const src = w.state.source;
+  if (src?.kind === "file") mediaProxy.allow(w.id, src.url);
   const ev = { t: "watch" as const, ...w.state, link: watchLink(w) };
   if (target instanceof WebSocket) target.send(JSON.stringify(ev));
   else target.broadcast(ev);
@@ -633,8 +655,18 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   });
 }
 
+// Video aktarımı sürerken dakikada bir yük özeti (Coolify loglarında görünür).
+setInterval(() => {
+  const s = mediaProxy.stats();
+  if (s.active > 0 || s.mbps > 0) {
+    console.log(`[media] ${s.mbps} Mbit/sn · ${s.active} akış · önbellek ${s.hits}/${s.requests} · toplam ${(s.bytes / 1e9).toFixed(2)} GB`);
+  }
+}, 60_000);
+
 // Boş ve eskimiş izleme odalarını temizle.
-setInterval(() => watches.sweep((w) => (rooms.find(Watches.roomKeyOf(w))?.size ?? 0) === 0), 10 * 60 * 1000);
+setInterval(() => {
+  for (const id of watches.sweep((w) => (rooms.find(Watches.roomKeyOf(w))?.size ?? 0) === 0)) mediaProxy.forget(id);
+}, 10 * 60 * 1000);
 
 // Ölü bağlantıları temizle.
 setInterval(() => {

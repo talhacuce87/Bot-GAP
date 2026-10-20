@@ -87,9 +87,16 @@ export class Watches {
     return this.byId.get(id);
   }
 
-  /** Odası boş ve uzun süredir dokunulmamış izleme odalarını siler. */
-  sweep(isEmpty: (w: Watch) => boolean, now = Date.now()): void {
-    for (const [id, w] of this.byId) if (isEmpty(w) && now - w.lastActive > WATCH_IDLE_MS) this.byId.delete(id);
+  /** Odası boş ve uzun süredir dokunulmamış izleme odalarını siler; silinenlerin kimliklerini döner. */
+  sweep(isEmpty: (w: Watch) => boolean, now = Date.now()): string[] {
+    const removed: string[] = [];
+    for (const [id, w] of this.byId) {
+      if (isEmpty(w) && now - w.lastActive > WATCH_IDLE_MS) {
+        this.byId.delete(id);
+        removed.push(id);
+      }
+    }
+    return removed;
   }
 
   /** İzleme odasının oyuncularının bulunduğu oda: Activity'ye bağlıysa o oda, değilse kendi odası. */

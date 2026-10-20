@@ -149,7 +149,8 @@ class InfoCog(commands.Cog):
                     "• `!basarimver @üye <başarım> [gümüş|altın|platin]` / `!basarimal @üye <başarım>` — Başarım ver / geri al\n"
                     "• *XP komutlarında sebep zorunludur; tüm işlemler kayıt altına alınır*\n"
                     "• `!xpsenkronize` — Sunucu üyelerinin XP rollerini kontrol edip eşitler\n"
-                    "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır"
+                    "• `!yedekle` — Veritabanının anlık yedeğini güvenle alır\n"
+                    "• `!dünyadurum` — GAP Dünyası'nın anlık video upload hızı, akışlar ve oyuncular"
                 ),
                 inline=False,
             )
@@ -218,7 +219,8 @@ class InfoCog(commands.Cog):
             name="🌍 GAP Dünyası",
             value=(
                 "• Ses kanalında 🚀 Etkinlikler → **Bot GAP** ile 3D dünyaya gir\n"
-                "• 🎬 Sinema: 🎬 düğmesi, perdenin önünde **F** ya da `!izle <link>`; YouTube/Twitch/Kick'i birlikte izle, ⛶ ile tam ekran\n"
+                "• 🎬 Sinema: 🎬 düğmesi, perdenin önünde **F** ya da `!izle <link>`. TRT (tabii) ve .m3u8/.mp4 videolar "
+                "**Activity'nin içinde perdede** oynar; YouTube/Twitch/Kick tarayıcıda, ama herkes aynı odada. ⛶ tam ekran\n"
                 "• 💬 Oyun içi sohbet (**Enter**): `!xp`, `!seri`, `!ses`, `!sıra`, `!gardırop`, `!yardım` komutları da çalışır\n"
                 "• 🍢 Mangal, ⛓️ zindanda çay/domates, 🌸 Sakura Bahçesi, 🏆 Şöhret Kürsüsü\n"
                 "• 🎣 Gölde günde bir balık: nadirliğe göre 1–24 saat **2x XP**; art arda günler efsanevi şansını artırır"

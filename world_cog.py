@@ -380,6 +380,40 @@ class WorldCog(commands.Cog):
         view.add_item(discord.ui.Button(label="İzlemeye katıl", emoji="🍿", url=room["url"]))
         await ctx.send(embed=embed, view=view)
 
+    @commands.command(name="dünyadurum", aliases=["dunyadurum", "dünyastat", "worldstats"])
+    @commands.guild_only()
+    @commands.has_permissions(administrator=True)
+    async def world_stats_command(self, ctx: commands.Context) -> None:
+        """Admin: GAP Dünyası'nın anlık yükü (sinema video aktarımının upload hızı, akışlar, oyuncular)."""
+        if self._client is None:
+            await ctx.send("ℹ️ GAP Dünyası bu botta bağlı değil.")
+            return
+        try:
+            r = await self._client.get(f"{self.url}/internal/stats")
+            r.raise_for_status()
+            data = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("Dünya istatistikleri alınamadı: %s", e)
+            await ctx.send("❌ GAP Dünyası'na şu an ulaşılamıyor.")
+            return
+        m = data.get("media", {})
+        hit = f"%{100 * m.get('hits', 0) / m['requests']:.0f}" if m.get("requests") else "—"
+        embed = discord.Embed(title="🌍 GAP Dünyası durumu", color=discord.Color.from_rgb(88, 101, 242))
+        embed.add_field(name="Video upload (son 10 sn)", value=f"**{m.get('mbps', 0)} Mbit/sn**", inline=True)
+        embed.add_field(name="Aktif akış", value=str(m.get("active", 0)), inline=True)
+        embed.add_field(name="Önbellek isabeti", value=hit, inline=True)
+        embed.add_field(name="Toplam gönderilen", value=f"{m.get('bytes', 0) / 1e9:.2f} GB", inline=True)
+        embed.add_field(name="Oda / oyuncu", value=f"{data.get('rooms', 0)} / {data.get('players', 0)}", inline=True)
+        embed.set_footer(text="Sayaçlar dünya sunucusu yeniden başlayınca sıfırlanır")
+        await ctx.send(embed=embed)
+
+    @world_stats_command.error
+    async def _world_stats_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ Bu komut için yönetici yetkisi gerekli.")
+        else:
+            raise error
+
     @commands.Cog.listener()
     async def on_exile_end(self, guild_id: int, user_id: int, row, _by) -> None:
         """Süresi dolan sürgün kapanınca beklemeden serbest bırak."""

@@ -269,3 +269,24 @@ async def test_game_command_endpoint_answers_xp_streak_voice_and_rank(db, monkey
     assert (await call({"guild": 1, "user": 5, "command": "rm -rf"}))[0] == 400
     assert "üyesi değilsin" in (await call({"guild": 1, "user": 7, "command": "xp"}))[1]["text"]
     assert any(r[3] == "command" and json.loads(r[7]).get("source") == "world" for r in activitylog._buffer)
+
+
+async def test_world_stats_command_shows_upload(monkeypatch):
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    cog = world_cog.WorldCog(SimpleNamespace())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/internal/stats" and request.headers["x-world-secret"] == "s3cret"
+        return httpx.Response(200, json={"media": {"bytes": 2_500_000_000, "mbps": 42.5, "active": 7, "hits": 90, "requests": 100}, "rooms": 2, "players": 15})
+
+    cog._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), headers={"x-world-secret": "s3cret"})
+    sent = []
+
+    async def send(**kw):
+        sent.append(kw["embed"])
+
+    await cog.world_stats_command.callback(cog, SimpleNamespace(send=send))
+    fields = {f.name: f.value for f in sent[0].fields}
+    assert fields["Video upload (son 10 sn)"] == "**42.5 Mbit/sn**"
+    assert fields["Aktif akış"] == "7" and fields["Önbellek isabeti"] == "%90"
+    assert fields["Toplam gönderilen"] == "2.50 GB" and fields["Oda / oyuncu"] == "2 / 15"

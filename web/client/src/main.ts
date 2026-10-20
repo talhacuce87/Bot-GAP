@@ -25,7 +25,7 @@ import type { ChibiManifest } from "./avatars/chibiPack";
 import { Bots } from "./avatars/bots";
 import { EmoteFx, FX_CELL, ThrowFx } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
-import { login, type Session, watchIdFromPath } from "./discord";
+import { login, type Session } from "./discord";
 import { Input } from "./input/input";
 import { Net } from "./net";
 import { PerfGovernor } from "./perf";
@@ -50,8 +50,6 @@ const hudRoot = document.getElementById("hud")!;
 const loading = document.getElementById("loading")!;
 
 const touch = matchMedia("(pointer: coarse)").matches;
-/** Tarayıcıda izleme odası: perdede video oynar (canvas'ın saydam olabilmesi gerekir). */
-const watchRoom = watchIdFromPath() !== null;
 // Zayıf cihazlarda MSAA kapalı: en pahalı ama en az fark edilen kalite ayarı.
 const lowPower = params.has("low") || touch || (navigator.hardwareConcurrency || 4) <= 4;
 
@@ -69,7 +67,9 @@ async function start(): Promise<void> {
     renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: !lowPower,
-      alpha: watchRoom,
+      // Saydam: sinema perdesi bir "delik"tir, video canvas'ın arkasındaki katmanda oynar
+      // (izleme odasında ve Activity'de sunucudan aktarılan videoda).
+      alpha: true,
       powerPreference: "high-performance",
       stencil: false,
     });
@@ -210,15 +210,52 @@ async function start(): Promise<void> {
   // Activity'de video oynatılamaz: perde "Şimdi oynuyor" tabelasına döner, üstte "Tarayıcıda izle" bandı.
   // Sinema bu odaya bağlıdır; linkle gelenler de bu dünyaya girer.
   let cinemaSign: CinemaSign | null = null;
-  /** Odadaki sinemanın tarayıcı linki (oynuyorsa); perdenin önünde F ile açılır. */
+  /** Odadaki sinemanın tarayıcı linki (yalnızca tarayıcıda izlenebilen kaynakta); perdenin önünde F ile açılır. */
   let cinemaLink: string | null = null;
+  /** Sinemada bir şey oynuyor mu (perdede ya da tarayıcıda). */
+  let cinemaOn = false;
   if (session.mode !== "watch") {
     hud.cinemaButton(openCinema);
+    // Dosya/HLS (TRT, .m3u8, .mp4) sunucu üzerinden aktarılır ve perdede oynar; YouTube/Twitch/Kick
+    // Activity'de oynatılamaz: perde "Şimdi oynuyor" tabelası olur, video tarayıcıda izlenir.
+    // ScreenVideo, CinemaSign'dan önce kurulur: ikisi de perdenin özgün malzemesini saklar.
+    const screen = new ScreenVideo(world.screen, SCREEN_W);
     const sign = (cinemaSign = new CinemaSign(world.screen, session.base));
+    let inWorld: { sync: WatchSync; panel: WatchPanel } | null = null;
     net.onWatch = (s, link) => {
+      const id = link?.split("/w/")[1] ?? null;
+      const src = s.source;
+      cinemaOn = !!src;
+      if (src?.kind === "file" && id) {
+        sign.set(null);
+        if (!inWorld) {
+          const sync = new WatchSync(screen, () => net.serverNow());
+          const panel = new WatchPanel(hudRoot, sync, {
+            command: (op, pos) => net.send({ t: "wcmd", op, pos }),
+            load: (url) => net.send({ t: "wload", url }),
+            setInteractive: (on) => screen.setInteractive(on, canvas),
+            fullscreen: screen.canFullscreen ? () => void screen.toggleFullscreen().catch(() => {}) : null,
+          });
+          inWorld = { sync, panel };
+          watch = { sync, screen, panel };
+        }
+        const proxied = { ...src, url: `${session.base}/media/${id}/p?u=${encodeURIComponent(src.url)}` };
+        inWorld.sync.apply({ ...s, source: proxied });
+        inWorld.panel.onState(s);
+        inWorld.panel.setVisible(true);
+        hudRoot.classList.add("has-watch");
+        cinemaLink = null;
+        hud.setNowPlaying(null, null);
+        return;
+      }
+      if (inWorld) {
+        inWorld.sync.apply({ ...s, source: null });
+        inWorld.panel.setVisible(false);
+        hudRoot.classList.remove("has-watch");
+      }
       sign.set(s);
-      cinemaLink = s.source && link ? link : null;
-      hud.setNowPlaying(s.source ? s.title : null, link ? () => openUrl(link) : null);
+      cinemaLink = src && link ? link : null;
+      hud.setNowPlaying(src ? s.title : null, link ? () => openUrl(link) : null);
     };
   }
   // Debug: gardırobu bot olmadan denemek için (ekran görüntüsü testleri)
@@ -274,7 +311,7 @@ async function start(): Promise<void> {
             { key: "f", label: "Tarayıcıda izle 🍿", act: "watch" },
             { key: "g", label: "Videoyu değiştir 🎬", act: "cinema" },
           ]
-        : [{ key: "f", label: "Sinemayı aç 🎬", act: "cinema" }];
+        : [{ key: "f", label: cinemaOn ? "Videoyu değiştir 🎬" : "Sinemayı aç 🎬", act: "cinema" }];
     }
     const g = ACT_SPOTS.grill, bars = ACT_SPOTS.bars;
     if (Math.hypot(me.x - g.x, me.z - g.z) <= g.r) return [{ key: "f", label: "Şiş çevir 🍢", act: "grill" }];
