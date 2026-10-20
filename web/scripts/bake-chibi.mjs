@@ -229,7 +229,25 @@ function simplify(p, targetTris) {
     if (idx.length / 3 > targetTris * 1.5) [idx] = MeshoptSimplifier.simplifySloppy(idx, w.P, 3, null, targetTris * 3, 0.05);
   }
   const N = w.hasNormals ? w.N : smoothNormals(w.P, idx);
-  return { ...w, idx, N };
+  return { ...w, idx: orient(w.P, N, idx), N };
+}
+
+/**
+ * Sarım yönünü köşe normallerine uydurur. Sert sadeleştirme (özellikle saçın çift yüzlü katman
+ * plakalarında) üçgenlerin yaklaşık üçte birini normaline ters bırakıyor; oyundaki kontur normal
+ * boyunca şiştiği için ters üçgenlerin konturu saçın önüne geçip onu koyu lekelerle örtüyordu.
+ */
+function orient(P, N, idx) {
+  const out = Uint32Array.from(idx);
+  for (let t = 0; t < out.length; t += 3) {
+    const [a, b, c] = [out[t] * 3, out[t + 1] * 3, out[t + 2] * 3];
+    const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+    const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+    const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx;
+    const nx = N[a] + N[b] + N[c], ny = N[a + 1] + N[b + 1] + N[c + 1], nz = N[a + 2] + N[b + 2] + N[c + 2];
+    if (fx * nx + fy * ny + fz * nz < 0) [out[t + 1], out[t + 2]] = [out[t + 2], out[t + 1]];
+  }
+  return out;
 }
 
 /** Parçaları bütçeye göre sadeleştirip tek köşe/indeks dizisine paketler. */

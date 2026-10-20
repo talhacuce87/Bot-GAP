@@ -475,6 +475,8 @@ Tarayıcıda Discord olmadan misafir olarak açılır. Kullanılabilecek paramet
 | `?jail=1` | Misafiri zindana koyar (zindan testi) |
 | `?debug=1&at=x,z` | Belirtilen noktada başlatır |
 
+Gardırop normalde Discord girişi ve bot ister. Yerelde denemek için sunucuyu `WORLD_DEV_WARDROBE=1 npm run dev` ile başlat (PowerShell: `$env:WORLD_DEV_WARDROBE="1"; npm run dev`): misafir de gardırobu açar, bütün parçalar kilitsizdir, kayıt yalnızca sunucu açıkken bellekte tutulur. Canlıda tanımlama.
+
 **Bölgeler:**
 - **Meydan:** Çeşme, doğma noktası ve yön tabelası.
 - **Sinema:** Kuzeyde. 20 m'lik perde ve 6 sıralık amfi.
