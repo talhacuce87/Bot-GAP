@@ -15,6 +15,7 @@ import { type BotPost, fetchLook, fetchWardrobe, OUTFIT_COOLDOWN_MS, sanitizeLoo
 import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
 import { MediaProxy } from "./mediaProxy";
 import { resolveMedia, type Watch, Watches } from "./watch";
+import { type Share, SHARE_MIME, Shares } from "./share";
 
 /** Sinema videosu (dosya/HLS) sunucu üzerinden: Activity'de perdede oynar. */
 const mediaProxy = new MediaProxy();
@@ -43,6 +44,8 @@ const STATIC_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)), "../cli
 
 const rooms = new Rooms();
 const watches = new Watches();
+/** Oda başına ekran paylaşımı (oda anahtarıyla). */
+const shares = new Shares();
 
 const boards = new Boards();
 
@@ -389,11 +392,19 @@ const server = createServer((req, res) => {
 // ---------------------------------------------------------------------------
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+/** Ekran paylaşımı: büyük video parçaları ayrı bağlantıda (konum mesajlarını bekletmesin). */
+const shareWss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
+/**
+ * Paylaşım izleyicileri ping ile kesilmez: yoğun video akışının arkasında kuyruktaki ping geç yanıtlanır
+ * (arka plandaki sekme, küçültülmüş Discord). Ölü izleyiciye kuyruğu dolunca zaten gönderim durur.
+ */
+const shareViewers = new WeakSet<WebSocket>();
 const alive = new WeakSet<WebSocket>();
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url || "/", "http://x");
-  if (routePath(url.pathname) !== "/ws") {
+  const endpoint = routePath(url.pathname);
+  if (endpoint !== "/ws" && endpoint !== "/share") {
     socket.destroy();
     return;
   }
@@ -417,6 +428,10 @@ server.on("upgrade", (req, socket, head) => {
   }
   // Tank savaşı: aynı Activity/oda için ayrı bir savaş odası (izleme odalarında yok)
   const roomKey = url.searchParams.get("battle") === "1" && !key.startsWith("w:") ? `b:${key}` : key;
+  if (endpoint === "/share") {
+    shareWss.handleUpgrade(req, socket, head, (ws) => onShareConnection(ws, user, roomKey, url.searchParams));
+    return;
+  }
   const guildParam = url.searchParams.get("guild") || "";
   const guild = watch?.guild ?? (/^\d{5,20}$/.test(guildParam) ? guildParam : null);
   // Zindanı denemek için: yalnızca misafirler kendini zindana koyabilir.
@@ -599,6 +614,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   const current = roomWatch();
   if (current) sendWatch(ws, current);
   if (room.chat.length) ws.send(JSON.stringify({ t: "chatlog", lines: room.chat }));
+  const share = shares.get(room.key);
+  if (share) ws.send(JSON.stringify({ t: "share", sid: share.sid, name: share.name }));
   const limiter = { last: 0 };
   let lastEmote = 0;
   let lastAct = 0;
@@ -670,6 +687,11 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
       } else if (msg?.t === "fire") {
         const el = typeof msg.el === "number" ? msg.el : undefined;
         room.fire(sid, typeof msg.h === "number" && typeof msg.tr === "number" ? { h: msg.h, tr: msg.tr, el } : undefined);
+      } else if (msg?.t === "sharelink") {
+        const now = Date.now();
+        if (now - limiter.last < 3000) return;
+        limiter.last = now;
+        ws.send(JSON.stringify({ t: "open", url: `${watchLink(roomCinema(room, opts.guild ?? null, user.name))}?share=1` }));
       } else if (msg?.t === "emote") {
         const e = msg.e;
         const now = Date.now();
@@ -686,13 +708,84 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
     }
   });
   ws.on("close", () => {
+    const s = shares.get(room.key);
+    if (s?.sid === sid) {
+      s.closeSender();
+      endShare(room, s);
+    }
     room.leave(sid);
     rooms.release(room);
   });
 }
 
+/** Odanın tarayıcı linki: sinema varsa onun, yoksa sinemasız bir izleme odası açılır (aynı dünya). */
+function roomCinema(room: Room, guild: string | null, by: string): Watch {
+  const existing = room.watchId ? watches.get(room.watchId) : undefined;
+  if (existing) return existing;
+  const w = watches.create(guild, by, null, "", Date.now(), room.key);
+  room.watchId = w.id;
+  return w;
+}
+
+function endShare(room: Room, s: Share): void {
+  if (!shares.stop(room.key, s)) return;
+  room.broadcast({ t: "share", sid: 0, name: "" });
+  console.log(`[share] ${s.name} paylaşımı bitti · ${(s.sent / 1e6).toFixed(1)} MB dağıtıldı`);
+}
+
+/**
+ * Ekran paylaşımı bağlantısı. `role=send`: paylaşan (önce {t:"start", mime}, sonra WebM parçaları);
+ * `role=view`: izleyici (önce {t:"init"}, sonra WebM baytları). Paylaşan odada olmalı (`sid` kendisi).
+ */
+function onShareConnection(ws: WebSocket, user: SessionUser, key: string, params: URLSearchParams): void {
+  const room = rooms.find(key);
+  if (!room) return ws.close(4004, "room not found");
+  alive.add(ws);
+  ws.on("pong", () => alive.add(ws));
+  const role = params.get("role");
+  if (role === "view") {
+    const s = shares.get(key);
+    if (!s) return ws.close(4004, "no share");
+    shareViewers.add(ws);
+    s.addViewer(ws);
+    ws.on("close", () => s.removeViewer(ws));
+    return;
+  }
+  const sid = Number(params.get("sid"));
+  if (role !== "send" || room.players.get(sid)?.info.id !== user.id) return ws.close(4001, "not in room");
+  let share: Share | null = null;
+  ws.on("message", (data, isBinary) => {
+    if (!isBinary) {
+      if (share) return;
+      let msg: { t?: unknown; mime?: unknown } = {};
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+      if (msg.t !== "start" || typeof msg.mime !== "string" || !SHARE_MIME.test(msg.mime)) return ws.close(4400, "bad start");
+      const r = shares.start(key, sid, user.name, msg.mime);
+      if ("busy" in r) {
+        ws.send(JSON.stringify({ t: "busy", name: r.busy.name }));
+        return ws.close(4009, "busy");
+      }
+      share = r.ok;
+      share.closeSender = () => ws.close(4000, "left");
+      ws.send(JSON.stringify({ t: "started" }));
+      room.broadcast({ t: "share", sid, name: user.name });
+      console.log(`[share] ${user.name} ekranını paylaşıyor (${msg.mime})`);
+      return;
+    }
+    if (share && !share.data(data as Buffer)) ws.close(4008, "too fast");
+  });
+  ws.on("close", () => {
+    if (share) endShare(room, share);
+  });
+}
+
 // Video aktarımı sürerken dakikada bir yük özeti (Coolify loglarında görünür).
 setInterval(() => {
+  for (const [, s] of shares.all()) console.log(`[share] ${s.name} · ${s.viewerCount} izleyici · ${(s.sent / 1e6).toFixed(1)} MB`);
   const s = mediaProxy.stats();
   if (s.active > 0 || s.mbps > 0) {
     console.log(`[media] ${s.mbps} Mbit/sn · ${s.active} akış · önbellek ${s.hits}/${s.requests} · toplam ${(s.bytes / 1e9).toFixed(2)} GB`);
@@ -706,7 +799,8 @@ setInterval(() => {
 
 // Ölü bağlantıları temizle.
 setInterval(() => {
-  for (const ws of wss.clients) {
+  for (const ws of [...wss.clients, ...shareWss.clients]) {
+    if (shareViewers.has(ws)) continue;
     if (!alive.has(ws)) {
       ws.terminate();
       continue;

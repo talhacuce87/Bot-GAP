@@ -43,6 +43,8 @@ import { sakuraEntrance } from "./ui/sakuraFx";
 import { Chat } from "./ui/chat";
 import { plainLook, Wardrobe } from "./ui/wardrobe";
 import { openYoutubeTest } from "./ui/youtube";
+import { ScreenSender } from "./share/sender";
+import { ShareViewer } from "./share/viewer";
 import { ScreenVideo } from "./watch/screen";
 import { WatchSync } from "./watch/sync";
 import { WatchPanel } from "./ui/watchPanel";
@@ -229,8 +231,9 @@ async function start(): Promise<void> {
 
   // Watch party: video perdede, kontroller altta. Odaya giren sinemanın koridorunda başlar.
   let watch: { sync: WatchSync; screen: ScreenVideo; panel: WatchPanel } | null = null;
+  // Perde tek: sinema videosu ve ekran paylaşımı aynı kutuda (paylaşım üstte).
+  const screen = new ScreenVideo(world.screen, SCREEN_W);
   if (session.mode === "watch") {
-    const screen = new ScreenVideo(world.screen, SCREEN_W);
     const sync = new WatchSync(screen, () => net.serverNow());
     const panel = new WatchPanel(hudRoot, sync, {
       command: (op, pos) => net.send({ t: "wcmd", op, pos }),
@@ -286,6 +289,10 @@ async function start(): Promise<void> {
       send: (text) => net.send({ t: "chat", text }),
       open: openUrl,
       local: (text) => {
+        if (/^[!/](payla[şs]|ekran)/i.test(text)) {
+          void toggleShare();
+          return true;
+        }
         if (/^[!/](sava[şs]|tank)\b/i.test(text)) {
           switchMode(true);
           return true;
@@ -323,7 +330,6 @@ async function start(): Promise<void> {
     // Dosya/HLS (TRT, .m3u8, .mp4) sunucu üzerinden aktarılır ve perdede oynar; YouTube/Twitch/Kick
     // Activity'de oynatılamaz: perde "Şimdi oynuyor" tabelası olur, video tarayıcıda izlenir.
     // ScreenVideo, CinemaSign'dan önce kurulur: ikisi de perdenin özgün malzemesini saklar.
-    const screen = new ScreenVideo(world.screen, SCREEN_W);
     const sign = (cinemaSign = new CinemaSign(world.screen, session.base));
     let inWorld: { sync: WatchSync; panel: WatchPanel } | null = null;
     net.onWatch = (s, link) => {
@@ -343,6 +349,7 @@ async function start(): Promise<void> {
           });
           inWorld = { sync, panel };
           watch = { sync, screen, panel };
+          sync.setSuppressed(viewer !== null); // paylaşım sürüyorsa sinema sessiz başlar
         }
         const proxied = { ...src, url: `${session.base}/media/${id}/p?u=${encodeURIComponent(src.url)}` };
         inWorld.sync.apply({ ...s, source: proxied });
@@ -363,8 +370,98 @@ async function start(): Promise<void> {
       hud.setNowPlaying(src ? s.title : null, link ? () => openUrl(link) : null);
     };
   }
+  // ---- Ekran paylaşımı: paylaşanın ekranı sunucu üzerinden herkesin sinema perdesine gelir ----
+  const shareUrl = session.wsUrl.replace("/ws?", "/share?");
+  let sender: ScreenSender | null = null;
+  let viewer: ShareViewer | null = null;
+  let sharer = { sid: 0, name: "" };
+  /** İzleyen biri "Sesi aç"a bastı mı (sonraki paylaşımlarda da açık kalır). */
+  let shareSound = false;
+  const shareActions = {
+    sound: () => {
+      shareSound = true;
+      viewer?.setMuted(false);
+      renderShare();
+    },
+    fullscreen: screen.canFullscreen ? () => void screen.toggleFullscreen().catch(() => {}) : null,
+    stop: () => sender?.stop(),
+  };
+  const renderShare = () => {
+    const mine = sharer.sid !== 0 && sharer.sid === net.you;
+    hud.setShare(sharer.sid ? { name: sharer.name, mine, muted: !mine && !shareSound } : null, shareActions);
+  };
+  /** Paylaşımı perdede açar; bağlantı beklenmedik koparsa paylaşım sürdükçe yeniden bağlanır. */
+  const openViewer = (sid: number) => {
+    const v = (viewer = new ShareViewer(`${shareUrl}&role=view`));
+    // Paylaşan kendi sesini duymaz (yankı); diğerleri bir kez tıklayınca duyar
+    v.setMuted(sid === net.you || !shareSound);
+    v.onEnd = (reason, unexpected) => {
+      if (viewer !== v) return;
+      viewer = null;
+      screen.setOverlay(null);
+      if (reason) hud.toast(reason);
+      else if (unexpected) {
+        window.setTimeout(() => {
+          if (!viewer && sharer.sid === sid) openViewer(sid);
+        }, 1500);
+      }
+    };
+    screen.setOverlay(v.video);
+  };
+  net.onShare = (sid, name) => {
+    if (sid === sharer.sid && viewer) return;
+    sharer = { sid, name };
+    viewer?.destroy();
+    viewer = null;
+    if (sid) {
+      openViewer(sid);
+      cinemaSign?.suspend(true);
+      watch?.sync.setSuppressed(true);
+      if (sid !== net.you) hud.toast(`🖥️ ${name} ekranını paylaşıyor — sinema perdesine bak`);
+    } else {
+      screen.setOverlay(null);
+      cinemaSign?.suspend(false);
+      watch?.sync.setSuppressed(false);
+    }
+    renderShare();
+  };
+  /** Discord içinden paylaşılamıyorsa aynı odayı tarayıcıda açar (oradan paylaşılır, herkes perdede görür). */
+  const shareInBrowser = () => {
+    if (!session.sdk) return hud.toast("🖥️ Bu tarayıcı ekran paylaşımını desteklemiyor (bilgisayardan Chrome/Edge/Firefox dene).");
+    hud.toast("🖥️ Discord içinden ekran paylaşılamıyor: aynı oda tarayıcıda açılıyor, oradan paylaş.");
+    net.send({ t: "sharelink" });
+  };
+  const toggleShare = async () => {
+    if (sender) return sender.stop();
+    if (sharer.sid && sharer.sid !== net.you) return hud.toast(`🖥️ Şu an ${sharer.name} ekranını paylaşıyor.`);
+    if (!ScreenSender.supported()) return shareInBrowser();
+    const t0 = performance.now();
+    let stream: MediaStream;
+    try {
+      stream = await ScreenSender.capture();
+    } catch (err) {
+      // İzin politikası (Discord içi) seçme penceresini hiç açmaz; kullanıcı iptali daha geç gelir.
+      if (session.sdk && (/policy|not allowed in this context/i.test((err as Error).message) || performance.now() - t0 < 400)) shareInBrowser();
+      return;
+    }
+    startShare(stream);
+  };
+  const startShare = (stream: MediaStream) => {
+    const s = (sender = new ScreenSender(stream, `${shareUrl}&role=send&sid=${net.you}`));
+    s.onStop = (reason) => {
+      if (sender === s) sender = null;
+      if (reason) hud.toast(reason);
+    };
+    if (!s.hasAudio) hud.toast("🖥️ Paylaşım başladı. Ses için paylaşırken \"sekme/sistem sesini paylaş\" kutusunu işaretle.");
+  };
+  hud.shareButton(() => void toggleShare());
+  if (session.mode === "watch" && params.has("share")) {
+    hud.highlightShare();
+    hud.toast("🖥️ Ekranını paylaşmak için sağdaki 🖥️ düğmesine bas.");
+  }
+
   // Debug: gardırobu bot olmadan denemek için (ekran görüntüsü testleri)
-  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe, gapNet: net, gapDust: dust, gapMe: me });
+  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe, gapNet: net, gapDust: dust, gapMe: me, gapShare: startShare });
 
   // ---- Etkileşimler: mangalda şiş çevir, zindanda çay ver / domates at ----
   const HEART = 2; // EMOTES içindeki ❤️
@@ -584,13 +681,15 @@ async function start(): Promise<void> {
     hud.setPrompt(me.seated ? "stand" : me.nearSeat ? "sit" : "");
     if (remotes.consumeChanged()) hud.renderPlayers(remotes);
 
+    // Paylaşımın sesi de sinemadan uzaklaştıkça kısılır
+    viewer?.setVolume(Math.min(1, Math.max(0.06, 1 - (Math.hypot(me.x, me.z - SCREEN_Z) - 18) / 45)));
     if (watch) {
       watch.sync.update(dt);
       watch.sync.setDistance(Math.hypot(me.x, me.z - SCREEN_Z));
       watch.panel.update(now);
     }
 
-    if (glow && world.env.lights > 0.05 && !watch?.screen.isActive) {
+    if (glow && world.env.lights > 0.05 && !screen.isActive) {
       const pr = renderer.getPixelRatio();
       if (pr !== glow.pr || innerWidth !== glow.w || innerHeight !== glow.h) {
         Object.assign(glow, { pr, w: innerWidth, h: innerHeight });
@@ -602,7 +701,7 @@ async function start(): Promise<void> {
     } else {
       renderer.render(world.scene, camera);
     }
-    watch?.screen.render(camera);
+    screen.render(camera);
     perf.frame(dtMs, performance.now() - t0);
     hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);
   };

@@ -21,6 +21,8 @@ export class WatchSync {
   /** Kullanıcı bir kez tıklayana kadar sessiz (tarayıcı otomatik sesli oynatmayı engeller). */
   unlocked = false;
   userVolume = 0.8;
+  /** Ekran paylaşımı sürerken sinema sesi kısılır. */
+  private suppressed = false;
   private acc = 0;
   private cooldown = 0;
   private distanceGain = 1;
@@ -75,10 +77,15 @@ export class WatchSync {
     this.applyVolume();
   }
 
+  setSuppressed(on: boolean): void {
+    this.suppressed = on;
+    this.applyVolume();
+  }
+
   private applyVolume(): void {
     const p = this.player;
     if (!p) return;
-    p.setMuted(!this.unlocked);
+    p.setMuted(!this.unlocked || this.suppressed);
     p.setVolume(this.userVolume * this.distanceGain);
   }
 

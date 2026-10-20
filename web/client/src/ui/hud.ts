@@ -32,6 +32,8 @@ export class Hud {
   private actsKey = "";
   private toastEl: HTMLDivElement;
   private nowPlaying: HTMLDivElement | null = null;
+  private shareBtn: HTMLButtonElement | null = null;
+  private shareBar: HTMLDivElement | null = null;
   private toastTimer = 0;
 
   constructor(
@@ -80,6 +82,51 @@ export class Hud {
     b.textContent = "🎬";
     b.title = "Sinemayı aç (link yapıştır)";
     b.addEventListener("click", onOpen);
+  }
+
+  /** Ekran paylaşımı düğmesi: paylaşmayı başlatır ya da kendi paylaşımını durdurur. */
+  shareButton(onClick: () => void): void {
+    const b = (this.shareBtn = el("button", "wardrobe-btn share-btn", this.root));
+    b.textContent = "🖥️";
+    b.title = "Ekranını paylaş (sinema perdesinde)";
+    b.addEventListener("click", () => {
+      b.classList.remove("pulse");
+      onClick();
+    });
+  }
+
+  /** Paylaşım linkiyle gelene düğmeyi gösterir. */
+  highlightShare(): void {
+    this.shareBtn?.classList.add("pulse");
+  }
+
+  /**
+   * Odadaki paylaşım bandı: kim paylaşıyor; izleyene sesi aç ve tam ekran, paylaşana durdur.
+   * `share` null ise band gizlenir.
+   */
+  setShare(share: { name: string; mine: boolean; muted: boolean } | null, actions: { sound(): void; fullscreen: (() => void) | null; stop(): void }): void {
+    this.shareBtn?.classList.toggle("on", !!share?.mine);
+    if (this.shareBtn) this.shareBtn.title = share?.mine ? "Paylaşımı durdur" : "Ekranını paylaş (sinema perdesinde)";
+    if (!share) {
+      this.shareBar?.classList.remove("show");
+      return;
+    }
+    this.shareBar ??= el("div", "panel now-playing share-bar", this.root);
+    const text = document.createElement("span");
+    text.className = "now-title";
+    text.textContent = share.mine ? "🔴 Ekranını paylaşıyorsun" : `🖥️ ${share.name} ekranını paylaşıyor`;
+    const button = (label: string, fn: () => void) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.addEventListener("click", fn);
+      return b;
+    };
+    const parts: HTMLElement[] = [text];
+    if (share.mine) parts.push(button("⏹ Durdur", actions.stop));
+    else if (share.muted) parts.push(button("🔊 Sesi aç", actions.sound));
+    if (!share.mine && actions.fullscreen) parts.push(button("⛶", actions.fullscreen));
+    this.shareBar.replaceChildren(...parts);
+    this.shareBar.classList.add("show");
   }
 
   /** Activity'de sinema bandı: ne oynuyor ve tarayıcıda izleme düğmesi; null ise gizlenir. */

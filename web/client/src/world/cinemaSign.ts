@@ -49,6 +49,8 @@ export class CinemaSign {
   private thumb: HTMLImageElement | null = null;
   private thumbKey = "";
   private lastDraw = 0;
+  /** Ekran paylaşımı perdeyi kullanırken tabela perdeye dokunmaz. */
+  private suspended = false;
 
   constructor(
     private screen: THREE.Mesh,
@@ -69,7 +71,7 @@ export class CinemaSign {
   /** Sunucudan gelen sinema durumu; kaynak yoksa perde eski tabelasına döner. */
   set(state: WatchState | null): void {
     this.state = state?.source ? state : null;
-    this.screen.material = this.state ? this.material : this.original;
+    if (!this.suspended) this.screen.material = this.state ? this.material : this.original;
     const yt = this.state?.source?.kind === "youtube" ? this.state.source.id : "";
     if (yt !== this.thumbKey) {
       this.thumbKey = yt;
@@ -86,6 +88,11 @@ export class CinemaSign {
       }
     }
     this.lastDraw = 0;
+  }
+
+  suspend(on: boolean): void {
+    this.suspended = on;
+    if (!on) this.screen.material = this.state ? this.material : this.original;
   }
 
   /** Saniyede bir yeniden çizer (süre ilerlesin). `serverNow`: sunucu saati (ms). */

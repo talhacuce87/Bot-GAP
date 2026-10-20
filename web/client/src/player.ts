@@ -203,7 +203,8 @@ export class Player implements AvatarView, PlayerState {
   enterTank(x: number, z: number, h: number, tr: number, el = DEFAULT_ELEV): void {
     this.seat = null;
     this.knockT = 0;
-    this.jumpY = this.vy = 0;
+    this.jumpY = 0;
+    this.jumpT = JUMP_TIME;
     this.vx = this.vz = 0;
     this.driving = { h, tr, el, v: 0 };
     this.pitch = 0.2; // ufka yakın: nişan tankın 15–20 m önüne düşer
@@ -234,8 +235,8 @@ export class Player implements AvatarView, PlayerState {
     this.vx = vx;
     this.vz = vz;
     this.knockT = KNOCK_TIME;
-    if (this.jumpY === 0) {
-      this.vy = JUMP_VELOCITY;
+    if (this.jumpT >= JUMP_TIME) {
+      this.jumpT = 0;
       this.jumpSeq = (this.jumpSeq + 1) & 3;
     }
   }

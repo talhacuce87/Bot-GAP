@@ -17,14 +17,15 @@ export class Watch {
     readonly id: string,
     readonly guild: string | null,
     readonly createdBy: string,
-    source: Source,
+    /** null: sinemasız oda (ör. yalnızca ekran paylaşımı için açılan tarayıcı linki). */
+    source: Source | null,
     title: string,
     now: number,
     /** Activity'den açıldıysa o odanın anahtarı: linkle gelenler de aynı odaya (ve dünyaya) girer. */
     readonly roomKey: string | null = null,
   ) {
     this.lastActive = now;
-    this.state = { source, title, playing: true, position: source.kind === "youtube" || source.kind === "twitch-vod" ? source.start : 0, updatedAt: now, by: createdBy, op: "load" };
+    this.state = { source, title, playing: true, position: source && (source.kind === "youtube" || source.kind === "twitch-vod") ? source.start : 0, updatedAt: now, by: createdBy, op: "load" };
   }
 
   /** Şu anki konum (saniye): oynuyorsa son güncellemeden beri geçen süre eklenir. */
@@ -74,7 +75,7 @@ export class Watch {
 export class Watches {
   private byId = new Map<string, Watch>();
 
-  create(guild: string | null, by: string, source: Source, title: string, now = Date.now(), roomKey: string | null = null): Watch {
+  create(guild: string | null, by: string, source: Source | null, title: string, now = Date.now(), roomKey: string | null = null): Watch {
     let id: string;
     do id = randomBytes(6).toString("base64url");
     while (this.byId.has(id));

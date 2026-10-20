@@ -11,6 +11,11 @@ const PX_H = 720;
 export class ScreenVideo {
   /** Oynatıcıların yerleştirildiği kutu (16:9). */
   readonly host: HTMLDivElement;
+  /** Perdedeki kutu: oynatıcılar ve üstte ekran paylaşımı; tam ekran olan budur. */
+  private frame: HTMLDivElement;
+  /** Ekran paylaşımı: oynatıcının üstüne biner, varken perde hep açıktır. */
+  private overlay: HTMLElement | null = null;
+  private playerActive = false;
   private css = new CSS3DRenderer();
   private cssScene = new THREE.Scene();
   private object: CSS3DObject;
@@ -29,11 +34,14 @@ export class ScreenVideo {
     screenWidth: number,
   ) {
     this.normalMaterial = screen.material;
+    this.frame = document.createElement("div");
+    this.frame.className = "screen-host";
+    this.frame.style.width = `${PX_W}px`;
+    this.frame.style.height = `${PX_H}px`;
     this.host = document.createElement("div");
-    this.host.className = "screen-host";
-    this.host.style.width = `${PX_W}px`;
-    this.host.style.height = `${PX_H}px`;
-    this.object = new CSS3DObject(this.host);
+    this.host.className = "screen-players";
+    this.frame.append(this.host);
+    this.object = new CSS3DObject(this.frame);
     this.object.position.copy(screen.position);
     this.object.quaternion.copy(screen.quaternion);
     this.object.scale.setScalar(screenWidth / PX_W);
@@ -57,6 +65,20 @@ export class ScreenVideo {
 
   /** Video varken perde deliğe döner; yokken normal (tabelalı) perde. */
   setActive(on: boolean): void {
+    this.playerActive = on;
+    this.refresh();
+  }
+
+  /** Ekran paylaşımı katmanı (null: kaldır). */
+  setOverlay(el: HTMLElement | null): void {
+    if (this.overlay && this.overlay !== el) this.overlay.remove();
+    this.overlay = el;
+    if (el) this.frame.append(el);
+    this.refresh();
+  }
+
+  private refresh(): void {
+    const on = this.playerActive || !!this.overlay;
     if (on === this.active) return;
     this.active = on;
     this.screen.material = on ? this.holeMaterial : this.normalMaterial;
@@ -71,11 +93,11 @@ export class ScreenVideo {
 
   /** Tarayıcı tam ekran destekliyor mu (iOS Safari'de öğe tam ekranı yok). */
   get canFullscreen(): boolean {
-    return document.fullscreenEnabled && typeof this.host.requestFullscreen === "function";
+    return document.fullscreenEnabled && typeof this.frame.requestFullscreen === "function";
   }
 
   get fullscreen(): boolean {
-    return document.fullscreenElement === this.host;
+    return document.fullscreenElement === this.frame;
   }
 
   /**
@@ -84,7 +106,7 @@ export class ScreenVideo {
    */
   async toggleFullscreen(): Promise<void> {
     if (this.fullscreen) await document.exitFullscreen();
-    else if (this.canFullscreen) await this.host.requestFullscreen();
+    else if (this.canFullscreen) await this.frame.requestFullscreen();
   }
 
   render(camera: THREE.Camera): void {

@@ -13,7 +13,7 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.10.0"
+BOT_VERSION = "2.11.0"
 LAST_DEPLOY_DATE = "20 Ekim 2026"
 
 # Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
@@ -197,9 +197,21 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "GAP Dünyası daha canlı: sık çimen, gece ışıkları, konuşma baloncukları! 🌙✨"
+                "GAP Dünyası'nda artık ekranını sinema perdesine yansıtabilirsin! 🖥️🍿"
             ),
             color=discord.Color.from_rgb(0, 212, 255),
+        )
+
+        embed.add_field(
+            name="🖥️ Ekran Paylaşımı",
+            value=(
+                "• Sağdaki 🖥️ düğmesi ya da sohbette `!paylaş`: ekranın (ve istersen sesi) dünyadaki herkesin "
+                "sinema perdesinde, Activity'dekiler dahil\n"
+                "• Sonradan gelen de anında izler; 🔊 Sesi aç ve ⛶ tam ekran üstteki bantta\n"
+                "• Discord içinden paylaşılamazsa aynı oda tarayıcıda açılır, oradan paylaşırsın\n"
+                "• Ses için paylaşırken \"sekme/sistem sesini paylaş\" kutusunu işaretle"
+            ),
+            inline=False,
         )
 
         embed.add_field(
@@ -220,7 +232,7 @@ class InfoCog(commands.Cog):
                 "• Ses kanalında 🚀 Etkinlikler → **Bot GAP** ile 3D dünyaya gir\n"
                 "• 🎬 Sinema: 🎬 düğmesi, perdenin önünde **F** ya da `!izle <link>`. TRT (tabii) ve .m3u8/.mp4 videolar "
                 "**Activity'nin içinde perdede** oynar; YouTube/Twitch/Kick tarayıcıda, ama herkes aynı odada. ⛶ tam ekran\n"
-                "• 💬 Oyun içi sohbet (**Enter**): `!xp`, `!seri`, `!ses`, `!sıra`, `!gardırop`, `!yardım` komutları da çalışır\n"
+                "• 💬 Oyun içi sohbet (**Enter**): `!xp`, `!seri`, `!ses`, `!sıra`, `!gardırop`, `!paylaş`, `!yardım` komutları da çalışır\n"
                 "• 🍢 Mangal, ⛓️ zindanda çay/domates, 🌸 Sakura Bahçesi, 🏆 Şöhret Kürsüsü\n"
                 "• 🎣 Gölde günde bir balık: nadirliğe göre 1–24 saat **2x XP**; art arda günler efsanevi şansını artırır"
             ),

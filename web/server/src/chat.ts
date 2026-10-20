@@ -19,7 +19,7 @@ export const BOT_COMMANDS: Record<string, string> = {
 };
 
 export const HELP_TEXT =
-  "Komutlar: !izle <link> (sinemayı aç) · !xp · !seri · !ses · !sıra · !lb · !gardırop · !yardım. " +
+  "Komutlar: !izle <link> (sinemayı aç) · !paylaş (ekranını perdeye yansıt) · !xp · !seri · !ses · !sıra · !lb · !gardırop · !yardım. " +
   "Diğer her şey odaya mesaj olarak gider.";
 
 /** Kontrol karakterlerini atar, boşlukları sadeleştirir, uzunluğu sınırlar. Boşsa null. */

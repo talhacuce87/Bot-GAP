@@ -123,6 +123,8 @@ export type ServerEvent =
   /** Yalnızca isteyene: dış bağlantıyı aç (Activity'de Discord onay penceresiyle). */
   | { t: "open"; url: string }
   | ({ t: "wardrobe" } & (WardrobeInfo | { error: string }))
+  /** Odadaki ekran paylaşımı: `sid` 0 ise paylaşım yok. */
+  | { t: "share"; sid: number; name: string }
   | { t: "pong"; c: number; s: number }
   /** Tankın durumu (biri binince/inince ve girişte): `driver` 0 ise park halinde. */
   | { t: "tank"; driver: number; x: number; z: number; h: number; tr: number; el: number }
@@ -152,7 +154,9 @@ export type ClientEvent =
   | { t: "taim"; h: number; tr: number; el: number }
   /** Atış anındaki açılar da gelir: mermi tam o an kulenin baktığı yöne gider. */
   | { t: "fire"; h: number; tr: number; el: number }
-  | { t: "team"; team: 0 | 1 };
+  | { t: "team"; team: 0 | 1 }
+  /** Activity'den paylaşılamıyorsa: aynı odanın tarayıcı linki istenir (cevap "open"). */
+  | { t: "sharelink" };
 
 export const STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;

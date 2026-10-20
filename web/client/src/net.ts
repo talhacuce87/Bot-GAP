@@ -40,6 +40,8 @@ export class Net {
   onChatLog: (lines: ChatLine[]) => void = () => {};
   /** Sunucu bir dış bağlantı açtırıyor (ör. az önce açtığın sinema). */
   onOpen: (url: string) => void = () => {};
+  /** Odadaki ekran paylaşımı değişti (`sid` 0: yok). */
+  onShare: (sid: number, name: string) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -183,6 +185,9 @@ export class Net {
         break;
       case "open":
         this.onOpen(ev.url);
+        break;
+      case "share":
+        this.onShare(ev.sid, ev.name);
         break;
       case "wardrobe": {
         const { t: _t, ...w } = ev;
