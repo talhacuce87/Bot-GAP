@@ -528,11 +528,20 @@ async def clear_expired_boosts(guild_id: int, user_id: int) -> None:
 
 
 async def get_active_multiplier(guild_id: int, user_id: int) -> float:
+    return (await get_active_boost(guild_id, user_id))[0]
+
+
+async def get_active_boost(guild_id: int, user_id: int) -> tuple[float, str | None]:
+    """Geçerli çarpan ve kaynağı: "admin" (!boost), "fish" (gölde balık) ya da boost yoksa None."""
     await clear_expired_boosts(guild_id, user_id)
     row = await get_user_row(guild_id, user_id)
     if row is None:
-        return 1.0
-    return active_boost(row)[0]
+        return 1.0, None
+    mult, expires = active_boost(row)
+    if expires is None:
+        return 1.0, None
+    fish = row["fish_boost_expires_at"]
+    return mult, "fish" if fish is not None and float(fish) == expires else "admin"
 
 
 FISH_BOOST_MULTIPLIER = 2.0

@@ -26,6 +26,7 @@ import httpx
 from aiohttp import web
 from discord.ext import commands, tasks
 
+import activitylog
 import database as db
 import fishing
 from font_utils import clean_display_name
@@ -112,7 +113,9 @@ class WorldCog(commands.Cog):
 
     async def handle_fish(self, request: web.Request) -> web.Response:
         """Dünyadan: {"guild", "user"} → günün balığı ya da neden tutulamadığı."""
-        if not hmac.compare_digest(request.headers.get("x-world-secret", ""), self.secret):
+        # bytes karşılaştırması: str sürümü ASCII dışı karakterde TypeError (500) fırlatır
+        given = request.headers.get("x-world-secret", "").encode()
+        if not hmac.compare_digest(given, self.secret.encode()):
             return web.json_response({"error": "not found"}, status=404)
         try:
             body = await request.json()
@@ -129,6 +132,12 @@ class WorldCog(commands.Cog):
         if result is None:
             return web.json_response({"ok": False, "reason": "already"})
         log.info("Balık: %s %s (%s saat, seri %s)", user_id, result["rarity"], result["hours"], result["streak"])
+        # Balık boost'u, XP kayıtlarında yönetici !boost'undan ayırt edilebilsin diye ayrıca kaydedilir
+        activitylog.record(
+            "fish_catch", guild_id, user_id,
+            rarity=result["rarity"], hours=result["hours"], streak=result["streak"],
+            boost_until=round(result["boost_until"]),
+        )
         return web.json_response({"ok": True, **result})
 
     async def push_exiles(self) -> None:

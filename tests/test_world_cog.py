@@ -181,3 +181,11 @@ async def test_fish_endpoint_checks_secret_membership_and_daily_limit(db, monkey
     status, first = await call({"guild": "1", "user": "5"})
     assert status == 200 and first["ok"] and first["hours"] >= 1
     assert (await call({"guild": "1", "user": "5"}))[1] == {"ok": False, "reason": "already"}
+
+    # Tutulan balık olay kaydına düşer (yönetici boost'undan ayırt etmek için)
+    catches = [r for r in activitylog._buffer if r[3] == "fish_catch"]
+    assert len(catches) == 1 and catches[0][1:3] == (1, 5)
+    assert json.loads(catches[0][7])["rarity"] == first["rarity"]
+
+    # ASCII dışı secret başlığı 500 değil, 404 dönmeli
+    assert (await call({"guild": "1", "user": "5"}, secret="şifre"))[0] == 404

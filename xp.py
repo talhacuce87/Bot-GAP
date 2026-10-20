@@ -357,12 +357,12 @@ class XPTrackerCog(commands.Cog):
 
             if exile:
                 # Sürgün: sabit çarpan, boost ve seri yok sayılır
-                boost, s_mult = 1.0, None
+                boost, boost_src, s_mult = 1.0, None, None
                 earned = self._exiled_xp(guild_id, user_id, base_xp)
                 if earned <= 0:
                     return
             else:
-                boost = await db.get_active_multiplier(guild_id, user_id)
+                boost, boost_src = await db.get_active_boost(guild_id, user_id)
                 s_mult = streak_multiplier(streak)
                 earned = max(1, round(base_xp * boost * s_mult))
 
@@ -375,7 +375,8 @@ class XPTrackerCog(commands.Cog):
             activitylog.record(
                 "xp_message", guild_id, user_id,
                 channel_id=message.channel.id, amount=earned,
-                base=base_xp, boost=boost if boost != 1.0 else None, streak_mult=s_mult,
+                base=base_xp, boost=boost if boost != 1.0 else None, boost_src=boost_src,
+                streak_mult=s_mult,
                 exile=EXILE_MULTIPLIER if exile else None,
             )
 
@@ -458,12 +459,12 @@ class XPTrackerCog(commands.Cog):
                     try:
                         exile = await self.get_exile(guild.id, member.id)
                         if exile:
-                            boost = 1.0
+                            boost, boost_src = 1.0, None
                             earned = self._exiled_xp(guild.id, member.id, VOICE_XP_PER_INTERVAL)
                             if earned <= 0:
                                 continue
                         else:
-                            boost = await db.get_active_multiplier(guild.id, member.id)
+                            boost, boost_src = await db.get_active_boost(guild.id, member.id)
                             earned = max(1, round(VOICE_XP_PER_INTERVAL * boost))
                         await db.add_voice_xp(guild.id, member.id, earned)
                         activitylog.record(
@@ -474,6 +475,7 @@ class XPTrackerCog(commands.Cog):
                             stream=member.voice.self_stream or None,
                             video=member.voice.self_video or None,
                             boost=boost if boost != 1.0 else None,
+                            boost_src=boost_src,
                             peers=[m.id for m in valid if m.id != member.id],
                             bots=[m.id for m in channel.members if m.bot] or None,
                         )

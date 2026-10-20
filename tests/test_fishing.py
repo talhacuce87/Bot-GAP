@@ -67,3 +67,11 @@ async def test_fish_boost_never_lowers_a_bigger_admin_boost(db, monkeypatch):
 
     await db.set_boost(1, 6, 1.5, 600)  # küçük yönetici boost'u: balığın 2x'i geçerli
     assert await db.get_active_multiplier(1, 6) == 2.0
+
+
+async def test_active_boost_reports_its_source(db):
+    assert await db.get_active_boost(1, 7) == (1.0, None)
+    await fishing.catch(1, 7, rand=lambda: 0.5)
+    assert await db.get_active_boost(1, 7) == (2.0, "fish")
+    await db.set_boost(1, 7, 3.0, 600)  # büyük yönetici boost'u geçerli olur
+    assert await db.get_active_boost(1, 7) == (3.0, "admin")
