@@ -126,6 +126,7 @@ Tüm komutların kısa listesi Discord'da `!yardim` ile görülebilir.
 | Komut | Açıklama |
 |---|---|
 | `!kart [@üye]` | Seviye, XP, rol ve ilerleme kartı |
+| `!karakter [üye]` (`!chibi`) | GAP Dünyası'ndaki chibi karakterin resmi; üye etiket, kullanıcı adı ya da takma adla verilebilir |
 | `!xp` | Ayrıntılı XP durumu (metin) |
 | `!liderlik` (`!lb`, `!top`) | İlk 10 sıralama kartı |
 | `!topxp` | İlk 10 sıralama (metin) |
@@ -500,6 +501,14 @@ Gölün kenarında **F · Balık tut 🎣**. Türkiye saatiyle günde bir kez; z
 - **Discord duyurusu:** `FISH_CHANNEL_ID` ayarlıysa nadir ve üstü balıklar o kanalda duyurulur (ör. `🌟 EFSANEVİ! @üye gölden Efsanevi Altın Sazan çıkardı! ⚡ 24 saat 2x XP · 🔥 12 günlük seri`). Üyenin adı vurgulanır ama bildirim (ping) gitmez. Eşik `FISH_ANNOUNCE_MIN_RARITY` ile değişir.
 - **Kayıt:** Her tutuş olay kaydına `fish_catch` olarak düşer; XP kayıtlarındaki `boost_src` boost'un balıktan mı (`fish`) yöneticiden mi (`admin`) geldiğini gösterir.
 - **Kurulum:** Dünya, botun iç HTTP ucuna (`BOT_INTERNAL_URL`, varsayılan `http://bot-gap:8081`) `WORLD_SHARED_SECRET` ile istek atar.
+
+#### Chibi karakterler
+
+Her üyenin kendi chibi karakteri var: 22 saç, 30 üst, 16 alt, 8 ayakkabı, 12 şapka, 6 gözlük, 7 sakal/bıyık, ten/saç/göz rengi. `!karakter [üye]` karakterin resmini Discord'a çizer (`chibi_render.py`, GPU gerekmez).
+
+- **Paket:** Ham model paketi (`chibi_asset_pack_v8/`, 155 MB) repoya girmez. `cd web && npm run bake:chibi -- <paket klasörü>` her parçayı tek ağa birleştirir, renkleri köşelere gömer ve sadeleştirir; çıktı ~4 MB `chibi.{json,bin}`, aynısı `assets/chibi/` (bot) ve `web/client/chibi/` (dünya) altına yazılır. İkisinin aynı olduğunu test denetler.
+- **Kurallar** (`outfit.py`): bilinmeyen ya da yanlış slottaki parça varsayılana döner; tek parça üst (elbise, gelinlik, yeniçeri) altı gizler; şapka takınca saç bastırılır. `LOCKED` tablosundaki parçalar seviyeyle açılır: Level Up Tişört 5, XP Hoodie 10. Seviye düşerse parça yine varsayılana döner.
+- **Kayıt:** `avatar_outfit` tablosu. Dünya kıyafetleri botun iç ucundan okur ve yazar: `/internal/outfits` (odadakiler), `/internal/wardrobe` (gardırop: kıyafet, seviye, kilitler), `/internal/outfit` (kaydet). Her değişiklik olay kaydına `outfit_change` olarak düşer.
 
 **Kontroller:** WASD ile yürü, Shift ile koş, sürükleyerek kamerayı çevir, tekerlekle yakınlaştır, E ile koltuğa otur. Dokunmatik cihazlarda ekranın sol yarısı joystick (sonuna kadar itince koşar), sağ yarısı kamera.
 

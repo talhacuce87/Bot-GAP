@@ -9,6 +9,7 @@ event loop'uyla tam uyumludur.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import time
 from itertools import combinations
@@ -149,6 +150,15 @@ CREATE TABLE IF NOT EXISTS fishing (
     user_id   INTEGER NOT NULL,
     last_date TEXT    NOT NULL,
     streak    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+-- Chibi karakter kıyafeti (outfit.py): parça kimlikleri ve renkler, JSON
+CREATE TABLE IF NOT EXISTS avatar_outfit (
+    guild_id   INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    outfit     TEXT    NOT NULL,
+    updated_at REAL    NOT NULL,
     PRIMARY KEY (guild_id, user_id)
 );
 """
@@ -563,6 +573,52 @@ def active_boost(row: aiosqlite.Row) -> tuple[float, float | None]:
     if fish is not None and fish > now and FISH_BOOST_MULTIPLIER >= best[0]:
         best = (FISH_BOOST_MULTIPLIER, float(fish))
     return best
+
+
+async def get_outfit(guild_id: int, user_id: int) -> dict | None:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT outfit FROM avatar_outfit WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)
+        ) as cur:
+            row = await cur.fetchone()
+    if row is None:
+        return None
+    try:
+        data = json.loads(row[0])
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def get_outfits(guild_id: int, user_ids: list[int]) -> dict[int, dict]:
+    if not user_ids:
+        return {}
+    out: dict[int, dict] = {}
+    async with _db() as db:
+        async with db.execute(
+            f"SELECT user_id, outfit FROM avatar_outfit WHERE guild_id = ? AND user_id IN ({','.join('?' * len(user_ids))})",
+            (guild_id, *user_ids),
+        ) as cur:
+            for uid, raw in await cur.fetchall():
+                try:
+                    data = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(data, dict):
+                    out[int(uid)] = data
+    return out
+
+
+async def set_outfit(guild_id: int, user_id: int, outfit: dict) -> None:
+    async with _db() as db:
+        await db.execute(
+            """
+            INSERT INTO avatar_outfit (guild_id, user_id, outfit, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT (guild_id, user_id) DO UPDATE SET outfit = excluded.outfit, updated_at = excluded.updated_at
+            """,
+            (guild_id, user_id, json.dumps(outfit, separators=(",", ":")), time.time()),
+        )
+        await db.commit()
 
 
 async def record_fish_catch(

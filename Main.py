@@ -29,6 +29,7 @@ import activitylog
 from achievement_cog import AchievementCog
 from audit import AuditCog
 from bestfriend import BestFriendCog
+from character_cog import CharacterCog
 from exile import ExileCog
 from info import InfoCog
 from leaderboard import LeaderboardCog
@@ -155,6 +156,7 @@ class GapBot(commands.Bot):
         await self.add_cog(SummaryCog(self))
         await self.add_cog(AchievementCog(self))
         await self.add_cog(WorldCog(self))
+        await self.add_cog(CharacterCog(self))
         await self._load_ai()
 
     async def _load_ai(self) -> None:

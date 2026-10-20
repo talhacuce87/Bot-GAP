@@ -30,6 +30,8 @@ from discord.ext import commands, tasks
 import activitylog
 import database as db
 import fishing
+import outfit
+from xproles import XPRoleManager
 from font_utils import clean_display_name
 
 log = logging.getLogger("gap.world")
@@ -96,6 +98,7 @@ class WorldCog(commands.Cog):
         self._client: httpx.AsyncClient | None = None
         self._runner: web.AppRunner | None = None
         self._tasks: set[asyncio.Task] = set()
+        self._roles = XPRoleManager()
         self._failing = False
 
     async def cog_load(self) -> None:
@@ -107,6 +110,9 @@ class WorldCog(commands.Cog):
         self.board_loop.start()
         app = web.Application(client_max_size=4096)
         app.router.add_post("/internal/fish", self.handle_fish)
+        app.router.add_post("/internal/outfits", self.handle_outfits)
+        app.router.add_post("/internal/wardrobe", self.handle_wardrobe)
+        app.router.add_post("/internal/outfit", self.handle_save_outfit)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         await web.TCPSite(self._runner, "0.0.0.0", self.port).start()
@@ -119,11 +125,18 @@ class WorldCog(commands.Cog):
         if self._runner is not None:
             await self._runner.cleanup()
 
-    async def handle_fish(self, request: web.Request) -> web.Response:
-        """Dünyadan: {"guild", "user"} → günün balığı ya da neden tutulamadığı."""
+    def _authorized(self, request: web.Request) -> bool:
         # bytes karşılaştırması: str sürümü ASCII dışı karakterde TypeError (500) fırlatır
         given = request.headers.get("x-world-secret", "").encode()
-        if not hmac.compare_digest(given, self.secret.encode()):
+        return hmac.compare_digest(given, self.secret.encode())
+
+    async def _level(self, guild_id: int, user_id: int) -> int:
+        row = await db.get_user_row(guild_id, user_id)
+        return self._roles.get_progress_data(int(row["total_xp"]) if row else 0)[0]
+
+    async def handle_fish(self, request: web.Request) -> web.Response:
+        """Dünyadan: {"guild", "user"} → günün balığı ya da neden tutulamadığı."""
+        if not self._authorized(request):
             return web.json_response({"error": "not found"}, status=404)
         try:
             body = await request.json()
@@ -152,6 +165,56 @@ class WorldCog(commands.Cog):
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
         return web.json_response({"ok": True, **result})
+
+    async def handle_outfits(self, request: web.Request) -> web.Response:
+        """Dünyadan: {"guild", "users": [...]} → odadakilerin kıyafetleri (kayıtsızlara varsayılan)."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+            guild_id = int(body["guild"])
+            users = [int(u) for u in body["users"]][:200]
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild and users required"}, status=400)
+        saved = await db.get_outfits(guild_id, users)
+        out = {}
+        for uid in users:
+            level = await self._level(guild_id, uid)
+            out[str(uid)] = outfit.validate(saved.get(uid), level)[0]
+        return web.json_response({"outfits": out})
+
+    async def handle_wardrobe(self, request: web.Request) -> web.Response:
+        """Gardırop açılırken: {"guild", "user"} → kıyafet, seviye ve kilitli parçalar."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+            guild_id, user_id = int(body["guild"]), int(body["user"])
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild and user required"}, status=400)
+        level = await self._level(guild_id, user_id)
+        return web.json_response({
+            "outfit": await outfit.load(guild_id, user_id, level),
+            "level": level,
+            "locked": outfit.LOCKED,
+        })
+
+    async def handle_save_outfit(self, request: web.Request) -> web.Response:
+        """Gardıroptan kaydet: {"guild", "user", "outfit"} → temizlenmiş kıyafet ve atılan parçalar."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+            guild_id, user_id = int(body["guild"]), int(body["user"])
+            raw = body["outfit"]
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild, user and outfit required"}, status=400)
+        guild = self.bot.get_guild(guild_id)
+        if guild is None or guild.get_member(user_id) is None:
+            return web.json_response({"ok": False, "reason": "not_member"})
+        clean, dropped = await outfit.save(guild_id, user_id, raw, await self._level(guild_id, user_id))
+        activitylog.record("outfit_change", guild_id, user_id, outfit=clean)
+        return web.json_response({"ok": True, "outfit": clean, "dropped": dropped})
 
     async def _announce_fish(self, guild: discord.Guild, user_id: int, result: dict) -> None:
         channel = guild.get_channel(FISH_CHANNEL_ID)

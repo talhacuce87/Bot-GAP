@@ -84,6 +84,7 @@ class InfoCog(commands.Cog):
             name="📊 Profil & İstatistik Kartları",
             value=(
                 "• `!kart [@üye]` — Özelleştirilmiş görsel profil ve seviye kartı\n"
+                "• `!karakter [üye]` — GAP Dünyası'ndaki chibi karakterinin resmi\n"
                 "• `!bf [@üye]` — En çok ses geçirilen partnerle arkadaşlık tier kartı\n"
                 "• `!arkadaslar [@üye]` — En çok ses geçirilen 10 kişi ve tier'ları\n"
                 "• `!tierlar` — Arkadaşlık tier'ları ve saat eşikleri\n"
