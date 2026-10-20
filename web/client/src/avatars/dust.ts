@@ -1,4 +1,4 @@
-// Zıplama tozu: kalkışta küçük, inişte ayakların çevresinden halka gibi açılan çizgi film tozu.
+// Zıplama tozu: kalkışta ayakların çevresinden halka gibi açılan çizgi film tozu (inişte yok).
 // Puflar tek InstancedMesh; çıkış noktası/zaman örnek başına bir kez yazılır, hareket vertex shader'da.
 import * as THREE from "three";
 import { timeUniform } from "../world/geo";
@@ -83,17 +83,16 @@ export class DustFx {
   }
 
   /**
-   * Kare başına her avatar için: yükseklik sıfırdan çıkınca kalkış, sıfıra dönünce iniş tozu.
-   * `camera`: uzaktakiler için toz üretilmez.
+   * Kare başına her avatar için: yükseklik sıfırdan çıkınca (kalkış) ayakların altından toz kalkar.
+   * İnişte toz yok. `camera`: uzaktakiler için toz üretilmez.
    */
   track(v: { x: number; z: number; jumpY: number }, time: number, camera: THREE.Vector3): void {
     const prev = this.prevY.get(v);
     this.prevY.set(v, v.jumpY);
-    if (prev === undefined || (prev > 0) === (v.jumpY > 0)) return;
+    if (prev === undefined || prev > 0 || v.jumpY <= 0) return;
     if ((v.x - camera.x) ** 2 + (v.z - camera.z) ** 2 > MAX_DIST * MAX_DIST) return;
     // Puflar çimenin üstünde kalacak kadar büyük ve yüksek
-    if (v.jumpY > 0) this.burst(v.x, v.z, time, 6, 0.7, 0.5);
-    else this.burst(v.x, v.z, time, 12, 1.25, 0.68);
+    this.burst(v.x, v.z, time, 12, 1.25, 0.68);
   }
 
   /** `n` puf halka şeklinde dışa açılır; `reach` m, `size` puf çapı. */

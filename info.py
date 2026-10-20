@@ -208,7 +208,7 @@ class InfoCog(commands.Cog):
                 "• 🌙 Gece lambalar etrafı gerçekten aydınlatıyor, ışıklar parlıyor; ağaçlıklarda ateş böcekleri, gökte ay\n"
                 "• 🌿 Karakterin çevresinde sık, rüzgârda dalgalanan çimen; üstünden geçince eğiliyor\n"
                 "• 💬 Sohbete yazdığın mesaj kafanın üstünde baloncuk olarak çıkıyor\n"
-                "• 💨 Zıplayıp inince ayaklarından toz kalkıyor\n"
+                "• 💨 Zıpladığında ayaklarından toz kalkıyor, zıplama artık havada süzülüyor\n"
                 "• 🔊 Sinemada bir şey oynarken hoparlörler ritimle titriyor, notalar uçuşuyor"
             ),
             inline=False,

@@ -13,7 +13,7 @@ const used = (d: DustFx) => {
 describe("zıplama tozu", () => {
   const cam = new THREE.Vector3(0, 3, 6);
 
-  it("kalkışta az, inişte çok puf; yerde dururken ya da havadayken hiç", () => {
+  it("yalnızca kalkışta toz; havadayken ve inişte yok", () => {
     const d = new DustFx();
     const v = { x: 0, z: 0, jumpY: 0 };
     d.track(v, 1, cam);
@@ -24,20 +24,19 @@ describe("zıplama tozu", () => {
     expect(takeoff).toBeGreaterThan(0);
     v.jumpY = 0.8;
     d.track(v, 1.2, cam);
-    expect(used(d)).toBe(takeoff);
     v.jumpY = 0;
     d.track(v, 1.6, cam);
-    expect(used(d) - takeoff).toBeGreaterThan(takeoff);
+    expect(used(d)).toBe(takeoff);
   });
 
-  it("uzaktaki avatar için toz üretmez; ilk görüldüğü kare iniş sayılmaz", () => {
+  it("uzaktaki avatar için toz üretmez; ilk görüldüğü kare kalkış sayılmaz", () => {
     const d = new DustFx();
-    const far = { x: 200, z: 0, jumpY: 0.5 };
+    const far = { x: 200, z: 0, jumpY: 0 };
     d.track(far, 1, cam);
-    far.jumpY = 0;
-    d.track(far, 1.5, cam);
+    far.jumpY = 0.5;
+    d.track(far, 1.1, cam);
     expect(used(d)).toBe(0);
-    const fresh = { x: 1, z: 1, jumpY: 0 };
+    const fresh = { x: 1, z: 1, jumpY: 0.4 };
     d.track(fresh, 2, cam);
     expect(used(d)).toBe(0);
   });
