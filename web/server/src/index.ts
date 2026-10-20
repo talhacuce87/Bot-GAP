@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
-import { decodeState, type FishCatch, type PlayerState, type ServerEvent } from "../../shared/protocol";
+import { decodeState, type FishCatch, type Look, type PlayerState, type ServerEvent } from "../../shared/protocol";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
 import { CHAT_COOLDOWN_MS, CHAT_HISTORY, CINEMA_COOLDOWN_MS, cleanChat, parseCommand, runCommand } from "./chat";
@@ -465,9 +465,27 @@ const botPost: BotPost = async (path, body) => {
   return { ok: r.ok, body: ((await r.json().catch(() => ({}))) || {}) as Record<string, unknown> };
 };
 
+/**
+ * Yerel geliştirme: WORLD_DEV_WARDROBE=1 ise Discord ve bot olmadan da gardırop açılır; bütün parçalar
+ * kilitsiz, kayıt yalnızca bu süreçte (bellekte) tutulur. Canlıda tanımlanmaz.
+ */
+const DEV_WARDROBE = process.env.WORLD_DEV_WARDROBE === "1";
+const devLooks = new Map<string, Look>();
+const DEV_DEFAULT_LOOK: Look = { hair: "hair_kisa_doku", tops: "top_tisort", bottoms: "bottom_kot", shoes: "shoes_sneaker", hats: null, glasses: null, facial: null, colors: {} };
+
+function onDevLookMessage(send: (ev: ServerEvent) => void, room: Room, sid: number, user: SessionUser, msg: Record<string, unknown>): void {
+  if (msg.t === "wardrobe") return send({ t: "wardrobe", outfit: devLooks.get(user.id) ?? DEV_DEFAULT_LOOK, level: 99, locked: {} });
+  const look = sanitizeLook(msg.outfit);
+  if (!look) return send({ t: "notice", text: "👕 Kıyafet okunamadı." });
+  devLooks.set(user.id, look);
+  room.setLook(sid, look);
+  send({ t: "notice", text: "👕 Kaydedildi (yerel test, sunucu kapanınca silinir)." });
+}
+
 /** Gardırop: aç (kayıtlı kıyafet + kilitler) ya da kaydet. Misafirler ve sunucusuz odalar kullanamaz. */
 async function onLookMessage(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null, msg: Record<string, unknown>): Promise<void> {
   const send = (ev: ServerEvent) => ws.send(JSON.stringify(ev));
+  if (DEV_WARDROBE && (user.guest || !guild || !SHARED_SECRET)) return onDevLookMessage(send, room, sid, user, msg);
   const unavailable = user.guest || !guild ? "👕 Gardırop için dünyaya Discord'dan (ses kanalındaki Activity ile) gir." : !SHARED_SECRET ? "👕 Gardırop şu an kapalı (bot bağlı değil)." : null;
   if (msg.t === "wardrobe") {
     if (unavailable) return send({ t: "wardrobe", error: unavailable });
@@ -707,5 +725,5 @@ setInterval(() => {
 }, 1000 / TICK_HZ);
 
 server.listen(PORT, () => {
-  console.log(`[world] listening on :${PORT} (guests ${ALLOW_GUESTS ? "on" : "off"}, discord ${CLIENT_ID ? "on" : "off"})`);
+  console.log(`[world] listening on :${PORT} (guests ${ALLOW_GUESTS ? "on" : "off"}, discord ${CLIENT_ID ? "on" : "off"}${DEV_WARDROBE ? ", yerel gardırop on" : ""})`);
 });

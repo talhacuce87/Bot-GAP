@@ -42,6 +42,13 @@ export const DEFAULT_LOOK: Look = {
 /** Uzuvlar: 0 gövde, 1 kafa, 2-3 kol (sol/sağ), 4-5 bacak (sol/sağ). */
 export const LIMB_COUNT = 6;
 
+/**
+ * Saç ve sakal ince, sivri plakalardan oluşuyor: tam kalınlıkta kontur her tutamın etrafına kalın
+ * koyu bir çerçeve çizip rengi bastırıyor. Bunlarda kontur ince (anime tarzı tutam çizgisi) kalır.
+ */
+const THIN_OUTLINE = new Set(["hair", "facial"]);
+const THIN_OUTLINE_SCALE = 0.3;
+
 const TINT_OF: Record<LookColor, number> = { skin: 1, hair: 2, eye: 3 };
 
 /** Aynı kıyafet aynı anahtarı verir (geometri önbelleği için). */
@@ -98,7 +105,7 @@ export class ChibiPack {
     return out;
   }
 
-  /** Kıyafeti tek geometriye birleştirir: position, normal, color (doğrusal), aLimb. */
+  /** Kıyafeti tek geometriye birleştirir: position, normal, color (doğrusal), aLimb, aOutline. */
   build(look: Look | null | undefined): THREE.BufferGeometry {
     const l = look ?? DEFAULT_LOOK;
     const m = this.manifest;
@@ -110,6 +117,7 @@ export class ChibiPack {
     const nor = new Float32Array(vTotal * 3);
     const col = new Float32Array(vTotal * 3);
     const limb = new Float32Array(vTotal);
+    const outl = new Float32Array(vTotal);
     const index = vTotal > 65535 ? new Uint32Array(iTotal) : new Uint16Array(iTotal);
     const dv = new DataView(this.buf);
     const hat = ids.some((id) => m.parts[id].cat === "hats");
@@ -130,7 +138,9 @@ export class ChibiPack {
         if (r) refLum[TINT_OF[c]] = Math.max(lum(r[0], r[1], r[2]), 1);
       }
       const base = v;
+      const ow = THIN_OUTLINE.has(p.cat) ? THIN_OUTLINE_SCALE : 1;
       for (let k = 0; k < p.vCount; k++, v++) {
+        outl[v] = ow;
         const o = p.vOff + k * m.stride;
         let x = dv.getInt16(o, true) * m.posScale;
         let y = dv.getInt16(o + 2, true) * m.posScale;
@@ -174,6 +184,7 @@ export class ChibiPack {
     geo.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
     geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
     geo.setAttribute("aLimb", new THREE.BufferAttribute(limb, 1));
+    geo.setAttribute("aOutline", new THREE.BufferAttribute(outl, 1));
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.computeBoundingSphere();
     return geo;

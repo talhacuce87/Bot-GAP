@@ -11,6 +11,11 @@ export const CHIBI_SCALE = 0.72;
 const BUILDS_PER_FRAME = 2;
 const CACHE_MAX = 64;
 const OUTLINE_WIDTH = 0.012;
+/**
+ * Kontur kabuğu kameradan bu kadar (m) geri itilir: siluette görünür ama kafa derisine yakın saç
+ * tutamlarını (ya da gövdeye yakın parçaları) önden örtmez.
+ */
+const OUTLINE_PUSH = 0.03;
 /** Kontur bu mesafeden uzakta çizilmez (üçgen sayısını ikiye katlıyor, uzakta fark edilmiyor). */
 const OUTLINE_RADIUS = 15;
 
@@ -28,6 +33,7 @@ export interface LimbPose {
 
 const LIMB_GLSL = /* glsl */ `
   attribute float aLimb;
+  attribute float aOutline;
   uniform vec2 uLimbA[${LIMB_COUNT}];
   uniform vec3 uPivot[${LIMB_COUNT}];
   mat3 limbMat(int i) {
@@ -51,8 +57,14 @@ function patch(shader: THREE.WebGLProgramParametersWithUniforms, uniforms: Recor
       `int li = int(aLimb + 0.5);
        mat3 lm = limbMat(li);
        vec3 transformed = lm * (position - uPivot[li]) + uPivot[li];` +
-        (outline ? `\ntransformed += normalize(lm * normal) * ${(OUTLINE_WIDTH / CHIBI_SCALE).toFixed(4)};` : ""),
+        (outline ? `\ntransformed += normalize(lm * normal) * (${(OUTLINE_WIDTH / CHIBI_SCALE).toFixed(4)} * aOutline);` : ""),
     );
+  if (outline) {
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <project_vertex>",
+      `#include <project_vertex>\nmvPosition.z -= ${OUTLINE_PUSH.toFixed(3)};\ngl_Position = projectionMatrix * mvPosition;`,
+    );
+  }
 }
 
 interface Slot {
@@ -96,7 +108,8 @@ export class ChibiLayer {
   private makeSlot(): Slot {
     const angles = Array.from({ length: LIMB_COUNT }, () => new THREE.Vector2());
     const uniforms = { uLimbA: { value: angles }, uPivot: { value: this.pivots } };
-    const body = new THREE.MeshToonMaterial({ vertexColors: true });
+    // Saç katmanları çift yüzlü plakalar: arkası dönük tutam da çizilsin, konturu örtsün
+    const body = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide });
     body.onBeforeCompile = (s) => patch(s, uniforms, false);
     body.customProgramCacheKey = () => "chibi-body";
     const line = new THREE.MeshBasicMaterial({ color: 0x1c1622, side: THREE.BackSide });
