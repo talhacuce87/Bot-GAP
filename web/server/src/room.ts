@@ -48,6 +48,8 @@ export class Room {
   readonly players = new Map<number, Player>();
   /** Son sohbet mesajları (yalnızca bellekte); yeni gelen geçmişi görür. */
   readonly chat: ChatLine[] = [];
+  /** Bu odaya bağlı sinema (izleme odası); Activity'deki ve linkle gelenler aynı videoyu paylaşır. */
+  watchId: string | null = null;
   private nextSid = 1;
   private dirty = false;
 

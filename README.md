@@ -531,13 +531,15 @@ Harita yaklaşık 200 m çapında. Meydandan her bölgeye lambalı taş yollar g
 | Komut | Ne yapar |
 |---|---|
 | `!izle <link>` (`!sinema`) | Sinemayı açar: izleme odası kurulur, açana bağlantı açılır, odaya **🍿 Katıl** düğmeli duyuru düşer. İzleme odasındaysan videoyu değiştirir. |
-| `!xp` (`!seviye`), `!seri`, `!ses`, `!sıra` | Bot cevaplar (`world_cog.py` → `/internal/command`) |
+| `!xp` (`!seviye`), `!seri`, `!ses`, `!sıra`, `!lb` (`!liderlik`) | Bot cevaplar (`world_cog.py` → `/internal/command`) |
 | `!gardırop` | Gardırobu açar (istemcide) |
 | `!yardım` | Komut listesi |
 
 Sınırlar: mesaj en fazla 200 karakter, kişi başı 0.6 sn'de bir; sinema 10 sn'de bir. Metin her zaman düz yazı olarak gösterilir (HTML yorumlanmaz). Bot komutları olay kaydına `command` (`source: world`) olarak düşer.
 
 **Sinemayı oyundan açmak:** Sağ üstteki 🎬 düğmesi ya da perdenin önündeki oturma alanında **F**, sohbete `!izle ` yazar; linki yapıştırıp Enter. Video Activity'nin içinde oynatılamaz (Discord, YouTube/Twitch/Kick'in video sunucularına erişimi engeller), bu yüzden izleme odası tarayıcıda açılır: Activity'de Discord'un "dış bağlantı" onay penceresiyle.
+
+**Activity ile izleme odası aynı oda:** Activity'den açılan sinema o Activity'nin odasına bağlıdır (`Watch.roomKey`, `Room.watchId`). Linkle tarayıcıdan gelen izleyici ayrı bir odaya değil, aynı dünyaya girer: herkes birbirini görür, sohbet ortaktır. Odada tekrar `!izle` yazılırsa (Activity'den ya da tarayıcıdan) yeni oda açılmaz, aynı sinemanın videosu herkes için değişir. Activity'de perde "Şimdi oynuyor" tabelasına döner (YouTube küçük resmi `/thumb/<id>` ile aynı origin'den, başlık, herkesle aynı süre ya da ● CANLI); üstte **🍿 Tarayıcıda izle** bandı çıkar. Perdenin önünde sinema açıkken **F** tarayıcıda izler, **G** videoyu değiştirir. Discord'daki `!izle` komutuyla açılan sinema ise eskisi gibi kendi odasıdır.
 
 **Watch party (`!izle <link>`):**
 - **Nasıl çalışır:** Discord'da `!izle <link>` yazılır, bot bir izleme odası açıp "İzlemeye katıl" düğmesini kanala atar. Düğmeye basan kişi tarayıcıda dünyayı açar, Discord ile giriş yapar ve sinemanın koridorunda doğar.

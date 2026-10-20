@@ -15,10 +15,11 @@ export const BOT_COMMANDS: Record<string, string> = {
   seri: "streak", streak: "streak",
   ses: "ses",
   sira: "rank", siralama: "rank", rank: "rank",
+  lb: "top", liderlik: "top", top: "top", topxp: "top",
 };
 
 export const HELP_TEXT =
-  "Komutlar: !izle <link> (sinemayı aç) · !xp · !seri · !ses · !sıra · !gardırop · !yardım. " +
+  "Komutlar: !izle <link> (sinemayı aç) · !xp · !seri · !ses · !sıra · !lb · !gardırop · !yardım. " +
   "Diğer her şey odaya mesaj olarak gider.";
 
 /** Kontrol karakterlerini atar, boşlukları sadeleştirir, uzunluğu sınırlar. Boşsa null. */
@@ -53,14 +54,14 @@ export interface ChatContext {
   guild: string | null;
   /** Bot bağlı değilse (secret yok) null. */
   bot: BotPost | null;
-  /** İzleme odasındaysak !izle o odadaki videoyu değiştirir. */
+  /** Tarayıcıdan izleme odasına gelen izleyici: video zaten açık, yeni sekme açılmaz. */
   inWatch: boolean;
   reply(text: string, link?: ChatLine["link"]): void;
   announce(text: string, link?: ChatLine["link"]): void;
   /** Yalnızca istekte bulunana dış bağlantıyı açtırır. */
   open(url: string): void;
-  /** Sinemayı aç / izleme odasında videoyu değiştir. */
-  cinema(url: string): Promise<{ url: string; title: string } | { error: string }>;
+  /** Sinemayı aç; odada sinema varsa videosunu değiştir (reused). */
+  cinema(url: string): Promise<{ url: string; title: string; reused: boolean } | { error: string }>;
   /** Sinema açma sıklığı sınırı (true: izin var). */
   cinemaAllowed(): boolean;
 }
@@ -75,9 +76,9 @@ export async function runCommand(ctx: ChatContext, cmd: string, args: string): P
     if (!ctx.cinemaAllowed()) return ctx.reply("🎬 Biraz bekle, sinema az önce açıldı.");
     const r = await ctx.cinema(args);
     if ("error" in r) return ctx.reply(`🎬 ${r.error}`);
-    if (ctx.inWatch) return; // izleme odasında video değişti; durum zaten herkese gitti
-    ctx.open(r.url);
-    ctx.announce(`🎬 ${ctx.user.name} sinemayı açtı: ${r.title}`, { url: r.url, label: "🍿 Katıl" });
+    if (!ctx.inWatch) ctx.open(r.url);
+    const what = r.reused ? "videoyu değiştirdi" : "sinemayı açtı";
+    ctx.announce(`🎬 ${ctx.user.name} ${what}: ${r.title}`, { url: r.url, label: "🍿 Tarayıcıda izle" });
     return;
   }
 

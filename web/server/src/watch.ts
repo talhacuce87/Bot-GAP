@@ -20,6 +20,8 @@ export class Watch {
     source: Source,
     title: string,
     now: number,
+    /** Activity'den açıldıysa o odanın anahtarı: linkle gelenler de aynı odaya (ve dünyaya) girer. */
+    readonly roomKey: string | null = null,
   ) {
     this.lastActive = now;
     this.state = { source, title, playing: true, position: source.kind === "youtube" || source.kind === "twitch-vod" ? source.start : 0, updatedAt: now, by: createdBy, op: "load" };
@@ -72,11 +74,11 @@ export class Watch {
 export class Watches {
   private byId = new Map<string, Watch>();
 
-  create(guild: string | null, by: string, source: Source, title: string, now = Date.now()): Watch {
+  create(guild: string | null, by: string, source: Source, title: string, now = Date.now(), roomKey: string | null = null): Watch {
     let id: string;
     do id = randomBytes(6).toString("base64url");
     while (this.byId.has(id));
-    const w = new Watch(id, guild, by, source, title, now);
+    const w = new Watch(id, guild, by, source, title, now, roomKey);
     this.byId.set(id, w);
     return w;
   }
@@ -85,13 +87,17 @@ export class Watches {
     return this.byId.get(id);
   }
 
-  /** Boş ve uzun süredir dokunulmamış odaları siler. */
-  sweep(isEmpty: (id: string) => boolean, now = Date.now()): void {
-    for (const [id, w] of this.byId) if (isEmpty(id) && now - w.lastActive > WATCH_IDLE_MS) this.byId.delete(id);
+  /** Odası boş ve uzun süredir dokunulmamış izleme odalarını siler. */
+  sweep(isEmpty: (w: Watch) => boolean, now = Date.now()): void {
+    for (const [id, w] of this.byId) if (isEmpty(w) && now - w.lastActive > WATCH_IDLE_MS) this.byId.delete(id);
+  }
+
+  /** İzleme odasının oyuncularının bulunduğu oda: Activity'ye bağlıysa o oda, değilse kendi odası. */
+  static roomKeyOf(w: Watch): string {
+    return w.roomKey ?? `w:${w.id}`;
   }
 }
 
-/** Link → kaynak + başlık. YouTube başlığı oEmbed'den alınır; alınamazsa kaynağın adı kullanılır. */
 /** Çalma listesini okur (en fazla 64 KB, 4 sn). Okunamazsa null. */
 async function fetchPlaylist(url: string): Promise<string | null> {
   try {
@@ -119,6 +125,7 @@ export async function detectHlsLive(url: string, get: (u: string) => Promise<str
   return !text.includes("#EXT-X-ENDLIST");
 }
 
+/** Link → kaynak + başlık. YouTube başlığı oEmbed'den alınır; alınamazsa kaynağın adı kullanılır. */
 export async function resolveMedia(url: string): Promise<{ source: Source; title: string } | null> {
   const source = parseMediaUrl(url);
   if (!source) return null;

@@ -47,7 +47,7 @@ describe("Watches", () => {
     const a = ws.create(null, "Ali", yt, "A", 0);
     const b = ws.create(null, "Ali", yt, "B", 0);
     expect(a.id).not.toBe(b.id);
-    ws.sweep((id) => id === a.id, WATCH_IDLE_MS + 1);
+    ws.sweep((w) => w.id === a.id, WATCH_IDLE_MS + 1);
     expect(ws.get(a.id)).toBeUndefined();
     expect(ws.get(b.id)).toBeDefined(); // içinde biri var
   });

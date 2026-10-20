@@ -31,6 +31,7 @@ export class Hud {
   private acts: HTMLDivElement;
   private actsKey = "";
   private toastEl: HTMLDivElement;
+  private nowPlaying: HTMLDivElement | null = null;
   private toastTimer = 0;
 
   constructor(
@@ -79,6 +80,27 @@ export class Hud {
     b.textContent = "🎬";
     b.title = "Sinemayı aç (link yapıştır)";
     b.addEventListener("click", onOpen);
+  }
+
+  /** Activity'de sinema bandı: ne oynuyor ve tarayıcıda izleme düğmesi; null ise gizlenir. */
+  setNowPlaying(title: string | null, onWatch: (() => void) | null): void {
+    if (!title) {
+      this.nowPlaying?.classList.remove("show");
+      return;
+    }
+    if (!this.nowPlaying) this.nowPlaying = el("div", "panel now-playing", this.root);
+    const text = document.createElement("span");
+    text.className = "now-title";
+    text.textContent = `🎬 ${title}`;
+    const parts: HTMLElement[] = [text];
+    if (onWatch) {
+      const b = document.createElement("button");
+      b.textContent = "🍿 Tarayıcıda izle";
+      b.addEventListener("click", onWatch);
+      parts.push(b);
+    }
+    this.nowPlaying.replaceChildren(...parts);
+    this.nowPlaying.classList.add("show");
   }
 
   /** Dokunmatikte zıplama düğmesi (masaüstünde Space). */

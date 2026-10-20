@@ -38,6 +38,7 @@ import { openYoutubeTest } from "./ui/youtube";
 import { ScreenVideo } from "./watch/screen";
 import { WatchSync } from "./watch/sync";
 import { WatchPanel } from "./ui/watchPanel";
+import { CinemaSign } from "./world/cinemaSign";
 import { buildWorld, SCREEN_W, SCREEN_Z } from "./world/scene";
 
 /** Perdenin önü (oturma alanı): F ile sinema açılır. */
@@ -206,9 +207,22 @@ async function start(): Promise<void> {
   net.onChatLog = (lines) => chat.setLog(lines);
   net.onOpen = openUrl;
   const openCinema = () => chat.focus("!izle ");
-  if (session.mode !== "watch") hud.cinemaButton(openCinema);
+  // Activity'de video oynatılamaz: perde "Şimdi oynuyor" tabelasına döner, üstte "Tarayıcıda izle" bandı.
+  // Sinema bu odaya bağlıdır; linkle gelenler de bu dünyaya girer.
+  let cinemaSign: CinemaSign | null = null;
+  /** Odadaki sinemanın tarayıcı linki (oynuyorsa); perdenin önünde F ile açılır. */
+  let cinemaLink: string | null = null;
+  if (session.mode !== "watch") {
+    hud.cinemaButton(openCinema);
+    const sign = (cinemaSign = new CinemaSign(world.screen, session.base));
+    net.onWatch = (s, link) => {
+      sign.set(s);
+      cinemaLink = s.source && link ? link : null;
+      hud.setNowPlaying(s.source ? s.title : null, link ? () => openUrl(link) : null);
+    };
+  }
   // Debug: gardırobu bot olmadan denemek için (ekran görüntüsü testleri)
-  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe });
+  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe, gapNet: net });
 
   // ---- Etkileşimler: mangalda şiş çevir, zindanda çay ver / domates at ----
   const HEART = 2; // EMOTES içindeki ❤️
@@ -250,11 +264,17 @@ async function start(): Promise<void> {
       hud.toast(`🎣 ${name} ${c.label.toLowerCase()} bir ${c.fish} tuttu!`);
     }
   };
-  const nearActs = (): { key: "f" | "g"; label: string; act: Act | "fish" | "cinema" }[] => {
+  const nearActs = (): { key: "f" | "g"; label: string; act: Act | "fish" | "cinema" | "watch" }[] => {
     if (me.jailed) return [];
     const c = CINEMA_FRONT;
     if (session.mode !== "watch" && me.x >= c.minX && me.x <= c.maxX && me.z >= c.minZ && me.z <= c.maxZ) {
-      return [{ key: "f", label: "Sinemayı aç 🎬", act: "cinema" }];
+      // Sinema açıksa: F tarayıcıda izle, G videoyu değiştir
+      return cinemaLink
+        ? [
+            { key: "f", label: "Tarayıcıda izle 🍿", act: "watch" },
+            { key: "g", label: "Videoyu değiştir 🎬", act: "cinema" },
+          ]
+        : [{ key: "f", label: "Sinemayı aç 🎬", act: "cinema" }];
     }
     const g = ACT_SPOTS.grill, bars = ACT_SPOTS.bars;
     if (Math.hypot(me.x - g.x, me.z - g.z) <= g.r) return [{ key: "f", label: "Şiş çevir 🍢", act: "grill" }];
@@ -320,6 +340,8 @@ async function start(): Promise<void> {
     const act = actKey ? acts.find((a) => a.key === actKey)?.act : undefined;
     if (act === "cinema") {
       openCinema();
+    } else if (act === "watch") {
+      if (cinemaLink) openUrl(cinemaLink);
     } else if (act === "fish" && now - lastAct >= FISH_COOLDOWN_MS) {
       lastAct = now;
       emoteFx.emit(me.x, 0, me.z, FX_CELL.rod, time, undefined, 1);
@@ -330,6 +352,7 @@ async function start(): Promise<void> {
       net.send({ t: "act", a: act });
     }
     throwFx.update(time);
+    cinemaSign?.update(net.serverNow());
     net.update(dt, me);
     const serverNow = net.serverNow();
     bots?.update(dt, serverNow);

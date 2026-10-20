@@ -92,8 +92,20 @@ async def build_leaderboard_payload(bot: commands.Bot) -> dict:
 
 
 
-async def game_command_text(guild_id: int, user_id: int, command: str, roles: XPRoleManager) -> str | None:
+async def game_command_text(guild_id: int, user_id: int, command: str, roles: XPRoleManager,
+                            guild: discord.Guild | None = None) -> str | None:
     """Oyun içi komutların metin cevabı; bilinmeyen komutta None."""
+    if command == "top":
+        rows = await db.get_leaderboard(guild_id, 5)
+        if not rows:
+            return "🏆 Henüz XP verisi yok."
+        medals = ["🥇", "🥈", "🥉", "4.", "5."]
+        names = []
+        for i, r in enumerate(rows):
+            member = guild.get_member(int(r["user_id"])) if guild else None
+            name = member.display_name if member else f"Kullanıcı {r['user_id']}"
+            names.append(f"{medals[i]} {name} ({int(r['total_xp']):,})")
+        return "🏆 " + " · ".join(names)
     row = await db.get_user_row(guild_id, user_id)
     total = int(row["total_xp"]) if row else 0
     level, _next, _floor, ceiling, _ratio = roles.get_progress_data(total)
@@ -255,7 +267,7 @@ class WorldCog(commands.Cog):
         guild = self.bot.get_guild(guild_id)
         if guild is None or guild.get_member(user_id) is None:
             return web.json_response({"text": "Bu sunucunun üyesi değilsin."})
-        text = await game_command_text(guild_id, user_id, command, self._roles)
+        text = await game_command_text(guild_id, user_id, command, self._roles, guild)
         if text is None:
             return web.json_response({"error": "unknown command"}, status=400)
         activitylog.record("command", guild_id, user_id, name=command, source="world")

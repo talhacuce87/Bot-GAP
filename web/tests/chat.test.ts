@@ -21,7 +21,7 @@ function ctx(over: Partial<ChatContext> = {}) {
     reply: (t) => out.replies.push(t),
     announce: (text, link) => out.announced.push({ text, link }),
     open: (url) => out.opened.push(url),
-    cinema: async () => ({ url: "https://gap.example/w/abc123", title: "Maç özeti" }),
+    cinema: async () => ({ url: "https://gap.example/w/abc123", title: "Maç özeti", reused: false }),
     cinemaAllowed: () => {
       const a = allowed;
       allowed = false;
@@ -82,7 +82,7 @@ describe("komutlar", () => {
     await runCommand(c, "izle", "https://youtu.be/abc");
     expect(out.opened).toEqual(["https://gap.example/w/abc123"]);
     expect(out.announced[0].text).toContain("Barış sinemayı açtı: Maç özeti");
-    expect(out.announced[0].link).toEqual({ url: "https://gap.example/w/abc123", label: "🍿 Katıl" });
+    expect(out.announced[0].link).toEqual({ url: "https://gap.example/w/abc123", label: "🍿 Tarayıcıda izle" });
     // Hemen ikinci kez: sınır
     await runCommand(c, "izle", "https://youtu.be/def");
     expect(out.replies.at(-1)).toContain("Biraz bekle");
@@ -101,11 +101,15 @@ describe("komutlar", () => {
     expect(g.out.replies[0]).toContain("Discord'dan");
   });
 
-  it("izleme odasında !izle yalnızca videoyu değiştirir (duyuru ve yeni sekme yok)", async () => {
-    const { c, out } = ctx({ inWatch: true, guild: null });
-    await runCommand(c, "izle", "https://youtu.be/abc");
-    expect(out.opened).toEqual([]);
-    expect(out.announced).toEqual([]);
+  it("odada sinema varken !izle videoyu değiştirir; tarayıcıdaki izleyiciye yeni sekme açılmaz", async () => {
+    const reused = { cinema: async () => ({ url: "https://gap.example/w/abc123", title: "Fragman", reused: true }) };
+    const viewer = ctx({ ...reused, inWatch: true, guild: null });
+    await runCommand(viewer.c, "izle", "https://youtu.be/abc");
+    expect(viewer.out.opened).toEqual([]);
+    expect(viewer.out.announced[0].text).toContain("videoyu değiştirdi: Fragman");
+    const player = ctx(reused); // Activity'deki oyuncu: izlemek için tarayıcıda açılır
+    await runCommand(player.c, "izle", "https://youtu.be/abc");
+    expect(player.out.opened).toEqual(["https://gap.example/w/abc123"]);
   });
 });
 

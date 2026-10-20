@@ -21,6 +21,7 @@ export default defineConfig({
       "/api": server,
       "/auth": server,
       "/avatar": server,
+      "/thumb": server,
       "/health": server,
       "/ws": { target: server, ws: true },
     },

@@ -18,7 +18,8 @@ export class Net {
   /** Kendi sürgün durumumuz değişti (girişte ya da canlı). */
   onJail: (jailed: boolean, x: number, z: number, rot: number) => void = () => {};
   onBoard: (entries: BoardEntry[], updated: number) => void = () => {};
-  onWatch: (s: WatchState) => void = () => {};
+  /** `link`: izleme odasının tarayıcı adresi (Activity'de "Tarayıcıda izle"). */
+  onWatch: (s: WatchState, link?: string) => void = () => {};
   onNotice: (text: string) => void = () => {};
   onEmote: (sid: number, e: number) => void = () => {};
   onAct: (sid: number, a: Act) => void = () => {};
@@ -122,8 +123,8 @@ export class Net {
         this.onBoard(ev.entries, ev.updated);
         break;
       case "watch": {
-        const { t: _t, ...state } = ev;
-        this.onWatch(state);
+        const { t: _t, link, ...state } = ev;
+        this.onWatch(state, link);
         break;
       }
       case "notice":

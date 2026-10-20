@@ -91,7 +91,8 @@ export type ServerEvent =
   | { t: "leave"; sid: number }
   | { t: "jail"; sid: number; jailed: boolean; x: number; z: number; rot: number }
   | { t: "board"; updated: number; entries: BoardEntry[] }
-  | ({ t: "watch" } & WatchState)
+  /** `link`: izleme odasının tarayıcı adresi (Activity'de "Tarayıcıda izle" için). */
+  | ({ t: "watch"; link?: string } & WatchState)
   | { t: "notice"; text: string }
   | { t: "emote"; sid: number; e: number }
   | { t: "act"; sid: number; a: Act }

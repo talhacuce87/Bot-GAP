@@ -15,6 +15,11 @@ import { type BotPost, fetchLook, fetchWardrobe, OUTFIT_COOLDOWN_MS, sanitizeLoo
 import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
 import { resolveMedia, type Watch, Watches } from "./watch";
 
+/** İzleme odasının tarayıcı adresi. */
+function watchLink(w: Watch): string {
+  return `${PUBLIC_URL || "http://localhost:5173"}/w/${w.id}`;
+}
+
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
@@ -193,6 +198,25 @@ async function serveAvatar(res: ServerResponse, id: string, hash: string): Promi
   res.end(img);
 }
 
+/** YouTube küçük resmi aynı origin'den (Activity CSP'si dış görsele izin vermez); sinema perdesinde gösterilir. */
+const thumbCache = new Map<string, Buffer>();
+
+async function serveThumb(res: ServerResponse, id: string): Promise<void> {
+  let img = thumbCache.get(id);
+  if (!img) {
+    const r = await fetch(`https://i.ytimg.com/vi/${id}/mqdefault.jpg`, { signal: AbortSignal.timeout(4000) }).catch(() => null);
+    if (!r?.ok) {
+      res.writeHead(404).end();
+      return;
+    }
+    img = Buffer.from(await r.arrayBuffer());
+    if (thumbCache.size >= AVATAR_CACHE_MAX) thumbCache.delete(thumbCache.keys().next().value!);
+    thumbCache.set(id, img);
+  }
+  res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=86400" });
+  res.end(img);
+}
+
 // ---------------------------------------------------------------------------
 // Rotalar
 // ---------------------------------------------------------------------------
@@ -282,6 +306,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return w ? json(res, 200, { id: w.id, title: w.state.title }) : json(res, 404, { error: "not found" });
   }
 
+  const thumb = /^\/thumb\/([\w-]{11})$/.exec(path);
+  if (thumb && method === "GET") return serveThumb(res, thumb[1]);
+
   const avatar = /^\/avatar\/(\d+)\/([0-9a-f_]+)(?:\.png)?$/.exec(path);
   if (avatar && method === "GET") return serveAvatar(res, avatar[1], avatar[2]);
 
@@ -359,7 +386,8 @@ server.on("upgrade", (req, socket, head) => {
   let key: string | null = null;
   if (url.searchParams.has("watch")) {
     if (!watch) return close(4004, "watch not found");
-    if (user && (!user.guest || !LOGIN_REQUIRED)) key = `w:${watch.id}`;
+    // Activity'den açılan sinemanın linkiyle gelen, o Activity'nin odasına (aynı dünyaya) girer.
+    if (user && (!user.guest || !LOGIN_REQUIRED)) key = Watches.roomKeyOf(watch);
   } else if (user && !user.guest && /^[\w-]{1,100}$/.test(instance)) key = `d:${instance}`;
   else if (user?.guest && /^[\w-]{1,32}$/.test(roomName)) key = `g:${roomName}`;
   if (!user || !key) {
@@ -376,7 +404,7 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 function sendWatch(target: Room | WebSocket, w: Watch): void {
-  const ev = { t: "watch" as const, ...w.state };
+  const ev = { t: "watch" as const, ...w.state, link: watchLink(w) };
   if (target instanceof WebSocket) target.send(JSON.stringify(ev));
   else target.broadcast(ev);
 }
@@ -430,22 +458,27 @@ async function onLookMessage(ws: WebSocket, room: Room, sid: number, user: Sessi
   send({ t: "notice", text: r.dropped.length ? `👕 Kaydedildi; kilitli parçalar çıkarıldı: ${r.dropped.join(", ")}` : "👕 Kıyafetin kaydedildi!" });
 }
 
-/** Sinemayı açar: izleme odasındaysak videoyu değiştirir, değilse yeni izleme odası kurar. */
-async function openCinema(link: string, guild: string | null, by: string, room: Room, watch?: Watch): Promise<{ url: string; title: string } | { error: string }> {
+/**
+ * Sinemayı açar. Odada zaten bir sinema varsa videosunu herkes için değiştirir; yoksa bu odaya bağlı
+ * yeni bir izleme odası kurar (linkle gelenler bu odaya, aynı dünyaya girer).
+ */
+async function openCinema(link: string, guild: string | null, by: string, room: Room): Promise<{ url: string; title: string; reused: boolean } | { error: string }> {
   const media = await resolveMedia(link);
-  if (!media) return { error: "Bu link açılamıyor. YouTube, Twitch, Kick ya da .mp4/.webm/.m3u8 linki dene." };
-  const base = PUBLIC_URL || "http://localhost:5173";
-  if (watch) {
-    watch.load(media.source, media.title, by, Date.now());
-    sendWatch(room, watch);
-    return { url: `${base}/w/${watch.id}`, title: media.title };
+  if (!media) return { error: "Bu link açılamıyor. YouTube, Twitch, Kick, tabii (TRT) ya da .mp4/.webm/.m3u8 linki dene." };
+  const existing = room.watchId ? watches.get(room.watchId) : undefined;
+  if (existing) {
+    existing.load(media.source, media.title, by, Date.now());
+    sendWatch(room, existing);
+    return { url: watchLink(existing), title: media.title, reused: true };
   }
-  const w = watches.create(guild, by, media.source, media.title);
-  return { url: `${base}/w/${w.id}`, title: media.title };
+  const w = watches.create(guild, by, media.source, media.title, Date.now(), room.key);
+  room.watchId = w.id;
+  sendWatch(room, w);
+  return { url: watchLink(w), title: media.title, reused: false };
 }
 
 /** Sohbet mesajı ya da komut. Komut cevapları yalnızca sorana gider. */
-async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null, text: string, watch: Watch | undefined, cinemaGate: { last: number }): Promise<void> {
+async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null, text: string, viewer: boolean, cinemaGate: { last: number }): Promise<void> {
   const line = (kind: "system" | "reply", t: string, link?: { url: string; label: string }) => ({ kind, sid: 0, name: "Bot GAP", text: t, at: Date.now(), ...(link ? { link } : {}) });
   const parsed = parseCommand(text);
   if (!parsed) {
@@ -458,11 +491,11 @@ async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser,
       sid,
       guild,
       bot: SHARED_SECRET ? botPost : null,
-      inWatch: !!watch,
+      inWatch: viewer,
       reply: (t, link) => ws.send(JSON.stringify({ t: "chat", line: line("reply", t, link) })),
       announce: (t, link) => room.say(line("system", t, link), CHAT_HISTORY),
       open: (url) => ws.send(JSON.stringify({ t: "open", url })),
-      cinema: (url) => openCinema(url, guild, user.name, room, watch),
+      cinema: (url) => openCinema(url, guild, user.name, room),
       cinemaAllowed: () => {
         const now = Date.now();
         if (now - cinemaGate.last < CINEMA_COOLDOWN_MS) return false;
@@ -518,7 +551,11 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
     void fetchLook(botPost, opts.guild, user.id).then((look) => look && room.setLook(sid, look));
   }
   sendBoard(ws, boards.for(opts.guild ?? null));
-  if (watch) sendWatch(ws, watch);
+  // Sinema odaya bağlıdır: linkle gelen bağlar, Activity'den !izle ile sonradan da açılabilir.
+  if (watch && !room.watchId) room.watchId = watch.id;
+  const roomWatch = () => (room.watchId ? watches.get(room.watchId) : undefined);
+  const current = roomWatch();
+  if (current) sendWatch(ws, current);
   if (room.chat.length) ws.send(JSON.stringify({ t: "chatlog", lines: room.chat }));
   const limiter = { last: 0 };
   let lastEmote = 0;
@@ -567,7 +604,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const text = cleanChat(msg.text);
         if (!text || now - lastChat < CHAT_COOLDOWN_MS) return;
         lastChat = now;
-        void onChat(ws, room, sid, user, opts.guild ?? null, text, watch, cinemaGate);
+        void onChat(ws, room, sid, user, opts.guild ?? null, text, !!watch, cinemaGate);
       } else if (msg?.t === "wardrobe" || msg?.t === "outfit") {
         const now = Date.now();
         const isSave = msg.t === "outfit";
@@ -582,8 +619,9 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
           lastEmote = now;
           room.broadcast({ t: "emote", sid, e }, sid);
         }
-      } else if (watch && msg && typeof msg === "object") {
-        onWatchMessage(ws, room, watch, user, msg, limiter);
+      } else if (msg && typeof msg === "object") {
+        const w = roomWatch();
+        if (w) onWatchMessage(ws, room, w, user, msg, limiter);
       }
     } catch {
       // bozuk mesaj yok sayılır
@@ -596,7 +634,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
 }
 
 // Boş ve eskimiş izleme odalarını temizle.
-setInterval(() => watches.sweep((id) => (rooms.find(`w:${id}`)?.size ?? 0) === 0), 10 * 60 * 1000);
+setInterval(() => watches.sweep((w) => (rooms.find(Watches.roomKeyOf(w))?.size ?? 0) === 0), 10 * 60 * 1000);
 
 // Ölü bağlantıları temizle.
 setInterval(() => {

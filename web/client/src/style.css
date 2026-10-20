@@ -839,3 +839,39 @@ body {
     max-height: 18vh;
   }
 }
+
+/* Activity'de sinema bandı (video tarayıcıda oynar) */
+.now-playing {
+  position: absolute;
+  top: calc(max(10px, env(safe-area-inset-top)) + 44px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(560px, calc(100vw - 140px));
+  display: none;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.now-playing.show {
+  display: flex;
+}
+
+.now-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.now-playing button {
+  flex: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
