@@ -26,7 +26,8 @@ const TINTS = ["#d8705f", "#6f95e6"];
 
 /** `?battle=1` (paylaşılabilir/test linki) ya da sekmede saklanan tercih. */
 export function wantsBattle(): boolean {
-  if (new URLSearchParams(location.search).get("battle") === "1") return true;
+  const param = new URLSearchParams(location.search).get("battle");
+  if (param !== null) return param === "1";
   try {
     return sessionStorage.getItem(MODE_KEY) === "battle";
   } catch {
@@ -34,19 +35,21 @@ export function wantsBattle(): boolean {
   }
 }
 
-/** Savaşa gir / dünyaya dön: tercih sekmede saklanır, sayfa yeniden yüklenir (giriş kendiliğinden tekrarlanır). */
+/**
+ * Savaşa gir / dünyaya dön: tercih adrese (`?battle=1`) yazılır ve sayfa o adresle yeniden yüklenir
+ * (giriş kendiliğinden tekrarlanır). Discord Activity çerçevesinde sessionStorage yeniden yüklemede
+ * korunmuyor; adres korunur. Sekmede de saklanır (adres parametresiz açılırsa).
+ */
 export function switchMode(battle: boolean): void {
   try {
     if (battle) sessionStorage.setItem(MODE_KEY, "battle");
     else sessionStorage.removeItem(MODE_KEY);
   } catch {
-    // depolama kapalıysa yalnızca linkle geçilebilir
+    // depolama kapalı: adres yeter
   }
   const url = new URL(location.href);
-  if (!battle && url.searchParams.has("battle")) {
-    url.searchParams.delete("battle");
-    location.replace(url);
-  } else location.reload();
+  url.searchParams.set("battle", battle ? "1" : "0");
+  location.replace(url);
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text = ""): HTMLElementTagNameMap[K] {
