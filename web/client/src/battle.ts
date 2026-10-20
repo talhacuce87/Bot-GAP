@@ -1,4 +1,4 @@
-// Tank savaşı istemcisi: arena, takım seçimi, herkes tankta. Dünyadan "!savaş" ile girilir (sayfa yeniden yüklenir).
+// Tank savaşı istemcisi: arena, takım seçimi, herkes tankta. Dünyadan "!savaş" ile girilir (sayfa yenilenmeden, mode.ts).
 // Kurallar sunucuda (server/src/battle.ts); burada sürüş, nişan, çizim ve arayüz var.
 import * as THREE from "three";
 import { TANK_HP, TEAMS, type Team } from "../../shared/arena";
@@ -10,6 +10,7 @@ import { colorFor } from "./avatars/avatars";
 import { EmoteFx, FX_CELL } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
 import { login } from "./discord";
+import { beginMode, switchMode } from "./mode";
 import { Input } from "./input/input";
 import { Net } from "./net";
 import { PerfGovernor } from "./perf";
@@ -20,37 +21,8 @@ import { buildArena } from "./world/arena";
 import type { World } from "./world/scene";
 import { aimRay, ShellFx, TankView } from "./world/tank";
 
-const MODE_KEY = "gap-mode";
 /** Takım tonu, tankın nötr metaliyle çarpılır. */
 const TINTS = ["#d8705f", "#6f95e6"];
-
-/** `?battle=1` (paylaşılabilir/test linki) ya da sekmede saklanan tercih. */
-export function wantsBattle(): boolean {
-  const param = new URLSearchParams(location.search).get("battle");
-  if (param !== null) return param === "1";
-  try {
-    return sessionStorage.getItem(MODE_KEY) === "battle";
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Savaşa gir / dünyaya dön: tercih adrese (`?battle=1`) yazılır ve sayfa o adresle yeniden yüklenir
- * (giriş kendiliğinden tekrarlanır). Discord Activity çerçevesinde sessionStorage yeniden yüklemede
- * korunmuyor; adres korunur. Sekmede de saklanır (adres parametresiz açılırsa).
- */
-export function switchMode(battle: boolean): void {
-  try {
-    if (battle) sessionStorage.setItem(MODE_KEY, "battle");
-    else sessionStorage.removeItem(MODE_KEY);
-  } catch {
-    // depolama kapalı: adres yeter
-  }
-  const url = new URL(location.href);
-  url.searchParams.set("battle", battle ? "1" : "0");
-  location.replace(url);
-}
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text = ""): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -73,6 +45,7 @@ interface Foe {
 }
 
 export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement, loading: HTMLElement, lowPower: boolean): Promise<void> {
+  const life = beginMode();
   const fail = (msg: string) => {
     loading.textContent = msg;
     loading.classList.add("error");
@@ -87,7 +60,14 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   renderer.setSize(innerWidth, innerHeight, false);
   const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 260);
   const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, 1.5), true);
+  life.onStop(() => {
+    renderer.setAnimationLoop(null);
+    renderer.dispose();
+    renderer.forceContextLoss();
+    if (document.pointerLockElement) document.exitPointerLock();
+  });
   addEventListener("resize", () => {
+    if (!life.active) return;
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight, false);
@@ -100,10 +80,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
     fail(`Giriş yapılamadı: ${(err as Error).message}`);
     return;
   }
-  if (session.mode === "watch") {
-    switchMode(false);
-    return;
-  }
+  if (!life.active) return;
 
   const arena = buildArena();
   const scene = arena.scene;
@@ -118,6 +95,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   const input = new Input(canvas, hudRoot);
   const hud = new Hud(hudRoot, session.user.name, input.touch, () => input.triggerAction());
   const net = new Net(`${session.wsUrl}&battle=1`, remotes);
+  life.onStop(() => net.close());
   net.onStatus = (s) => hud.setStatus(s);
   net.onNotice = (text) => hud.toast(text);
   hud.setStatus(net.status);
@@ -354,6 +332,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
     renderer.setAnimationLoop(frame);
   };
   document.addEventListener("visibilitychange", () => {
+    if (!life.active) return;
     if (document.hidden) renderer.setAnimationLoop(null);
     else run();
   });

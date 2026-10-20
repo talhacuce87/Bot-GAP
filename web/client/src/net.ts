@@ -52,6 +52,8 @@ export class Net {
   private pingTimer = 0;
   private retry = 0;
   private rttSamples: { rtt: number; offset: number }[] = [];
+  /** close() çağrıldı: yeniden bağlanılmaz (mod değişti). */
+  private closed = false;
   private readonly onEntry: (sid: number, x: number, z: number, rot: number, flags: number, time: number) => void;
 
   constructor(
@@ -91,6 +93,7 @@ export class Net {
       window.clearInterval(this.pingTimer);
       this.ws = null;
       this.you = -1;
+      if (this.closed) return;
       // Upgrade reddi tarayıcıda 1006 olarak görünür; hiç açılmadan kapanırsa yine dene ama yavaşla.
       if (e.code === 4001 || e.code === 4004) {
         this.setStatus(e.code === 4001 ? "denied" : "notfound");
@@ -210,6 +213,13 @@ export class Net {
         break;
       }
     }
+  }
+
+  /** Bağlantıyı kalıcı olarak kapatır (dünya ↔ savaş geçişinde eski bağlantı). */
+  close(): void {
+    this.closed = true;
+    window.clearInterval(this.pingTimer);
+    this.ws?.close(1000, "mode");
   }
 
   send(ev: ClientEvent): void {

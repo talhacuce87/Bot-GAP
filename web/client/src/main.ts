@@ -51,14 +51,16 @@ import { WatchPanel } from "./ui/watchPanel";
 import { CinemaSign } from "./world/cinemaSign";
 import { MAX_PUSHERS } from "./world/grassField";
 import { buildWorld, SCREEN_W, SCREEN_Z } from "./world/scene";
-import { runBattle, switchMode, wantsBattle } from "./battle";
+import { runBattle } from "./battle";
+import { beginMode, setModeStarter, stopMode, switchMode, wantsBattle } from "./mode";
 import { aimRay, ShellFx, TankView } from "./world/tank";
 
 /** Perdenin önü (oturma alanı): F ile sinema açılır. */
 const CINEMA_FRONT = { minX: -12, maxX: 12, minZ: SCREEN_Z + 3, maxZ: SCREEN_Z + 22 };
 
 const params = new URLSearchParams(location.search);
-const canvas = document.getElementById("scene") as HTMLCanvasElement;
+/** Mod değişince yenisiyle değişir (temiz WebGL bağlamı). */
+let canvas = document.getElementById("scene") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud")!;
 const loading = document.getElementById("loading")!;
 
@@ -72,7 +74,7 @@ function fail(msg: string): void {
 }
 
 async function start(): Promise<void> {
-  if (wantsBattle()) return runBattle(canvas, hudRoot, loading, lowPower);
+  const life = beginMode();
   const hourParam = params.get("hour");
   const world = buildWorld({
     hour: hourParam !== null && hourParam !== "" ? Number(hourParam) : undefined,
@@ -96,6 +98,11 @@ async function start(): Promise<void> {
   }
   renderer.setSize(innerWidth, innerHeight, false);
   const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 260);
+  life.onStop(() => {
+    renderer.setAnimationLoop(null);
+    renderer.dispose();
+    renderer.forceContextLoss();
+  });
   const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, 1.5), !params.has("noadapt"));
   // Kare başına elle sıfırlanır: bloom açıkken birden çok geçişin çizimleri de sayılsın.
   renderer.info.autoReset = false;
@@ -165,7 +172,9 @@ async function start(): Promise<void> {
   const input = new Input(canvas, hudRoot);
   const hud = new Hud(hudRoot, session.user.name, input.touch, () => input.triggerAction());
   world.fame.setAvatarUrl((id, hash) => `${session.base}/avatar/${id}/${hash}`);
+  if (!life.active) return;
   const net = new Net(session.wsUrl, remotes);
+  life.onStop(() => net.close());
   net.onBoard = (entries, updated) => world.fame.set(entries, updated);
   net.onEmote = (sid, e) => {
     const r = remotes.map.get(sid);
@@ -233,6 +242,7 @@ async function start(): Promise<void> {
   let watch: { sync: WatchSync; screen: ScreenVideo; panel: WatchPanel } | null = null;
   // Perde tek: sinema videosu ve ekran paylaşımı aynı kutuda (paylaşım üstte).
   const screen = new ScreenVideo(world.screen, SCREEN_W);
+  life.onStop(() => screen.destroy());
   if (session.mode === "watch") {
     const sync = new WatchSync(screen, () => net.serverNow());
     const panel = new WatchPanel(hudRoot, sync, {
@@ -318,15 +328,15 @@ async function start(): Promise<void> {
   let cinemaLink: string | null = null;
   /** Sinemada bir şey oynuyor mu (perdede ya da tarayıcıda). */
   let cinemaOn = false;
+  // Tank savaşı: aynı odanın savaş odası (izleme odasından da); geçiş sayfa yenilenmeden
+  const battleBtn = document.createElement("button");
+  battleBtn.className = "wardrobe-btn battle-btn";
+  battleBtn.textContent = "⚔️";
+  battleBtn.title = "Tank savaşı (!savaş)";
+  battleBtn.addEventListener("click", () => switchMode(true));
+  hudRoot.append(battleBtn);
   if (session.mode !== "watch") {
     hud.cinemaButton(openCinema);
-    // Tank savaşı: ayrı oda, sayfa savaş modunda yeniden açılır
-    const battleBtn = document.createElement("button");
-    battleBtn.className = "wardrobe-btn battle-btn";
-    battleBtn.textContent = "⚔️";
-    battleBtn.title = "Tank savaşı (!savaş)";
-    battleBtn.addEventListener("click", () => switchMode(true));
-    hudRoot.append(battleBtn);
     // Dosya/HLS (TRT, .m3u8, .mp4) sunucu üzerinden aktarılır ve perdede oynar; YouTube/Twitch/Kick
     // Activity'de oynatılamaz: perde "Şimdi oynuyor" tabelası olur, video tarayıcıda izlenir.
     // ScreenVideo, CinemaSign'dan önce kurulur: ikisi de perdenin özgün malzemesini saklar.
@@ -374,6 +384,11 @@ async function start(): Promise<void> {
   const shareUrl = session.wsUrl.replace("/ws?", "/share?");
   let sender: ScreenSender | null = null;
   let viewer: ShareViewer | null = null;
+  life.onStop(() => {
+    sender?.stop();
+    viewer?.destroy();
+    viewer = null;
+  });
   let sharer = { sid: 0, name: "" };
   /** İzleyen biri "Sesi aç"a bastı mı (sonraki paylaşımlarda da açık kalır). */
   let shareSound = false;
@@ -543,6 +558,7 @@ async function start(): Promise<void> {
   if (bots) bots.onEmote = (sid, e) => net.onEmote(sid, e);
 
   addEventListener("resize", () => {
+    if (!life.active) return;
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight, false);
@@ -712,6 +728,7 @@ async function start(): Promise<void> {
     renderer.setAnimationLoop(frame);
   };
   document.addEventListener("visibilitychange", () => {
+    if (!life.active) return;
     if (document.hidden) renderer.setAnimationLoop(null);
     else run();
   });
@@ -719,4 +736,18 @@ async function start(): Promise<void> {
   loading.remove();
 }
 
-void start();
+/** Dünya ↔ savaş: çalışan mod durur, sayfa yenilenmeden diğeri başlar (Discord Activity'de yenileme güvenilir değil). */
+setModeStarter((battle) => {
+  stopMode();
+  const fresh = canvas.cloneNode() as HTMLCanvasElement;
+  canvas.replaceWith(fresh);
+  canvas = fresh;
+  hudRoot.replaceChildren();
+  hudRoot.className = "";
+  loading.textContent = battle ? "Tank savaşı yükleniyor…" : "GAP Dünyası yükleniyor…";
+  loading.classList.remove("error");
+  if (!loading.isConnected) document.body.append(loading);
+  void (battle ? runBattle(canvas, hudRoot, loading, lowPower) : start());
+});
+
+void (wantsBattle() ? runBattle(canvas, hudRoot, loading, lowPower) : start());

@@ -36,7 +36,18 @@ function wsBase(base: string): string {
   return `${proto}//${location.host}${base}/ws`;
 }
 
-export async function login(): Promise<Session> {
+let session: Promise<Session> | null = null;
+
+/** Oturum bir kez açılır; dünya ↔ savaş geçişinde Discord girişi tekrarlanmaz. */
+export function login(): Promise<Session> {
+  session ??= openSession().catch((err) => {
+    session = null;
+    throw err;
+  });
+  return session;
+}
+
+async function openSession(): Promise<Session> {
   const watchId = watchIdFromPath();
   if (watchId) return watchLogin(watchId);
   if (!inDiscord()) return guestLogin();

@@ -426,8 +426,8 @@ server.on("upgrade", (req, socket, head) => {
     // HTTP 401 tarayıcıda 1006 olarak görünür; 4001 ile kapatırsak istemci yeniden denemeyi bırakır.
     return close(4001, "unauthorized");
   }
-  // Tank savaşı: aynı Activity/oda için ayrı bir savaş odası (izleme odalarında yok)
-  const roomKey = url.searchParams.get("battle") === "1" && !key.startsWith("w:") ? `b:${key}` : key;
+  // Tank savaşı: aynı Activity/oda (ya da izleme odası) için ayrı bir savaş odası
+  const roomKey = url.searchParams.get("battle") === "1" ? `b:${key}` : key;
   if (endpoint === "/share") {
     shareWss.handleUpgrade(req, socket, head, (ws) => onShareConnection(ws, user, roomKey, url.searchParams));
     return;

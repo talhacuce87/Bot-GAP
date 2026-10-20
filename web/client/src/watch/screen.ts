@@ -58,6 +58,12 @@ export class ScreenVideo {
     this.css.setSize(innerWidth, innerHeight);
   }
 
+  /** Katmanı tamamen kaldırır (mod değişince): içindeki oynatıcılar da durur. */
+  destroy(): void {
+    this.overlay?.remove();
+    this.css.domElement.remove();
+  }
+
   /** Perde şu an video deliği mi. */
   get isActive(): boolean {
     return this.active;
