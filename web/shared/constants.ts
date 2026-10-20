@@ -26,7 +26,9 @@ export const FLAG_SEATED = 2;
 export const JUMP_SHIFT = 2;
 export const JUMP_MASK = 0b1100;
 export const FLAG_RUNNING = 16;
-export const FLAG_MASK = FLAG_WALKING | FLAG_SEATED | JUMP_MASK | FLAG_RUNNING;
+/** Tankı sürüyor: avatarı çizilmez, konumu tankın konumudur. */
+export const FLAG_DRIVING = 32;
+export const FLAG_MASK = FLAG_WALKING | FLAG_SEATED | JUMP_MASK | FLAG_RUNNING | FLAG_DRIVING;
 
 /**
  * Herkesin zıplaması aynı: uzak istemciler yayı yükseklik göndermeden aynen çizer.

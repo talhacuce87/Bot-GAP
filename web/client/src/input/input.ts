@@ -31,6 +31,8 @@ export class Input {
   private lastY = 0;
   private mouseDown = false;
   private pinch = new Map<number, { x: number; y: number }>();
+  /** Tankta: fare kilitlenmek isteniyor (kilit Esc ile bırakılırsa tıklayınca yeniden). */
+  private wantLock = false;
   private pinchDist = 0;
 
   private joyBase: HTMLDivElement;
@@ -80,7 +82,34 @@ export class Input {
     this.showJoy(false);
   }
 
+  /** Fare kilitli mi (imleç gizli, her hareket kamerayı çevirir). */
+  get locked(): boolean {
+    return document.pointerLockElement === this.el;
+  }
+
+  /** Tanka binince açılır: imleç ortada kilitlenir, sol tık ateş eder. Dokunmatikte etkisiz. */
+  setPointerLock(on: boolean): void {
+    this.wantLock = on && !this.touch;
+    if (this.wantLock) this.requestLock();
+    else if (this.locked) document.exitPointerLock();
+  }
+
+  private requestLock(): void {
+    // Kullanıcı hareketi yoksa ya da çerçeve izin vermiyorsa reddedilir: sürükleyerek bakma çalışmaya devam eder.
+    try {
+      const r = this.el.requestPointerLock() as unknown;
+      if (r instanceof Promise) r.catch(() => {});
+    } catch {
+      // yok say
+    }
+  }
+
   private onDown(e: PointerEvent): void {
+    if (e.pointerType === "mouse" && this.wantLock) {
+      if (!this.locked) this.requestLock();
+      else if (e.button === 0) this.jump = true; // sol tık: ateş
+      if (this.locked) return;
+    }
     this.el.setPointerCapture(e.pointerId);
     if (e.pointerType === "mouse") {
       this.mouseDown = true;
@@ -105,6 +134,11 @@ export class Input {
 
   private onMove(e: PointerEvent): void {
     if (e.pointerType === "mouse") {
+      if (this.locked) {
+        this.lookX += e.movementX;
+        this.lookY += e.movementY;
+        return;
+      }
       if (!this.mouseDown) return;
       this.lookX += e.clientX - this.lastX;
       this.lookY += e.clientY - this.lastY;

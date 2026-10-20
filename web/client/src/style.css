@@ -936,3 +936,187 @@ body {
     margin-top: 6px;
   }
 }
+
+/* Tank nişangâhı: ekranın ortası (GTA gibi); kule dönerken ve doldururken soluk */
+.crosshair {
+  position: absolute;
+  left: calc(50% - 14px);
+  top: calc(50% - 14px);
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  display: none;
+}
+
+.crosshair::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: #ff5a3c;
+}
+
+.crosshair.show {
+  display: block;
+}
+
+.crosshair.reloading {
+  opacity: 0.35;
+}
+
+/* ---- Tank savaşı ---- */
+/* Sinema düğmesinin solunda: dikeyde ortalanan emote sütununa çarpmasın */
+.battle-btn {
+  top: calc(max(10px, env(safe-area-inset-top)) + 90px);
+  right: calc(max(10px, env(safe-area-inset-right)) + 50px);
+}
+
+.battle-exit,
+.battle-switch {
+  position: absolute;
+  left: max(10px, env(safe-area-inset-left));
+  pointer-events: auto;
+  border: 0;
+  border-radius: 10px;
+  padding: 7px 12px;
+  font: 600 13px system-ui, sans-serif;
+  color: var(--text);
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.battle-exit {
+  top: calc(max(10px, env(safe-area-inset-top)) + 120px);
+}
+
+.battle-switch {
+  top: calc(max(10px, env(safe-area-inset-top)) + 158px);
+  display: none;
+}
+
+.battle-switch.show {
+  display: block;
+}
+
+.battle-board {
+  position: absolute;
+  left: 50%;
+  top: max(10px, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  font: 800 17px system-ui, sans-serif;
+  white-space: nowrap;
+}
+
+.battle-banner {
+  position: absolute;
+  left: 50%;
+  top: calc(max(10px, env(safe-area-inset-top)) + 54px);
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 10px 18px;
+  border-radius: 12px;
+  background: rgba(10, 14, 22, 0.66);
+  font: 800 20px system-ui, sans-serif;
+  text-align: center;
+  display: none;
+}
+
+.battle-banner.show {
+  display: block;
+}
+
+.battle-hp {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 34px);
+  transform: translateX(-50%);
+  font-size: 18px;
+  display: none;
+}
+
+.battle-hp.show {
+  display: block;
+}
+
+.battle-feed {
+  position: absolute;
+  right: calc(max(10px, env(safe-area-inset-right)) + 56px);
+  top: calc(max(10px, env(safe-area-inset-top)) + 46px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font: 700 13px system-ui, sans-serif;
+}
+
+.feed-line {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(10, 14, 22, 0.6);
+}
+
+.battle-picker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px));
+  padding: 18px;
+  text-align: center;
+  pointer-events: auto;
+  display: none;
+}
+
+.battle-picker.show {
+  display: block;
+}
+
+.battle-picker h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+.team-btn {
+  margin: 0 6px;
+  min-width: 140px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  font: 800 16px system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.team-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.battle-help {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tank-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 2px 7px;
+  border-radius: 8px;
+  background: rgba(10, 14, 22, 0.55);
+  font: 700 13px system-ui, sans-serif;
+  white-space: nowrap;
+  display: none;
+}
+
+.tank-label.show {
+  display: block;
+}

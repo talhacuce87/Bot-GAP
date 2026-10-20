@@ -1,5 +1,7 @@
 // WebSocket istemcisi: 15 Hz konum gönderimi, snapshot alımı, saat senkronu ve yeniden bağlanma.
 import { type Act, SEND_HZ } from "../../shared/constants";
+import type { Shot } from "../../shared/tank";
+import type { BattleState } from "../../shared/protocol";
 import { type BoardEntry, type ChatLine, type ClientEvent, encodeState, type FishCatch, type Look, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES, type WardrobeInfo, type WatchState } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
 
@@ -24,6 +26,13 @@ export class Net {
   onEmote: (sid: number, e: number) => void = () => {};
   onAct: (sid: number, a: Act) => void = () => {};
   onFish: (sid: number, name: string, c: FishCatch) => void = () => {};
+  onTank: (s: { driver: number; x: number; z: number; h: number; tr: number; el: number }) => void = () => {};
+  onTaim: (h: number, tr: number, el: number) => void = () => {};
+  onShell: (sid: number, shot: Shot, hits: { sid: number; vx: number; vz: number }[]) => void = () => {};
+  onBattle: (s: BattleState) => void = () => {};
+  onSpawn: (sid: number, x: number, z: number, h: number) => void = () => {};
+  onBaim: (sid: number, h: number, tr: number, el: number) => void = () => {};
+  onKill: (killer: number, victim: number) => void = () => {};
   /** Kendi kıyafetimiz (girişte bottan, gardıroptan kaydedince). */
   onMyLook: (look: Look) => void = () => {};
   onWardrobe: (w: WardrobeInfo | { error: string }) => void = () => {};
@@ -135,6 +144,29 @@ export class Net {
         break;
       case "act":
         this.onAct(ev.sid, ev.a);
+        break;
+      case "tank":
+        this.onTank(ev);
+        break;
+      case "taim":
+        this.onTaim(ev.h, ev.tr, ev.el);
+        break;
+      case "shell":
+        this.onShell(ev.sid, ev.shot, ev.hits);
+        break;
+      case "battle": {
+        const { t: _t, ...state } = ev;
+        this.onBattle(state);
+        break;
+      }
+      case "spawn":
+        this.onSpawn(ev.sid, ev.x, ev.z, ev.h);
+        break;
+      case "baim":
+        this.onBaim(ev.sid, ev.h, ev.tr, ev.el);
+        break;
+      case "kill":
+        this.onKill(ev.killer, ev.victim);
         break;
       case "fish":
         this.onFish(ev.sid, ev.name, ev.catch);
