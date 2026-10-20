@@ -526,6 +526,19 @@ Harita yaklaşık 200 m çapında. Meydandan her bölgeye lambalı taş yollar g
    - YouTube testi için ek mapping'ler: `/youtube` → `www.youtube.com`, `/ytimg` → `i.ytimg.com`.
 4. Ses kanalında 🚀 Activities menüsünden uygulamayı başlat. Aynı kanalda başlatan herkes aynı odaya düşer.
 
+**Oyun içi sohbet:** **Enter** ile yazılır, **Esc** ile çıkılır. Mesajlar odadaki herkese gider; oda başına son 30 mesaj bellekte tutulur (yeni gelen görür, kalıcı kayıt yok). `!` ya da `/` ile başlayan mesajlar komuttur ve cevabı yalnızca sorana gelir:
+
+| Komut | Ne yapar |
+|---|---|
+| `!izle <link>` (`!sinema`) | Sinemayı açar: izleme odası kurulur, açana bağlantı açılır, odaya **🍿 Katıl** düğmeli duyuru düşer. İzleme odasındaysan videoyu değiştirir. |
+| `!xp` (`!seviye`), `!seri`, `!ses`, `!sıra` | Bot cevaplar (`world_cog.py` → `/internal/command`) |
+| `!gardırop` | Gardırobu açar (istemcide) |
+| `!yardım` | Komut listesi |
+
+Sınırlar: mesaj en fazla 200 karakter, kişi başı 0.6 sn'de bir; sinema 10 sn'de bir. Metin her zaman düz yazı olarak gösterilir (HTML yorumlanmaz). Bot komutları olay kaydına `command` (`source: world`) olarak düşer.
+
+**Sinemayı oyundan açmak:** Sağ üstteki 🎬 düğmesi ya da perdenin önündeki oturma alanında **F**, sohbete `!izle ` yazar; linki yapıştırıp Enter. Video Activity'nin içinde oynatılamaz (Discord, YouTube/Twitch/Kick'in video sunucularına erişimi engeller), bu yüzden izleme odası tarayıcıda açılır: Activity'de Discord'un "dış bağlantı" onay penceresiyle.
+
 **Watch party (`!izle <link>`):**
 - **Nasıl çalışır:** Discord'da `!izle <link>` yazılır, bot bir izleme odası açıp "İzlemeye katıl" düğmesini kanala atar. Düğmeye basan kişi tarayıcıda dünyayı açar, Discord ile giriş yapar ve sinemanın koridorunda doğar.
 - **Senkron:** Video 20 m'lik perdede herkes için senkron oynar. Durumu sunucu tutar, sapma 1 saniyeyi geçince oynatıcı doğru yere sarılır.
@@ -534,6 +547,7 @@ Harita yaklaşık 200 m çapında. Meydandan her bölgeye lambalı taş yollar g
 - **Desteklenmeyenler:** DRM'li siteler (Netflix, Disney+ vb.) teknik olarak oynatılamaz.
 - **Kick:** Kick'in oynatıcısında bir kontrol arayüzü (API) yok. Sesi açmak için paneldeki 🖱 etkileşim düğmesiyle oynatıcıya doğrudan tıklanır.
 - **Activity farkı:** İzleme odaları Discord Activity'nin içinde değil, normal tarayıcı sekmesinde açılır. Activity'nin YouTube, Twitch ve Kick'i engelleyen güvenlik kısıtları orada yok.
+- **Tam ekran:** Kontrol satırındaki ⛶ düğmesi videoyu tam ekran yapar, **Esc** ile çıkılır (iOS Safari öğe tam ekranını desteklemediği için orada düğme görünmez).
 - **Ömür:** Oda boş kaldıktan 6 saat sonra kapanır.
 - **Kurulum:**
   - Coolify'da `WORLD_PUBLIC_URL=https://world.<domain>` tanımla.

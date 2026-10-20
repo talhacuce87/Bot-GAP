@@ -51,7 +51,7 @@ export class Hud {
     this.toastEl = el("div", "panel toast", root);
     el("div", "hint", root).textContent = touch
       ? "Sol: yürü (sonuna kadar it: koş) • Sağ: kamera • İki parmak: yakınlaştır"
-      : "WASD: yürü • Shift: koş • Space: zıpla • E: otur • F/G: etkileşim • 1–6: emote • C: gardırop";
+      : "WASD: yürü • Shift: koş • Space: zıpla • E: otur • F/G: etkileşim • 1–6: emote • C: gardırop • Enter: sohbet";
   }
 
   /** Sağ kenarda emote düğmeleri (masaüstünde 1–6 tuşları da çalışır). */
@@ -70,6 +70,14 @@ export class Hud {
     const b = el("button", "wardrobe-btn", this.root);
     b.textContent = "👕";
     b.title = touch ? "Gardırop" : "Gardırop (C)";
+    b.addEventListener("click", onOpen);
+  }
+
+  /** Sinema düğmesi: sohbete "!izle " yazar, link yapıştırılınca sinema açılır. */
+  cinemaButton(onOpen: () => void): void {
+    const b = el("button", "wardrobe-btn cinema-btn", this.root);
+    b.textContent = "🎬";
+    b.title = "Sinemayı aç (link yapıştır)";
     b.addEventListener("click", onOpen);
   }
 

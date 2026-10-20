@@ -141,8 +141,9 @@ body {
 
 .debug {
   position: absolute;
-  bottom: max(10px, env(safe-area-inset-bottom));
-  left: max(10px, env(safe-area-inset-left));
+  /* Sol alt sohbetin; sağ altta ipucu satırının üstünde */
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 26px);
+  right: calc(max(10px, env(safe-area-inset-right)) + 56px);
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre;
   pointer-events: auto;
@@ -718,5 +719,123 @@ body {
 
   .wardrobe-body {
     max-height: 32vh;
+  }
+}
+
+/* Tam ekran video: CSS3D dönüşümü yok sayılır, oynatıcıya tıklanabilir */
+.screen-host:fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+  pointer-events: auto;
+}
+
+.cinema-btn {
+  top: calc(max(10px, env(safe-area-inset-top)) + 90px);
+}
+
+/* ---- Sohbet ---- */
+.chat {
+  position: absolute;
+  left: max(10px, env(safe-area-inset-left));
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 26px);
+  width: min(340px, calc(100vw - 20px));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto;
+  transition: opacity 0.4s;
+}
+
+.chat.idle {
+  opacity: 0.45;
+}
+
+.chat.idle .chat-input:not(:focus) {
+  opacity: 0.6;
+}
+
+.chat-log {
+  max-height: 30vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: thin;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.chat-line {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.chat-line.mine .chat-name {
+  color: #c9cffd;
+}
+
+.chat-name {
+  font-weight: 600;
+  color: #9ad7ff;
+}
+
+.chat-line.system {
+  background: rgba(88, 101, 242, 0.35);
+}
+
+.chat-line.reply {
+  background: rgba(60, 70, 90, 0.8);
+  color: #dfe5f0;
+  font-style: italic;
+}
+
+.chat-link {
+  margin-left: 6px;
+  border: 0;
+  border-radius: 6px;
+  padding: 2px 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.chat-input:focus {
+  border-color: var(--accent);
+}
+
+/* İzleme odasında kontrol panelinin üstünde */
+.has-watch .chat {
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 150px);
+}
+
+/* Dokunmatik/dar ekran: joystick bölgesine taşmasın, kısa geçmiş */
+@media (max-width: 520px) {
+  .chat {
+    width: min(260px, 62vw);
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 110px);
+  }
+
+  .chat-log {
+    max-height: 18vh;
   }
 }

@@ -218,7 +218,8 @@ class InfoCog(commands.Cog):
             name="🌍 GAP Dünyası",
             value=(
                 "• Ses kanalında 🚀 Etkinlikler → **Bot GAP** ile 3D dünyaya gir\n"
-                "• 🎬 Sinema: `!izle <link>` ile YouTube/Twitch/Kick'i perdede birlikte izle\n"
+                "• 🎬 Sinema: 🎬 düğmesi, perdenin önünde **F** ya da `!izle <link>`; YouTube/Twitch/Kick'i birlikte izle, ⛶ ile tam ekran\n"
+                "• 💬 Oyun içi sohbet (**Enter**): `!xp`, `!seri`, `!ses`, `!sıra`, `!gardırop`, `!yardım` komutları da çalışır\n"
                 "• 🍢 Mangal, ⛓️ zindanda çay/domates, 🌸 Sakura Bahçesi, 🏆 Şöhret Kürsüsü\n"
                 "• 🎣 Gölde günde bir balık: nadirliğe göre 1–24 saat **2x XP**; art arda günler efsanevi şansını artırır"
             ),

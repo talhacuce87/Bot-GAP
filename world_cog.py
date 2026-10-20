@@ -21,6 +21,7 @@ import asyncio
 import hmac
 import logging
 import os
+import time
 
 import discord
 import httpx
@@ -31,6 +32,7 @@ import activitylog
 import database as db
 import fishing
 import outfit
+from xp import format_duration, streak_multiplier
 from xproles import XPRoleManager
 from font_utils import clean_display_name
 
@@ -89,6 +91,29 @@ async def build_leaderboard_payload(bot: commands.Bot) -> dict:
     return {"guilds": guilds}
 
 
+
+async def game_command_text(guild_id: int, user_id: int, command: str, roles: XPRoleManager) -> str | None:
+    """Oyun içi komutların metin cevabı; bilinmeyen komutta None."""
+    row = await db.get_user_row(guild_id, user_id)
+    total = int(row["total_xp"]) if row else 0
+    level, _next, _floor, ceiling, _ratio = roles.get_progress_data(total)
+    if command == "xp":
+        rank = await db.get_user_rank(guild_id, user_id)
+        left = f" · sonraki seviyeye {ceiling - total:,} XP" if ceiling > total else " · en üst seviye"
+        return f"⭐ Seviye {level} · {total:,} XP · sıra #{rank}{left}"
+    if command == "rank":
+        return f"🏆 Sıralamada #{await db.get_user_rank(guild_id, user_id)} ({total:,} XP)"
+    if command == "streak":
+        days = int(row["streak_days"]) if row else 0
+        return f"🔥 {days} günlük seri · XP çarpanı x{streak_multiplier(days):.2f}"
+    if command == "ses":
+        seconds = int(row["voice_seconds"]) if row else 0
+        started = row["active_voice_started_at"] if row else None
+        if started:
+            seconds += max(0, int(time.time() - started))
+        return f"🔊 Toplam ses süren: {format_duration(seconds)}"
+    return None
+
 class WorldCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -113,6 +138,7 @@ class WorldCog(commands.Cog):
         app.router.add_post("/internal/outfits", self.handle_outfits)
         app.router.add_post("/internal/wardrobe", self.handle_wardrobe)
         app.router.add_post("/internal/outfit", self.handle_save_outfit)
+        app.router.add_post("/internal/command", self.handle_command)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         await web.TCPSite(self._runner, "0.0.0.0", self.port).start()
@@ -215,6 +241,25 @@ class WorldCog(commands.Cog):
         clean, dropped = await outfit.save(guild_id, user_id, raw, await self._level(guild_id, user_id))
         activitylog.record("outfit_change", guild_id, user_id, outfit=clean)
         return web.json_response({"ok": True, "outfit": clean, "dropped": dropped})
+
+    async def handle_command(self, request: web.Request) -> web.Response:
+        """Oyun içi sohbetten komut: {"guild", "user", "command"} → {"text"} (yalnızca sorana gösterilir)."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+            guild_id, user_id = int(body["guild"]), int(body["user"])
+            command = str(body["command"])
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild, user and command required"}, status=400)
+        guild = self.bot.get_guild(guild_id)
+        if guild is None or guild.get_member(user_id) is None:
+            return web.json_response({"text": "Bu sunucunun üyesi değilsin."})
+        text = await game_command_text(guild_id, user_id, command, self._roles)
+        if text is None:
+            return web.json_response({"error": "unknown command"}, status=400)
+        activitylog.record("command", guild_id, user_id, name=command, source="world")
+        return web.json_response({"text": text})
 
     async def _announce_fish(self, guild: discord.Guild, user_id: int, result: dict) -> None:
         channel = guild.get_channel(FISH_CHANNEL_ID)

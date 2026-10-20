@@ -64,6 +64,24 @@ export class ScreenVideo {
     this.css.domElement.style.pointerEvents = on ? "auto" : "none";
   }
 
+  /** Tarayıcı tam ekran destekliyor mu (iOS Safari'de öğe tam ekranı yok). */
+  get canFullscreen(): boolean {
+    return document.fullscreenEnabled && typeof this.host.requestFullscreen === "function";
+  }
+
+  get fullscreen(): boolean {
+    return document.fullscreenElement === this.host;
+  }
+
+  /**
+   * Oynatıcı kutusunu tam ekran yapar. Kutu yerinden oynatılmaz (iframe taşınırsa yeniden yüklenir);
+   * tam ekran öğesi en üst katmanda çizilir ve 3D dönüşümü tarayıcı yok sayar. Esc ile çıkılır.
+   */
+  async toggleFullscreen(): Promise<void> {
+    if (this.fullscreen) await document.exitFullscreen();
+    else if (this.canFullscreen) await this.host.requestFullscreen();
+  }
+
   render(camera: THREE.Camera): void {
     if (this.active) this.css.render(this.cssScene, camera);
   }

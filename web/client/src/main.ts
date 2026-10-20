@@ -32,12 +32,16 @@ import { PerfGovernor } from "./perf";
 import { Player } from "./player";
 import { Hud } from "./ui/hud";
 import { sakuraEntrance } from "./ui/sakuraFx";
+import { Chat } from "./ui/chat";
 import { plainLook, Wardrobe } from "./ui/wardrobe";
 import { openYoutubeTest } from "./ui/youtube";
 import { ScreenVideo } from "./watch/screen";
 import { WatchSync } from "./watch/sync";
 import { WatchPanel } from "./ui/watchPanel";
 import { buildWorld, SCREEN_W, SCREEN_Z } from "./world/scene";
+
+/** Perdenin önü (oturma alanı): F ile sinema açılır. */
+const CINEMA_FRONT = { minX: -12, maxX: 12, minZ: SCREEN_Z + 3, maxZ: SCREEN_Z + 22 };
 
 const params = new URLSearchParams(location.search);
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -142,6 +146,7 @@ async function start(): Promise<void> {
       command: (op, pos) => net.send({ t: "wcmd", op, pos }),
       load: (url) => net.send({ t: "wload", url }),
       setInteractive: (on) => screen.setInteractive(on, canvas),
+      fullscreen: screen.canFullscreen ? () => void screen.toggleFullscreen() : null,
     });
     net.onWatch = (s) => {
       sync.apply(s);
@@ -177,6 +182,31 @@ async function start(): Promise<void> {
     if (!wardrobe.isOpen) me.outfit = look;
   };
   hud.wardrobeButton(input.touch, () => wardrobe.toggle());
+
+  // ---- Sohbet ve sinema: "!" komutları, !izle ile izleme odası açılır ----
+  // Activity içinde dış bağlantı Discord'un onay penceresiyle açılır; tarayıcıda yeni sekme.
+  const openUrl = (url: string) => {
+    if (session.sdk) void session.sdk.commands.openExternalLink({ url }).catch((err) => console.warn("[open]", err));
+    else window.open(url, "_blank", "noopener");
+  };
+  const chat = new Chat(
+    hudRoot,
+    {
+      send: (text) => net.send({ t: "chat", text }),
+      open: openUrl,
+      local: (text) => {
+        if (!/^[!/](gard[ıi]rop|kiyafet|kıyafet)\b/i.test(text)) return false;
+        wardrobe.open();
+        return true;
+      },
+    },
+    input.touch,
+  );
+  net.onChat = (line) => chat.add(line, line.kind === "say" && line.sid === net.you);
+  net.onChatLog = (lines) => chat.setLog(lines);
+  net.onOpen = openUrl;
+  const openCinema = () => chat.focus("!izle ");
+  if (session.mode !== "watch") hud.cinemaButton(openCinema);
   // Debug: gardırobu bot olmadan denemek için (ekran görüntüsü testleri)
   if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe });
 
@@ -220,8 +250,12 @@ async function start(): Promise<void> {
       hud.toast(`🎣 ${name} ${c.label.toLowerCase()} bir ${c.fish} tuttu!`);
     }
   };
-  const nearActs = (): { key: "f" | "g"; label: string; act: Act | "fish" }[] => {
+  const nearActs = (): { key: "f" | "g"; label: string; act: Act | "fish" | "cinema" }[] => {
     if (me.jailed) return [];
+    const c = CINEMA_FRONT;
+    if (session.mode !== "watch" && me.x >= c.minX && me.x <= c.maxX && me.z >= c.minZ && me.z <= c.maxZ) {
+      return [{ key: "f", label: "Sinemayı aç 🎬", act: "cinema" }];
+    }
     const g = ACT_SPOTS.grill, bars = ACT_SPOTS.bars;
     if (Math.hypot(me.x - g.x, me.z - g.z) <= g.r) return [{ key: "f", label: "Şiş çevir 🍢", act: "grill" }];
     if (Math.hypot(me.x - FISH_SPOT.x, me.z - FISH_SPOT.z) <= FISH_SPOT.r) return [{ key: "f", label: "Balık tut 🎣", act: "fish" }];
@@ -284,7 +318,9 @@ async function start(): Promise<void> {
     hud.setActs(acts, input.touch, (k) => input.triggerAct(k));
     const actKey = input.consumeAct();
     const act = actKey ? acts.find((a) => a.key === actKey)?.act : undefined;
-    if (act === "fish" && now - lastAct >= FISH_COOLDOWN_MS) {
+    if (act === "cinema") {
+      openCinema();
+    } else if (act === "fish" && now - lastAct >= FISH_COOLDOWN_MS) {
       lastAct = now;
       emoteFx.emit(me.x, 0, me.z, FX_CELL.rod, time, undefined, 1);
       net.send({ t: "fish" });

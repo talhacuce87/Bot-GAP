@@ -30,6 +30,8 @@ export interface WatchActions {
   command(op: "play" | "pause" | "seek", pos?: number): void;
   load(url: string): void;
   setInteractive(on: boolean): void;
+  /** Videoyu tam ekran yap / çık; desteklenmiyorsa null (düğme gösterilmez). */
+  fullscreen: (() => void) | null;
 }
 
 export class WatchPanel {
@@ -70,6 +72,12 @@ export class WatchPanel {
       this.actions.command("seek", Number(this.seek.value));
     });
     this.time = el("span", "watch-time", row, "--:--");
+    const full = this.actions.fullscreen;
+    if (full) {
+      const fs = el("button", "watch-btn small", row, "⛶");
+      fs.title = "Tam ekran (Esc ile çık)";
+      fs.addEventListener("click", () => full());
+    }
 
     const row2 = el("div", "watch-row", this.root);
     el("span", "watch-label", row2, "🔊");

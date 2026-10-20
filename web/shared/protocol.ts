@@ -33,6 +33,19 @@ export interface PlayerInfo {
   look?: Look | null;
 }
 
+/**
+ * Sohbet satırı. say: oyuncu mesajı (odaya) • system: oda duyurusu (ör. sinema açıldı)
+ * • reply: komut cevabı (yalnızca sorana). `link` varsa satırda bir düğme gösterilir.
+ */
+export interface ChatLine {
+  kind: "say" | "system" | "reply";
+  sid: number;
+  name: string;
+  text: string;
+  at: number;
+  link?: { url: string; label: string };
+}
+
 /** Gardırop açılınca: kayıtlı kıyafet, seviye ve seviyeyle açılan parçalar. */
 export interface WardrobeInfo {
   outfit: Look;
@@ -84,6 +97,10 @@ export type ServerEvent =
   | { t: "act"; sid: number; a: Act }
   | { t: "fish"; sid: number; name: string; catch: FishCatch }
   | { t: "look"; sid: number; look: Look }
+  | { t: "chat"; line: ChatLine }
+  | { t: "chatlog"; lines: ChatLine[] }
+  /** Yalnızca isteyene: dış bağlantıyı aç (Activity'de Discord onay penceresiyle). */
+  | { t: "open"; url: string }
   | ({ t: "wardrobe" } & (WardrobeInfo | { error: string }))
   | { t: "pong"; c: number; s: number };
 
@@ -96,7 +113,8 @@ export type ClientEvent =
   | { t: "act"; a: Act }
   | { t: "fish" }
   | { t: "wardrobe" }
-  | { t: "outfit"; outfit: Look };
+  | { t: "outfit"; outfit: Look }
+  | { t: "chat"; text: string };
 
 export const STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;

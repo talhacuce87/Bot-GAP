@@ -1,6 +1,6 @@
 // WebSocket istemcisi: 15 Hz konum gönderimi, snapshot alımı, saat senkronu ve yeniden bağlanma.
 import { type Act, SEND_HZ } from "../../shared/constants";
-import { type BoardEntry, type ClientEvent, encodeState, type FishCatch, type Look, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES, type WardrobeInfo, type WatchState } from "../../shared/protocol";
+import { type BoardEntry, type ChatLine, type ClientEvent, encodeState, type FishCatch, type Look, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES, type WardrobeInfo, type WatchState } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
 
 export type NetStatus = "connecting" | "online" | "offline" | "denied" | "notfound";
@@ -26,6 +26,10 @@ export class Net {
   /** Kendi kıyafetimiz (girişte bottan, gardıroptan kaydedince). */
   onMyLook: (look: Look) => void = () => {};
   onWardrobe: (w: WardrobeInfo | { error: string }) => void = () => {};
+  onChat: (line: ChatLine) => void = () => {};
+  onChatLog: (lines: ChatLine[]) => void = () => {};
+  /** Sunucu bir dış bağlantı açtırıyor (ör. az önce açtığın sinema). */
+  onOpen: (url: string) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -137,6 +141,15 @@ export class Net {
       case "look":
         if (ev.sid === this.you) this.onMyLook(ev.look);
         else this.remotes.setLook(ev.sid, ev.look);
+        break;
+      case "chat":
+        this.onChat(ev.line);
+        break;
+      case "chatlog":
+        this.onChatLog(ev.lines);
+        break;
+      case "open":
+        this.onOpen(ev.url);
         break;
       case "wardrobe": {
         const { t: _t, ...w } = ev;

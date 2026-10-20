@@ -10,6 +10,7 @@ import {
   WORLD_RADIUS,
 } from "../../shared/constants";
 import {
+  type ChatLine,
   type Look,
   type PlayerInfo,
   type PlayerState,
@@ -45,6 +46,8 @@ const SPAWN_Z = 8;
 
 export class Room {
   readonly players = new Map<number, Player>();
+  /** Son sohbet mesajları (yalnızca bellekte); yeni gelen geçmişi görür. */
+  readonly chat: ChatLine[] = [];
   private nextSid = 1;
   private dirty = false;
 
@@ -144,6 +147,13 @@ export class Room {
     p.state.flags = s.flags & FLAG_MASK;
     p.lastUpdate = now;
     this.dirty = true;
+  }
+
+  /** Odaya sohbet satırı: geçmişe eklenir ve herkese gider. */
+  say(line: ChatLine, max = 30): void {
+    this.chat.push(line);
+    if (this.chat.length > max) this.chat.splice(0, this.chat.length - max);
+    this.broadcast({ t: "chat", line });
   }
 
   /** Bottan gelen (doğrulanmış) kıyafeti uygular ve odaya duyurur. Oyuncu ayrıldıysa bir şey yapmaz. */

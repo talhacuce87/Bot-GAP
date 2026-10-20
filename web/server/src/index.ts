@@ -10,6 +10,7 @@ import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FI
 import { decodeState, type FishCatch, type PlayerState, type ServerEvent } from "../../shared/protocol";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
+import { CHAT_COOLDOWN_MS, CHAT_HISTORY, CINEMA_COOLDOWN_MS, cleanChat, parseCommand, runCommand } from "./chat";
 import { type BotPost, fetchLook, fetchWardrobe, OUTFIT_COOLDOWN_MS, sanitizeLook, saveLook, WARDROBE_COOLDOWN_MS } from "./looks";
 import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
 import { resolveMedia, type Watch, Watches } from "./watch";
@@ -429,6 +430,51 @@ async function onLookMessage(ws: WebSocket, room: Room, sid: number, user: Sessi
   send({ t: "notice", text: r.dropped.length ? `👕 Kaydedildi; kilitli parçalar çıkarıldı: ${r.dropped.join(", ")}` : "👕 Kıyafetin kaydedildi!" });
 }
 
+/** Sinemayı açar: izleme odasındaysak videoyu değiştirir, değilse yeni izleme odası kurar. */
+async function openCinema(link: string, guild: string | null, by: string, room: Room, watch?: Watch): Promise<{ url: string; title: string } | { error: string }> {
+  const media = await resolveMedia(link);
+  if (!media) return { error: "Bu link açılamıyor. YouTube, Twitch, Kick ya da .mp4/.webm/.m3u8 linki dene." };
+  const base = PUBLIC_URL || "http://localhost:5173";
+  if (watch) {
+    watch.load(media.source, media.title, by, Date.now());
+    sendWatch(room, watch);
+    return { url: `${base}/w/${watch.id}`, title: media.title };
+  }
+  const w = watches.create(guild, by, media.source, media.title);
+  return { url: `${base}/w/${w.id}`, title: media.title };
+}
+
+/** Sohbet mesajı ya da komut. Komut cevapları yalnızca sorana gider. */
+async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null, text: string, watch: Watch | undefined, cinemaGate: { last: number }): Promise<void> {
+  const line = (kind: "system" | "reply", t: string, link?: { url: string; label: string }) => ({ kind, sid: 0, name: "Bot GAP", text: t, at: Date.now(), ...(link ? { link } : {}) });
+  const parsed = parseCommand(text);
+  if (!parsed) {
+    room.say({ kind: "say", sid, name: user.name, text, at: Date.now() }, CHAT_HISTORY);
+    return;
+  }
+  await runCommand(
+    {
+      user,
+      sid,
+      guild,
+      bot: SHARED_SECRET ? botPost : null,
+      inWatch: !!watch,
+      reply: (t, link) => ws.send(JSON.stringify({ t: "chat", line: line("reply", t, link) })),
+      announce: (t, link) => room.say(line("system", t, link), CHAT_HISTORY),
+      open: (url) => ws.send(JSON.stringify({ t: "open", url })),
+      cinema: (url) => openCinema(url, guild, user.name, room, watch),
+      cinemaAllowed: () => {
+        const now = Date.now();
+        if (now - cinemaGate.last < CINEMA_COOLDOWN_MS) return false;
+        cinemaGate.last = now;
+        return true;
+      },
+    },
+    parsed.cmd,
+    parsed.args,
+  );
+}
+
 const FISH_REFUSED: Record<string, string> = {
   already: "🎣 Bugünkü balığını tuttun. Yarın tekrar gel, serin bozulmasın!",
   exiled: "⛓️ Sürgündeyken balık tutamazsın.",
@@ -473,12 +519,15 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   }
   sendBoard(ws, boards.for(opts.guild ?? null));
   if (watch) sendWatch(ws, watch);
+  if (room.chat.length) ws.send(JSON.stringify({ t: "chatlog", lines: room.chat }));
   const limiter = { last: 0 };
   let lastEmote = 0;
   let lastAct = 0;
   let lastFish = 0;
   let lastWardrobe = 0;
   let lastOutfit = 0;
+  let lastChat = 0;
+  const cinemaGate = { last: 0 };
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   alive.add(ws);
 
@@ -513,6 +562,12 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
           lastFish = now;
           void fish(ws, room, sid, user, opts.guild ?? null);
         }
+      } else if (msg?.t === "chat") {
+        const now = Date.now();
+        const text = cleanChat(msg.text);
+        if (!text || now - lastChat < CHAT_COOLDOWN_MS) return;
+        lastChat = now;
+        void onChat(ws, room, sid, user, opts.guild ?? null, text, watch, cinemaGate);
       } else if (msg?.t === "wardrobe" || msg?.t === "outfit") {
         const now = Date.now();
         const isSave = msg.t === "outfit";

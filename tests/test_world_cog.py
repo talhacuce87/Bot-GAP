@@ -243,3 +243,27 @@ async def test_fish_catch_announced_in_fish_channel_from_rare_up(db, monkeypatch
     await cog.handle_fish(SimpleNamespace(headers={"x-world-secret": "s3cret"}, json=lambda: _json(7)))
     await asyncio.gather(*cog._tasks)
     assert len(channel.sent) == 1
+
+
+async def test_game_command_endpoint_answers_xp_streak_voice_and_rank(db, monkeypatch):
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    guild = SimpleNamespace(get_member=lambda uid: object() if uid in (5, 6) else None)
+    cog = world_cog.WorldCog(SimpleNamespace(get_guild=lambda gid: guild if gid == 1 else None))
+    await database.add_text_xp(1, 5, 500)
+    await database.add_voice_xp(1, 6, 900)
+
+    async def call(body, secret="s3cret"):
+        async def _json():
+            return body
+        r = await cog.handle_command(SimpleNamespace(headers={"x-world-secret": secret}, json=_json))
+        return r.status, json.loads(r.text)
+
+    assert (await call({"guild": 1, "user": 5, "command": "xp"}, secret="x"))[0] == 404
+    status, xp = await call({"guild": 1, "user": 5, "command": "xp"})
+    assert status == 200 and "500 XP" in xp["text"] and "sıra #2" in xp["text"]
+    assert "#1" in (await call({"guild": 1, "user": 6, "command": "rank"}))[1]["text"]
+    assert "günlük seri" in (await call({"guild": 1, "user": 5, "command": "streak"}))[1]["text"]
+    assert "ses süren" in (await call({"guild": 1, "user": 5, "command": "ses"}))[1]["text"]
+    assert (await call({"guild": 1, "user": 5, "command": "rm -rf"}))[0] == 400
+    assert "üyesi değilsin" in (await call({"guild": 1, "user": 7, "command": "xp"}))[1]["text"]
+    assert any(r[3] == "command" and json.loads(r[7]).get("source") == "world" for r in activitylog._buffer)
