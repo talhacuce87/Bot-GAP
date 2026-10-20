@@ -28,14 +28,24 @@ export const JUMP_MASK = 0b1100;
 export const FLAG_RUNNING = 16;
 export const FLAG_MASK = FLAG_WALKING | FLAG_SEATED | JUMP_MASK | FLAG_RUNNING;
 
-/** Herkesin zıplaması aynı: uzak istemciler yayı yükseklik göndermeden aynen çizer. */
-export const JUMP_VELOCITY = 6.2;
-export const GRAVITY = 19;
-export const JUMP_TIME = (2 * JUMP_VELOCITY) / GRAVITY;
+/**
+ * Herkesin zıplaması aynı: uzak istemciler yayı yükseklik göndermeden aynen çizer.
+ * Parabol yerine "havada süzülen" eğri: hızlı ama yumuşak kalkış, tepede asılı kalma,
+ * çıkıştan daha uzun ve yavaş iniş (yere sert çarpmaz).
+ */
+export const JUMP_PEAK = 1.3;
+export const JUMP_TIME = 1.05;
+/** Sürenin bu kadarı çıkış, kalanı iniş. */
+const JUMP_RISE = 0.4;
 
 /** Zıplamanın başından `t` sn sonraki yükseklik (havada değilse 0). */
 export function jumpHeight(t: number): number {
-  return t > 0 && t < JUMP_TIME ? JUMP_VELOCITY * t - 0.5 * GRAVITY * t * t : 0;
+  if (!(t > 0 && t < JUMP_TIME)) return 0;
+  const u = t / JUMP_TIME;
+  if (u < JUMP_RISE) return JUMP_PEAK * (1 - (1 - u / JUMP_RISE) ** 2);
+  const s = (u - JUMP_RISE) / (1 - JUMP_RISE);
+  // Tepede yavaş başlar, sona doğru hızlanır ama son anda biraz yumuşar
+  return JUMP_PEAK * (1 - s ** 2.2) * (1 - 0.15 * s ** 8);
 }
 
 /** Konumlar santimetre hassasiyetinde int16 olarak gönderilir. */

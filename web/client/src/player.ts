@@ -5,10 +5,10 @@ import {
   FLAG_RUNNING,
   FLAG_SEATED,
   FLAG_WALKING,
-  GRAVITY,
   JUMP_MASK,
   JUMP_SHIFT,
-  JUMP_VELOCITY,
+  JUMP_TIME,
+  jumpHeight,
   PLAYER_RADIUS,
   RUN_MULTIPLIER,
   WALK_SPEED,
@@ -40,7 +40,8 @@ export class Player implements AvatarView, PlayerState {
   emoteAt = 0;
   /** Zemin üstü yükseklik (zıplarken). */
   jumpY = 0;
-  private vy = 0;
+  /** Zıplamanın başından geçen süre; yerdeyken JUMP_TIME. */
+  private jumpT = JUMP_TIME;
   private jumpSeq = 0;
   color: THREE.Color;
   /** Oturma menzilindeki koltuk (UI ipucu için), yoksa null. */
@@ -93,15 +94,14 @@ export class Player implements AvatarView, PlayerState {
       jump = false; // kalkarken zıplama
     }
 
-    // Zıplama: sabit hız ve yerçekimi; uzak istemciler aynı yayı sayaçtan çizer.
-    if (jump && this.jumpY === 0) {
-      this.vy = JUMP_VELOCITY;
+    // Zıplama: ortak eğri (jumpHeight); uzak istemciler aynı yayı sayaçtan çizer.
+    if (jump && this.jumpT >= JUMP_TIME) {
+      this.jumpT = 0;
       this.jumpSeq = (this.jumpSeq + 1) & 3;
     }
-    if (this.vy !== 0 || this.jumpY > 0) {
-      this.jumpY += this.vy * dt;
-      this.vy -= GRAVITY * dt;
-      if (this.jumpY <= 0) this.jumpY = this.vy = 0;
+    if (this.jumpT < JUMP_TIME) {
+      this.jumpT = Math.min(JUMP_TIME, this.jumpT + dt);
+      this.jumpY = jumpHeight(this.jumpT);
     }
 
     // Kameraya göre hareket yönü: ileri = kameranın baktığı yatay yön.
@@ -128,7 +128,8 @@ export class Player implements AvatarView, PlayerState {
   /** Sunucunun belirlediği yere ışınlanır (zindana giriş/çıkış). */
   teleport(x: number, z: number, rot: number): void {
     this.seat = null;
-    this.jumpY = this.vy = 0;
+    this.jumpY = 0;
+    this.jumpT = JUMP_TIME;
     this.x = x;
     this.z = z;
     this.rot = rot;
@@ -158,7 +159,8 @@ export class Player implements AvatarView, PlayerState {
   }
 
   private sitOn(s: Seat): void {
-    this.jumpY = this.vy = 0;
+    this.jumpY = 0;
+    this.jumpT = JUMP_TIME;
     this.seat = s;
     this.standX = this.x;
     this.standZ = this.z;
