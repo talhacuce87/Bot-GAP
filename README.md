@@ -497,6 +497,8 @@ Gölün kenarında **F · Balık tut 🎣**. Türkiye saatiyle günde bir kez; z
 
 - **Şans serisi:** Art arda balık tutulan her gün efsanevi ihtimalini **+%0.1** artırır (fark yaygından düşülür), en fazla **%5**'e kadar. Bir gün atlanırsa seri sıfırlanır.
 - **Boost:** Yeni balığın süresi süren balık boost'unun üstüne eklenir. Yöneticinin `!boost`'u ayrı tutulur; ikisinden büyük çarpan geçerlidir, `!xp`'de görünür.
+- **Discord duyurusu:** `FISH_CHANNEL_ID` ayarlıysa nadir ve üstü balıklar o kanalda duyurulur (ör. `🌟 EFSANEVİ! @üye gölden Efsanevi Altın Sazan çıkardı! ⚡ 24 saat 2x XP · 🔥 12 günlük seri`). Üyenin adı vurgulanır ama bildirim (ping) gitmez. Eşik `FISH_ANNOUNCE_MIN_RARITY` ile değişir.
+- **Kayıt:** Her tutuş olay kaydına `fish_catch` olarak düşer; XP kayıtlarındaki `boost_src` boost'un balıktan mı (`fish`) yöneticiden mi (`admin`) geldiğini gösterir.
 - **Kurulum:** Dünya, botun iç HTTP ucuna (`BOT_INTERNAL_URL`, varsayılan `http://bot-gap:8081`) `WORLD_SHARED_SECRET` ile istek atar.
 
 **Kontroller:** WASD ile yürü, Shift ile koş, sürükleyerek kamerayı çevir, tekerlekle yakınlaştır, E ile koltuğa otur. Dokunmatik cihazlarda ekranın sol yarısı joystick (sonuna kadar itince koşar), sağ yarısı kamera.

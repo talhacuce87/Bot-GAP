@@ -17,6 +17,7 @@ varsayılan 8081) `POST /internal/fish` atar; zar, seri ve boost botta (fishing.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import os
@@ -32,6 +33,12 @@ import fishing
 from font_utils import clean_display_name
 
 log = logging.getLogger("gap.world")
+
+# Tutulan balıkların duyurulacağı kanal (boşsa duyuru yok) ve duyurulacak en düşük nadirlik
+FISH_CHANNEL_ID = int(os.getenv("FISH_CHANNEL_ID", "0") or 0)
+FISH_ANNOUNCE_MIN_RARITY = os.getenv("FISH_ANNOUNCE_MIN_RARITY", "rare").strip().lower()
+if FISH_ANNOUNCE_MIN_RARITY not in fishing.RANK:
+    FISH_ANNOUNCE_MIN_RARITY = "rare"
 
 WATCH_KIND_LABELS = {
     "youtube": "YouTube",
@@ -88,6 +95,7 @@ class WorldCog(commands.Cog):
         self.port = int(os.getenv("WORLD_BOT_PORT", "8081"))
         self._client: httpx.AsyncClient | None = None
         self._runner: web.AppRunner | None = None
+        self._tasks: set[asyncio.Task] = set()
         self._failing = False
 
     async def cog_load(self) -> None:
@@ -138,7 +146,26 @@ class WorldCog(commands.Cog):
             rarity=result["rarity"], hours=result["hours"], streak=result["streak"],
             boost_until=round(result["boost_until"]),
         )
+        if FISH_CHANNEL_ID and fishing.RANK[result["rarity"]] >= fishing.RANK[FISH_ANNOUNCE_MIN_RARITY]:
+            # Arka planda: Discord gecikmesi dünyadaki tutuş bildirimini bekletmesin
+            task = asyncio.create_task(self._announce_fish(guild, user_id, result))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
         return web.json_response({"ok": True, **result})
+
+    async def _announce_fish(self, guild: discord.Guild, user_id: int, result: dict) -> None:
+        channel = guild.get_channel(FISH_CHANNEL_ID)
+        if not isinstance(channel, discord.abc.Messageable):
+            log.warning("Balık kanalı bulunamadı: %s", FISH_CHANNEL_ID)
+            return
+        try:
+            # Adı vurgulu gösterir ama bildirim (ping) göndermez
+            await channel.send(
+                fishing.announce_text(f"<@{user_id}>", result),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.HTTPException as err:
+            log.warning("Balık duyurusu gönderilemedi: %s", err)
 
     async def push_exiles(self) -> None:
         if self._client is None:

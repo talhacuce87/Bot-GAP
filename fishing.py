@@ -38,6 +38,22 @@ RARITIES = (
 )
 
 
+# Yaygından nadire sıra: common 0 … legendary 4 (duyuru eşiği karşılaştırması için)
+RANK = {r.key: i for i, r in enumerate(reversed(RARITIES))}
+
+ANNOUNCE_EMOJI = {"legendary": "🌟", "epic": "💜", "rare": "💙", "uncommon": "💚", "common": "🐟"}
+
+
+def announce_text(mention: str, result: dict) -> str:
+    """Discord balık kanalına gidecek duyuru metni."""
+    emoji = ANNOUNCE_EMOJI.get(result["rarity"], "🎣")
+    head = f"{emoji} **EFSANEVİ!** " if result["rarity"] == "legendary" else f"{emoji} "
+    return (
+        f"{head}{mention} gölden **{result['label']} {result['fish']}** çıkardı! "
+        f"⚡ {result['hours']} saat 2x XP · 🔥 {result['streak']} günlük seri"
+    )
+
+
 def luck_bonus(prev_streak: int) -> float:
     """Dün dahil art arda balık tutulan gün sayısına göre efsanevi ihtimaline eklenen yüzde puan."""
     return min(max(prev_streak, 0) * LUCK_PER_DAY, LUCK_MAX)

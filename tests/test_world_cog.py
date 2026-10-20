@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from types import SimpleNamespace
 
+import discord
 import httpx
 import pytest
 
@@ -189,3 +191,55 @@ async def test_fish_endpoint_checks_secret_membership_and_daily_limit(db, monkey
 
     # ASCII dışı secret başlığı 500 değil, 404 dönmeli
     assert (await call({"guild": "1", "user": "5"}, secret="şifre"))[0] == 404
+
+
+class _FishChannel(discord.abc.Messageable):
+    def __init__(self):
+        self.sent = []
+
+    async def _get_channel(self):
+        return self
+
+    async def send(self, content=None, **kw):
+        self.sent.append((content, kw))
+
+
+async def test_fish_catch_announced_in_fish_channel_from_rare_up(db, monkeypatch):
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    monkeypatch.setattr(world_cog, "FISH_CHANNEL_ID", 77)
+    monkeypatch.setattr(world_cog, "FISH_ANNOUNCE_MIN_RARITY", "rare")
+    channel = _FishChannel()
+    guild = SimpleNamespace(
+        get_member=lambda uid: object(),
+        get_channel=lambda cid: channel if cid == 77 else None,
+    )
+    bot = SimpleNamespace(get_guild=lambda gid: guild)
+    cog = world_cog.WorldCog(bot)
+
+    rolls = {}
+
+    async def fake_catch(guild_id, user_id):
+        return {"rarity": rolls[user_id], "label": "Efsanevi" if rolls[user_id] == "legendary" else "Yaygın",
+                "fish": "Altın Sazan", "hours": 24, "streak": 3, "luck": 0.2, "boost_until": time.time()}
+
+    monkeypatch.setattr(world_cog.fishing, "catch", fake_catch)
+
+    async def _json(uid):
+        return {"guild": "1", "user": str(uid)}
+
+    for uid, rarity in ((5, "common"), (6, "legendary")):
+        rolls[uid] = rarity
+        await cog.handle_fish(SimpleNamespace(headers={"x-world-secret": "s3cret"}, json=lambda uid=uid: _json(uid)))
+    await asyncio.gather(*cog._tasks)
+
+    assert len(channel.sent) == 1  # common duyurulmaz
+    text, kw = channel.sent[0]
+    assert "<@6>" in text and "EFSANEVİ" in text and "24 saat 2x XP" in text
+    assert kw["allowed_mentions"].users is False  # ping yok
+
+    # Kanal bulunamazsa sessizce geçer
+    monkeypatch.setattr(world_cog, "FISH_CHANNEL_ID", 99)
+    rolls[7] = "epic"
+    await cog.handle_fish(SimpleNamespace(headers={"x-world-secret": "s3cret"}, json=lambda: _json(7)))
+    await asyncio.gather(*cog._tasks)
+    assert len(channel.sent) == 1
