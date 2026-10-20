@@ -204,8 +204,9 @@ class AchievementCog(commands.Cog):
                 else:
                     lines.append(f"🏅 **{a.name}**{kademe} — {a.describe(tier)}")
             try:
+                # Ad vurgulanır ama ping gitmez (balık duyurularıyla aynı #ödüller kanalı)
                 await channel.send(f"<@{uid}>\n" + "\n".join(lines),
-                                   allowed_mentions=discord.AllowedMentions(users=[discord.Object(uid)]))
+                                   allowed_mentions=discord.AllowedMentions.none())
             except discord.HTTPException:
                 log.warning("Başarım duyurusu gönderilemedi (%s)", uid)
 

@@ -66,6 +66,21 @@ def _fmt_date(ts: float) -> str:
     return dt.datetime.fromtimestamp(ts, TR_TZ).strftime("%d.%m.%Y %H:%M")
 
 
+# Activity başlatma komutu (/launch, PRIMARY_ENTRY_POINT). Activities açıkken Discord bunu
+# içermeyen toplu komut yazımını reddeder; tree.sync() bunu bilmediği için elle korunur.
+ENTRY_POINT_TYPE = 4
+_ENTRY_POINT_KEYS = ("id", "name", "description", "type", "handler", "integration_types", "contexts")
+
+
+async def sync_slash_commands(bot: commands.Bot) -> int:
+    """Slash komutlarını toplu yazar; mevcut Activity başlatma komutunu listeye ekleyerek korur."""
+    app_id = bot.application_id
+    existing = await bot.http.get_global_commands(app_id)
+    keep = [{k: c[k] for k in _ENTRY_POINT_KEYS if k in c} for c in existing if c.get("type") == ENTRY_POINT_TYPE]
+    payload = [cmd.to_dict(bot.tree) for cmd in bot.tree.get_commands()]
+    data = await bot.http.bulk_upsert_global_commands(app_id, payload=payload + keep)
+    return len(data)
+
 class AICog(commands.Cog, name="AICog"):
     def __init__(self, bot: commands.Bot, cfg: AIConfig) -> None:
         self.bot = bot
@@ -335,8 +350,8 @@ class AICog(commands.Cog, name="AICog"):
         if self.cfg.slash_sync and not self._slash_synced:
             self._slash_synced = True
             try:
-                synced = await self.bot.tree.sync()
-                log.info("Slash komutları senkronize edildi: %d", len(synced))
+                synced = await sync_slash_commands(self.bot)
+                log.info("Slash komutları senkronize edildi: %d", synced)
             except discord.HTTPException as err:
                 log.warning("Slash komutları senkronize edilemedi: %s", err)
 

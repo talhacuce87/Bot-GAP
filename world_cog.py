@@ -3,7 +3,7 @@ world_cog.py — GAP Dünyası (3D Activity, web/) entegrasyonu.
 
 Sürgündekilerin listesini 20 sn'de bir dünya sunucusuna gönderir; dünya onları
 zindan hücresine koyar, sürgün bitince serbest bırakır. XP sıralamasının ilk
-10'unu da 5 dakikada bir gönderir; dünyadaki Şöhret Kürsüsü panosu bununla dolar.
+10'unu da dakikada bir gönderir; dünyadaki Şöhret Kürsüsü panosu bununla dolar.
 
 !izle <link> bir watch party odası açar: link YouTube, Twitch, Kick ya da
 doğrudan video dosyası olabilir. Bot "İzlemeye katıl" düğmesini kanala atar;
@@ -52,7 +52,7 @@ WATCH_KIND_LABELS = {
 WATCH_USAGE = "!izle <link> — YouTube, Twitch, Kick ya da .mp4/.webm/.m3u8 linki"
 
 PUSH_SECONDS = 20
-BOARD_MINUTES = 5
+BOARD_MINUTES = 1
 BOARD_SIZE = 10
 
 
