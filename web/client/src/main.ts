@@ -293,7 +293,7 @@ async function start(): Promise<void> {
           void toggleShare();
           return true;
         }
-        if (/^[!/](sava[şs]|tank)\b/i.test(text)) {
+        if (/^[!/](sava[şs]|tank)(\s|$)/i.test(text)) {
           switchMode(true);
           return true;
         }
