@@ -48,6 +48,7 @@ export class WatchPanel {
   private lastUpdate = 0;
   private toastTimer = 0;
   private lastOp = "";
+  private kickHint = "";
 
   constructor(
     hud: HTMLElement,
@@ -129,6 +130,11 @@ export class WatchPanel {
 
   /** Sunucudan durum geldi: başlık ve kimin ne yaptığı. */
   onState(s: WatchState): void {
+    const kick = s.source?.kind === "kick" ? s.source.channel : "";
+    if (kick && kick !== this.kickHint) {
+      this.kickHint = kick;
+      this.notice("Kick: ses için 🍿 İzlemeye başla'ya bas. Yine gelmezse 🖱 ile oynatıcıdaki hoparlöre tıkla.");
+    }
     this.title.textContent = s.source ? s.title : "Bir link yapıştır";
     const key = `${s.op}|${s.updatedAt}`;
     if (key !== this.lastOp && s.by && OP_TEXT[s.op]) this.notice(`${s.by} ${OP_TEXT[s.op]}`);

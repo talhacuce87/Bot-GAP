@@ -219,12 +219,20 @@ class TwitchEmbed implements MediaPlayer {
 class KickEmbed implements MediaPlayer {
   readonly controllable = false;
   private frame: HTMLIFrameElement;
+  private muted = true;
 
-  constructor(host: HTMLElement, channel: string) {
+  constructor(
+    host: HTMLElement,
+    private channel: string,
+  ) {
     this.frame = document.createElement("iframe");
-    this.frame.src = `https://player.kick.com/${encodeURIComponent(channel)}?autoplay=true&muted=true`;
+    this.frame.src = this.src(true);
     this.frame.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
     host.append(this.frame);
+  }
+
+  private src(muted: boolean): string {
+    return `https://player.kick.com/${encodeURIComponent(this.channel)}?autoplay=true&muted=${muted}`;
   }
 
   play(): void {}
@@ -240,7 +248,16 @@ class KickEmbed implements MediaPlayer {
     return true;
   }
   setVolume(): void {}
-  setMuted(): void {}
+  /**
+   * Kick oynatıcısının API'si yok: sesi açmak için oynatıcı sesli parametreyle yeniden yüklenir.
+   * "İzlemeye başla" tıklamasından sonra çağrıldığı için tarayıcı sesli oynatmaya izin verir
+   * (iframe'e allow="autoplay" ile devredilir). Canlı yayında yeniden yükleme bir şey kaybettirmez.
+   */
+  setMuted(m: boolean): void {
+    if (m || !this.muted) return;
+    this.muted = false;
+    this.frame.src = this.src(false);
+  }
   destroy(): void {
     this.frame.remove();
   }
