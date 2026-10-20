@@ -92,9 +92,37 @@ export class Watches {
 }
 
 /** Link → kaynak + başlık. YouTube başlığı oEmbed'den alınır; alınamazsa kaynağın adı kullanılır. */
+/** Çalma listesini okur (en fazla 64 KB, 4 sn). Okunamazsa null. */
+async function fetchPlaylist(url: string): Promise<string | null> {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return null;
+    return (await r.text()).slice(0, 64 * 1024);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * HLS canlı mı: bitiş etiketi (#EXT-X-ENDLIST) olmayan medya çalma listesi canlıdır.
+ * Ana listeyse ilk varyanta bakılır. Okunamazsa kayıtlı video sayılır (eski davranış).
+ */
+export async function detectHlsLive(url: string, get: (u: string) => Promise<string | null> = fetchPlaylist): Promise<boolean> {
+  let text = await get(url);
+  if (!text) return false;
+  if (text.includes("#EXT-X-STREAM-INF")) {
+    const variant = text.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("#"));
+    if (!variant) return false;
+    text = await get(new URL(variant, url).toString());
+    if (!text) return false;
+  }
+  return !text.includes("#EXT-X-ENDLIST");
+}
+
 export async function resolveMedia(url: string): Promise<{ source: Source; title: string } | null> {
   const source = parseMediaUrl(url);
   if (!source) return null;
+  if (source.kind === "file" && source.hls && source.live === undefined) source.live = await detectHlsLive(source.url);
   let title = describeSource(source);
   if (source.kind === "youtube") {
     try {

@@ -5,12 +5,31 @@ export type Source =
   | { kind: "twitch"; channel: string }
   | { kind: "twitch-vod"; video: string; start: number }
   | { kind: "kick"; channel: string }
-  | { kind: "file"; url: string; hls: boolean };
+  /** `live`: bitişi olmayan HLS (canlı yayın); sunucu çalma listesine bakarak belirler. `label`: görünen ad. */
+  | { kind: "file"; url: string; hls: boolean; live?: boolean; label?: string };
 
 /** Canlı yayınlar herkes için zaten aynı anda akar: konum senkronu ve sarma yoktur. */
 export function isLive(s: Source): boolean {
-  return s.kind === "twitch" || s.kind === "kick";
+  return s.kind === "twitch" || s.kind === "kick" || (s.kind === "file" && !!s.live);
 }
+
+/**
+ * tabii.com canlı yayın sayfası → TRT'nin herkese açık HLS akışı (CORS açık).
+ * Yalnızca açık akışı doğrulanan kanallar; TRT Spor gibi yayın hakkı kısıtlı olanlar yok.
+ */
+export const TRT_LIVE: Record<string, string> = {
+  trt1: "TRT 1",
+  trt2: "TRT 2",
+  trthaber: "TRT Haber",
+  trtcocuk: "TRT Çocuk",
+  trtbelgesel: "TRT Belgesel",
+  trtmuzik: "TRT Müzik",
+  trtturk: "TRT Türk",
+  trtavaz: "TRT Avaz",
+  trtworld: "TRT World",
+  trtkurdi: "TRT Kurdî",
+  trtarabi: "TRT Arabi",
+};
 
 const YT_ID = /^[\w-]{11}$/;
 const CHANNEL = /^[A-Za-z0-9_]{2,30}$/;
@@ -58,6 +77,15 @@ export function parseMediaUrl(raw: string): Source | null {
     if (parts.length === 1 && CHANNEL.test(parts[0])) return { kind: "kick", channel: parts[0].toLowerCase() };
     return null;
   }
+  if (host === "tabii.com") {
+    // /tr/watch/live/trt1 (dil öneki isteğe bağlı)
+    const i = parts.indexOf("live");
+    const slug = i >= 0 && parts[i - 1] === "watch" ? parts[i + 1]?.toLowerCase() : undefined;
+    if (slug && TRT_LIVE[slug]) {
+      return { kind: "file", url: `https://tv-${slug}.medya.trt.com.tr/master.m3u8`, hls: true, live: true, label: TRT_LIVE[slug] };
+    }
+    return null;
+  }
   if (VIDEO_EXT.test(url.pathname)) {
     return { kind: "file", url: url.toString(), hls: /\.m3u8$/i.test(url.pathname) };
   }
@@ -74,7 +102,9 @@ export function describeSource(s: Source): string {
       return "Twitch video";
     case "kick":
       return `Kick · ${s.channel} (canlı)`;
-    case "file":
-      return decodeURIComponent(s.url.split("/").pop()!.split("?")[0]) || "Video";
+    case "file": {
+      const name = s.label ?? (decodeURIComponent(s.url.split("/").pop()!.split("?")[0]) || "Video");
+      return s.live ? `${name} (canlı)` : name;
+    }
   }
 }

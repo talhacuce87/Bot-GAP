@@ -543,7 +543,9 @@ Sınırlar: mesaj en fazla 200 karakter, kişi başı 0.6 sn'de bir; sinema 10 s
 - **Nasıl çalışır:** Discord'da `!izle <link>` yazılır, bot bir izleme odası açıp "İzlemeye katıl" düğmesini kanala atar. Düğmeye basan kişi tarayıcıda dünyayı açar, Discord ile giriş yapar ve sinemanın koridorunda doğar.
 - **Senkron:** Video 20 m'lik perdede herkes için senkron oynar. Durumu sunucu tutar, sapma 1 saniyeyi geçince oynatıcı doğru yere sarılır.
 - **Kontroller:** Odadaki herkes oynatabilir, durdurabilir, sarabilir ve alttaki kutuya yeni link yapıştırabilir. Perdeden uzaklaştıkça ses kısılır.
-- **Desteklenen kaynaklar:** YouTube (video ve canlı), Twitch (canlı ve video), Kick (canlı) ve doğrudan dosyalar (.mp4, .webm, .m3u8).
+- **Desteklenen kaynaklar:** YouTube (video ve canlı), Twitch (canlı ve video), Kick (canlı), tabii (TRT canlı kanalları) ve doğrudan dosyalar (.mp4, .webm, .m3u8).
+- **TRT canlı (tabii):** `https://www.tabii.com/tr/watch/live/trt1` gibi tabii canlı yayın linkleri TRT'nin herkese açık HLS akışına çevrilir (TRT 1, TRT 2, TRT Haber, TRT Çocuk, TRT Belgesel, TRT Müzik, TRT Türk, TRT Avaz, TRT World, TRT Kurdî, TRT Arabi). TRT Spor'un açık akışı yok. Her izleyici yayını doğrudan TRT'den çeker.
+- **Canlı HLS:** `.m3u8` linkinin çalma listesinde bitiş etiketi (`#EXT-X-ENDLIST`) yoksa canlı yayın sayılır: Twitch/Kick gibi sarma ve duraklatma kapanır, herkes canlı uçta izler.
 - **Desteklenmeyenler:** DRM'li siteler (Netflix, Disney+ vb.) teknik olarak oynatılamaz.
 - **Kick:** Kick'in oynatıcısında bir kontrol arayüzü (API) yok. Sesi açmak için paneldeki 🖱 etkileşim düğmesiyle oynatıcıya doğrudan tıklanır.
 - **Activity farkı:** İzleme odaları Discord Activity'nin içinde değil, normal tarayıcı sekmesinde açılır. Activity'nin YouTube, Twitch ve Kick'i engelleyen güvenlik kısıtları orada yok.

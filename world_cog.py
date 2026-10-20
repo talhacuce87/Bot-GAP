@@ -51,7 +51,7 @@ WATCH_KIND_LABELS = {
     "kick": "Kick (canlı)",
     "file": "Video dosyası",
 }
-WATCH_USAGE = "!izle <link> — YouTube, Twitch, Kick ya da .mp4/.webm/.m3u8 linki"
+WATCH_USAGE = "!izle <link> — YouTube, Twitch, Kick, tabii (TRT canlı) ya da .mp4/.webm/.m3u8 linki"
 
 PUSH_SECONDS = 20
 BOARD_MINUTES = 1
