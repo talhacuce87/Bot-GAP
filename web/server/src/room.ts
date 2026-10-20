@@ -10,6 +10,7 @@ import {
   WORLD_RADIUS,
 } from "../../shared/constants";
 import {
+  type Look,
   type PlayerInfo,
   type PlayerState,
   type ServerEvent,
@@ -143,6 +144,14 @@ export class Room {
     p.state.flags = s.flags & FLAG_MASK;
     p.lastUpdate = now;
     this.dirty = true;
+  }
+
+  /** Bottan gelen (doğrulanmış) kıyafeti uygular ve odaya duyurur. Oyuncu ayrıldıysa bir şey yapmaz. */
+  setLook(sid: number, look: Look): void {
+    const p = this.players.get(sid);
+    if (!p) return;
+    p.info.look = look;
+    this.broadcast({ t: "look", sid, look });
   }
 
   /**

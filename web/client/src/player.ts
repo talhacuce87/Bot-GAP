@@ -13,7 +13,7 @@ import {
   RUN_MULTIPLIER,
   WALK_SPEED,
 } from "../../shared/constants";
-import type { PlayerState } from "../../shared/protocol";
+import type { Look, PlayerState } from "../../shared/protocol";
 import type { AvatarView } from "./avatars/avatars";
 import type { Input } from "./input/input";
 import type { Seat, World } from "./world/scene";
@@ -47,6 +47,8 @@ export class Player implements AvatarView, PlayerState {
   nearSeat: Seat | null = null;
   /** Sürgünde: zindan hücresinden çıkamaz. */
   jailed = false;
+  /** Chibi kıyafeti (gardıropta önizleme de buraya yazılır); null: varsayılan karakter. */
+  outfit: Look | null = null;
 
   private vx = 0;
   private vz = 0;
@@ -175,6 +177,13 @@ export class Player implements AvatarView, PlayerState {
     this.x = this.standX;
     this.z = this.standZ;
     this.flags = this.jumpBits();
+  }
+
+  /** Gardırop: kamera karakterin önüne, biraz yakına (kıyafet görünsün). */
+  faceCamera(): void {
+    this.yaw = this.rot;
+    this.pitch = 0.18;
+    this.dist = 4.2;
   }
 
   updateCamera(camera: THREE.PerspectiveCamera, dt: number): void {

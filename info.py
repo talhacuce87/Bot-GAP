@@ -13,8 +13,8 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.8.0"
-LAST_DEPLOY_DATE = "19 Ekim 2026"
+BOT_VERSION = "2.9.0"
+LAST_DEPLOY_DATE = "20 Ekim 2026"
 
 # Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
 ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "0") or 0)
@@ -196,42 +196,38 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "Başarımlar, haftalık özet ve aylık Wrapped geldi! 🏅📊"
+                "GAP Dünyası'nda artık herkesin kendi chibi karakteri var! 🧍✨"
             ),
             color=discord.Color.from_rgb(0, 212, 255),
         )
 
         embed.add_field(
-            name="🏅 Başarımlar",
+            name="🧍 Chibi Karakterler & Gardırop",
             value=(
-                "• 47 başarım: ses, sohbet, arkadaşlık, ilerleme, özetler, sadakat, özel günler ve **gizliler**\n"
-                "• Yeni: Ses Kurdu, Maraton, Gece Nöbeti, Kalabalık Sever, Klavye Ustası, Günaydın, Sabahçı, "
-                "Sosyal Kelebek, Hoş Geldin Komitesi, Ateşli Seri, Yükselen Yıldız, Haftanın MVP'si, Koleksiyoncu, "
-                "Platin Avcısı, Gap'in Doğum Günü, Atatürk'ün Evlatları ve yeni gizliler\n"
-                "• `!başarımrehberi` — gizli olmayan başarımlar nasıl kazanılır\n"
-                "• Çoğu **Gümüş → Altın → Platin** kademeli; geçmiş aktiviten de sayıldı\n"
-                "• `!başarımlar` — rozetlerin izci fuları üzerinde · `!kartdüzen` — `!kart`'ında 3 rozet göster"
+                "• Dünyada herkes kendi karakteriyle dolaşıyor; yürürken kollar ve bacaklar sallanıyor, "
+                "el sallama ve dans emote'larında kollar havaya kalkıyor\n"
+                "• **Gardırop** (👕 düğmesi ya da **C**): 22 saç, 30 üst, 16 alt, 8 ayakkabı, 12 şapka, "
+                "6 gözlük, 7 sakal/bıyık; ten, saç ve göz rengi\n"
+                "• XP Hoodie (Sv 10) ve Level Up Tişört (Sv 5) seviyeyle açılır\n"
+                "• `!karakter [üye]` — kendi ya da arkadaşının karakterini resim olarak gör"
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="📊 Haftalık Özet",
+            name="🌍 GAP Dünyası",
             value=(
-                "• Her **pazar 21:00**'de haftanın kartı kanala düşer: MVP, seste en çok kalan, "
-                "en çok yazan, haftanın ikilisi, en uzun seri, gece kuşu\n"
-                "• Pazar günü `!haftalik` ile kendi haftalık kartını al (haftada bir kez)"
+                "• Ses kanalında 🚀 Etkinlikler → **Bot GAP** ile 3D dünyaya gir\n"
+                "• 🎬 Sinema: `!izle <link>` ile YouTube/Twitch/Kick'i perdede birlikte izle\n"
+                "• 🍢 Mangal, ⛓️ zindanda çay/domates, 🌸 Sakura Bahçesi, 🏆 Şöhret Kürsüsü\n"
+                "• 🎣 Gölde günde bir balık: nadirliğe göre 1–24 saat **2x XP**; art arda günler efsanevi şansını artırır"
             ),
             inline=False,
         )
 
         embed.add_field(
-            name="🎁 Aylık Wrapped",
-            value=(
-                "• **Ayın son günü 21:00**'de ayın Wrapped kartı kanala düşer\n"
-                "• O gün `!wrapped` ile kendi kartını al: kazandığın XP ve sıran, mesaj/ses, "
-                "en çok takıldığın kişi, en aktif saatin ve bu ayki hâlin (Gece Kuşu, Ses Bağımlısı…)"
-            ),
+            name="🏅 #ödüller",
+            value="• Nadir balıklar ve yeni başarımlar #ödüller kanalında duyuruluyor (ping atmadan)",
             inline=False,
         )
 

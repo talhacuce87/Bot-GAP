@@ -32,6 +32,10 @@ export class Remote implements AvatarView {
   leaving = false;
   readonly color: THREE.Color;
   readonly phase: number;
+  /** Kıyafet PlayerInfo'da durur; "look" olayıyla güncellenir. */
+  get outfit() {
+    return this.info.look ?? null;
+  }
   private t = new Float64Array(BUF);
   private bx = new Float32Array(BUF);
   private bz = new Float32Array(BUF);
@@ -141,10 +145,16 @@ export class Remotes {
     const existing = this.map.get(info.sid);
     if (existing && !existing.leaving) return existing;
     if (existing) this.drop(info.sid);
-    const r = new Remote(info, this.atlas.alloc(info.id, info.name, info.avatar, colorFor(info.id), info.jailed));
+    const r = new Remote(info, this.atlas.alloc(info.name, info.jailed));
     this.map.set(info.sid, r);
     this.changed = true;
     return r;
+  }
+
+  /** Kıyafet değişti (gardırop): chibi bir sonraki karede yeni kıyafetle çizilir. */
+  setLook(sid: number, look: PlayerInfo["look"]): void {
+    const r = this.map.get(sid);
+    if (r) r.info.look = look;
   }
 
   /** Sürgün durumu değişti: etiketi güncelle, ışınlanmayı interpolasyonsuz uygula. */

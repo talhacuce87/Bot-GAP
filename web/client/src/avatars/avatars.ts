@@ -1,9 +1,12 @@
-// Tüm avatarlar 4 draw call: gövde, yüz, isim, gölge. Her biri InstancedMesh.
-// Yüz/isim billboard'ları kameraya vertex shader'da döner ve uzakta solar (CPU'suz LOD).
+// Uzaktaki avatarlar 3 draw call: kapsül gövde, isim, gölge (her biri InstancedMesh).
+// Yakındakiler chibi karakter olarak çizilir (chibi.ts); onların kapsülü sıfır ölçekle gizlenir.
+// İsim billboard'u kameraya vertex shader'da döner ve uzakta solar (CPU'suz LOD).
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { EMOTES, FLAG_RUNNING, FLAG_SEATED, FLAG_WALKING } from "../../../shared/constants";
-import { ATLAS_CELLS, type AvatarAtlas, FACE_GRID, NAME_GRID } from "./atlas";
+import type { Look } from "../../../shared/protocol";
+import { ATLAS_CELLS, type AvatarAtlas, NAME_GRID } from "./atlas";
+import type { ChibiLayer, LimbPose } from "./chibi";
 
 export const MAX_AVATARS = ATLAS_CELLS;
 
@@ -23,6 +26,8 @@ export interface AvatarView {
   emoteAt: number;
   /** Zıplama yüksekliği (m). */
   jumpY: number;
+  /** Chibi kıyafeti; null/undefined ise varsayılan karakter. */
+  outfit?: Look | null;
 }
 
 /** Emote gövde animasyonlarının süresi (sn). */
@@ -35,7 +40,6 @@ const BILLBOARD_VERT = /* glsl */ `
   uniform vec2 uSize;
   uniform vec2 uFade;
   varying vec2 vUv;
-  varying vec2 vLocal;
   varying float vAlpha;
   void main() {
     vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
@@ -44,23 +48,8 @@ const BILLBOARD_VERT = /* glsl */ `
     float col = mod(aCell, uGrid.x);
     float row = floor(aCell / uGrid.x);
     vUv = (vec2(col, uGrid.y - 1.0 - row) + uv) / uGrid;
-    vLocal = uv * 2.0 - 1.0;
     gl_Position = projectionMatrix * (center + vec4(position.xy * uSize, 0.0, 0.0));
     if (vAlpha < 0.01 || aCell < 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-  }
-`;
-
-const FACE_FRAG = /* glsl */ `
-  uniform sampler2D uMap;
-  varying vec2 vUv;
-  varying vec2 vLocal;
-  varying float vAlpha;
-  void main() {
-    float r = length(vLocal);
-    if (r > 1.0) discard;
-    vec3 c = r > 0.86 ? vec3(1.0) : texture2D(uMap, vUv).rgb;
-    gl_FragColor = vec4(c, vAlpha);
-    #include <colorspace_fragment>
   }
 `;
 
@@ -121,18 +110,16 @@ function shadowTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(c);
 }
 
-const FACE_Y = 1.78;
-const NAME_Y = 2.3;
+const NAME_Y = 1.9;
 const SEAT_DROP = 0.32;
+/** Gizlenecek kapsül için sıfır ölçek. */
+const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 
 export class AvatarRenderer {
   readonly group = new THREE.Group();
   private body: THREE.InstancedMesh;
-  private face: THREE.InstancedMesh;
   private name: THREE.InstancedMesh;
   private shadow: THREE.InstancedMesh;
-  private faceCell: THREE.InstancedBufferAttribute;
-  private faceAlpha: THREE.InstancedBufferAttribute;
   private nameCell: THREE.InstancedBufferAttribute;
   private nameAlpha: THREE.InstancedBufferAttribute;
 
@@ -146,19 +133,16 @@ export class AvatarRenderer {
   private xAxis = new THREE.Vector3(1, 0, 0);
   private zAxis = new THREE.Vector3(0, 0, 1);
   private count = 0;
+  private limbs: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, time: 0 };
 
-  constructor(atlas: AvatarAtlas) {
+  constructor(
+    atlas: AvatarAtlas,
+    private chibi: ChibiLayer | null = null,
+  ) {
     const quad = new THREE.PlaneGeometry(1, 1);
 
     this.body = new THREE.InstancedMesh(bodyGeometry(), new THREE.MeshLambertMaterial({ vertexColors: true }), MAX_AVATARS);
     this.body.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_AVATARS * 3).fill(1), 3);
-
-    const faceGeo = quad.clone();
-    this.faceCell = new THREE.InstancedBufferAttribute(new Float32Array(MAX_AVATARS), 1);
-    this.faceAlpha = new THREE.InstancedBufferAttribute(new Float32Array(MAX_AVATARS), 1);
-    faceGeo.setAttribute("aCell", this.faceCell);
-    faceGeo.setAttribute("aAlpha", this.faceAlpha);
-    this.face = new THREE.InstancedMesh(faceGeo, billboardMaterial(FACE_FRAG, atlas.faceTex, FACE_GRID, [0.62, 0.62], [22, 30]), MAX_AVATARS);
 
     const nameGeo = quad.clone();
     this.nameCell = new THREE.InstancedBufferAttribute(new Float32Array(MAX_AVATARS), 1);
@@ -176,7 +160,7 @@ export class AvatarRenderer {
     );
     this.shadow.renderOrder = 1;
 
-    for (const mesh of [this.body, this.face, this.name, this.shadow]) {
+    for (const mesh of [this.body, this.name, this.shadow]) {
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       // Örnek konumları her kare değişir; three'nin tek seferlik bounding sphere'i yanlış kırpar.
       mesh.frustumCulled = false;
@@ -185,11 +169,14 @@ export class AvatarRenderer {
     }
   }
 
-  begin(): void {
+  /** Kare başı; kamera konumu yakındakileri chibi çizmek için. */
+  begin(camera?: THREE.Vector3): void {
     this.count = 0;
+    if (camera) this.chibi?.begin(camera);
   }
 
-  push(v: AvatarView, time: number): void {
+  /** `self`: kendi avatarın, uzaklıktan bağımsız her zaman chibi. */
+  push(v: AvatarView, time: number, self = false): void {
     if (this.count >= MAX_AVATARS || v.alpha <= 0.01) return;
     const i = this.count++;
     const seated = (v.flags & FLAG_SEATED) !== 0;
@@ -201,16 +188,20 @@ export class AvatarRenderer {
     const bob = walking ? Math.abs(Math.sin(time * stepHz + v.phase)) * (running ? 0.13 : 0.09) : 0;
     const sway = walking ? Math.sin(time * stepHz + v.phase) * (running ? 0.1 : 0.06) : 0;
     // Emote: dans döner, el sallama yana yatar, diğerleri zıplar.
-    let spin = 0, lean = 0, hop = 0;
+    let spin = 0, lean = 0, hop = 0, wave = 0, dance = 0;
     const et = time - v.emoteAt;
     if (v.emote >= 0 && et >= 0) {
       const anim = EMOTES[v.emote].anim;
       if (et < EMOTE_ANIM[anim]) {
+        // Kol kalkıp inerken yumuşak zarf (chibi kolları için)
+        const env = Math.min(1, et * 6, (EMOTE_ANIM[anim] - et) * 6);
         if (anim === "dance") {
           spin = et * 6;
           hop = Math.abs(Math.sin(et * 8)) * 0.16;
+          dance = env;
         } else if (anim === "wave") {
           lean = Math.sin(et * 14) * 0.2 * (1 - et / EMOTE_ANIM.wave);
+          wave = env;
         } else {
           hop = Math.sin((et / EMOTE_ANIM.hop) * Math.PI) * 0.32;
         }
@@ -226,11 +217,16 @@ export class AvatarRenderer {
     this.pos.set(v.x, y, v.z);
     this.scl.set(s, s, s);
     this.m.compose(this.pos, this.quat, this.scl);
-    this.body.setMatrixAt(i, this.m);
+    const l = this.limbs;
+    l.swing = walking ? Math.sin(time * stepHz + v.phase) * (running ? 0.75 : 0.5) : 0;
+    l.seated = seated;
+    l.wave = wave;
+    l.dance = dance;
+    l.time = time;
+    const asChibi = this.chibi?.place(v.outfit, v.x, v.z, this.m, l, self) ?? false;
+    this.body.setMatrixAt(i, asChibi ? HIDDEN : this.m);
     this.body.setColorAt(i, v.color);
 
-    this.m.makeTranslation(v.x, y + FACE_Y * s, v.z);
-    this.face.setMatrixAt(i, this.m);
     this.m.makeTranslation(v.x, y + NAME_Y * s, v.z);
     this.name.setMatrixAt(i, this.m);
     // Havadayken gölge küçülür: yükseklik hissi.
@@ -238,15 +234,14 @@ export class AvatarRenderer {
     this.m.makeScale(sh, 1, sh).setPosition(v.x, 0.04, v.z);
     this.shadow.setMatrixAt(i, this.m);
 
-    this.faceCell.setX(i, v.cell);
     this.nameCell.setX(i, v.cell);
-    this.faceAlpha.setX(i, v.alpha);
     this.nameAlpha.setX(i, v.alpha);
   }
 
   end(): void {
     const n = this.count;
-    for (const mesh of [this.body, this.face, this.name, this.shadow]) {
+    this.chibi?.end();
+    for (const mesh of [this.body, this.name, this.shadow]) {
       mesh.count = n;
       mesh.instanceMatrix.clearUpdateRanges();
       mesh.instanceMatrix.addUpdateRange(0, n * 16);
@@ -255,7 +250,7 @@ export class AvatarRenderer {
     this.body.instanceColor!.clearUpdateRanges();
     this.body.instanceColor!.addUpdateRange(0, n * 3);
     this.body.instanceColor!.needsUpdate = true;
-    for (const a of [this.faceCell, this.faceAlpha, this.nameCell, this.nameAlpha]) {
+    for (const a of [this.nameCell, this.nameAlpha]) {
       a.clearUpdateRanges();
       a.addUpdateRange(0, n);
       a.needsUpdate = true;

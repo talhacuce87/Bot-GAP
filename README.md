@@ -216,7 +216,7 @@ Bot, olay kaydındaki veriden (XP, mesajlar, ses XP'si ve o sırada seste kimler
 - **Spam koruması:** Kapıyı Açan, ancak boş kanalı açtıktan sonra 30 dakika içinde biri gelirse sayılır. Işıkları Kapatan, ancak kanalda biriyle birlikte olunduysa sayılır. Kalabalık Sever günde en fazla bir kez sayılır. Günaydın, 08:00'den sonra sunucuda o günün ilk mesajını atana verilir. Islah Oldum yalnızca aralıksız en az 10 saat süren bir sürgünden sonra 30 gün temiz kalana verilir.
 - **Koleksiyon:** Koleksiyoncu ve Platin Avcısı diğer başarımlara bakar; kendileri sayılmaz.
 - **Özel günler:** Gap'in Doğum Günü, sunucunun Discord'daki kuruluş tarihinin yıldönümünde; Atatürk'ün Evlatları, 29 Ekim'de seste olanlara verilir.
-- **Hesaplama:** Başarımlar olay kaydından 5 dakikada bir hesaplanır. İlk çalıştırmada geçmiş kayıt geriye dönük işlenir ve bu ilk açılışlar duyurulmaz. `ACHIEVEMENT_CHANNEL_ID` ayarlıysa sonraki yeni başarımlar orada duyurulur.
+- **Hesaplama:** Başarımlar olay kaydından 5 dakikada bir hesaplanır. İlk çalıştırmada geçmiş kayıt geriye dönük işlenir ve bu ilk açılışlar duyurulmaz. `ACHIEVEMENT_CHANNEL_ID` ayarlıysa sonraki yeni başarımlar orada duyurulur (üyenin adı vurgulanır, ping gitmez).
 - **`!başarımrehberi`:** Gizli olmayan başarımların koşulları, kademe eşikleri ve kullanıcının hangilerine sahip olduğu listelenir. Gizliler sadece sayı olarak görünür.
 - **Yönetici:** `!basarimver @üye <başarım> [kademe]` her başarımı verir. Kademe yazılmazsa bir üst kademe verilir; Fikir Babası yalnızca böyle açılır. Yanlış verilen bir başarım `!basarimal` ile geri alınır. Başarım adlarında Türkçe karakter ve büyük/küçük harf fark etmez (`fikir babasi`, `yayinci altin`).
 - **Komut yazımı:** Tüm komutlar Türkçe karakterli ya da karaktersiz yazılabilir (`!başarımlar`, `!basarimlar`, `!basarımlar`).
@@ -482,7 +482,7 @@ Tarayıcıda Discord olmadan misafir olarak açılır. Kullanılabilecek paramet
 - **LAGER'in Mangalı:** Doğuda, ormanın içinde. Mangal, kütük oturaklar, piknik masası ve ışık zinciri var.
 - **Gölet:** Güneyde, kenarında bir bank var. Gölde ördekler yüzer; kenarında F ile günde bir balık tutulur (aşağıda).
 - **Sakura Bahçesi:** Kuzeydoğuda, torii kapıdan girilir. Gür çimen, sakura ağaçları, gece loş yanan taş fenerler, ortadaki büyük sakuraya bakan iki bank. İçeri girince ekran pembe parlayıp söner, yukarıdan sakura yaprakları süzülür, esinti ve rüzgâr çanı sesi gelir (ses Web Audio ile üretilir). Yürürken yerdeki yapraklar ayağının dibinde havalanır. Yoğunluk ve boyutlar `web/client/src/world/sakura.ts` içindeki `SAKURA_CONFIG`'te.
-- **Şöhret Kürsüsü:** Meydanın güneybatısında. XP sıralamasının ilk 10'u bir panoda gösterilir; önündeki podyumda ilk 3 için altın, gümüş ve bronz heykeller durur. Bot sıralamayı 5 dakikada bir gönderir, pano sayfa yenilenmeden güncellenir.
+- **Şöhret Kürsüsü:** Meydanın güneybatısında. XP sıralamasının ilk 10'u bir panoda gösterilir; önündeki podyumda ilk 3 için altın, gümüş ve bronz heykeller durur. Bot sıralamayı dakikada bir gönderir, pano sayfa yenilenmeden güncellenir.
 
 #### Gölde balık tutma
 
@@ -508,6 +508,8 @@ Her üyenin kendi chibi karakteri var: 22 saç, 30 üst, 16 alt, 8 ayakkabı, 12
 
 - **Paket:** Ham model paketi (`chibi_asset_pack_v8/`, 155 MB) repoya girmez. `cd web && npm run bake:chibi -- <paket klasörü>` her parçayı tek ağa birleştirir, renkleri köşelere gömer ve sadeleştirir; çıktı ~4 MB `chibi.{json,bin}`, aynısı `assets/chibi/` (bot) ve `web/client/chibi/` (dünya) altına yazılır. İkisinin aynı olduğunu test denetler.
 - **Kurallar** (`outfit.py`): bilinmeyen ya da yanlış slottaki parça varsayılana döner; tek parça üst (elbise, gelinlik, yeniçeri) altı gizler; şapka takınca saç bastırılır. `LOCKED` tablosundaki parçalar seviyeyle açılır: Level Up Tişört 5, XP Hoodie 10. Seviye düşerse parça yine varsayılana döner.
+- **Dünyada:** Kameraya yakın avatarlar (masaüstünde 28 kişi / 40 m, zayıf cihazda 14 / 26 m) chibi, uzaktakiler kapsül çizilir; paket (~2.3 MB gzip) arka planda iner, o zamana kadar herkes kapsüldür. Kol/bacak salınımı, oturma ve el sallama/dans kolları vertex shader'da (`client/src/avatars/chibi.ts`); 15 m içinde anime konturu. Profil fotoğrafı dünyada gösterilmez, yalnızca isim etiketi kalır.
+- **Gardırop:** 👕 düğmesi ya da **C**. Seçimler kendi karakterinde canlı görünür; Kaydet → dünya botun `/internal/outfit` ucuna iletir, bot doğrular ve odaya temizlenmiş kıyafet `look` olayıyla yayınlanır. Vazgeç/Esc önizlemeyi geri alır. Misafirler kullanamaz. `?debug` ile `window.gapWardrobe` açılır (bot olmadan arayüz testi).
 - **Kayıt:** `avatar_outfit` tablosu. Dünya kıyafetleri botun iç ucundan okur ve yazar: `/internal/outfits` (odadakiler), `/internal/wardrobe` (gardırop: kıyafet, seviye, kilitler), `/internal/outfit` (kaydet). Her değişiklik olay kaydına `outfit_change` olarak düşer.
 
 **Kontroller:** WASD ile yürü, Shift ile koş, sürükleyerek kamerayı çevir, tekerlekle yakınlaştır, E ile koltuğa otur. Dokunmatik cihazlarda ekranın sol yarısı joystick (sonuna kadar itince koşar), sağ yarısı kamera.

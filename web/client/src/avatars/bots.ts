@@ -1,6 +1,8 @@
 // `?bots=N`: performans testi için yerel sahte oyuncular. Gerçek ağ yolunu (Remotes + interpolasyon) kullanır.
 import { EMOTES, FLAG_SEATED, FLAG_WALKING, JUMP_SHIFT, SEND_HZ, WALK_SPEED, WORLD_RADIUS } from "../../../shared/constants";
 import type { Seat } from "../world/scene";
+import manifest from "../../chibi/chibi.json";
+import { type ChibiManifest, randomLook } from "./chibiPack";
 import { LOCAL_SID_BASE, type Remotes } from "./remotes";
 
 interface Bot {
@@ -33,7 +35,8 @@ export class Bots {
       const b: Bot = { sid, x: Math.sin(a) * r, z: Math.cos(a) * r + 6, rot: 0, tx: 0, tz: 0, wait: 0, seated: false, jumpSeq: 0 };
       this.pickTarget(b);
       this.bots.push(b);
-      remotes.add({ sid, id: `bot-${i}`, name: `Bot ${i + 1}`, avatar: null, spectator: false, jailed: false });
+      const look = randomLook(manifest as ChibiManifest, i + 1);
+      remotes.add({ sid, id: `bot-${i}`, name: `Bot ${i + 1}`, avatar: null, spectator: false, jailed: false, look });
     }
   }
 

@@ -14,6 +14,13 @@ export interface PlayerState {
   flags: number;
 }
 
+/** Chibi karakter kıyafeti; parça kimlikleri chibi.json'dan, doğrulama botta (outfit.py). */
+export const LOOK_SLOTS = ["hair", "tops", "bottoms", "shoes", "hats", "glasses", "facial"] as const;
+export type LookSlot = (typeof LOOK_SLOTS)[number];
+export const LOOK_COLORS = ["skin", "hair", "eye"] as const;
+export type LookColor = (typeof LOOK_COLORS)[number];
+export type Look = Partial<Record<LookSlot, string | null>> & { colors?: Partial<Record<LookColor, string>> };
+
 export interface PlayerInfo {
   sid: number;
   id: string;
@@ -22,6 +29,15 @@ export interface PlayerInfo {
   spectator: boolean;
   /** Sürgünde: zindan hücresinde tutulur. */
   jailed: boolean;
+  /** Bottan gelen kıyafet; yoksa (misafir, henüz yüklenmedi) varsayılan karakter. */
+  look?: Look | null;
+}
+
+/** Gardırop açılınca: kayıtlı kıyafet, seviye ve seviyeyle açılan parçalar. */
+export interface WardrobeInfo {
+  outfit: Look;
+  level: number;
+  locked: Record<string, number>;
 }
 
 /** Şöhret Kürsüsü satırı (XP sıralaması, bot gönderir). */
@@ -67,6 +83,8 @@ export type ServerEvent =
   | { t: "emote"; sid: number; e: number }
   | { t: "act"; sid: number; a: Act }
   | { t: "fish"; sid: number; name: string; catch: FishCatch }
+  | { t: "look"; sid: number; look: Look }
+  | ({ t: "wardrobe" } & (WardrobeInfo | { error: string }))
   | { t: "pong"; c: number; s: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */
@@ -76,7 +94,9 @@ export type ClientEvent =
   | { t: "wload"; url: string }
   | { t: "emote"; e: number }
   | { t: "act"; a: Act }
-  | { t: "fish" };
+  | { t: "fish" }
+  | { t: "wardrobe" }
+  | { t: "outfit"; outfit: Look };
 
 export const STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;

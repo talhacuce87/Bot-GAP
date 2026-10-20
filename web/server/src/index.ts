@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
-import { decodeState, type FishCatch, type PlayerState } from "../../shared/protocol";
+import { decodeState, type FishCatch, type PlayerState, type ServerEvent } from "../../shared/protocol";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
+import { type BotPost, fetchLook, fetchWardrobe, OUTFIT_COOLDOWN_MS, sanitizeLook, saveLook, WARDROBE_COOLDOWN_MS } from "./looks";
 import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
 import { resolveMedia, type Watch, Watches } from "./watch";
 
@@ -113,7 +114,8 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
   ".map": "application/json",
 };
-const COMPRESSIBLE = new Set([".html", ".js", ".css", ".json", ".svg", ".map"]);
+// .bin: chibi karakter paketi (~4.3 MB → ~2.3 MB gzip)
+const COMPRESSIBLE = new Set([".html", ".js", ".css", ".json", ".svg", ".map", ".bin"]);
 
 interface CachedFile {
   raw: Buffer;
@@ -400,6 +402,33 @@ function onWatchMessage(ws: WebSocket, room: Room, w: Watch, user: SessionUser, 
   }
 }
 
+const botPost: BotPost = async (path, body) => {
+  const r = await fetch(`${BOT_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-world-secret": SHARED_SECRET },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(5000),
+  });
+  return { ok: r.ok, body: ((await r.json().catch(() => ({}))) || {}) as Record<string, unknown> };
+};
+
+/** Gardırop: aç (kayıtlı kıyafet + kilitler) ya da kaydet. Misafirler ve sunucusuz odalar kullanamaz. */
+async function onLookMessage(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null, msg: Record<string, unknown>): Promise<void> {
+  const send = (ev: ServerEvent) => ws.send(JSON.stringify(ev));
+  const unavailable = user.guest || !guild ? "👕 Gardırop için dünyaya Discord'dan (ses kanalındaki Activity ile) gir." : !SHARED_SECRET ? "👕 Gardırop şu an kapalı (bot bağlı değil)." : null;
+  if (msg.t === "wardrobe") {
+    if (unavailable) return send({ t: "wardrobe", error: unavailable });
+    return send({ t: "wardrobe", ...(await fetchWardrobe(botPost, guild!, user.id)) });
+  }
+  const look = sanitizeLook(msg.outfit);
+  if (unavailable) return send({ t: "notice", text: unavailable });
+  if (!look) return send({ t: "notice", text: "👕 Kıyafet okunamadı." });
+  const r = await saveLook(botPost, guild!, user.id, look);
+  if ("error" in r) return send({ t: "notice", text: `👕 ${r.error}` });
+  room.setLook(sid, r.look);
+  send({ t: "notice", text: r.dropped.length ? `👕 Kaydedildi; kilitli parçalar çıkarıldı: ${r.dropped.join(", ")}` : "👕 Kıyafetin kaydedildi!" });
+}
+
 const FISH_REFUSED: Record<string, string> = {
   already: "🎣 Bugünkü balığını tuttun. Yarın tekrar gel, serin bozulmasın!",
   exiled: "⛓️ Sürgündeyken balık tutamazsın.",
@@ -438,12 +467,18 @@ async function fish(ws: WebSocket, room: Room, sid: number, user: SessionUser, g
 function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions, watch?: Watch): void {
   const room = rooms.get(key);
   const sid = room.join(user, ws, Date.now(), opts);
+  // Kayıtlı kıyafet arka planda gelir; o zamana kadar varsayılan karakter çizilir.
+  if (!user.guest && opts.guild && SHARED_SECRET) {
+    void fetchLook(botPost, opts.guild, user.id).then((look) => look && room.setLook(sid, look));
+  }
   sendBoard(ws, boards.for(opts.guild ?? null));
   if (watch) sendWatch(ws, watch);
   const limiter = { last: 0 };
   let lastEmote = 0;
   let lastAct = 0;
   let lastFish = 0;
+  let lastWardrobe = 0;
+  let lastOutfit = 0;
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   alive.add(ws);
 
@@ -478,6 +513,13 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
           lastFish = now;
           void fish(ws, room, sid, user, opts.guild ?? null);
         }
+      } else if (msg?.t === "wardrobe" || msg?.t === "outfit") {
+        const now = Date.now();
+        const isSave = msg.t === "outfit";
+        if (now - (isSave ? lastOutfit : lastWardrobe) < (isSave ? OUTFIT_COOLDOWN_MS : WARDROBE_COOLDOWN_MS)) return;
+        if (isSave) lastOutfit = now;
+        else lastWardrobe = now;
+        void onLookMessage(ws, room, sid, user, opts.guild ?? null, msg);
       } else if (msg?.t === "emote") {
         const e = msg.e;
         const now = Date.now();

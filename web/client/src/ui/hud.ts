@@ -51,7 +51,7 @@ export class Hud {
     this.toastEl = el("div", "panel toast", root);
     el("div", "hint", root).textContent = touch
       ? "Sol: yürü (sonuna kadar it: koş) • Sağ: kamera • İki parmak: yakınlaştır"
-      : "WASD: yürü • Shift: koş • Space: zıpla • E: otur • F/G: etkileşim • 1–6: emote";
+      : "WASD: yürü • Shift: koş • Space: zıpla • E: otur • F/G: etkileşim • 1–6: emote • C: gardırop";
   }
 
   /** Sağ kenarda emote düğmeleri (masaüstünde 1–6 tuşları da çalışır). */
@@ -63,6 +63,14 @@ export class Hud {
       b.title = touch ? em.name : `${em.name} (${i + 1})`;
       b.addEventListener("click", () => onEmote(i));
     });
+  }
+
+  /** Gardırop düğmesi (masaüstünde C). */
+  wardrobeButton(touch: boolean, onOpen: () => void): void {
+    const b = el("button", "wardrobe-btn", this.root);
+    b.textContent = "👕";
+    b.title = touch ? "Gardırop" : "Gardırop (C)";
+    b.addEventListener("click", onOpen);
   }
 
   /** Dokunmatikte zıplama düğmesi (masaüstünde Space). */

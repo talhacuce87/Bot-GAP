@@ -1,6 +1,6 @@
 // WebSocket istemcisi: 15 Hz konum gönderimi, snapshot alımı, saat senkronu ve yeniden bağlanma.
 import { type Act, SEND_HZ } from "../../shared/constants";
-import { type BoardEntry, type ClientEvent, encodeState, type FishCatch, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES, type WatchState } from "../../shared/protocol";
+import { type BoardEntry, type ClientEvent, encodeState, type FishCatch, type Look, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES, type WardrobeInfo, type WatchState } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
 
 export type NetStatus = "connecting" | "online" | "offline" | "denied" | "notfound";
@@ -23,6 +23,9 @@ export class Net {
   onEmote: (sid: number, e: number) => void = () => {};
   onAct: (sid: number, a: Act) => void = () => {};
   onFish: (sid: number, name: string, c: FishCatch) => void = () => {};
+  /** Kendi kıyafetimiz (girişte bottan, gardıroptan kaydedince). */
+  onMyLook: (look: Look) => void = () => {};
+  onWardrobe: (w: WardrobeInfo | { error: string }) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -100,6 +103,7 @@ export class Net {
         for (const p of ev.players) if (p.sid !== ev.you && !p.spectator) this.remotes.add(p);
         const me = ev.players.find((p) => p.sid === ev.you);
         if (me) this.onJail(me.jailed, NaN, NaN, NaN);
+        if (me?.look) this.onMyLook(me.look);
         this.lastSent.flags = -1; // hemen tam durum gönder
         this.setStatus("online");
         break;
@@ -130,6 +134,15 @@ export class Net {
       case "fish":
         this.onFish(ev.sid, ev.name, ev.catch);
         break;
+      case "look":
+        if (ev.sid === this.you) this.onMyLook(ev.look);
+        else this.remotes.setLook(ev.sid, ev.look);
+        break;
+      case "wardrobe": {
+        const { t: _t, ...w } = ev;
+        this.onWardrobe(w);
+        break;
+      }
       case "leave":
         this.remotes.leave(ev.sid);
         break;

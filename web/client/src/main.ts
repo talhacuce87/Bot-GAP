@@ -15,8 +15,13 @@ import {
   JAIL_SPAWN,
   RELEASE_SPAWN,
 } from "../../shared/constants";
+import type { Look } from "../../shared/protocol";
+import chibiBinUrl from "../chibi/chibi.bin?url";
+import chibiManifest from "../chibi/chibi.json";
 import { AvatarAtlas } from "./avatars/atlas";
 import { AvatarRenderer, colorFor, MAX_AVATARS } from "./avatars/avatars";
+import { ChibiLayer } from "./avatars/chibi";
+import type { ChibiManifest } from "./avatars/chibiPack";
 import { Bots } from "./avatars/bots";
 import { EmoteFx, FX_CELL, ThrowFx } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
@@ -27,6 +32,7 @@ import { PerfGovernor } from "./perf";
 import { Player } from "./player";
 import { Hud } from "./ui/hud";
 import { sakuraEntrance } from "./ui/sakuraFx";
+import { plainLook, Wardrobe } from "./ui/wardrobe";
 import { openYoutubeTest } from "./ui/youtube";
 import { ScreenVideo } from "./watch/screen";
 import { WatchSync } from "./watch/sync";
@@ -79,8 +85,12 @@ async function start(): Promise<void> {
     return;
   }
 
-  const atlas = new AvatarAtlas((id, hash) => `${session.base}/avatar/${id}/${hash}`);
-  const avatars = new AvatarRenderer(atlas);
+  const atlas = new AvatarAtlas();
+  // Yakındaki avatarlar chibi; paket (~2 MB) arka planda iner, o zamana kadar herkes kapsül.
+  const chibi = new ChibiLayer(lowPower ? 14 : 28, lowPower ? 26 : 40);
+  world.scene.add(chibi.group);
+  void chibi.load(chibiManifest as ChibiManifest, chibiBinUrl).catch((err) => console.warn("[chibi]", err));
+  const avatars = new AvatarRenderer(atlas, chibi);
   world.scene.add(avatars.group);
   const remotes = new Remotes(atlas);
   const emoteFx = new EmoteFx();
@@ -89,7 +99,7 @@ async function start(): Promise<void> {
   world.scene.add(throwFx.mesh);
 
   const me = new Player(world, colorFor(session.user.id));
-  me.cell = atlas.alloc(session.user.id, session.user.name, session.user.avatar, me.color);
+  me.cell = atlas.alloc(session.user.name);
 
   // Debug: `?at=x,z,yön` ile istenen noktada başla (ekran görüntüsü, bölge testi).
   const atParam = params.has("debug") ? params.get("at") : null;
@@ -144,6 +154,31 @@ async function start(): Promise<void> {
   }
 
   hud.emoteBar(input.touch, (i) => input.triggerEmote(i));
+
+  // ---- Gardırop: seçim kendi karakterinde canlı görünür; kayıt botta doğrulanır ----
+  let savedLook: Look | null = null;
+  let saveTimer = 0;
+  const wardrobe = new Wardrobe(hudRoot, chibiManifest as ChibiManifest, {
+    request: () => net.send({ t: "wardrobe" }),
+    preview: (look) => (me.outfit = look),
+    save: (look) => {
+      net.send({ t: "outfit", outfit: plainLook(look) });
+      // Kayıt reddedilirse (bot yok, üye değil) birkaç saniye sonra kayıtlı kıyafete dön.
+      window.clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => (me.outfit = savedLook), 6000);
+    },
+    cancel: () => (me.outfit = savedLook),
+    opened: () => me.faceCamera(),
+  });
+  net.onWardrobe = (w) => wardrobe.onInfo(w);
+  net.onMyLook = (look) => {
+    window.clearTimeout(saveTimer);
+    savedLook = look;
+    if (!wardrobe.isOpen) me.outfit = look;
+  };
+  hud.wardrobeButton(input.touch, () => wardrobe.toggle());
+  // Debug: gardırobu bot olmadan denemek için (ekran görüntüsü testleri)
+  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe });
 
   // ---- Etkileşimler: mangalda şiş çevir, zindanda çay ver / domates at ----
   const HEART = 2; // EMOTES içindeki ❤️
@@ -264,8 +299,8 @@ async function start(): Promise<void> {
     bots?.update(dt, serverNow);
     remotes.update(serverNow - INTERP_DELAY_MS, dt);
 
-    avatars.begin();
-    avatars.push(me, time);
+    avatars.begin(camera.position);
+    avatars.push(me, time, true);
     for (const r of remotes.map.values()) if (r.hasData) avatars.push(r, time);
     avatars.end();
     me.updateCamera(camera, dt);
