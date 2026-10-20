@@ -14,6 +14,7 @@ import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUnifor
 import { dungeon, GROVE, grove, GROVE_SIGN, POND, pond, signPost, steppingStones, waterMaterial } from "./zones";
 import { FAME } from "./fame";
 import { SAKURA, SAKURA_CONFIG, sakuraGarden, type SakuraGarden } from "./sakura";
+import { TANK_PARK } from "../../../shared/tank";
 
 export type { Seat };
 
@@ -88,7 +89,7 @@ function screenTexture(): THREE.CanvasTexture {
 }
 
 /** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
-const DIRECTIONS = ["↑ SİNEMA", "SAKURA BAHÇESİ ↗", "← ZİNDAN", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "GÖLET ↘"];
+const DIRECTIONS = ["↑ SİNEMA", "SAKURA BAHÇESİ ↗", "← ZİNDAN", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "GÖLET ↘", "↖ TANK"];
 const SIGN_DUNGEON = 0;
 const SIGN_GROVE = 1;
 const SIGN_DIR = 2;
@@ -141,7 +142,7 @@ function directionPost(b: Builder): SignSpec[] {
   b.add(part(new THREE.CylinderGeometry(0.08, 0.1, 3.1, 6), "#5b3f25", mat(x, 1.55, z)));
   b.add(part(new THREE.ConeGeometry(0.16, 0.25, 6), "#5b3f25", mat(x, 3.2, z)));
   b.colliders.circle(x, z, 0.15);
-  return DIRECTIONS.map((_, i) => ({ at: mat(x, 2.85 - i * 0.44, z + 0.09), w: 1.7, h: 0.4, cell: SIGN_DIR + i }));
+  return DIRECTIONS.map((_, i) => ({ at: mat(x, 2.9 - i * 0.4, z + 0.09), w: 1.7, h: 0.36, cell: SIGN_DIR + i }));
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +370,19 @@ function nature(b: Builder): void {
   }
 }
 
+/** Tankın park yeri: beton zemin ve sarı-siyah köşe babaları; çevresine ağaç dikilmez. */
+function tankPark(b: Builder): void {
+  const { x, z, h } = TANK_PARK;
+  b.add(part(new THREE.BoxGeometry(6, 0.06, 8), "#8d8f8a", mat(x, 0.03, z, h), 0.05, b.rand));
+  const c = Math.cos(h), s = Math.sin(h);
+  for (const [ox, oz] of [[-3.2, -4.2], [3.2, -4.2], [-3.2, 4.2], [3.2, 4.2]]) {
+    const bx = x + ox * c + oz * s, bz = z - ox * s + oz * c;
+    for (let k = 0; k < 4; k++) b.add(part(new THREE.CylinderGeometry(0.13, 0.13, 0.2, 8), k % 2 ? "#1d1d1d" : "#f2c230", mat(bx, 0.1 + k * 0.2, bz)));
+    b.colliders.circle(bx, bz, 0.15);
+  }
+  b.clearCircle(x, z, 6.5);
+}
+
 /** Meydandan her bölgeye taş yol; kenarında aralıklı lambalar. */
 function paths(b: Builder): void {
   const lampEvery = 13;
@@ -393,6 +407,7 @@ function paths(b: Builder): void {
   radial(POND.x, POND.z, 9.2);
   radial(FAME.x, FAME.z, 3.6);
   radial(SAKURA.x, SAKURA.z, SAKURA_CONFIG.radius + 0.6);
+  radial(TANK_PARK.x, TANK_PARK.z, 5);
 }
 
 function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matrix4[]): void {
@@ -731,6 +746,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
   signPost(b, GROVE_SIGN.x + 0.1, GROVE_SIGN.z, 2.1);
   const pd = pond(b);
   const garden = sakuraGarden(b);
+  tankPark(b);
   scene.add(pd.water, pd.ducks);
   fameStatics(b);
   const dirSigns = directionPost(b);

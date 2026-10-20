@@ -1,6 +1,7 @@
 // Oda başına oyuncu durumu ve 15 Hz snapshot yayını.
 import {
   clampToJail,
+  FLAG_DRIVING,
   FLAG_MASK,
   JAIL_SPAWN,
   RELEASE_SPAWN,
@@ -19,7 +20,23 @@ import {
   writeSnapshotEntry,
   writeSnapshotHeader,
 } from "../../shared/protocol";
+import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
+import { Battle } from "./battle";
+
+/** Odanın tek tankı. Sürücü varken konumu sürücünün konumudur. */
+interface Tank {
+  driver: number;
+  x: number;
+  z: number;
+  h: number;
+  tr: number;
+  /** Namlu açısı. */
+  el: number;
+  lastFire: number;
+  /** Son inişin zamanı: uzun süre boş kalırsa park yerine döner. */
+  idleSince: number;
+}
 
 export interface Conn {
   send(data: string | Uint8Array): void;
@@ -50,10 +67,15 @@ export class Room {
   readonly chat: ChatLine[] = [];
   /** Bu odaya bağlı sinema (izleme odası); Activity'deki ve linkle gelenler aynı videoyu paylaşır. */
   watchId: string | null = null;
+  readonly tank: Tank = { driver: 0, x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, lastFire: 0, idleSince: 0 };
+  /** Tank savaşı odası ("b:..."): dünyanın tek tankı yerine takımlı maç. */
+  readonly battle: Battle | null;
   private nextSid = 1;
   private dirty = false;
 
-  constructor(readonly key: string) {}
+  constructor(readonly key: string) {
+    this.battle = key.startsWith("b:") ? new Battle(this) : null;
+  }
 
   get size(): number {
     return this.players.size;
@@ -98,6 +120,8 @@ export class Room {
       conn,
     });
     this.sendTo(conn, { t: "welcome", you: sid, room: this.key, players: [info, ...others] });
+    if (this.battle) this.battle.join(sid);
+    else this.sendTo(conn, this.tankEvent());
     this.broadcast({ t: "join", player: info }, sid);
     this.dirty = true;
     return sid;
@@ -106,7 +130,9 @@ export class Room {
   leave(sid: number): void {
     const p = this.players.get(sid);
     if (!p) return;
+    if (this.tank.driver === sid) this.exitTank(sid);
     this.players.delete(sid);
+    this.battle?.leave(sid);
     this.broadcast({ t: "leave", sid });
     // Boşalan yere en eski izleyici geçer; istemciler onu yeni katılan gibi görür.
     if (!p.info.spectator) {
@@ -125,6 +151,7 @@ export class Room {
   applyState(sid: number, s: PlayerState, now = Date.now()): void {
     const p = this.players.get(sid);
     if (!p || p.info.spectator) return;
+    if (this.battle && !this.battle.canMove(sid)) return;
     const dt = Math.min(1, Math.max(0, (now - p.lastUpdate) / 1000));
     const maxStep = WALK_SPEED * RUN_MULTIPLIER * dt * 1.3 + 0.5;
     let dx = s.x - p.state.x;
@@ -145,8 +172,10 @@ export class Room {
     p.state.x = x;
     p.state.z = z;
     if (p.info.jailed) clampToJail(p.state);
+    this.battle?.clamp(p.state);
     p.state.rot = s.rot;
-    p.state.flags = s.flags & FLAG_MASK;
+    // Sürücü bayrağını yalnızca gerçekten süren taşır
+    p.state.flags = s.flags & FLAG_MASK & (this.tank.driver === sid ? FLAG_MASK : ~FLAG_DRIVING);
     p.lastUpdate = now;
     this.dirty = true;
   }
@@ -174,6 +203,7 @@ export class Room {
     for (const [sid, p] of this.players) {
       const jailed = p.forceJail || (!p.user.guest && isExiled(p.user.id, p.guild));
       if (jailed === p.info.jailed) continue;
+      if (jailed && this.tank.driver === sid) this.exitTank(sid);
       p.info.jailed = jailed;
       Object.assign(p.state, jailed ? JAIL_SPAWN : RELEASE_SPAWN);
       p.state.flags = 0;
@@ -184,8 +214,87 @@ export class Room {
     }
   }
 
+  /** Sunucunun belirlediği yere koyar (savaşta doğma); sonraki hız kontrolü buradan başlar. */
+  teleport(sid: number, x: number, z: number, rot: number, now = Date.now()): void {
+    const p = this.players.get(sid);
+    if (!p) return;
+    Object.assign(p.state, { x, z, rot });
+    p.lastUpdate = now;
+    this.dirty = true;
+  }
+
+  private tankEvent(): ServerEvent {
+    const { driver, x, z, h, tr, el } = this.tank;
+    return { t: "tank", driver, x, z, h, tr, el };
+  }
+
+  /** Tanka binme: yakında, boşta, izleyici ya da sürgünde değilse. Başarılıysa true. */
+  enterTank(sid: number): boolean {
+    const p = this.players.get(sid);
+    const t = this.tank;
+    if (!p || p.info.spectator || p.info.jailed || t.driver) return false;
+    if (Math.hypot(p.state.x - t.x, p.state.z - t.z) > TANK_REACH + 0.5) return false;
+    t.driver = sid;
+    // Sürücü tankın yerine geçer; sonraki konumları tankı taşır.
+    p.state.x = t.x;
+    p.state.z = t.z;
+    this.broadcast(this.tankEvent());
+    this.dirty = true;
+    return true;
+  }
+
+  /** İniş (ya da sürücü ayrıldı/sürgüne gitti): tank son konumunda park eder. */
+  exitTank(sid: number, now = Date.now()): void {
+    const p = this.players.get(sid);
+    const t = this.tank;
+    if (t.driver !== sid) return;
+    t.driver = 0;
+    t.idleSince = now;
+    if (p) {
+      t.x = p.state.x;
+      t.z = p.state.z;
+      p.state.flags &= ~FLAG_DRIVING;
+    }
+    this.broadcast(this.tankEvent());
+  }
+
+  aimTank(sid: number, h: number, tr: number, el = DEFAULT_ELEV): void {
+    if (this.tank.driver !== sid || !Number.isFinite(h) || !Number.isFinite(tr)) return;
+    this.tank.h = h;
+    this.tank.tr = tr;
+    this.tank.el = clampElev(el);
+    this.broadcast({ t: "taim", h, tr, el: this.tank.el }, sid);
+  }
+
+  /**
+   * Sürücü ateş etti: atışı hesaplar ve herkese yollar (bekleme süresi dolmadıysa yok sayılır).
+   * `aim`: atış anındaki gövde/kule açısı; son "taim" gecikmiş ya da düşmüş olabilir.
+   */
+  fire(sid: number, aim?: { h: number; tr: number; el?: number }, now = Date.now()): void {
+    const t = this.tank;
+    const p = this.players.get(sid);
+    if (t.driver !== sid || !p || now - t.lastFire < FIRE_COOLDOWN_MS) return;
+    t.lastFire = now;
+    if (aim && Number.isFinite(aim.h) && Number.isFinite(aim.tr)) {
+      t.h = aim.h;
+      t.tr = aim.tr;
+      if (aim.el !== undefined) t.el = clampElev(aim.el);
+    }
+    const targets = [...this.players]
+      .filter(([s, q]) => s !== sid && !q.info.spectator)
+      .map(([s, q]) => ({ sid: s, x: q.state.x, z: q.state.z }));
+    const { shot, hits } = computeShot(p.state.x, p.state.z, t.tr, targets, t.el);
+    this.broadcast({ t: "shell", sid, shot, hits });
+  }
+
   /** Değişiklik varsa (ya da her saniye) tüm aktif oyuncuların konumunu yayınlar. */
   tick(now: number, force = false): void {
+    this.battle?.tick(now);
+    const t = this.tank;
+    if (!t.driver && t.idleSince && now - t.idleSince > TANK_RETURN_MS) {
+      Object.assign(t, { x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, idleSince: 0 });
+      this.broadcast(this.tankEvent());
+    }
     if (!this.dirty && !force) return;
     this.dirty = false;
     let count = 0;

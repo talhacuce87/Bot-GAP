@@ -21,6 +21,7 @@ import {
   RELEASE_SPAWN,
 } from "../../shared/constants";
 import type { Look } from "../../shared/protocol";
+import { DEFAULT_ELEV, FIRE_COOLDOWN_MS, hullCircles, TANK_PARK, TANK_REACH } from "../../shared/tank";
 import chibiBinUrl from "../chibi/chibi.bin?url";
 import chibiManifest from "../chibi/chibi.json";
 import { AvatarAtlas } from "./avatars/atlas";
@@ -48,6 +49,8 @@ import { WatchPanel } from "./ui/watchPanel";
 import { CinemaSign } from "./world/cinemaSign";
 import { MAX_PUSHERS } from "./world/grassField";
 import { buildWorld, SCREEN_W, SCREEN_Z } from "./world/scene";
+import { runBattle, switchMode, wantsBattle } from "./battle";
+import { aimRay, ShellFx, TankView } from "./world/tank";
 
 /** Perdenin önü (oturma alanı): F ile sinema açılır. */
 const CINEMA_FRONT = { minX: -12, maxX: 12, minZ: SCREEN_Z + 3, maxZ: SCREEN_Z + 22 };
@@ -67,6 +70,7 @@ function fail(msg: string): void {
 }
 
 async function start(): Promise<void> {
+  if (wantsBattle()) return runBattle(canvas, hudRoot, loading, lowPower);
   const hourParam = params.get("hour");
   const world = buildWorld({
     hour: hourParam !== null && hourParam !== "" ? Number(hourParam) : undefined,
@@ -132,6 +136,22 @@ async function start(): Promise<void> {
   let musicOn = false;
   let lastNote = 0;
 
+  // ---- Tank: odada tek; boşsa yanında F ile binilir, Space ateş, F ile inilir ----
+  const tankView = new TankView();
+  world.scene.add(tankView.group);
+  const shells = new ShellFx();
+  world.scene.add(shells.group);
+  const tank = { driver: 0, x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV };
+  tankView.set(tank.x, tank.z, tank.h, tank.tr, tank.el);
+  let lastAim = { h: NaN, tr: NaN, el: NaN, at: 0 };
+  let lastFire = -Infinity;
+  let tankPrev = { x: tank.x, z: tank.z };
+  // Nişangâh ekranın ortasında (GTA gibi); kule ve namlu oraya döner. Dönerken ve doldururken soluk.
+  const crosshair = document.createElement("div");
+  crosshair.className = "crosshair";
+  hudRoot.append(crosshair);
+  const aimPoint = new THREE.Vector3();
+
   const me = new Player(world, colorFor(session.user.id));
   me.cell = atlas.alloc(session.user.name);
 
@@ -164,6 +184,46 @@ async function start(): Promise<void> {
     else if (jailed && !was) me.teleport(JAIL_SPAWN.x, JAIL_SPAWN.z, JAIL_SPAWN.rot);
     else if (!jailed && was) me.teleport(RELEASE_SPAWN.x, RELEASE_SPAWN.z, RELEASE_SPAWN.rot);
   };
+  net.onTank = (s) => {
+    Object.assign(tank, s);
+    if (s.driver === net.you) {
+      if (!me.driving) {
+        me.enterTank(s.x, s.z, s.h, s.tr, s.el);
+        input.setPointerLock(true);
+        hud.toast(input.touch
+          ? "🪖 Joystick: sür · sağ yarı: nişan · ⤒: ateş · F: in"
+          : "🪖 W/S: ileri-geri · A/D: dön · fare: nişan · sol tık/Space: ateş · F: in · Esc: imleci bırak");
+      }
+    } else if (me.driving) {
+      me.exitTank();
+      input.setPointerLock(false);
+    }
+    if (!s.driver) tankView.set(s.x, s.z, s.h, s.tr, s.el);
+  };
+  net.onTaim = (h, tr, el) => {
+    tank.h = h;
+    tank.tr = tr;
+    tank.el = el;
+  };
+  const nameOf = (sid: number) => (sid === net.you ? session.user.name : remotes.map.get(sid)?.info.name ?? "Biri");
+  net.onShell = (sid, shot, hits) => {
+    const time = performance.now() / 1000;
+    shells.fire(shot, time, camera.position);
+    // Uzak sürücünün kulesi "taim"den geride kalmış olabilir: atış yönüne hizala
+    if (sid !== net.you) {
+      tank.tr = tankView.tr = Math.atan2(shot.dx, shot.dz);
+      tank.el = tankView.el = Math.atan2(shot.vy, shot.vh);
+    }
+    tankView.recoil(time);
+    const mine = hits.find((h) => h.sid === net.you);
+    if (mine) {
+      window.setTimeout(() => {
+        me.knock(mine.vx, mine.vz);
+        hud.toast(`💥 ${nameOf(sid)} seni vurdu!`);
+      }, shot.flight * 1000);
+    }
+  };
+  shells.onImpact = (x, y, z) => emoteFx.emit(x, y, z, FX_CELL.splat, performance.now() / 1000, 0.3, 4);
   hud.setStatus(net.status);
   if (params.has("debug")) hud.enableDebug(() => void openYoutubeTest(hudRoot, session));
 
@@ -226,6 +286,10 @@ async function start(): Promise<void> {
       send: (text) => net.send({ t: "chat", text }),
       open: openUrl,
       local: (text) => {
+        if (/^[!/](sava[şs]|tank)\b/i.test(text)) {
+          switchMode(true);
+          return true;
+        }
         if (!/^[!/](gard[ıi]rop|kiyafet|kıyafet)\b/i.test(text)) return false;
         wardrobe.open();
         return true;
@@ -249,6 +313,13 @@ async function start(): Promise<void> {
   let cinemaOn = false;
   if (session.mode !== "watch") {
     hud.cinemaButton(openCinema);
+    // Tank savaşı: ayrı oda, sayfa savaş modunda yeniden açılır
+    const battleBtn = document.createElement("button");
+    battleBtn.className = "wardrobe-btn battle-btn";
+    battleBtn.textContent = "⚔️";
+    battleBtn.title = "Tank savaşı (!savaş)";
+    battleBtn.addEventListener("click", () => switchMode(true));
+    hudRoot.append(battleBtn);
     // Dosya/HLS (TRT, .m3u8, .mp4) sunucu üzerinden aktarılır ve perdede oynar; YouTube/Twitch/Kick
     // Activity'de oynatılamaz: perde "Şimdi oynuyor" tabelası olur, video tarayıcıda izlenir.
     // ScreenVideo, CinemaSign'dan önce kurulur: ikisi de perdenin özgün malzemesini saklar.
@@ -335,8 +406,12 @@ async function start(): Promise<void> {
       hud.toast(`🎣 ${name} ${c.label.toLowerCase()} bir ${c.fish} tuttu!`);
     }
   };
-  const nearActs = (): { key: "f" | "g"; label: string; act: Act | "fish" | "cinema" | "watch" }[] => {
+  const nearActs = (): { key: "f" | "g"; label: string; act: Act | "fish" | "cinema" | "watch" | "tankin" | "tankout" }[] => {
     if (me.jailed) return [];
+    if (me.driving) return [{ key: "f", label: "Tanktan in 🚪", act: "tankout" }];
+    if (!tank.driver && Math.hypot(me.x - tankView.x, me.z - tankView.z) <= TANK_REACH) {
+      return [{ key: "f", label: "Tanka bin 🪖", act: "tankin" }];
+    }
     const c = CINEMA_FRONT;
     if (session.mode !== "watch" && me.x >= c.minX && me.x <= c.maxX && me.z >= c.minZ && me.z <= c.maxZ) {
       // Sinema açıksa: F tarayıcıda izle, G videoyu değiştir
@@ -411,7 +486,14 @@ async function start(): Promise<void> {
     hud.setActs(acts, input.touch, (k) => input.triggerAct(k));
     const actKey = input.consumeAct();
     const act = actKey ? acts.find((a) => a.key === actKey)?.act : undefined;
-    if (act === "cinema") {
+    if (act === "tankin") {
+      net.send({ t: "tank", on: true });
+    } else if (act === "tankout") {
+      // Önce iniş mesajı, sonra yeni konum: sunucu tankı son sürüş konumuna park eder
+      net.send({ t: "tank", on: false });
+      me.exitTank();
+      input.setPointerLock(false);
+    } else if (act === "cinema") {
       openCinema();
     } else if (act === "watch") {
       if (cinemaLink) openUrl(cinemaLink);
@@ -424,6 +506,22 @@ async function start(): Promise<void> {
       perform(act, me.x, me.z, session.user.name, time, true);
       net.send({ t: "act", a: act });
     }
+    if (me.driving) {
+      const d = me.driving;
+      // Değişince en fazla 15 Hz; değişmese de yarım saniyede bir (düşen mesaj kalıcı sapma bırakmasın)
+      const changed = Math.abs(d.h - lastAim.h) + Math.abs(d.tr - lastAim.tr) + Math.abs(d.el - lastAim.el) > 0.01;
+      if ((changed && now - lastAim.at > 66) || now - lastAim.at > 500) {
+        lastAim = { h: d.h, tr: d.tr, el: d.el, at: now };
+        net.send({ t: "taim", h: d.h, tr: d.tr, el: d.el });
+      }
+      if (me.wantsFire) {
+        me.wantsFire = false;
+        if (now - lastFire >= FIRE_COOLDOWN_MS) {
+          lastFire = now;
+          net.send({ t: "fire", h: d.h, tr: d.tr, el: d.el });
+        }
+      }
+    }
     throwFx.update(time);
     cinemaSign?.update(net.serverNow());
     net.update(dt, me);
@@ -431,11 +529,30 @@ async function start(): Promise<void> {
     bots?.update(dt, serverNow);
     remotes.update(serverNow - INTERP_DELAY_MS, dt);
 
+    // Tank: kendi sürüşü yerel; uzak sürücüde konum onun snapshot'ı, açılar "taim"; yoksa park yeri
+    const driver = tank.driver && tank.driver !== net.you ? remotes.map.get(tank.driver) : undefined;
+    if (me.driving) tankView.set(me.x, me.z, me.driving.h, me.driving.tr, me.driving.el);
+    else if (driver?.hasData) tankView.set(driver.x, driver.z, tank.h, tank.tr, tank.el, 1 - Math.exp(-dt * 10));
+    else if (!tank.driver) tankView.set(tank.x, tank.z, tank.h, tank.tr, tank.el);
+    const moving = Math.min(1, Math.hypot(tankView.x - tankPrev.x, tankView.z - tankPrev.z) / Math.max(dt, 1e-3) / 3);
+    tankPrev = { x: tankView.x, z: tankView.z };
+    tankView.update(time, moving);
+    shells.update(time, camera.position);
+    me.obstacle = me.driving ? null : hullCircles(tankView.x, tankView.z, tankView.h);
+
     avatars.begin(camera.position);
-    avatars.push(me, time, true);
-    for (const r of remotes.map.values()) if (r.hasData) avatars.push(r, time);
+    if (!me.driving) avatars.push(me, time, true);
+    for (const r of remotes.map.values()) if (r.hasData && r.info.sid !== tank.driver) avatars.push(r, time);
     avatars.end();
     me.updateCamera(camera, dt);
+    if (me.driving) {
+      me.aimAt = aimRay(camera, aimPoint);
+      crosshair.classList.add("show");
+      crosshair.classList.toggle("reloading", now - lastFire < FIRE_COOLDOWN_MS || !me.aimReady);
+    } else {
+      me.aimAt = null;
+      crosshair.classList.remove("show");
+    }
 
     // Zıplama tozu (kalkış/iniş) ve çimeni iten karakterler: sen + en yakınlar
     dust.light.value = 0.45 + 0.55 * world.env.day;

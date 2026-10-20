@@ -1,6 +1,8 @@
 // Tel protokolü. Sık mesajlar (konum, snapshot) binary; seyrek olaylar JSON metin.
 import { type Act, POS_SCALE } from "./constants";
 import type { Source } from "./media";
+import type { Phase } from "./arena";
+import type { Shot } from "./tank";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
 export const MSG_SNAPSHOT = 2; // sunucu → istemci: odadaki herkesin konumu
@@ -84,6 +86,24 @@ export interface FishCatch {
   luck: number;
 }
 
+/** Tank savaşında bir oyuncu: `team` -1 ise henüz takım seçmedi. */
+export interface Fighter {
+  sid: number;
+  team: -1 | 0 | 1;
+  hp: number;
+  alive: boolean;
+  kills: number;
+  deaths: number;
+}
+
+/** Tank savaşının durumu (değişince herkese): `endsAt` evrenin bittiği sunucu zamanı (ms). */
+export interface BattleState {
+  phase: Phase;
+  endsAt: number;
+  score: [number, number];
+  fighters: Fighter[];
+}
+
 /** Sunucunun gönderdiği JSON olaylar. */
 export type ServerEvent =
   | { t: "welcome"; you: number; room: string; players: PlayerInfo[] }
@@ -103,7 +123,19 @@ export type ServerEvent =
   /** Yalnızca isteyene: dış bağlantıyı aç (Activity'de Discord onay penceresiyle). */
   | { t: "open"; url: string }
   | ({ t: "wardrobe" } & (WardrobeInfo | { error: string }))
-  | { t: "pong"; c: number; s: number };
+  | { t: "pong"; c: number; s: number }
+  /** Tankın durumu (biri binince/inince ve girişte): `driver` 0 ise park halinde. */
+  | { t: "tank"; driver: number; x: number; z: number; h: number; tr: number; el: number }
+  /** Sürücünün gövde ve kule açısı (konumu sürücünün kendi snapshot'ından gelir). */
+  | { t: "taim"; h: number; tr: number; el: number }
+  /** Atış: herkes aynı yayı çizer; `hits` savrulanlar (yalnızca kendi sid'i olan uygular). */
+  | { t: "shell"; sid: number; shot: Shot; hits: { sid: number; vx: number; vz: number }[] }
+  | ({ t: "battle" } & BattleState)
+  /** Savaşta (yeniden) doğma: sunucu konumu belirler, o oyuncu tankını oraya koyar. */
+  | { t: "spawn"; sid: number; x: number; z: number; h: number }
+  /** Savaşta bir tankın gövde/kule/namlu açısı (konumu snapshot'tan). */
+  | { t: "baim"; sid: number; h: number; tr: number; el: number }
+  | { t: "kill"; killer: number; victim: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */
 export type ClientEvent =
@@ -115,7 +147,12 @@ export type ClientEvent =
   | { t: "fish" }
   | { t: "wardrobe" }
   | { t: "outfit"; outfit: Look }
-  | { t: "chat"; text: string };
+  | { t: "chat"; text: string }
+  | { t: "tank"; on: boolean }
+  | { t: "taim"; h: number; tr: number; el: number }
+  /** Atış anındaki açılar da gelir: mermi tam o an kulenin baktığı yöne gider. */
+  | { t: "fire"; h: number; tr: number; el: number }
+  | { t: "team"; team: 0 | 1 };
 
 export const STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;

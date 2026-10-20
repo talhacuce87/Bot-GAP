@@ -121,11 +121,12 @@ const MIME: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".webp": "image/webp",
   ".glb": "model/gltf-binary",
+  ".obj": "text/plain; charset=utf-8",
   ".ico": "image/x-icon",
   ".map": "application/json",
 };
 // .bin: chibi karakter paketi (~4.3 MB → ~2.3 MB gzip)
-const COMPRESSIBLE = new Set([".html", ".js", ".css", ".json", ".svg", ".map", ".bin"]);
+const COMPRESSIBLE = new Set([".html", ".js", ".css", ".json", ".svg", ".map", ".bin", ".obj"]);
 
 interface CachedFile {
   raw: Buffer;
@@ -414,7 +415,8 @@ server.on("upgrade", (req, socket, head) => {
     // HTTP 401 tarayıcıda 1006 olarak görünür; 4001 ile kapatırsak istemci yeniden denemeyi bırakır.
     return close(4001, "unauthorized");
   }
-  const roomKey = key;
+  // Tank savaşı: aynı Activity/oda için ayrı bir savaş odası (izleme odalarında yok)
+  const roomKey = url.searchParams.get("battle") === "1" && !key.startsWith("w:") ? `b:${key}` : key;
   const guildParam = url.searchParams.get("guild") || "";
   const guild = watch?.guild ?? (/^\d{5,20}$/.test(guildParam) ? guildParam : null);
   // Zindanı denemek için: yalnızca misafirler kendini zindana koyabilir.
@@ -583,6 +585,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   let lastEmote = 0;
   let lastAct = 0;
   let lastFish = 0;
+  let lastAim = 0;
   let lastWardrobe = 0;
   let lastOutfit = 0;
   let lastChat = 0;
@@ -600,7 +603,9 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
     }
     try {
       const msg = JSON.parse(data.toString());
-      if (msg?.t === "ping" && typeof msg.c === "number") {
+      if (msg && typeof msg === "object" && room.battle?.handle(sid, msg)) {
+        // savaş mesajı işlendi
+      } else if (msg?.t === "ping" && typeof msg.c === "number") {
         ws.send(JSON.stringify({ t: "pong", c: msg.c, s: Date.now() }));
       } else if (msg?.t === "act" && ACTS.includes(msg.a)) {
         // Yalnızca o noktanın yanındaysa; sürgündekiler parmaklıktan bir şey atamaz.
@@ -634,6 +639,19 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (isSave) lastOutfit = now;
         else lastWardrobe = now;
         void onLookMessage(ws, room, sid, user, opts.guild ?? null, msg);
+      } else if (msg?.t === "tank" && typeof msg.on === "boolean") {
+        if (msg.on) {
+          if (!room.enterTank(sid)) ws.send(JSON.stringify({ t: "notice", text: "🚫 Tanka şu an binemezsin (dolu ya da çok uzaktasın)." }));
+        } else room.exitTank(sid);
+      } else if (msg?.t === "taim" && typeof msg.h === "number" && typeof msg.tr === "number") {
+        const now = Date.now();
+        if (now - lastAim >= 50) {
+          lastAim = now;
+          room.aimTank(sid, msg.h, msg.tr, typeof msg.el === "number" ? msg.el : undefined);
+        }
+      } else if (msg?.t === "fire") {
+        const el = typeof msg.el === "number" ? msg.el : undefined;
+        room.fire(sid, typeof msg.h === "number" && typeof msg.tr === "number" ? { h: msg.h, tr: msg.tr, el } : undefined);
       } else if (msg?.t === "emote") {
         const e = msg.e;
         const now = Date.now();
