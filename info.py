@@ -13,7 +13,7 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-BOT_VERSION = "2.9.0"
+BOT_VERSION = "2.10.0"
 LAST_DEPLOY_DATE = "20 Ekim 2026"
 
 # Yeni sürüm açıldığında güncelleme notlarının otomatik paylaşılacağı kanal (boşsa paylaşılmaz)
@@ -197,20 +197,19 @@ class InfoCog(commands.Cog):
             title=f"🚀 Bot-GAP v{BOT_VERSION} Deploy & Güncelleme Notları",
             description=(
                 f"**Yayın Tarihi:** {LAST_DEPLOY_DATE}\n"
-                "GAP Dünyası'nda artık herkesin kendi chibi karakteri var! 🧍✨"
+                "GAP Dünyası daha canlı: sık çimen, gece ışıkları, konuşma baloncukları! 🌙✨"
             ),
             color=discord.Color.from_rgb(0, 212, 255),
         )
 
         embed.add_field(
-            name="🧍 Chibi Karakterler & Gardırop",
+            name="✨ Dünya Görsel Güncellemesi",
             value=(
-                "• Dünyada herkes kendi karakteriyle dolaşıyor; yürürken kollar ve bacaklar sallanıyor, "
-                "el sallama ve dans emote'larında kollar havaya kalkıyor\n"
-                "• **Gardırop** (👕 düğmesi ya da **C**): 22 saç, 30 üst, 16 alt, 8 ayakkabı, 12 şapka, "
-                "6 gözlük, 7 sakal/bıyık; ten, saç ve göz rengi\n"
-                "• XP Hoodie (Sv 10) ve Level Up Tişört (Sv 5) seviyeyle açılır\n"
-                "• `!karakter [üye]` — kendi ya da arkadaşının karakterini resim olarak gör"
+                "• 🌙 Gece lambalar etrafı gerçekten aydınlatıyor, ışıklar parlıyor; ağaçlıklarda ateş böcekleri, gökte ay\n"
+                "• 🌿 Karakterin çevresinde sık, rüzgârda dalgalanan çimen; üstünden geçince eğiliyor\n"
+                "• 💬 Sohbete yazdığın mesaj kafanın üstünde baloncuk olarak çıkıyor\n"
+                "• 💨 Zıplayıp inince ayaklarından toz kalkıyor\n"
+                "• 🔊 Sinemada bir şey oynarken hoparlörler ritimle titriyor, notalar uçuşuyor"
             ),
             inline=False,
         )

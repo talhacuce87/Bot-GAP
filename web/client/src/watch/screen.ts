@@ -50,6 +50,11 @@ export class ScreenVideo {
     this.css.setSize(innerWidth, innerHeight);
   }
 
+  /** Perde şu an video deliği mi. */
+  get isActive(): boolean {
+    return this.active;
+  }
+
   /** Video varken perde deliğe döner; yokken normal (tabelalı) perde. */
   setActive(on: boolean): void {
     if (on === this.active) return;

@@ -1,5 +1,9 @@
 // GAP Dünyası istemcisi: giriş → dünya → ana döngü.
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import {
   ACT_COOLDOWN_MS,
   ACT_SPOTS,
@@ -8,6 +12,7 @@ import {
   EMOTES,
   FISH_COOLDOWN_MS,
   FLAG_RUNNING,
+  FLAG_SEATED,
   FLAG_WALKING,
   FISH_SPOT,
   INTERP_DELAY_MS,
@@ -23,6 +28,7 @@ import { AvatarRenderer, colorFor, MAX_AVATARS } from "./avatars/avatars";
 import { ChibiLayer } from "./avatars/chibi";
 import type { ChibiManifest } from "./avatars/chibiPack";
 import { Bots } from "./avatars/bots";
+import { DustFx } from "./avatars/dust";
 import { EmoteFx, FX_CELL, ThrowFx } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
 import { login, type Session } from "./discord";
@@ -30,6 +36,7 @@ import { Input } from "./input/input";
 import { Net } from "./net";
 import { PerfGovernor } from "./perf";
 import { Player } from "./player";
+import { Bubbles } from "./ui/bubbles";
 import { Hud } from "./ui/hud";
 import { sakuraEntrance } from "./ui/sakuraFx";
 import { Chat } from "./ui/chat";
@@ -39,6 +46,7 @@ import { ScreenVideo } from "./watch/screen";
 import { WatchSync } from "./watch/sync";
 import { WatchPanel } from "./ui/watchPanel";
 import { CinemaSign } from "./world/cinemaSign";
+import { MAX_PUSHERS } from "./world/grassField";
 import { buildWorld, SCREEN_W, SCREEN_Z } from "./world/scene";
 
 /** Perdenin önü (oturma alanı): F ile sinema açılır. */
@@ -60,7 +68,10 @@ function fail(msg: string): void {
 
 async function start(): Promise<void> {
   const hourParam = params.get("hour");
-  const world = buildWorld({ hour: hourParam !== null && hourParam !== "" ? Number(hourParam) : undefined });
+  const world = buildWorld({
+    hour: hourParam !== null && hourParam !== "" ? Number(hourParam) : undefined,
+    quality: lowPower ? "low" : "high",
+  });
 
   let renderer: THREE.WebGLRenderer;
   try {
@@ -80,6 +91,18 @@ async function start(): Promise<void> {
   renderer.setSize(innerWidth, innerHeight, false);
   const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 260);
   const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, 1.5), !params.has("noadapt"));
+  // Kare başına elle sıfırlanır: bloom açıkken birden çok geçişin çizimleri de sayılsın.
+  renderer.info.autoReset = false;
+  // Gece parıltısı (bloom): lambalar, ateş böcekleri, köz ve ay ışık saçar. Yalnızca hava kararınca ve
+  // perdede video yokken açılır (video saydam "delik"ten görünür; son işlem alfayı korumaz). Zayıf cihazda yok.
+  const glow = lowPower || params.has("nobloom") ? null : (() => {
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(world.scene, camera));
+    const pass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.8, 0.55, 0.72);
+    composer.addPass(pass);
+    composer.addPass(new OutputPass());
+    return { composer, pass, pr: 0, w: 0, h: 0 };
+  })();
 
   let session: Session;
   try {
@@ -102,6 +125,12 @@ async function start(): Promise<void> {
   world.scene.add(emoteFx.mesh);
   const throwFx = new ThrowFx(emoteFx);
   world.scene.add(throwFx.mesh);
+  const dust = new DustFx();
+  world.scene.add(dust.mesh);
+  const bubbles = new Bubbles(hudRoot);
+  /** Sinemada oynayan bir şey var: hoparlörler titrer, notalar çıkar. */
+  let musicOn = false;
+  let lastNote = 0;
 
   const me = new Player(world, colorFor(session.user.id));
   me.cell = atlas.alloc(session.user.name);
@@ -152,6 +181,7 @@ async function start(): Promise<void> {
     net.onWatch = (s) => {
       sync.apply(s);
       panel.onState(s);
+      musicOn = !!s.source && s.playing;
     };
     net.onNotice = (text) => panel.notice(text);
     watch = { sync, screen, panel };
@@ -203,7 +233,10 @@ async function start(): Promise<void> {
     },
     input.touch,
   );
-  net.onChat = (line) => chat.add(line, line.kind === "say" && line.sid === net.you);
+  net.onChat = (line) => {
+    chat.add(line, line.kind === "say" && line.sid === net.you);
+    if (line.kind === "say" && line.sid >= 0) bubbles.say(line.sid, line.text, performance.now());
+  };
   net.onChatLog = (lines) => chat.setLog(lines);
   net.onOpen = openUrl;
   const openCinema = () => chat.focus("!izle ");
@@ -226,6 +259,7 @@ async function start(): Promise<void> {
       const id = link?.split("/w/")[1] ?? null;
       const src = s.source;
       cinemaOn = !!src;
+      musicOn = !!src && s.playing;
       if (src?.kind === "file" && id) {
         sign.set(null);
         if (!inWorld) {
@@ -259,7 +293,7 @@ async function start(): Promise<void> {
     };
   }
   // Debug: gardırobu bot olmadan denemek için (ekran görüntüsü testleri)
-  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe, gapNet: net });
+  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe, gapNet: net, gapDust: dust, gapMe: me });
 
   // ---- Etkileşimler: mangalda şiş çevir, zindanda çay ver / domates at ----
   const HEART = 2; // EMOTES içindeki ❤️
@@ -342,6 +376,7 @@ async function start(): Promise<void> {
     renderer.setSize(innerWidth, innerHeight, false);
   });
 
+  const pushers: { x: number; z: number; r: number }[] = [];
   let last = performance.now();
   const frame = (now: number) => {
     const dtMs = now - last;
@@ -349,8 +384,9 @@ async function start(): Promise<void> {
     const dt = Math.min(dtMs, 100) / 1000;
     const t0 = performance.now();
     const time = now / 1000;
+    renderer.info.reset();
 
-    world.update(time);
+    world.update(time, me);
     input.poll();
     const emote = input.consumeEmote();
     if (emote >= 0 && now - lastEmote >= EMOTE_COOLDOWN_MS) {
@@ -401,6 +437,33 @@ async function start(): Promise<void> {
     avatars.end();
     me.updateCamera(camera, dt);
 
+    // Zıplama tozu (kalkış/iniş) ve çimeni iten karakterler: sen + en yakınlar
+    dust.light.value = 0.45 + 0.55 * world.env.day;
+    dust.track(me, time, camera.position);
+    pushers.length = 0;
+    pushers.push({ x: me.x, z: me.z, r: me.seated ? 0.001 : 0.75 });
+    for (const r of remotes.map.values()) {
+      if (!r.hasData) continue;
+      dust.track(r, time, camera.position);
+      if (world.grass && (r.flags & FLAG_SEATED) === 0 && pushers.length < MAX_PUSHERS && (r.x - me.x) ** 2 + (r.z - me.z) ** 2 < 400) {
+        pushers.push({ x: r.x, z: r.z, r: 0.75 });
+      }
+    }
+    world.grass?.update(camera, pushers);
+
+    world.setMusic(musicOn);
+    if (musicOn && time - lastNote > 0.55) {
+      lastNote = time;
+      const sp = world.speakers[Math.floor(Math.random() * world.speakers.length)];
+      emoteFx.emit(sp.x + (Math.random() - 0.5) * 0.8, sp.y, sp.z + 0.5, Math.random() < 0.5 ? FX_CELL.note : FX_CELL.notes, time, 0, 1);
+    }
+
+    bubbles.update(now, camera, (sid) => {
+      if (sid === net.you) return { x: me.x, z: me.z, y: me.jumpY - (me.seated ? 0.32 : 0) };
+      const r = remotes.map.get(sid);
+      return r?.hasData && !r.leaving ? { x: r.x, z: r.z, y: r.jumpY - (r.flags & FLAG_SEATED ? 0.32 : 0) } : null;
+    });
+
     hud.setPrompt(me.seated ? "stand" : me.nearSeat ? "sit" : "");
     if (remotes.consumeChanged()) hud.renderPlayers(remotes);
 
@@ -410,7 +473,18 @@ async function start(): Promise<void> {
       watch.panel.update(now);
     }
 
-    renderer.render(world.scene, camera);
+    if (glow && world.env.lights > 0.05 && !watch?.screen.isActive) {
+      const pr = renderer.getPixelRatio();
+      if (pr !== glow.pr || innerWidth !== glow.w || innerHeight !== glow.h) {
+        Object.assign(glow, { pr, w: innerWidth, h: innerHeight });
+        glow.composer.setPixelRatio(pr);
+        glow.composer.setSize(innerWidth, innerHeight);
+      }
+      glow.pass.strength = 0.85 * world.env.lights;
+      glow.composer.render(dt);
+    } else {
+      renderer.render(world.scene, camera);
+    }
     watch?.screen.render(camera);
     perf.frame(dtMs, performance.now() - t0);
     hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);

@@ -18,8 +18,10 @@ export const FX_CELL = {
   rod: EMOTES.length + 4,
   fish: EMOTES.length + 5,
   sparkle: EMOTES.length + 6,
+  note: EMOTES.length + 7,
+  notes: EMOTES.length + 8,
 };
-const FX_EMOJI = ["🍢", "🍅", "🍵", "💥", "🎣", "🐟", "✨"];
+const FX_EMOJI = ["🍢", "🍅", "🍵", "💥", "🎣", "🐟", "✨", "🎵", "🎶"];
 const CELL = 128;
 /** Emoji isim etiketinin üstünden çıkar: yüzü ve ismi kapatmasın. */
 const HEAD_Y = 2.6;

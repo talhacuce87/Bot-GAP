@@ -7,6 +7,8 @@ import { WORLD_RADIUS } from "../../../shared/constants";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
 import { DayNight } from "./daynight";
+import { GrassField } from "./grassField";
+import { NightFx } from "./night";
 import { FameBoard, fameStatics } from "./fame";
 import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, windMaterial } from "./geo";
 import { dungeon, GROVE, grove, GROVE_SIGN, POND, pond, signPost, steppingStones, waterMaterial } from "./zones";
@@ -24,16 +26,26 @@ export interface World {
   /** Watch party perdesinin dünya konumu (Faz 3). */
   screen: THREE.Mesh;
   spawn: { x: number; z: number; rot: number };
-  /** Kare başına: shader saati ve birkaç ucuz animasyon. */
-  update(time: number): void;
+  /** Kare başına: shader saati ve birkaç ucuz animasyon; `focus` oyuncunun konumu (gece ışıkları). */
+  update(time: number, focus?: { x: number; z: number }): void;
   /** Biri şiş çevirdi: duman kabarır, köz parlar (`time`: döngü saati, sn). */
   grillBoost(time: number): void;
   sakura: SakuraGarden;
+  /** Gün ışığı (0 gece, 1 gündüz) ve lambaların yanma oranı; DayNight günceller. */
+  env: { day: number; lights: number };
+  /** Oyuncunun çevresindeki sık çimen (zayıf cihazda yok). */
+  grass: GrassField | null;
+  /** Sinemada bir şey oynuyor: hoparlörler ritimle titrer. */
+  setMusic(on: boolean): void;
+  /** Hoparlörlerin üstü: nota efektleri buradan çıkar. */
+  speakers: { x: number; y: number; z: number }[];
 }
 
 export interface WorldOptions {
   /** Gece/gündüz testi için saat (?hour=21); verilmezse Türkiye saati. */
   hour?: number;
+  /** "low": sık çimen ve gerçek lamba ışıkları kapalı (dokunmatik, zayıf cihaz). */
+  quality?: "low" | "high";
 }
 
 export const SCREEN_Z = -46;
@@ -218,10 +230,8 @@ function amphitheatre(b: Builder): THREE.Mesh {
   b.add(part(new THREE.BoxGeometry(SCREEN_W + 0.8, SCREEN_H + 0.8, 0.4), "#2a2f3a", mat(0, 1.2 + SCREEN_H / 2, SCREEN_Z - 1.6)));
   for (const sx of [-1, 1]) {
     b.add(part(new THREE.BoxGeometry(0.6, SCREEN_H + 2, 0.6), "#3a3f4c", mat(sx * (SCREEN_W / 2 + 0.7), (SCREEN_H + 2) / 2, SCREEN_Z - 1.6)));
-    // Hoparlörler
+    // Hoparlör kabini (koniler ayrı mesh: müzikle titrer)
     b.add(part(new THREE.BoxGeometry(1.4, 2.4, 1), "#23262d", mat(sx * 12.8, 1.8, SCREEN_Z - 0.9)));
-    b.add(part(new THREE.CylinderGeometry(0.45, 0.45, 0.05, 12), "#4a4f5a", mat(sx * 12.8, 2.2, SCREEN_Z - 0.38).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))));
-    b.add(part(new THREE.CylinderGeometry(0.25, 0.25, 0.05, 10), "#4a4f5a", mat(sx * 12.8, 1.2, SCREEN_Z - 0.38).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))));
   }
   b.colliders.segment(-14, SCREEN_Z - 0.5, 14, SCREEN_Z - 0.5, 2.5);
   b.clearBox(-22, 22, -52, -17);
@@ -253,6 +263,44 @@ function amphitheatre(b: Builder): THREE.Mesh {
   }
   return instanced(bench, new THREE.MeshLambertMaterial({ vertexColors: true }), mats);
 }
+
+/** Hoparlör konileri: bas (büyük) ve tiz (küçük), ikişer tane; müzikte ritimle öne çıkıp geri çekilir. */
+function speakerCones(): { mesh: THREE.InstancedMesh; update(time: number, level: number): void } {
+  const facing = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+  // Kenar halkası, içe çökük koni ve ortada toz kapağı
+  const cone = mergeGeometries([
+    part(new THREE.CylinderGeometry(1, 1, 0.05, 16, 1, true), "#3a3e48", facing),
+    part(new THREE.CylinderGeometry(0.92, 0.35, 0.16, 16, 1, true), "#4a4f5a", new THREE.Matrix4().makeTranslation(0, 0, -0.06).multiply(facing)),
+    part(new THREE.CircleGeometry(0.92, 16), "#2c3038", new THREE.Matrix4().makeTranslation(0, 0, -0.02)),
+    part(new THREE.SphereGeometry(0.3, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), "#5c6270", new THREE.Matrix4().makeTranslation(0, 0, -0.08).multiply(facing)),
+  ]);
+  const spots: [number, number, number, number][] = []; // x, y, yarıçap, hz çarpanı
+  for (const sx of [-1, 1]) spots.push([sx * 12.8, 2.2, 0.48, 1], [sx * 12.8, 1.15, 0.27, 2]);
+  const z = SCREEN_Z - 0.38;
+  const mesh = instanced(cone, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), spots.map(([x, y, r]) => mat(x, y, z, 0, r, r, r)));
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const m = new THREE.Matrix4();
+  let was = 0;
+  return {
+    mesh,
+    update(time, level) {
+      if (level < 0.01 && was < 0.01) return;
+      was = level;
+      // 120 BPM: vuruşta hızlı öne çıkış, yavaş dönüş; araya küçük titreşim
+      const kick = Math.pow(1 - ((time * 2) % 1), 3);
+      spots.forEach(([x, y, r, hz], i) => {
+        const beat = hz === 1 ? kick : Math.pow(1 - ((time * 4 + 0.5) % 1), 2) * 0.7 + 0.3 * Math.abs(Math.sin(time * 23));
+        const p = level * beat;
+        m.compose(_v.set(x, y, z + p * 0.09 * (r / 0.48)), _q.identity(), _s.set(r * (1 + p * 0.07), r * (1 + p * 0.07), r * (1 + p * 1.6)));
+        mesh.setMatrixAt(i, m);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+    },
+  };
+}
+const _v = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _s = new THREE.Vector3();
 
 /** Orman kümeleri: harita büyüyünce boş çayır yerine yer yer sık ağaçlık. [x, z, yarıçap] */
 const FOREST_CLUSTERS: [number, number, number][] = [
@@ -676,6 +724,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
   ground(b);
   plaza(b);
   scene.add(amphitheatre(b));
+  const speakers = speakerCones();
+  scene.add(speakers.mesh);
   const dz = dungeon(b);
   const gr = grove(b);
   signPost(b, GROVE_SIGN.x + 0.1, GROVE_SIGN.z, 2.1);
@@ -712,6 +762,30 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const smokeMesh = smoke(gr.smokeAt);
   scene.add(smokeMesh);
   const smokeBoost = (smokeMesh.material as THREE.ShaderMaterial).uniforms.uBoost;
+  // Gece: yakın lambalarda gerçek ışık (sayı sabit; zayıf cihazda yok), ateş böcekleri, ay
+  const night = new NightFx({
+    bulbs: b.props.bulb,
+    flames: b.props.flame,
+    swarms: [...FOREST_CLUSTERS.slice(0, 6), [SAKURA.x, SAKURA.z, SAKURA_CONFIG.radius], [POND.x, POND.z, 11], [GROVE.x, GROVE.z, 10]],
+    lights: opts.quality === "low" ? 0 : 6,
+    skyRadius: 240,
+    moonDir: sun.position,
+  });
+  scene.add(night.group);
+  const grass = opts.quality === "low"
+    ? null
+    : new GrassField(
+        {
+          min: -(WORLD_RADIUS + 4),
+          size: (WORLD_RADIUS + 4) * 2,
+          allowed: (x, z) => (Math.hypot(x, z) < WORLD_RADIUS + 2 && b.isClear(x, z) ? 1 : 0),
+          color: groundColor,
+        },
+        30000,
+      );
+  if (grass) scene.add(grass.mesh);
+  const env = { day: 1, lights: 0 };
+  let music = 0, musicOn = false;
   const dayNight = new DayNight(
     {
       scene,
@@ -724,6 +798,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       bulbMatrices: b.props.bulb,
     },
     opts.hour,
+    env,
   );
   let boostUntil = 0;
 
@@ -743,8 +818,11 @@ export function buildWorld(opts: WorldOptions = {}): World {
     fame,
     screen,
     spawn: { x: 0, z: 8, rot: Math.PI },
-    update(time: number) {
+    update(time: number, focus?: { x: number; z: number }) {
       timeUniform.value = time;
+      night.update(time, env.lights, focus?.x ?? 0, focus?.z ?? 8);
+      music += ((musicOn ? 1 : 0) - music) * 0.08;
+      speakers.update(time, music);
       cloudMesh.rotation.y = time * 0.004;
       pd.update(time);
       const boost = Math.min(1, Math.max(0, (boostUntil - time) / 4));
@@ -757,6 +835,12 @@ export function buildWorld(opts: WorldOptions = {}): World {
       fnt.light.value = 0.35 + 0.65 * Math.min(1, hemi.intensity / 1.6);
     },
     sakura: garden,
+    env,
+    grass,
+    setMusic(on: boolean) {
+      musicOn = on;
+    },
+    speakers: [-1, 1].map((sx) => ({ x: sx * 12.8, y: 3.1, z: SCREEN_Z - 0.9 })),
     grillBoost(time: number) {
       boostUntil = Math.max(boostUntil, time) + 4;
       if (boostUntil - time > 10) boostUntil = time + 10;

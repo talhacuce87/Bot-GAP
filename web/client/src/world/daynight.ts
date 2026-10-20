@@ -115,6 +115,8 @@ export class DayNight {
   constructor(
     private p: DayNightParts,
     private override?: number,
+    /** Diğer efektler için dışa açılan durum (gece ışıkları, toz rengi vb.). */
+    private env: { day: number; lights: number } = { day: 1, lights: 0 },
   ) {
     this.glow = glowMesh(p.bulbMatrices);
     this.stars = starField(p.skyRadius * 0.95);
@@ -150,14 +152,17 @@ export class DayNight {
     }
     col.needsUpdate = true;
 
-    p.hemi.intensity = 0.5 + 1.1 * day;
+    // Gece daha karanlık: lambaların aydınlattığı yerler öne çıksın
+    p.hemi.intensity = 0.34 + 1.26 * day;
     p.hemi.color.copy(PAL.hemiNightSky).lerp(PAL.hemiDaySky, day);
     p.hemi.groundColor.copy(PAL.hemiNightGround).lerp(PAL.hemiDayGround, day);
-    p.sun.intensity = 0.4 + 1.3 * day;
+    p.sun.intensity = 0.32 + 1.38 * day;
     p.sun.color.copy(PAL.moon).lerp(PAL.sunDay, day).lerp(PAL.sunDusk, dusk);
 
     // Hava kararınca lambalar yanar
     const lights = 1 - smooth(0.25, 0.7, day);
+    this.env.day = day;
+    this.env.lights = lights;
     p.bulbMaterial.color.copy(PAL.bulbOff).lerp(PAL.bulbOn, lights);
     (this.glow.material as THREE.ShaderMaterial).uniforms.uOpacity.value = lights * 0.55;
     this.glow.visible = lights > 0.01;
