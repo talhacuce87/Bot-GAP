@@ -3,6 +3,7 @@ import { EMOTES } from "../../../shared/constants";
 import type { Remotes } from "../avatars/remotes";
 import type { NetStatus } from "../net";
 import type { PerfStats } from "../perf";
+import { actionLabel } from "../input/keybinds";
 
 const STATUS_TEXT: Record<NetStatus, string> = {
   connecting: "bağlanıyor…",
@@ -35,11 +36,12 @@ export class Hud {
   private shareBtn: HTMLButtonElement | null = null;
   private shareBar: HTMLDivElement | null = null;
   private toastTimer = 0;
+  private hint: HTMLDivElement;
 
   constructor(
     private root: HTMLElement,
     private myName: string,
-    touch: boolean,
+    private touch: boolean,
     onAction: () => void,
   ) {
     const players = el("div", "panel players", root);
@@ -52,9 +54,22 @@ export class Hud {
     this.prompt.addEventListener("click", onAction);
     this.acts = el("div", "acts", root);
     this.toastEl = el("div", "panel toast", root);
-    el("div", "hint", root).textContent = touch
-      ? "Sol: yürü (sonuna kadar it: koş) • Sağ: kamera • İki parmak: yakınlaştır"
-      : "WASD: yürü • Shift: koş • Space: zıpla • E: otur • F/G: etkileşim • 1–6: emote • C: gardırop • Enter: sohbet";
+    this.hint = el("div", "hint", root);
+    this.refreshHint();
+  }
+
+  /** Alttaki tuş ipucu; tuş atamaları değişince yeniden yazılır. */
+  refreshHint(): void {
+    if (this.touch) {
+      this.hint.textContent = "Sol: yürü (sonuna kadar it: koş) • Sağ: kamera • İki parmak: yakınlaştır";
+      return;
+    }
+    const k = actionLabel;
+    const move = [k("forward"), k("left"), k("back"), k("right")];
+    this.hint.textContent =
+      `${move.every((m) => m.length === 1) ? move.join("") : move.join("/")}: yürü • ${k("run")}: koş • ${k("jump")}: zıpla • ` +
+      `${k("sit")}: otur • ${k("actF")}/${k("actG")}: etkileşim • 1–6: emote • ${k("wardrobe")}: gardırop • ` +
+      `${k("shiftlock")}: shift lock • Enter: sohbet`;
   }
 
   /** Sağ kenarda emote düğmeleri (masaüstünde 1–6 tuşları da çalışır). */
@@ -72,7 +87,7 @@ export class Hud {
   wardrobeButton(touch: boolean, onOpen: () => void): void {
     const b = el("button", "wardrobe-btn", this.root);
     b.textContent = "👕";
-    b.title = touch ? "Gardırop" : "Gardırop (C)";
+    b.title = touch ? "Gardırop" : `Gardırop (${actionLabel("wardrobe")})`;
     b.addEventListener("click", onOpen);
   }
 
@@ -163,21 +178,22 @@ export class Hud {
 
   /** Yakındaki etkileşimler (mangal, zindan). Yalnızca liste değişince DOM'a yazılır. */
   setActs(list: { key: "f" | "g"; label: string }[], touch: boolean, onAct: (k: "f" | "g") => void): void {
-    const key = list.map((a) => a.key + a.label).join("|");
+    const text = (a: { key: "f" | "g"; label: string }) => (touch ? a.label : `${actionLabel(a.key === "f" ? "actF" : "actG")} · ${a.label}`);
+    const key = list.map((a) => a.key + text(a)).join("|");
     if (key === this.actsKey) return;
     // Yalnızca yazı değiştiyse (ör. balık geri sayımı) düğmeler yerinde kalır, dokunuş kaybolmaz.
     const keys = list.map((a) => a.key).join("|");
     const same = keys === this.actsKey.split("|").map((k) => k[0]).join("|") && this.acts.children.length === list.length;
     this.actsKey = key;
     if (same && list.length) {
-      list.forEach((a, i) => (this.acts.children[i].textContent = touch ? a.label : `${a.key.toUpperCase()} · ${a.label}`));
+      list.forEach((a, i) => (this.acts.children[i].textContent = text(a)));
       return;
     }
     this.acts.replaceChildren(
       ...list.map((a) => {
         const b = document.createElement("button");
         b.className = "act-btn";
-        b.textContent = touch ? a.label : `${a.key.toUpperCase()} · ${a.label}`;
+        b.textContent = text(a);
         b.addEventListener("click", () => onAct(a.key));
         return b;
       }),

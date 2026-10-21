@@ -1,4 +1,4 @@
-// Ayarlar paneli (⚙️): grafik ön ayarları ve tek tek grafik, kamera/kontrol, arayüz ayarları.
+// Ayarlar paneli (⚙️): grafik ön ayarları ve tek tek grafik, kamera/kontrol, tuş atamaları, arayüz ayarları.
 // Değişiklik anında uygulanır ve cihazda saklanır; sahne kurulurken okunanlar için "Uygula" dünyayı yeniden yükler.
 import {
   applyPreset,
@@ -11,6 +11,7 @@ import {
   settings,
   updateSettings,
 } from "../settings";
+import { type Action, ACTION_NAMES, type Bind, bindLabel, binds, RESERVED, resetBinds, setBind } from "../input/keybinds";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text = ""): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -28,6 +29,10 @@ export class SettingsPanel {
   private applyBar: HTMLDivElement;
   /** Panel açıldığında yeniden kurulum gerektiren ayarların değerleri. */
   private snapshot: Partial<Settings> = {};
+  /** Yeni tuş bekleyen atama; bir sonraki tuş/fare düğmesi/tekerlek oraya yazılır. */
+  private capture: { action: Action; slot: 0 | 1; stop: () => void } | null = null;
+  /** Son atamadan kalan uyarı (alınan tuş, ayrılmış tuş). */
+  private keyNote = "";
 
   constructor(
     parent: HTMLElement,
@@ -74,6 +79,8 @@ export class SettingsPanel {
   }
 
   close(): void {
+    this.endCapture();
+    this.keyNote = "";
     this.root.classList.remove("show");
   }
 
@@ -128,6 +135,8 @@ export class SettingsPanel {
     this.slider("Bakış hassasiyeti", s.sensitivity, 0.3, 2.5, 0.1, (v) => `${v.toFixed(1)}×`, (v) => this.set({ sensitivity: v }));
     this.toggleRow("Dikey bakışı ters çevir", s.invertY, (v) => this.set({ invertY: v }));
 
+    if (!matchMedia("(pointer: coarse)").matches) this.keys();
+
     this.section("Arayüz");
     this.toggleRow("Konuşma balonları", s.bubbles, (v) => this.set({ bubbles: v }));
     this.toggleRow("FPS göstergesi", s.showFps, (v) => this.set({ showFps: v }));
@@ -140,6 +149,97 @@ export class SettingsPanel {
 
     const dirty = RESTART_KEYS.some((k) => this.snapshot[k] !== settings[k]);
     this.applyBar.classList.toggle("show", dirty);
+  }
+
+  /** Tuş atamaları: her eyleme iki tuş; tıklanan kutu bir sonraki tuşu/fare düğmesini/tekerleği alır. */
+  private keys(): void {
+    this.section("Tuşlar");
+    el("div", "settings-note", this.body, "Sağ tık basılı: kamera (imleç yerinde kalır) • 1–6: emote • Enter: sohbet");
+    for (const a of Object.keys(ACTION_NAMES) as Action[]) {
+      const r = this.row(ACTION_NAMES[a]);
+      const wrap = el("div", "settings-keys", r);
+      for (const slot of [0, 1] as const) {
+        const waiting = this.capture?.action === a && this.capture.slot === slot;
+        const kb = el("button", `settings-key${waiting ? " waiting" : ""}${binds[a][slot] ? "" : " empty"}`, wrap, waiting ? "Tuşa bas…" : bindLabel(binds[a][slot]));
+        kb.addEventListener("click", () => this.startCapture(a, slot));
+      }
+    }
+    if (this.keyNote) el("div", "settings-note settings-warn", this.body, this.keyNote);
+    const reset = el("button", "settings-reset", this.body, "Tuşları sıfırla");
+    reset.addEventListener("click", () => {
+      this.endCapture();
+      resetBinds();
+      this.keyNote = "";
+      this.render();
+    });
+  }
+
+  private startCapture(action: Action, slot: 0 | 1): void {
+    this.endCapture();
+    const done = (bind: Bind | null) => {
+      this.endCapture();
+      if (bind === null) this.keyNote = "";
+      else {
+        if (RESERVED.has(bind)) this.keyNote = `${bindLabel(bind)} atanamaz (oyunda başka işi var).`;
+        else {
+          const taken = setBind(action, slot, bind);
+          this.keyNote = taken ? `${bindLabel(bind)}, "${ACTION_NAMES[taken]}" eyleminden alındı.` : "";
+        }
+      }
+      this.render();
+    };
+    // Pencerenin yakalama aşamasında: oyun da panel de bu tuşu görmez
+    const swallow = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      swallow(e);
+      if (e.repeat) return;
+      if (e.code === "Escape") done(null);
+      else if (e.code === "Backspace" || e.code === "Delete") done("");
+      else done(e.code);
+    };
+    const onMouse = (e: MouseEvent) => {
+      // Sol/sağ tık atamayı iptal eder. Panel yeniden kurulmaz: tıklanan başka kutu tıklamayı alsın
+      if (e.button === 0 || e.button === 2) {
+        this.endCapture();
+        this.keyNote = "";
+        const w = this.body.querySelector(".settings-key.waiting");
+        if (w) {
+          w.classList.remove("waiting");
+          w.textContent = bindLabel(binds[action][slot]);
+        }
+        this.body.querySelector(".settings-warn")?.remove();
+        return;
+      }
+      swallow(e);
+      done(`Mouse${e.button}`);
+    };
+    const onWheel = (e: WheelEvent) => {
+      swallow(e);
+      if (e.deltaY) done(e.deltaY < 0 ? "WheelUp" : "WheelDown");
+    };
+    const opts = { capture: true };
+    addEventListener("keydown", onKey, opts);
+    addEventListener("mousedown", onMouse, opts);
+    addEventListener("wheel", onWheel, { capture: true, passive: false });
+    this.capture = {
+      action,
+      slot,
+      stop: () => {
+        removeEventListener("keydown", onKey, opts);
+        removeEventListener("mousedown", onMouse, opts);
+        removeEventListener("wheel", onWheel, opts);
+      },
+    };
+    this.keyNote = "Yeni tuşa, fare düğmesine ya da tekerleğe bas • Esc: vazgeç • Backspace: boşalt";
+    this.render();
+  }
+
+  private endCapture(): void {
+    this.capture?.stop();
+    this.capture = null;
   }
 
   private section(title: string): void {
