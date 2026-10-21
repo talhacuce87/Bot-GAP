@@ -1,9 +1,5 @@
 // GAP Dünyası istemcisi: giriş → dünya → ana döngü.
 import * as THREE from "three";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import {
   ACT_COOLDOWN_MS,
   ACT_SPOTS,
@@ -36,13 +32,15 @@ import { Remotes } from "./avatars/remotes";
 import { login, type Session } from "./discord";
 import { Input } from "./input/input";
 import { Net } from "./net";
-import { PerfGovernor } from "./perf";
+import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
+import { lowPowerDevice as lowPower, onSettings, settings } from "./settings";
 import { Bubbles } from "./ui/bubbles";
 import { Hud } from "./ui/hud";
 import { sakuraEntrance } from "./ui/sakuraFx";
 import { Chat } from "./ui/chat";
 import { plainLook, Wardrobe } from "./ui/wardrobe";
+import { SettingsPanel } from "./ui/settingsPanel";
 import { openYoutubeTest } from "./ui/youtube";
 import { ScreenSender } from "./share/sender";
 import { ShareViewer } from "./share/viewer";
@@ -53,6 +51,7 @@ import { CinemaSign } from "./world/cinemaSign";
 import { SEAT_H } from "./world/builder";
 import { LEDGE } from "./world/colliders";
 import { MAX_PUSHERS } from "./world/grassField";
+import { PostFx } from "./world/post";
 import { buildWorld, SCREEN_W, SCREEN_Z } from "./world/scene";
 import { runBattle } from "./battle";
 import { beginMode, setModeStarter, stopMode, switchMode, wantsBattle } from "./mode";
@@ -67,10 +66,6 @@ let canvas = document.getElementById("scene") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud")!;
 const loading = document.getElementById("loading")!;
 
-const touch = matchMedia("(pointer: coarse)").matches;
-// Zayıf cihazlarda MSAA kapalı: en pahalı ama en az fark edilen kalite ayarı.
-const lowPower = params.has("low") || touch || (navigator.hardwareConcurrency || 4) <= 4;
-
 function fail(msg: string): void {
   loading.textContent = msg;
   loading.classList.add("error");
@@ -81,14 +76,15 @@ async function start(): Promise<void> {
   const hourParam = params.get("hour");
   const world = buildWorld({
     hour: hourParam !== null && hourParam !== "" ? Number(hourParam) : undefined,
-    quality: lowPower ? "low" : "high",
+    grass: settings.grass,
+    lamps: settings.lamps,
   });
 
   let renderer: THREE.WebGLRenderer;
   try {
     renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: !lowPower,
+      antialias: settings.antialias,
       // Saydam: sinema perdesi bir "delik"tir, video canvas'ın arkasındaki katmanda oynar
       // (izleme odasında ve Activity'de sunucudan aktarılan videoda).
       alpha: true,
@@ -100,25 +96,35 @@ async function start(): Promise<void> {
     return;
   }
   renderer.setSize(innerWidth, innerHeight, false);
-  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 260);
+  // Ton eşleme: düşük poli renkler aynı kalır, yalnızca parlak uçlar (güneş, lambalar) yumuşar
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  const camera = new THREE.PerspectiveCamera(settings.fov, innerWidth / innerHeight, 0.1, 260);
   life.onStop(() => {
     renderer.setAnimationLoop(null);
+    post?.dispose();
     renderer.dispose();
     renderer.forceContextLoss();
   });
-  const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, 1.5), !params.has("noadapt"));
-  // Kare başına elle sıfırlanır: bloom açıkken birden çok geçişin çizimleri de sayılsın.
+  const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, settings.maxDpr), settings.adaptive);
+  perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap);
+  const limiter = new FrameLimiter();
+  // Kare başına elle sıfırlanır: son işlem açıkken birden çok geçişin çizimleri de sayılsın.
   renderer.info.autoReset = false;
-  // Gece parıltısı (bloom): lambalar, ateş böcekleri, köz ve ay ışık saçar. Yalnızca hava kararınca ve
-  // perdede video yokken açılır (video saydam "delik"ten görünür; son işlem alfayı korumaz). Zayıf cihazda yok.
-  const glow = lowPower || params.has("nobloom") ? null : (() => {
-    const composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(world.scene, camera));
-    const pass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.8, 0.55, 0.72);
-    composer.addPass(pass);
-    composer.addPass(new OutputPass());
-    return { composer, pass, pr: 0, w: 0, h: 0 };
-  })();
+  // Son işlem (parıltı, renk): ayarda açıksa ilk gerektiğinde kurulur. Perdede video varken kapalı
+  // (video saydam "delik"ten görünür; son işlem alfayı korumaz).
+  let post: PostFx | null = null;
+  const applyGraphics = () => {
+    renderer.shadowMap.enabled = settings.shadows !== "off";
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    world.setShadows(settings.shadows);
+    perf.adaptive = settings.adaptive;
+    perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap);
+    camera.fov = settings.fov;
+    camera.updateProjectionMatrix();
+    hudRoot.classList.toggle("no-bubbles", !settings.bubbles);
+  };
+  applyGraphics();
+  life.onStop(onSettings(applyGraphics));
 
   let session: Session;
   try {
@@ -239,7 +245,16 @@ async function start(): Promise<void> {
   };
   shells.onImpact = (x, y, z) => emoteFx.emit(x, y, z, FX_CELL.splat, performance.now() / 1000, 0.3, 4);
   hud.setStatus(net.status);
+  // Hata ayıklama paneli (?debug) ya da ayarlardaki FPS göstergesi
+  const syncFps = () => {
+    if (params.has("debug")) return;
+    if (settings.showFps) hud.enableDebug();
+    else hud.disableDebug();
+  };
   if (params.has("debug")) hud.enableDebug(() => void openYoutubeTest(hudRoot, session));
+  syncFps();
+  life.onStop(onSettings(syncFps));
+  new SettingsPanel(hudRoot, () => switchMode(false));
 
   // Watch party: video perdede, kontroller altta. Odaya giren sinemanın koridorunda başlar.
   let watch: { sync: WatchSync; screen: ScreenVideo; panel: WatchPanel } | null = null;
@@ -589,6 +604,7 @@ async function start(): Promise<void> {
   const pushers: { x: number; z: number; r: number }[] = [];
   let last = performance.now();
   const frame = (now: number) => {
+    if (!limiter.ready(now, settings.fpsCap)) return;
     const dtMs = now - last;
     last = now;
     const dt = Math.min(dtMs, 100) / 1000;
@@ -733,15 +749,9 @@ async function start(): Promise<void> {
       watch.panel.update(now);
     }
 
-    if (glow && world.env.lights > 0.05 && !screen.isActive) {
-      const pr = renderer.getPixelRatio();
-      if (pr !== glow.pr || innerWidth !== glow.w || innerHeight !== glow.h) {
-        Object.assign(glow, { pr, w: innerWidth, h: innerHeight });
-        glow.composer.setPixelRatio(pr);
-        glow.composer.setSize(innerWidth, innerHeight);
-      }
-      glow.pass.strength = 0.85 * world.env.lights;
-      glow.composer.render(dt);
+    if ((settings.bloom || settings.grade) && !screen.isActive) {
+      post ??= new PostFx(renderer, world.scene, camera, settings.antialias ? 4 : 0);
+      post.render(dt, world.env, settings);
     } else {
       renderer.render(world.scene, camera);
     }

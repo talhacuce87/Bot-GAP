@@ -221,12 +221,20 @@ export class Hud {
     this.prompt.classList.toggle("show", state !== "");
   }
 
-  enableDebug(onYoutubeTest: () => void): void {
+  /** Performans paneli: ?debug'da YouTube testi düğmesiyle, ayarlardaki FPS göstergesinde yalnız. */
+  enableDebug(onYoutubeTest?: () => void): void {
+    if (this.debug) return;
     this.debug = el("div", "panel debug", this.root);
     this.debugText = el("div", "", this.debug);
+    if (!onYoutubeTest) return;
     const btn = el("button", "", this.debug);
     btn.textContent = "YouTube testi";
     btn.addEventListener("click", onYoutubeTest);
+  }
+
+  disableDebug(): void {
+    this.debug?.remove();
+    this.debug = this.debugText = null;
   }
 
   updateDebug(now: number, s: PerfStats, rtt: number, avatars: number): void {

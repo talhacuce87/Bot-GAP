@@ -3,7 +3,7 @@
 import type * as THREE from "three";
 
 const WINDOW = 60;
-const DROP_MS = 20; // 60 Hz'de bir kare kaçırıldı sayılır
+const DROP_MS = 20; // 60 Hz'de bir kare kaçırıldı sayılır (kare sınırı varsa ona göre genişler)
 const MIN_SCALE = 0.6;
 const STEP_DOWN = 0.15;
 const STEP_UP = 0.1;
@@ -31,12 +31,22 @@ export class PerfGovernor {
   private statFrames = 0;
   private statTime = 0;
   private statCpu = 0;
+  private dropMs = DROP_MS;
 
   constructor(
     private renderer: THREE.WebGLRenderer,
     private baseDpr: number,
-    private adaptive: boolean,
+    public adaptive: boolean,
   ) {
+    this.apply();
+  }
+
+  /** Ayardan: en yüksek piksel oranı ve kare sınırı (0 = yok). Ölçek ve tavan baştan başlar. */
+  configure(baseDpr: number, fpsCap: number): void {
+    this.dropMs = fpsCap ? Math.max(DROP_MS, (1000 / fpsCap) * 1.25) : DROP_MS;
+    if (baseDpr === this.baseDpr) return;
+    this.baseDpr = baseDpr;
+    this.scale = this.ceiling = 1;
     this.apply();
   }
 
@@ -65,9 +75,15 @@ export class PerfGovernor {
       this.statCpu = 0;
     }
 
-    if (!this.adaptive) return;
+    if (!this.adaptive) {
+      if (this.scale !== 1) {
+        this.scale = 1;
+        this.apply();
+      }
+      return;
+    }
     this.frames++;
-    if (dtMs > DROP_MS) this.dropped++;
+    if (dtMs > this.dropMs) this.dropped++;
     if (this.frames < WINDOW) return;
 
     const bad = this.dropped >= WINDOW * 0.1;
@@ -91,5 +107,20 @@ export class PerfGovernor {
       this.stable = 0;
     }
     this.frames = this.dropped = 0;
+  }
+}
+
+/** Kare sınırı: ekran daha hızlı yeniliyorsa araya kare atlar. `ready` false ise bu kare çizilmez. */
+export class FrameLimiter {
+  private lastDraw = -Infinity;
+
+  ready(now: number, fpsCap: number): boolean {
+    if (!fpsCap) return true;
+    const interval = 1000 / fpsCap;
+    const since = now - this.lastDraw;
+    // 1 ms pay: yenileme hızının tam katlarında kare kaçmasın
+    if (since < interval - 1) return false;
+    this.lastDraw = since > interval * 3 ? now : this.lastDraw + interval * Math.floor(since / interval);
+    return true;
   }
 }

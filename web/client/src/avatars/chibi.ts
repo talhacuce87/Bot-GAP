@@ -117,6 +117,12 @@ export class ChibiLayer {
     line.customProgramCacheKey = () => "chibi-outline";
     const empty = new THREE.BufferGeometry();
     const mesh = new THREE.Mesh(empty, body);
+    // Güneş gölgesi de pozdaki uzuvlarla düşsün (varsayılan derinlik malzemesi uzuvları döndürmez)
+    const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    depth.onBeforeCompile = (s) => patch(s, uniforms, false);
+    depth.customProgramCacheKey = () => "chibi-depth";
+    mesh.customDepthMaterial = depth;
+    mesh.castShadow = mesh.receiveShadow = true;
     const outline = new THREE.Mesh(empty, line);
     for (const m of [mesh, outline]) {
       m.matrixAutoUpdate = false;

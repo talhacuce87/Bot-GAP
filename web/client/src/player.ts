@@ -16,6 +16,7 @@ import {
   WALK_SPEED,
 } from "../../shared/constants";
 import type { Look, PlayerState } from "../../shared/protocol";
+import { settings } from "./settings";
 import {
   DEFAULT_ELEV,
   ELEV_TURN,
@@ -153,10 +154,12 @@ export class Player implements AvatarView, PlayerState {
 
   update(dt: number, input: Input): void {
     input.consumeLook(this.look);
-    this.yaw -= this.look.x * 0.006;
+    const sens = settings.sensitivity;
+    const lookY = this.look.y * 0.004 * sens * (settings.invertY ? -1 : 1);
+    this.yaw -= this.look.x * 0.006 * sens;
     this.pitch = this.driving
-      ? THREE.MathUtils.clamp(this.pitch + this.look.y * 0.004, TANK_PITCH_MIN, TANK_PITCH_MAX)
-      : THREE.MathUtils.clamp(this.pitch + this.look.y * 0.004, 0.05, 1.25);
+      ? THREE.MathUtils.clamp(this.pitch + lookY, TANK_PITCH_MIN, TANK_PITCH_MAX)
+      : THREE.MathUtils.clamp(this.pitch + lookY, 0.05, 1.25);
     this.dist = THREE.MathUtils.clamp(this.dist + input.consumeZoom() * 0.6, 2.5, 12);
 
     if (this.driving) {
