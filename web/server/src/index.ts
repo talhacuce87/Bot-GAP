@@ -56,6 +56,11 @@ const WORLD_ROOM = "dunya";
  */
 const DEFAULT_GUILD = /^\d{5,20}$/.test(process.env.WORLD_GUILD_ID || "") ? process.env.WORLD_GUILD_ID! : null;
 let lastGuild: string | null = null;
+/** Botun bulunduğu sunucular (sürgün listesiyle her 20 sn'de gelir): tek sunucuysa dünyanın sunucusu odur. */
+let botGuilds: string[] = [];
+function worldGuild(): string | null {
+  return DEFAULT_GUILD || lastGuild || botGuilds[0] || null;
+}
 /**
  * İstemci sürümü: derlenmiş sayfanın ana betiği (adında içerik özeti var). Bağlanan eski sürümdeyse
  * kendini yeniler; deploy sonrası herkes yeni koda kendiliğinden geçer. Geliştirmede (dist yok) null.
@@ -372,7 +377,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   // ---- Tarayıcıdan Discord girişi (izleme odaları Activity dışında açılır) ----
   if (path === "/auth/login" && method === "GET") {
-    const next = new URL(req.url || "/", "http://x").searchParams.get("next") || "/";
+    const lq = new URL(req.url || "/", "http://x").searchParams;
+    const next = lq.get("next") || "/";
     const safeNext = /^\/[\w\-/?=&.]*$/.test(next) && !next.startsWith("//") ? next : "/";
     if (!LOGIN_REQUIRED) return redirect(res, safeNext);
     const q = new URLSearchParams({
@@ -380,7 +386,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       response_type: "code",
       redirect_uri: `${publicBase(req)}/auth/callback`,
       scope: "identify",
-      prompt: "none",
+      // Daha önce onaylayan sessizce döner; ilk kez gelen (ya da sessiz giriş reddedildiyse) onay ekranını görür
+      prompt: lq.get("consent") === "1" ? "consent" : "none",
       state: signValue(`${Date.now()}|${safeNext}`, SESSION_SECRET),
     });
     return redirect(res, `https://discord.com/oauth2/authorize?${q}`);
@@ -390,6 +397,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const q = new URL(req.url || "/", "http://x").searchParams;
     const state = verifyValue(q.get("state") || "", SESSION_SECRET);
     const [ts, next] = state ? [Number(state.split("|")[0]), state.slice(state.indexOf("|") + 1)] : [0, "/"];
+    // Sessiz giriş reddedildi (uygulama bu tarayıcıda hiç onaylanmamış): onay ekranıyla bir kez daha
+    if (state && q.get("error") && q.get("error") !== "access_denied") {
+      return redirect(res, `/auth/login?consent=1&next=${encodeURIComponent(next)}`);
+    }
     if (!state || Date.now() - ts > 10 * 60 * 1000 || !q.get("code")) return redirect(res, "/?login=failed");
     try {
       const { user } = await exchangeCode(q.get("code")!, CLIENT_ID, CLIENT_SECRET, `${publicBase(req)}/auth/callback`);
@@ -450,7 +461,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       if (Array.isArray(ids)) next.set(String(gid), new Set(ids.map(String)));
     }
     exiles = next;
-    for (const room of rooms.all()) room.updateJail(isExiled);
+    botGuilds = [...next.keys()].filter((g) => /^\d{5,20}$/.test(g));
+    // Sunucu bilgisi olmadan girmiş Discord kullanıcıları (deploy sonrası, bot henüz bildirmeden): şimdi ata
+    const g = worldGuild();
+    for (const room of rooms.all()) {
+      if (g) for (const p of room.players.values()) if (!p.guild && !p.user.guest) p.guild = g;
+      room.updateJail(isExiled);
+    }
     return json(res, 200, { ok: true });
   }
 
@@ -572,7 +589,7 @@ server.on("upgrade", (req, socket, head) => {
   const guildParam = url.searchParams.get("guild") || "";
   if (/^\d{5,20}$/.test(guildParam)) lastGuild = guildParam;
   // Tarayıcıdan Discord hesabıyla gelen (Activity değil): sunucu bilgisi yok, dünyanın sunucusu kullanılır
-  const guild = watch?.guild ?? (/^\d{5,20}$/.test(guildParam) ? guildParam : null) ?? (user.guest ? null : DEFAULT_GUILD || lastGuild);
+  const guild = watch?.guild ?? (/^\d{5,20}$/.test(guildParam) ? guildParam : null) ?? (user.guest ? null : worldGuild());
   // Zindanı denemek için: yalnızca misafirler kendini zindana koyabilir.
   const forceJail = user.guest && url.searchParams.get("jail") === "1";
   const jailed = forceJail || (!user.guest && isExiled(user.id, guild));
@@ -836,12 +853,14 @@ async function sendSeason(ws: WebSocket, guild: string | null): Promise<void> {
 function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions, watch?: Watch): void {
   const room = rooms.get(key);
   const sid = room.join(user, ws, Date.now(), opts);
+  /** Oyuncunun sunucusu: bağlanınca bilinmiyorsa (tarayıcı, deploy sonrası) bot bildirince atanır. */
+  const myGuild = () => room.players.get(sid)?.guild ?? opts.guild ?? null;
   if (CLIENT_VERSION) ws.send(JSON.stringify({ t: "version", v: CLIENT_VERSION }));
   // Kayıtlı kıyafet arka planda gelir; o zamana kadar varsayılan karakter çizilir.
   if (!user.guest && opts.guild && SHARED_SECRET) {
     void fetchLook(botPost, opts.guild, user.id).then((look) => look && room.setLook(sid, look));
   }
-  sendBoard(ws, boards.for(opts.guild ?? null));
+  sendBoard(ws, boards.for(myGuild()));
   // Sinema odaya bağlıdır: linkle gelen bağlar, Activity'den !izle ile sonradan da açılabilir.
   if (watch && !room.watchId) room.watchId = watch.id;
   const roomWatch = () => (room.watchId ? watches.get(room.watchId) : undefined);
@@ -899,28 +918,28 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const near = p && Math.hypot(p.state.x - FISH_SPOT.x, p.state.z - FISH_SPOT.z) <= FISH_SPOT.r + 1;
         if (near && !p.info.spectator && !p.info.jailed && now - lastFish >= FISH_COOLDOWN_MS) {
           lastFish = now;
-          void fish(ws, room, sid, user, opts.guild ?? null);
+          void fish(ws, room, sid, user, myGuild());
         }
       } else if (msg?.t === "fishq") {
         const now = Date.now();
         if (now - lastFishQ >= FISH_COOLDOWN_MS) {
           lastFishQ = now;
-          if (DEV_FISH_S && (user.guest || !opts.guild || !SHARED_SECRET)) devFish(ws, room, sid, user, true);
-          else void fishWait(ws, user, opts.guild ?? null);
+          if (DEV_FISH_S && (user.guest || !myGuild() || !SHARED_SECRET)) devFish(ws, room, sid, user, true);
+          else void fishWait(ws, user, myGuild());
         }
       } else if (msg?.t === "chat") {
         const now = Date.now();
         const text = cleanChat(msg.text);
         if (!text || now - lastChat < CHAT_COOLDOWN_MS) return;
         lastChat = now;
-        void onChat(ws, room, sid, user, opts.guild ?? null, text, !!watch, cinemaGate);
+        void onChat(ws, room, sid, user, myGuild(), text, !!watch, cinemaGate);
       } else if (msg?.t === "wardrobe" || msg?.t === "outfit") {
         const now = Date.now();
         const isSave = msg.t === "outfit";
         if (now - (isSave ? lastOutfit : lastWardrobe) < (isSave ? OUTFIT_COOLDOWN_MS : WARDROBE_COOLDOWN_MS)) return;
         if (isSave) lastOutfit = now;
         else lastWardrobe = now;
-        void onLookMessage(ws, room, sid, user, opts.guild ?? null, msg);
+        void onLookMessage(ws, room, sid, user, myGuild(), msg);
       } else if (msg?.t === "tank" && typeof msg.on === "boolean") {
         if (msg.on) {
           if (!room.enterTank(sid)) ws.send(JSON.stringify({ t: "notice", text: "🚫 Tanka şu an binemezsin (dolu ya da çok uzaktasın)." }));
@@ -938,7 +957,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const now = Date.now();
         if (now - limiter.last < 3000) return;
         limiter.last = now;
-        ws.send(JSON.stringify({ t: "open", url: `${watchLink(roomCinema(room, opts.guild ?? null, user.name))}?share=1` }));
+        ws.send(JSON.stringify({ t: "open", url: `${watchLink(roomCinema(room, myGuild(), user.name))}?share=1` }));
       } else if (msg?.t === "emote") {
         const e = msg.e;
         const now = Date.now();
@@ -958,7 +977,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const now = Date.now();
         if (now - lastSeason < 5000) return;
         lastSeason = now;
-        void sendSeason(ws, opts.guild ?? null);
+        void sendSeason(ws, myGuild());
       } else if (msg && typeof msg === "object" && room.games?.handle(sid, msg)) {
         // dünya oyunu mesajı işlendi
       } else if (msg && typeof msg === "object") {
