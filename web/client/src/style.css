@@ -533,23 +533,108 @@ body {
   transform: scale(0.88);
 }
 
-.wardrobe {
-  position: absolute;
-  left: max(10px, env(safe-area-inset-left));
-  top: 50%;
-  transform: translateY(-50%);
-  width: min(360px, calc(100vw - 20px));
-  max-height: calc(100vh - 40px);
+/* Ekranın çoğunu kaplayan pencere. Arka plan bulanıklaştırılmaz (dünya arkada çizilmeye devam ediyor). */
+.wardrobe-backdrop {
+  position: fixed;
+  inset: 0;
   display: none;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: rgba(6, 9, 16, 0.62);
   pointer-events: auto;
-  z-index: 5;
+  z-index: 30;
 }
 
-.wardrobe.show {
+.wardrobe-backdrop.show {
   display: flex;
+  animation: wardrobe-fade 0.16s ease-out;
+}
+
+@keyframes wardrobe-fade {
+  from { opacity: 0; }
+}
+
+#hud.modal-open > :not(.wardrobe-backdrop) {
+  visibility: hidden;
+}
+
+.wardrobe {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  width: min(1240px, 100%);
+  height: min(860px, 100%);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: #101520;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+
+.wardrobe button {
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.wardrobe-stage {
+  position: relative;
+  min-height: 0;
+  background:
+    radial-gradient(ellipse at 50% 85%, rgba(88, 101, 242, 0.32), transparent 60%),
+    linear-gradient(180deg, #2a3550 0%, #161d2c 100%);
+}
+
+.wardrobe-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.wardrobe-stage canvas:active {
+  cursor: grabbing;
+}
+
+.wardrobe-stage-msg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.wardrobe-stage-msg:empty {
+  display: none;
+}
+
+.wardrobe-stage-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(10, 14, 22, 0.6);
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(242, 244, 248, 0.7);
+  pointer-events: none;
+}
+
+.wardrobe-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 18px 20px;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .wardrobe-head {
@@ -560,35 +645,39 @@ body {
 
 .wardrobe-head h3 {
   margin: 0;
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
-
-.wardrobe button {
-  font: inherit;
-  color: var(--text);
-  cursor: pointer;
+  font-size: 18px;
+  letter-spacing: 0.06em;
 }
 
 .wardrobe-x {
+  width: 34px;
+  height: 34px;
   border: 0;
-  background: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
   font-size: 16px;
+}
+
+.wardrobe-x:hover {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .wardrobe-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
 }
 
 .wardrobe-tabs button {
   border: 0;
-  border-radius: 8px;
-  padding: 4px 8px;
+  border-radius: 10px;
+  padding: 7px 12px;
   background: rgba(255, 255, 255, 0.08);
-  font-size: 12px;
+  font-size: 14px;
+}
+
+.wardrobe-tabs button:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .wardrobe-tabs button.active {
@@ -596,38 +685,44 @@ body {
 }
 
 .wardrobe-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  min-height: 120px;
-  max-height: 52vh;
+  padding-right: 4px;
 }
 
 .wardrobe-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 5px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
 }
 
 .wardrobe-group {
   grid-column: 1 / -1;
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: 8px;
+  font-size: 12px;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
 }
 
 .wardrobe-item {
+  min-height: 44px;
   border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 6px 8px;
+  border-radius: 10px;
+  padding: 8px 12px;
   background: rgba(255, 255, 255, 0.06);
   text-align: left;
-  font-size: 13px;
+  font-size: 14px;
+}
+
+.wardrobe-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .wardrobe-item.on {
   border-color: var(--accent);
-  background: rgba(88, 101, 242, 0.25);
+  background: rgba(88, 101, 242, 0.28);
 }
 
 .wardrobe-item:disabled {
@@ -636,7 +731,7 @@ body {
 }
 
 .wardrobe-msg {
-  padding: 20px 4px;
+  padding: 40px 4px;
   color: var(--muted);
   text-align: center;
 }
@@ -644,25 +739,25 @@ body {
 .wardrobe-colors {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 18px;
 }
 
 .wardrobe-color-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .wardrobe-color-label {
-  width: 34px;
-  font-size: 12px;
+  width: 44px;
+  font-size: 14px;
   color: var(--muted);
 }
 
 .swatch {
-  width: 26px;
-  height: 26px;
+  width: 34px;
+  height: 34px;
   border: 2px solid transparent;
   border-radius: 50%;
   padding: 0;
@@ -674,12 +769,12 @@ body {
 
 .swatch.default {
   background: rgba(255, 255, 255, 0.1);
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .swatch-pick {
-  width: 30px;
-  height: 26px;
+  width: 38px;
+  height: 34px;
   border: 0;
   padding: 0;
   background: none;
@@ -689,14 +784,17 @@ body {
 .wardrobe-foot {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .wardrobe-foot button {
   border: 0;
-  border-radius: 8px;
-  padding: 7px 14px;
+  border-radius: 10px;
+  padding: 10px 20px;
   background: rgba(255, 255, 255, 0.1);
+  font-size: 15px;
 }
 
 .wardrobe-foot .wardrobe-save {
@@ -709,17 +807,30 @@ body {
   cursor: default;
 }
 
-/* Dar ekranda alt yarıda: karakter üstte görünsün */
-@media (max-width: 520px) {
-  .wardrobe {
-    top: auto;
-    bottom: max(10px, env(safe-area-inset-bottom));
-    transform: none;
-    max-height: 55vh;
+/* Dar ekranda alt alta: önizleme üstte */
+@media (max-width: 760px) {
+  .wardrobe-backdrop {
+    padding: 8px;
   }
 
-  .wardrobe-body {
-    max-height: 32vh;
+  .wardrobe {
+    grid-template-columns: 1fr;
+    grid-template-rows: 38% minmax(0, 1fr);
+    height: 100%;
+  }
+
+  .wardrobe-side {
+    padding: 12px;
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .wardrobe-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  }
+
+  .wardrobe-stage-hint {
+    display: none;
   }
 }
 

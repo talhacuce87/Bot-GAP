@@ -308,8 +308,19 @@ async function start(): Promise<void> {
     },
     cancel: () => (me.outfit = savedLook),
     opened: () => me.faceCamera(),
+    modal: (open) => {
+      input.setBlocked(open);
+      hudRoot.classList.toggle("modal-open", open);
+    },
+    pack: () => chibi.pack,
   });
+  life.onStop(() => wardrobe.dispose());
   net.onWardrobe = (w) => wardrobe.onInfo(w);
+  const showStatus = net.onStatus;
+  net.onStatus = (s) => {
+    showStatus(s);
+    if (s === "online") wardrobe.retry();
+  };
   net.onMyLook = (look) => {
     window.clearTimeout(saveTimer);
     savedLook = look;
@@ -317,6 +328,8 @@ async function start(): Promise<void> {
   };
   hud.wardrobeButton(input.touch, () => wardrobe.toggle());
   input.onWardrobe = () => wardrobe.toggle();
+  // Geliştirirken doğrudan gardıropla açılır (?gardirop, sekmeyle: ?gardirop=tops)
+  if (params.has("gardirop")) wardrobe.open(params.get("gardirop") ?? undefined);
 
   // ---- Sohbet ve sinema: "!" komutları, !izle ile izleme odası açılır ----
   // Activity içinde dış bağlantı Discord'un onay penceresiyle açılır; tarayıcıda yeni sekme.

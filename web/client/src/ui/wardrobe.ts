@@ -1,7 +1,11 @@
 // Gardırop: kıyafet seçimi ve canlı önizleme (kendi karakterin üzerinde). Kaydet → bot doğrular,
 // odaya botun temizlediği kıyafet yayınlanır. Vazgeç/kapat → kayıtlı kıyafete döner.
 import { LOOK_SLOTS, type Look, type LookColor, type LookSlot, type WardrobeInfo } from "../../../shared/protocol";
-import type { ChibiManifest } from "../avatars/chibiPack";
+import type { ChibiManifest, ChibiPack } from "../avatars/chibiPack";
+import { type PreviewFocus, WardrobePreview } from "./wardrobePreview";
+
+/** Bu sekmelerde önizleme kafaya yakınlaşır. */
+const HEAD_TABS = new Set<string>(["hair", "hats", "glasses", "facial"]);
 
 const TABS: { key: LookSlot | "colors"; label: string; emoji: string }[] = [
   { key: "hair", label: "Saç", emoji: "💇" },
@@ -38,6 +42,10 @@ export interface WardrobeHooks {
   cancel(): void;
   /** Açılınca kamerayı karakterin önüne al. */
   opened(): void;
+  /** Açılıp kapanınca: dünya girişi (WASD, fare) kapanır/açılır. */
+  modal(open: boolean): void;
+  /** Dünyanın indirdiği chibi paketi (henüz inmediyse null). */
+  pack(): ChibiPack | null;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent?: HTMLElement): HTMLElementTagNameMap[K] {
@@ -48,7 +56,10 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent?:
 }
 
 export class Wardrobe {
+  private backdrop: HTMLDivElement;
   private panel: HTMLDivElement;
+  private preview: WardrobePreview;
+  private abort = new AbortController();
   private body: HTMLDivElement;
   private tabBar: HTMLDivElement;
   private saveBtn: HTMLButtonElement;
@@ -63,16 +74,20 @@ export class Wardrobe {
     private manifest: ChibiManifest,
     private hooks: WardrobeHooks,
   ) {
-    this.panel = el("div", "panel wardrobe", root);
-    const head = el("div", "wardrobe-head", this.panel);
+    // Ekranın çoğunu kaplayan pencere: solda büyük önizleme, sağda seçimler
+    this.backdrop = el("div", "wardrobe-backdrop", root);
+    this.panel = el("div", "panel wardrobe", this.backdrop);
+    this.preview = new WardrobePreview(this.panel, () => hooks.pack());
+    const side = el("div", "wardrobe-side", this.panel);
+    const head = el("div", "wardrobe-head", side);
     el("h3", "", head).textContent = "👕 GARDIROP";
     const close = el("button", "wardrobe-x", head);
     close.textContent = "✕";
     close.title = "Kapat (Esc)";
     close.addEventListener("click", () => this.close());
-    this.tabBar = el("div", "wardrobe-tabs", this.panel);
-    this.body = el("div", "wardrobe-body", this.panel);
-    const foot = el("div", "wardrobe-foot", this.panel);
+    this.tabBar = el("div", "wardrobe-tabs", side);
+    this.body = el("div", "wardrobe-body", side);
+    const foot = el("div", "wardrobe-foot", side);
     const cancel = el("button", "wardrobe-cancel", foot);
     cancel.textContent = "Vazgeç";
     cancel.addEventListener("click", () => this.close());
@@ -86,11 +101,27 @@ export class Wardrobe {
       this.hide();
     });
 
+    // Pencerenin dışına tıklamak kapatır (sürükleme dışarıda bitince değil)
+    let downOutside = false;
+    this.backdrop.addEventListener("pointerdown", (e) => (downOutside = e.target === this.backdrop));
+    this.backdrop.addEventListener("click", (e) => {
+      if (downOutside && e.target === this.backdrop) this.close();
+    });
+
+    const signal = this.abort.signal;
     addEventListener("keydown", (e) => {
       if (e.repeat || e.target instanceof HTMLInputElement) return;
       // Açma tuşu Input'ta (ayarlanabilir); burada yalnızca Esc
       if (e.key === "Escape" && this.isOpen) this.close();
-    });
+    }, { signal });
+  }
+
+  /** Mod değişince: önizlemenin WebGL bağlamı ve dinleyiciler bırakılır. */
+  dispose(): void {
+    if (this.isOpen) this.hide();
+    this.abort.abort();
+    this.preview.dispose();
+    this.backdrop.remove();
   }
 
   toggle(): void {
@@ -98,15 +129,27 @@ export class Wardrobe {
     else this.open();
   }
 
-  open(): void {
+  /** `tab` verilirse o sekmeyle açılır (hair, tops, colors…). */
+  open(tab?: string): void {
+    const t = TABS.find((x) => x.key === tab);
+    if (t) this.tab = t.key;
     this.isOpen = true;
     this.info = null;
-    this.panel.classList.add("show");
+    this.backdrop.classList.add("show");
+    this.hooks.modal(true);
+    this.preview.setLook(null);
+    this.preview.setFocus(this.focusOf(this.tab));
+    this.preview.start();
     this.body.replaceChildren(Object.assign(el("div", "wardrobe-msg"), { textContent: "Yükleniyor…" }));
     this.tabBar.replaceChildren();
     this.saveBtn.disabled = true;
     this.hooks.request();
     this.hooks.opened();
+  }
+
+  /** Bağlantı (yeniden) kurulunca: açıkken liste gelmediyse yeniden iste. */
+  retry(): void {
+    if (this.isOpen && !this.info) this.hooks.request();
   }
 
   /** Kaydetmeden kapat: önizleme geri alınır. */
@@ -119,7 +162,13 @@ export class Wardrobe {
 
   private hide(): void {
     this.isOpen = false;
-    this.panel.classList.remove("show");
+    this.backdrop.classList.remove("show");
+    this.preview.stop();
+    this.hooks.modal(false);
+  }
+
+  private focusOf(tab: LookSlot | "colors"): PreviewFocus {
+    return HEAD_TABS.has(tab) ? "head" : "body";
   }
 
   onInfo(w: WardrobeInfo | { error: string }): void {
@@ -131,6 +180,7 @@ export class Wardrobe {
     this.info = w;
     this.saveBtn.disabled = false;
     this.look = { ...w.outfit, colors: { ...w.outfit.colors } };
+    this.preview.setLook(this.look);
     this.renderTabs();
     this.renderBody();
   }
@@ -139,6 +189,7 @@ export class Wardrobe {
     this.look = next;
     this.dirty = true;
     this.hooks.preview(next);
+    this.preview.setLook(next);
     this.renderBody();
   }
 
@@ -149,6 +200,7 @@ export class Wardrobe {
         b.textContent = `${t.emoji} ${t.label}`;
         b.addEventListener("click", () => {
           this.tab = t.key;
+          this.preview.setFocus(this.focusOf(t.key));
           this.renderTabs();
           this.renderBody();
         });
