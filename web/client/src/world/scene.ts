@@ -7,7 +7,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { WORLD_RADIUS } from "../../../shared/constants";
 import type { Weather } from "../../../shared/protocol";
 import { KAHVEHANE, PITCH } from "../../../shared/zones";
-import { HOOD_BOX } from "../../../shared/build";
+import { HOOD_BOX, HOOD, HOOD_GAP, PLOT_SIZE } from "../../../shared/build";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
@@ -160,7 +160,7 @@ function screenTexture(): THREE.CanvasTexture {
 }
 
 /** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
-const DIRECTIONS = ["↑ SİNEMA · DJ", "SAKURA BAHÇESİ ↗", "← ZİNDAN", "↙ MAHALLE (İNŞA)", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "↙ KAHVEHANE", "↓ FUTBOL SAHASI", "GÖLET ↘", "↖ TANK"];
+const DIRECTIONS = ["↑ SİNEMA · DJ", "SAKURA BAHÇESİ ↗", "← ZİNDAN", "← MAHALLE (İNŞA)", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "↙ KAHVEHANE", "↓ FUTBOL SAHASI", "GÖLET ↘", "↖ TANK"];
 const SIGN_DUNGEON = 0;
 const SIGN_GROVE = 1;
 const SIGN_KAHVE = 2;
@@ -244,7 +244,10 @@ function groundColor(x: number, z: number, out: THREE.Color): THREE.Color {
 function heightAt(x: number, z: number): number {
   const r = Math.hypot(x, z);
   if (r <= WORLD_RADIUS + 4) return 0;
-  return Math.min(6, (r - WORLD_RADIUS - 4) * 0.18) + Math.sin(x * 0.3) * Math.cos(z * 0.25) * 0.6 * Math.min(1, (r - WORLD_RADIUS - 4) / 4);
+  const h = Math.min(6, (r - WORLD_RADIUS - 4) * 0.18) + Math.sin(x * 0.3) * Math.cos(z * 0.25) * 0.6 * Math.min(1, (r - WORLD_RADIUS - 4) / 4);
+  // Mahalle düzlüğü: kutunun içi düz, kenarından tepelere yumuşak geçiş
+  const dx = Math.max(HOOD_BOX.minX - x, 0, x - HOOD_BOX.maxX), dz = Math.max(HOOD_BOX.minZ - z, 0, z - HOOD_BOX.maxZ);
+  return h * Math.min(1, Math.hypot(dx, dz) / 8);
 }
 
 function ground(b: Builder): void {
@@ -401,7 +404,10 @@ function nature(b: Builder): void {
   for (let i = 0; i < 170; i++) {
     const a = (i / 170) * Math.PI * 2 + b.rand() * 0.03;
     const r = WORLD_RADIUS + 2 + b.rand() * (i % 3 ? 8 : 18);
-    tree(Math.sin(a) * r, Math.cos(a) * r, 0.9 + b.rand() * 1.0, false);
+    const x = Math.sin(a) * r, z = Math.cos(a) * r;
+    if (!b.isClear(x, z)) continue; // mahalleye açılan boşluk
+    // Mahallenin çevresine ağaç: sınırı orada da belli olsun
+    tree(x, z, 0.9 + b.rand() * 1.0, false);
   }
   for (const [cx, cz, cr] of FOREST_CLUSTERS) {
     const n = Math.round(cr * 2.1);
@@ -484,7 +490,12 @@ function paths(b: Builder): void {
     path(ux * 10.9, uz * 10.9, tx - ux * endPad, tz - uz * endPad);
   };
   path(-9.7, 5, -48.6, 5); // zindan
-  path(-26, 5.6, (HOOD_BOX.maxX - 1), HOOD_BOX.minZ + 1); // zindan yolundan mahalleye
+  // Zindanın arkasından mahalleye; mahallede iki sokak boyunca lambalı yol
+  const streetZ = [0, 1].map((r) => HOOD.z0 + (r + 1) * PLOT_SIZE + r * HOOD_GAP + HOOD_GAP / 2);
+  path(-66, 5, -90, streetZ[1] - 0.5);
+  for (const z of streetZ) path(-91, z, HOOD.x0 + 1, z);
+  const streetX = [0, 1].map((c) => HOOD.x0 + (c + 1) * PLOT_SIZE + c * HOOD_GAP + HOOD_GAP / 2);
+  for (const x of streetX) path(x, HOOD_BOX.minZ + 2, x, HOOD_BOX.maxZ - 2);
   path(9.7, 5, GROVE.x - 7, GROVE.z); // mangal ormanı
   radial(POND.x, POND.z, 9.2);
   radial(FAME.x, FAME.z, 3.6);
@@ -679,9 +690,16 @@ function mountains(b: Builder): THREE.Mesh {
   };
   for (let i = 0; i < 52; i++) {
     const a = (i / 52) * Math.PI * 2 + b.rand() * 0.1;
-    const dist = 178 + b.rand() * 32;
+    let dist = 178 + b.rand() * 32;
     const h = 30 + b.rand() * 48;
     const rad = 16 + b.rand() * 18;
+    // Mahalle düzlüğüne taşmasın: üstüne biniyorsa geriye it
+    const overlapsHood = (d: number) => {
+      const px = Math.sin(a) * d, pz = Math.cos(a) * d;
+      const dx = Math.max(HOOD_BOX.minX - px, 0, px - HOOD_BOX.maxX), dz = Math.max(HOOD_BOX.minZ - pz, 0, pz - HOOD_BOX.maxZ);
+      return Math.hypot(dx, dz) < rad * 1.6 + 10;
+    };
+    while (overlapsHood(dist) && dist < 260) dist += 4;
     const x = Math.sin(a) * dist, z = Math.cos(a) * dist;
     peak(x, z, h, rad, -2);
     // Yan zirveler: aynı sırtta, alçak

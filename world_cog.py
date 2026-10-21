@@ -81,7 +81,7 @@ def can_control_world(member) -> bool:
 
 # Mahalle: arsa sayısı üst sınırı ve arsa verisinin en büyük boyu (dünya sunucusunun kısa biçimi)
 BUILD_MAX_PLOTS = 100
-BUILD_MAX_DATA = 20000
+BUILD_MAX_DATA = 80000
 
 PUSH_SECONDS = 20
 BOARD_MINUTES = 1

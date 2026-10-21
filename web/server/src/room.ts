@@ -22,6 +22,7 @@ import {
   writeSnapshotHeader,
 } from "../../shared/protocol";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
+import { clampToWorld } from "../../shared/build";
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
 import type { WorldGames } from "./games/world";
@@ -179,14 +180,11 @@ export class Room {
     }
     let x = p.state.x + dx;
     let z = p.state.z + dz;
-    const r = Math.hypot(x, z);
-    const limit = WORLD_RADIUS + 1;
-    if (r > limit) {
-      x *= limit / r;
-      z *= limit / r;
-    }
-    p.state.x = x;
-    p.state.z = z;
+    // Dünya: daire ya da batıdaki mahalle kutusu
+    const pos = { x, z };
+    clampToWorld(pos, WORLD_RADIUS + 1, -1);
+    p.state.x = pos.x;
+    p.state.z = pos.z;
     if (p.info.jailed) clampToJail(p.state);
     this.battle?.clamp(p.state);
     p.state.rot = s.rot;

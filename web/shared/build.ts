@@ -1,13 +1,17 @@
 // İnşa: "GAP Mahallesi"nde her üyeye bir arsa. Arsada 1 m'lik ızgaraya blok konur (duvar, döşeme, çatı,
 // cam, kapı, lamba…). Sunucu ve istemci aynı tanımları kullanır; arsalar bot veritabanında saklanır.
+// Mahalle dünyanın batı sınırının dışında, ona bitişik düzlükte: dünya = daire ∪ mahalle kutusu.
+import { WORLD_RADIUS } from "./constants";
 
 /** Arsa kenarı (blok) ve en yüksek kat. */
-export const PLOT_SIZE = 9;
-export const PLOT_H = 10;
-export const PLOT_MAX_BLOCKS = 700;
-const GAP = 2.5;
-/** Mahallenin kuzeydoğu köşesi (dünya, en küçük x/z): zindanın kuzeyi. */
-export const HOOD = { x0: -80, z0: 18, cols: 3, rows: 3 };
+export const PLOT_SIZE = 18;
+export const PLOT_H = 16;
+export const PLOT_MAX_BLOCKS = 3000;
+/** Arsalar arası sokak genişliği. */
+export const HOOD_GAP = 3;
+/** Mahallenin en küçük köşesi (dünya x/z): zindanın batısında, sınırın ötesinde. */
+export const HOOD = { x0: -152, z0: -30, cols: 3, rows: 3 };
+const GAP = HOOD_GAP;
 
 export interface Plot {
   id: number;
@@ -25,11 +29,36 @@ for (let r = 0; r < HOOD.rows; r++) {
 
 /** Mahallenin kapladığı kutu (ağaç/kaya dikilmez). */
 export const HOOD_BOX = {
-  minX: HOOD.x0 - 1,
-  maxX: HOOD.x0 + HOOD.cols * PLOT_SIZE + (HOOD.cols - 1) * GAP + 1,
-  minZ: HOOD.z0 - 1,
-  maxZ: HOOD.z0 + HOOD.rows * PLOT_SIZE + (HOOD.rows - 1) * GAP + 1,
+  minX: HOOD.x0 - 2,
+  // Dünya dairesine kadar uzanır: aradaki boşluktan yürünerek girilir
+  maxX: -88,
+  minZ: HOOD.z0 - 2,
+  maxZ: HOOD.z0 + HOOD.rows * PLOT_SIZE + (HOOD.rows - 1) * GAP + 2,
 };
+
+/** Mahalle kutusunun içinde mi (kenardan `margin` içeride). */
+export function inHood(x: number, z: number, margin = 0): boolean {
+  return x >= HOOD_BOX.minX + margin && x <= HOOD_BOX.maxX - margin && z >= HOOD_BOX.minZ + margin && z <= HOOD_BOX.maxZ - margin;
+}
+
+/**
+ * Dünyanın içinde tut: daire (yarıçap `limit`) ya da mahalle kutusu (kenardan `margin`). İkisinin de
+ * dışındaysa en yakın izinli noktaya. Yerinde değiştirir.
+ */
+export function clampToWorld(p: { x: number; z: number }, limit = WORLD_RADIUS, margin = 0): void {
+  const r = Math.hypot(p.x, p.z);
+  if (r <= limit || inHood(p.x, p.z, margin)) return;
+  const cx = (p.x * limit) / r, cz = (p.z * limit) / r;
+  const bx = Math.max(HOOD_BOX.minX + margin, Math.min(HOOD_BOX.maxX - margin, p.x));
+  const bz = Math.max(HOOD_BOX.minZ + margin, Math.min(HOOD_BOX.maxZ - margin, p.z));
+  if (Math.hypot(p.x - bx, p.z - bz) < Math.hypot(p.x - cx, p.z - cz)) {
+    p.x = bx;
+    p.z = bz;
+  } else {
+    p.x = cx;
+    p.z = cz;
+  }
+}
 
 export type BlockKind = "cube" | "slab" | "wedge" | "glass" | "door" | "lamp" | "plant" | "fence";
 

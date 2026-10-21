@@ -1,6 +1,7 @@
 // Fizik motoru yerine: düz zeminde kapsül (yarıçaplı doğru parçası) çarpışmaları.
 // Daire = uzunluğu sıfır olan parça. Birkaç yüz engel için kare başına ihmal edilebilir maliyet.
 // Üst yüksekliği (`top`) olan engellerin üstüne çıkılır: üstündeyken itmez, zemin olur.
+import { clampToWorld } from "../../../shared/build";
 import { STEP_UP, WORLD_RADIUS } from "../../../shared/constants";
 
 export interface Vec2 {
@@ -54,12 +55,8 @@ export class Colliders {
       }
     }
     this.extra?.resolve(p, radius, y);
-    const r = Math.hypot(p.x, p.z);
-    const limit = WORLD_RADIUS - radius;
-    if (r > limit) {
-      p.x *= limit / r;
-      p.z *= limit / r;
-    }
+    // Dünya: daire ya da batıdaki mahalle kutusu
+    clampToWorld(p, WORLD_RADIUS - radius, radius);
   }
 
   /** Ayakları `y`de olan oyuncunun altındaki en yüksek zemin (yer 0). `y` Infinity: konuma göre en üstteki. */

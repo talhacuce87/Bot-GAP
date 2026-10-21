@@ -79,8 +79,10 @@ function geometryFor(kind: BlockKind): THREE.BufferGeometry {
 }
 
 const KINDS: BlockKind[] = ["cube", "slab", "wedge", "glass", "door", "lamp", "plant", "fence"];
-/** Tür başına en çok örnek (bütün arsalar). */
-const CAP = PLOTS.length * PLOT_MAX_BLOCKS;
+/** Tür başına en çok örnek (bütün arsalar): duvar blokları çok, süs blokları az. */
+const CAP: Record<BlockKind, number> = {
+  cube: PLOTS.length * PLOT_MAX_BLOCKS, slab: 8000, wedge: 8000, glass: 6000, door: 1000, lamp: 2000, plant: 2000, fence: 4000,
+};
 
 export interface BuildHit {
   plot: number;
@@ -117,7 +119,7 @@ export class BuildWorld {
       glass, lamp: this.lampMat, plant: colored,
     };
     for (const kind of KINDS) {
-      const m = new THREE.InstancedMesh(geometryFor(kind), mats[kind], CAP);
+      const m = new THREE.InstancedMesh(geometryFor(kind), mats[kind], CAP[kind]);
       m.count = 0;
       m.frustumCulled = false;
       m.castShadow = kind !== "glass" && kind !== "lamp";
@@ -227,6 +229,7 @@ export class BuildWorld {
         const def = blockDef(bl.b);
         if (!def) continue;
         const mesh = this.meshes[def.kind];
+        if (counts[def.kind] >= CAP[def.kind]) continue;
         const n = counts[def.kind]++;
         pos.set(base.x0 + bl.i + 0.5, bl.j, base.z0 + bl.k + 0.5);
         q.setFromAxisAngle(up, (bl.r * Math.PI) / 2);
