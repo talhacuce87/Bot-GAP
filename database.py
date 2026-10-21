@@ -207,6 +207,12 @@ def _today() -> datetime.date:
     return datetime.datetime.now(STREAK_TZ).date()
 
 
+def next_day_start() -> float:
+    """Yarının (Türkiye saatiyle) başladığı an, epoch saniye: günlük hakların yenilendiği an."""
+    tomorrow = _today() + datetime.timedelta(days=1)
+    return datetime.datetime.combine(tomorrow, datetime.time(), STREAK_TZ).timestamp()
+
+
 def _normalize_pair(user_a: int, user_b: int) -> tuple[int, int]:
     if user_a == user_b:
         raise ValueError("Aynı kullanıcı çifti kaydedilemez.")
@@ -677,6 +683,15 @@ async def record_fish_catch(
             await db.rollback()
             raise
 
+
+
+async def fish_caught_today(guild_id: int, user_id: int) -> bool:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT 1 FROM fishing WHERE guild_id = ? AND user_id = ? AND last_date = ?",
+            (guild_id, user_id, _today().isoformat()),
+        ) as cur:
+            return await cur.fetchone() is not None
 
 
 # ---------------------------------------------------------------------------

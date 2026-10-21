@@ -180,9 +180,17 @@ async def test_fish_endpoint_checks_secret_membership_and_daily_limit(db, monkey
     assert (await call({"guild": "1"}))[0] == 400
     assert (await call({"guild": "1", "user": "6"}))[1] == {"ok": False, "reason": "not_member"}
 
-    status, first = await call({"guild": "1", "user": "5"})
-    assert status == 200 and first["ok"] and first["hours"] >= 1
-    assert (await call({"guild": "1", "user": "5"}))[1] == {"ok": False, "reason": "already"}
+    async def status(body):
+        r = await cog.handle_fish_status(req(body))
+        return json.loads(r.text)
+
+    assert await status({"guild": "1", "user": "5"}) == {"next": 0}
+    status_code, first = await call({"guild": "1", "user": "5"})
+    assert status_code == 200 and first["ok"] and first["hours"] >= 1
+    tomorrow = database.next_day_start()
+    assert first["next"] == tomorrow and tomorrow - time.time() <= 86400
+    assert (await call({"guild": "1", "user": "5"}))[1] == {"ok": False, "reason": "already", "next": tomorrow}
+    assert await status({"guild": "1", "user": "5"}) == {"next": tomorrow}
 
     # Tutulan balık olay kaydına düşer (yönetici boost'undan ayırt etmek için)
     catches = [r for r in activitylog._buffer if r[3] == "fish_catch"]

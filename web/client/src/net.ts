@@ -26,6 +26,7 @@ export class Net {
   onEmote: (sid: number, e: number) => void = () => {};
   onAct: (sid: number, a: Act) => void = () => {};
   onFish: (sid: number, name: string, c: FishCatch) => void = () => {};
+  onFishWait: (at: number) => void = () => {};
   onTank: (s: { driver: number; x: number; z: number; h: number; tr: number; el: number }) => void = () => {};
   onTaim: (h: number, tr: number, el: number) => void = () => {};
   onShell: (sid: number, shot: Shot, hits: { sid: number; vx: number; vz: number }[]) => void = () => {};
@@ -175,6 +176,9 @@ export class Net {
         break;
       case "fish":
         this.onFish(ev.sid, ev.name, ev.catch);
+        break;
+      case "fishwait":
+        this.onFishWait(ev.at);
         break;
       case "look":
         if (ev.sid === this.you) this.onMyLook(ev.look);
