@@ -28,11 +28,19 @@ export class ScreenVideo {
     fog: false,
   });
   private active = false;
+  /** Kamera perdenin dibinde: köşelerden biri kameranın arkasında (CSS 3B bunu çizemez). */
+  private tooClose = false;
+  /** Yakından bakınca delik yerine: kapalı ekran gibi koyu perde. */
+  private closeMaterial = new THREE.MeshBasicMaterial({ color: "#0b0d12", fog: false });
+  private corners: THREE.Vector3[];
+  private v = new THREE.Vector3();
 
   constructor(
     private screen: THREE.Mesh,
     screenWidth: number,
   ) {
+    const hw = screenWidth / 2, hh = (screenWidth * PX_H) / PX_W / 2;
+    this.corners = [[-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh]].map(([x, y]) => new THREE.Vector3(x, y, 0));
     this.normalMaterial = screen.material;
     this.frame = document.createElement("div");
     this.frame.className = "screen-host";
@@ -87,8 +95,13 @@ export class ScreenVideo {
     const on = this.playerActive || !!this.overlay;
     if (on === this.active) return;
     this.active = on;
-    this.screen.material = on ? this.holeMaterial : this.normalMaterial;
-    this.css.domElement.style.display = on ? "" : "none";
+    this.applyMaterial();
+  }
+
+  private applyMaterial(): void {
+    const hole = this.active && !this.tooClose;
+    this.screen.material = hole ? this.holeMaterial : this.active ? this.closeMaterial : this.normalMaterial;
+    this.css.domElement.style.display = hole ? "" : "none";
   }
 
   /** Etkileşim modu: canvas tıklamaları geçirir, oynatıcıya doğrudan tıklanabilir (Kick sesi, çerez onayı vb.). */
@@ -116,6 +129,15 @@ export class ScreenVideo {
   }
 
   render(camera: THREE.Camera): void {
-    if (this.active) this.css.render(this.cssScene, camera);
+    if (!this.active) return;
+    // Perdenin bir köşesi kameranın arkasına (ya da dibine) düştüyse CSS 3B katmanı bozulur: delik açık kalır,
+    // arkasında boş sayfa görünür. O an deliği kapat, perdeyi koyu çiz; uzaklaşınca video geri gelir.
+    camera.updateMatrixWorld();
+    const close = this.corners.some((c) => this.v.copy(c).applyMatrix4(this.screen.matrixWorld).applyMatrix4(camera.matrixWorldInverse).z > -0.6);
+    if (close !== this.tooClose) {
+      this.tooClose = close;
+      this.applyMaterial();
+    }
+    if (!close) this.css.render(this.cssScene, camera);
   }
 }
