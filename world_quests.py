@@ -1,7 +1,8 @@
 """
 world_quests.py — GAP Dünyası günlük görevleri ve dünya sayaçları.
 
-Her üyeye her gün (Türkiye saati) havuzdan 3 görev düşer; seçim üye ve güne göre sabittir,
+Her üyeye her gün (Türkiye saati) havuzdan 3 görev düşer (görev başına 2–15 XP: 3 görev ≈ seste
+yarım-bir saat; ses 2 dakikada 1 XP); seçim üye ve güne göre sabittir,
 gün içinde değişmez. Dünya sunucusu olayları (`/internal/world_event`) bildirir: görev ilerler,
 tamamlanınca XP verilir. Bazı olaylar profil kartındaki sayaçları da artırır (gol, galibiyet…);
 tank vuruşu ve galibiyetler aylık sezon anahtarına da yazılır.
@@ -28,21 +29,21 @@ class Quest:
 
 
 QUESTS: tuple[Quest, ...] = (
-    Quest("grill", "Mangalda 3 kez şiş çevir", "grill", 3, 60),
-    Quest("tea", "Kahvehanede 2 çay söyle", "tea", 2, 40),
-    Quest("fish", "Gölde balık tut", "fish", 1, 50),
-    Quest("emote", "5 kez emote yap", "emote", 5, 30),
-    Quest("goal", "Futbolda gol at", "goal", 1, 80),
-    Quest("game_play", "Kahvehanede bir oyun oyna", "game_play", 1, 60),
-    Quest("game_win", "Kahvehanede bir oyun kazan", "game_win", 1, 120),
-    Quest("tank_hit", "Tankla 2 isabet", "tank_hit", 2, 70),
-    Quest("photo", "Fotoğraf çekip Discord'a gönder", "photo", 1, 40),
-    Quest("five", "Birine beşlik çak", "five", 1, 40),
-    Quest("hug", "Birine sarıl", "hug", 1, 40),
-    Quest("sakura", "Sakura Bahçesi'ni ziyaret et", "sakura", 1, 20),
-    Quest("tag_play", "Ebelemece ya da saklambaç oyna", "tag_play", 1, 60),
-    Quest("ride", "Bisiklet ya da kaykayla 300 m git", "ride", 300, 40),
-    Quest("stage", "Sahneye çık ya da DJ ol", "stage", 1, 40),
+    Quest("grill", "Mangalda 3 kez şiş çevir", "grill", 3, 6),
+    Quest("tea", "Kahvehanede 2 çay söyle", "tea", 2, 4),
+    Quest("fish", "Gölde balık tut", "fish", 1, 5),
+    Quest("emote", "5 kez emote yap", "emote", 5, 3),
+    Quest("goal", "Futbolda gol at", "goal", 1, 10),
+    Quest("game_play", "Kahvehanede bir oyun oyna", "game_play", 1, 6),
+    Quest("game_win", "Kahvehanede bir oyun kazan", "game_win", 1, 15),
+    Quest("tank_hit", "Tankla 2 isabet", "tank_hit", 2, 8),
+    Quest("photo", "Fotoğraf çekip Discord'a gönder", "photo", 1, 4),
+    Quest("five", "Birine beşlik çak", "five", 1, 3),
+    Quest("hug", "Birine sarıl", "hug", 1, 3),
+    Quest("sakura", "Sakura Bahçesi'ni ziyaret et", "sakura", 1, 2),
+    Quest("tag_play", "Ebelemece ya da saklambaç oyna", "tag_play", 1, 8),
+    Quest("ride", "Bisiklet ya da kaykayla 300 m git", "ride", 300, 5),
+    Quest("stage", "Sahneye çık ya da DJ ol", "stage", 1, 5),
 )
 BY_KEY = {q.key: q for q in QUESTS}
 EVENTS = {q.event for q in QUESTS}
