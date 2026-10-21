@@ -131,6 +131,15 @@ export const BOAT_R = LAKE.r - 1.1;
 export const SAKURA_SPOT = { x: 56, z: -36, r: 11 };
 export const SAKURA_FROM = { x: 10, z: -12 };
 
+/**
+ * Oyuncak pist binası: meydandan kahvehaneye giden yolun batısında, kapısı (doğu) yola bakar. İçinde alçak
+ * bir platformda oyuncak pist (shared/race.ts birimleri RACE_SCALE ile küçülür).
+ */
+export const RACE_HOUSE = { x: -116, z: 36, hw: 7.6, hd: 6.2, h: 4.6, door: 1.6 };
+export const RACE_SCALE = 0.1;
+/** Pist platformunun üstü. */
+export const RACE_TRACK_Y = 0.3;
+
 /** LAGER'in mangalı: güneybatıda, dağların eteğindeki ormanda. */
 export const GROVE = { x: -112, z: 118 };
 /** Şöhret Kürsüsü: meydanın doğusu, yüzü meydana dönük. */
