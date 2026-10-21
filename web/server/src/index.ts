@@ -745,7 +745,12 @@ async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser,
             queueText: () => room.games!.stage.listText(),
             skip: () => room.games!.stage.djCommand(sid, "skip"),
             sky: room.games.sky,
-            match: { start: (m) => room.games!.football.startMatch(m), end: () => room.games!.football.endMatch() },
+            match: {
+              start: (m) => room.games!.stadium.startMatch(m),
+              end: () => room.games!.stadium.endMatch(),
+              join: () => room.games!.stadium.joinMatch(sid),
+              leave: () => room.games!.stadium.leaveMatch(sid),
+            },
           }
         : undefined,
     },

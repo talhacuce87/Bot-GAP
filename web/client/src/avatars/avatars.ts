@@ -34,6 +34,10 @@ export interface AvatarView {
   lift?: number;
   /** İkili etkileşim (beşlik/sarılma): başladığı an (sn) ve dönülecek yön. */
   pair?: { kind: "five" | "hug"; at: number; face: number } | null;
+  /** Kayarak müdahalenin başladığı an (sn): gövde geriye yatar, ayaklar önde. */
+  slide?: number | null;
+  /** Çalımın (roulette) başladığı an (sn) ve yanı: oyuncu topun döndüğü yana bir tur döner. */
+  trick?: { at: number; side: -1 | 1 } | null;
   /** Karaoke: elde mikrofon. */
   mic?: boolean;
   /** İsim etiketi gizli (saklambaçta saklananlar). */
@@ -44,6 +48,12 @@ export interface AvatarView {
 
 /** İkili etkileşim animasyonunun süresi (sn). */
 export const PAIR_ANIM = 1.8;
+
+/** Kayarak müdahale pozunun süresi (sn). */
+export const SLIDE_ANIM = 0.6;
+
+/** Çalım dönüşünün süresi (sn); top da bu sürede yanından yarım daire çizer. */
+export const TRICK_ANIM = 0.55;
 
 /** Emote gövde animasyonlarının süresi (sn). */
 const EMOTE_ANIM = { wave: 1.2, hop: 0.45, dance: 2.6 } as const;
@@ -256,10 +266,19 @@ export class AvatarRenderer {
     // Belirip kaybolurken alfa yerine ölçek: gövde opak kalır, sıralama sorunu olmaz.
     const s = v.alpha < 1 ? 0.3 + 0.7 * v.alpha : 1;
 
+    // Çalım: topun döndüğü yana bir tur (yumuşak başlayıp biter)
+    const tt = v.trick ? time - v.trick.at : -1;
+    if (v.trick && tt >= 0 && tt < TRICK_ANIM) {
+      const u = tt / TRICK_ANIM;
+      spin = -v.trick.side * Math.PI * 2 * (u * u * (3 - 2 * u));
+    }
     this.quat.setFromAxisAngle(this.up, rot + spin);
     if (sway !== 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, sway * 0.5));
     if (lean !== 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, lean));
     if (hug > 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, 0.18 * hug));
+    // Kayarak müdahale: ayaklar önde, gövde geriye yatar
+    const st = v.slide != null ? time - v.slide : -1;
+    if (st >= 0 && st < SLIDE_ANIM) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, -1.15 * Math.min(1, st * 12, (SLIDE_ANIM - st) * 5)));
     // Kaykayda yana duruş ve hafif yatış
     if (vehicle === 2) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, moving ? Math.sin(time * 2.2 + v.phase) * 0.08 : 0));
     this.pos.set(v.x, y, v.z);

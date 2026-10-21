@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CTF_TARGET, flagHome } from "../shared/arena";
 import type { ServerEvent } from "../shared/protocol";
-import { PITCH, TABLES } from "../shared/zones";
+import { inStadium, PITCH, STADIUM_PITCH, TABLES } from "../shared/zones";
 import type { SessionUser } from "../server/src/auth";
 import { WorldGames } from "../server/src/games/world";
 import { type Conn, Room } from "../server/src/room";
@@ -86,7 +86,9 @@ describe("futbol", () => {
 
   it("direğe çarpan top seker ve gol olmaz", () => {
     const { games, a, sa, sb, place } = world();
-    games.football.random = () => 0.5; // sapma yok, kaleci kurtaramaz
+    // İlk rastgele vuruştaki sapma (0.5: yok), sonrakiler kaleci kararı (0.999: okuyamaz)
+    let rolls = 0;
+    games.football.random = () => (rolls++ ? 0.999 : 0.5);
     // Ortadan doğu kalesinin direğine (z = +goalHalf) doğru sert şut
     place(sa, PITCH.x - 0.6, PITCH.z);
     place(sb, PITCH.x - 20, PITCH.z);
@@ -248,6 +250,186 @@ describe("futbol", () => {
     const before = a.text.length;
     games.football.kick(sa, 0, 1, 1000);
     expect(a.text.length).toBe(before);
+  });
+});
+
+describe("stadyum", () => {
+  const S = STADIUM_PITCH;
+  const inArena = (room: Room, sid: number) => inStadium(room.players.get(sid)!.state.x, room.players.get(sid)!.state.z);
+
+  it("!maç salondakileri stadyuma ışınlar (yarıya göre takım), bitince salona döndürür", () => {
+    const { games, room, a, sa, sb, place } = world();
+    place(sa, PITCH.x - 5, PITCH.z);
+    place(sb, PITCH.x + 5, PITCH.z);
+    expect(games.stadium.startMatch(1, 1000)).toBeNull();
+    expect(a.last("match")?.match?.teams).toEqual([[sa], [sb]]);
+    expect(inArena(room, sa) && inArena(room, sb)).toBe(true);
+    // Kırmızı batı yarısında, mavi doğu yarısında
+    expect(room.players.get(sa)!.state.x).toBeLessThan(S.x);
+    expect(room.players.get(sb)!.state.x).toBeGreaterThan(S.x);
+    expect(a.text.filter((e) => e.t === "tp").map((e) => (e as { sid: number }).sid).sort()).toEqual([sa, sb].sort());
+    games.stadium.endMatch(2000);
+    expect(a.last("match")?.match).toBeNull();
+    expect(inArena(room, sa) || inArena(room, sb)).toBe(false);
+    expect(Math.abs(room.players.get(sa)!.state.x - PITCH.x)).toBeLessThan(PITCH.hx);
+  });
+
+  it("sonradan gelen !maç katıl ile az kişili takıma girer; !maç ayrıl ile salona döner", () => {
+    const { games, room, sa, sb, place } = world();
+    const c = room.join(member("c"), new FakeConn(), 0);
+    place(sa, PITCH.x - 5, PITCH.z);
+    place(sb, PITCH.x + 5, PITCH.z);
+    place(c, PITCH.x - 30, PITCH.z + 30);
+    games.stadium.startMatch(5, 1000);
+    expect(inArena(room, c)).toBe(false);
+    expect(games.stadium.joinMatch(c, 1100)).toBeNull();
+    expect(games.stadium.teamOf(c)).not.toBeNull();
+    expect(inArena(room, c)).toBe(true);
+    expect(games.stadium.leaveMatch(c, 1200)).toBe(true);
+    expect(games.stadium.teamOf(c)).toBeNull();
+    expect(inArena(room, c)).toBe(false);
+  });
+
+  it("vuruş bulunduğun sahaya gider; stadyumdaki top salondakini etkilemez", () => {
+    const { games, a, sa, sb, place } = world();
+    place(sb, S.x - 10, S.z + 6);
+    place(sa, S.x - 0.6, S.z);
+    games.handle(sa, { t: "kick", dir: Math.PI / 2, power: 0.3, kind: "pass" }, 1000);
+    const ball = a.last("ball")!;
+    expect(ball.f).toBe(1);
+    expect(ball.vx).toBeGreaterThan(5);
+    expect(games.football.state(1000).vx).toBe(0);
+  });
+
+  it("stadyumda yürüyen stadyumun içinde kalır", () => {
+    const { room, sa, place } = world();
+    place(sa, S.x, S.z);
+    const s = { x: S.x + 500, z: S.z, rot: 0, flags: 0 };
+    for (let i = 1; i <= 80; i++) room.applyState(sa, { ...s, x: S.x + i }, 1000 + i * 100);
+    expect(room.players.get(sa)!.state.x).toBeLessThanOrEqual(S.x + S.hx + 3);
+  });
+
+  it("kayarak müdahale yalnızca ayak topa değerse olur: birkaç adım önden kayan topu almaz, arkadan neredeyse hiç", () => {
+    const { games, room, sa, sb, place } = world();
+    const turn = (sid: number, x: number, z: number, rot: number) => room.teleport(sid, x, z, rot, 0);
+    const F = games.stadium;
+    F.random = () => 0.2;
+    place(sa, S.x - 0.5, S.z);
+    F.tick(10_000);
+    expect(F.ownerSid).toBe(sa);
+    const ball = F.state(10_000);
+    // 3 m doğudan topa dönük kayar ama topa ulaşamaz: kayış biter, top sahibinde kalır
+    turn(sb, ball.x + 3, ball.z, -Math.PI / 2);
+    games.handle(sb, { t: "tackle", slide: true }, 10_100);
+    F.tick(10_400);
+    F.tick(10_900);
+    expect(F.ownerSid).toBe(sa);
+    // Arkadan (sahibi +z'ye bakıyor, kayan arkasından aynı yöne): ayak değse de kapamaz
+    turn(sb, S.x - 0.5, S.z - 2.5, 0);
+    games.handle(sb, { t: "tackle", slide: true }, 12_000);
+    turn(sb, S.x - 0.5, ball.z - 0.4, 0);
+    F.tick(12_200);
+    expect(F.ownerSid).toBe(sa);
+    // Yandan kayıp ayağı topun üstünden geçerse top sahibinden çıkar
+    turn(sb, ball.x + 3, ball.z, -Math.PI / 2);
+    games.handle(sb, { t: "tackle", slide: true }, 14_000);
+    turn(sb, ball.x + 0.2, ball.z, -Math.PI / 2);
+    F.tick(14_200);
+    expect(F.ownerSid).not.toBe(sa);
+  });
+
+  it("ayakta müdahale topa dönük ve yakından olur, top müdahale edene geçer; kaptıran hemen geri alamaz", () => {
+    const { games, room, sa, sb, place } = world();
+    const turn = (sid: number, x: number, z: number, rot: number) => room.teleport(sid, x, z, rot, 0);
+    const F = games.stadium;
+    F.random = () => 0;
+    place(sa, S.x - 0.5, S.z);
+    F.tick(10_000);
+    const ball = F.state(10_000);
+    // Sırtı topa dönük: olmaz
+    turn(sb, ball.x + 0.9, ball.z, Math.PI / 2);
+    games.handle(sb, { t: "tackle" }, 10_100);
+    expect(F.ownerSid).toBe(sa);
+    turn(sb, ball.x + 0.9, ball.z, -Math.PI / 2);
+    games.handle(sb, { t: "tackle" }, 11_200);
+    expect(F.ownerSid).toBe(sb);
+    // Kaptıran hemen müdahale edemez, gövdesiyle de geri alamaz
+    const b2 = F.state(11_200);
+    turn(sa, b2.x - 0.3, b2.z, Math.PI / 2);
+    games.handle(sa, { t: "tackle" }, 11_300);
+    for (let t = 11_350; t <= 12_000; t += 50) F.tick(t);
+    expect(F.ownerSid).toBe(sb);
+  });
+
+  it("çalım yapan o an müdahaleyle topu kaptırmaz; maçta takım arkadaşı müdahale edemez", () => {
+    const { games, room, sa, sb, place } = world();
+    const turn = (sid: number, x: number, z: number, rot: number) => room.teleport(sid, x, z, rot, 0);
+    games.stadium.random = () => 0;
+    place(sa, S.x - 0.5, S.z);
+    games.stadium.tick(10_000);
+    games.handle(sa, { t: "skill", side: -1 }, 10_050);
+    expect(games.stadium.state(10_050).owner).toBe(sa);
+    const ball = games.stadium.state(10_050);
+    turn(sb, ball.x + 0.9, ball.z, -Math.PI / 2);
+    games.handle(sb, { t: "tackle" }, 10_100);
+    expect(games.stadium.ownerSid).toBe(sa);
+    // Çalım bitince kaptırır
+    games.handle(sb, { t: "tackle" }, 11_200);
+    expect(games.stadium.ownerSid).not.toBe(sa);
+
+    // Maçta aynı takımdakiler
+    const c = room.join(member("c"), new FakeConn(), 0);
+    place(sa, PITCH.x - 5, PITCH.z);
+    place(c, PITCH.x - 6, PITCH.z + 2);
+    place(sb, PITCH.x + 5, PITCH.z);
+    games.stadium.startMatch(5, 13_000);
+    expect(games.stadium.teamOf(sa)).toBe(games.stadium.teamOf(c));
+    place(sa, S.x - 0.5, S.z);
+    games.stadium.tick(16_000);
+    expect(games.stadium.ownerSid).toBe(sa);
+    const b2 = games.stadium.state(16_000);
+    turn(c, b2.x + 0.9, b2.z, -Math.PI / 2);
+    games.handle(c, { t: "tackle" }, 16_100);
+    expect(games.stadium.ownerSid).toBe(sa);
+  });
+
+  it("rainbow topu arkadan başın üstünden öne aşırtır; power şut normal şuttan serttir", () => {
+    const { games, a, sa, place } = world();
+    const F = games.stadium;
+    place(sa, S.x - 0.5, S.z);
+    F.tick(10_000);
+    games.handle(sa, { t: "rainbow" }, 10_100);
+    const r = a.last("ball")!;
+    expect(r.ev).toBe("rainbow");
+    expect(F.ownerSid).toBe(0);
+    expect(r.vy).toBeGreaterThan(4);
+    expect(r.vz).toBeGreaterThan(3);
+    expect(r.z).toBeLessThan(S.z);
+
+    const speed = (kind: "shot" | "power", t: number) => {
+      F.random = () => 0.5;
+      F.endMatch(t);
+      place(sa, S.x - 0.5, S.z);
+      for (let i = 0; i < 40 && F.ownerSid !== sa; i++) F.tick(t + 100 + i * 100);
+      games.handle(sa, { t: "kick", dir: Math.PI / 2, power: 1, kind }, t + 5000);
+      const b = a.last("ball")!;
+      return Math.hypot(b.vx, b.vz);
+    };
+    expect(speed("power", 20_000)).toBeGreaterThan(speed("shot", 40_000) + 5);
+  });
+
+  it("B menüsü: maçta takım değiştiren o takımın yarısına geçer; dünyaya dön maçtan çıkarıp salona götürür", () => {
+    const { games, room, sa, sb, place } = world();
+    place(sa, PITCH.x - 5, PITCH.z);
+    place(sb, PITCH.x + 5, PITCH.z);
+    games.stadium.startMatch(5, 1000);
+    expect(games.stadium.teamOf(sa)).toBe(0);
+    games.handle(sa, { t: "fbteam", team: 1 }, 1100);
+    expect(games.stadium.teamOf(sa)).toBe(1);
+    expect(room.players.get(sa)!.state.x).toBeGreaterThan(S.x);
+    games.handle(sb, { t: "fbhome" }, 1200);
+    expect(games.stadium.teamOf(sb)).toBeNull();
+    expect(inArena(room, sb)).toBe(false);
   });
 });
 

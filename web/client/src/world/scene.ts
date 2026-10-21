@@ -18,6 +18,7 @@ import { FameBoard, fameStatics } from "./fame";
 import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, wetEnv, wetUniform, windMaterial, withCloudShadows, withWetness } from "./geo";
 import { kahvehane } from "./kahvehane";
 import { type Pitch, pitch } from "./pitch";
+import { type Stadium, stadium } from "./stadium";
 import { djBooth, type StageLights, stageLights, stageTruss } from "./stageFx";
 import { addRipple, dungeon, GROVE, grove, GROVE_SIGN, GROVE_SIGN_RY, POND, pond, signPost, steppingStones, waterEnv, waterMaterial } from "./zones";
 import { BRIDGE_AXES, buildTerrain, groundY, inCave, mountainHeight, riverMesh, terrainColliders, walkable, WATER_Y, waterfallMesh } from "./terrain";
@@ -57,6 +58,8 @@ export interface World {
   hour(): number;
   /** Futbol sahası ve top. */
   pitch: Pitch;
+  /** Stadyum (dünyanın dışında; maçlar burada): saha, tribünler, seyirciler. */
+  stadium: Stadium;
   /** Sahne ışıkları (DJ şovu, karaoke takip spotu). */
   stageLights: StageLights;
   /** Suda dalga halkası (göl, çeşme). */
@@ -986,6 +989,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const kh = kahvehane(b);
   const field = pitch(b);
   scene.add(field.group);
+  const arena = stadium(b);
+  scene.add(arena.group);
   const sports = hall(b);
   scene.add(sports.upper);
   djBooth(b);
@@ -1174,6 +1179,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     },
     hour: () => dayNight.hour,
     pitch: field,
+    stadium: arena,
     stageLights: lights,
     ripple: addRipple,
     season: SEASON,

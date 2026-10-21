@@ -51,6 +51,8 @@ export class Remote implements AvatarView {
   mic = false;
   hideName = false;
   pair: AvatarView["pair"] = null;
+  slide: number | null = null;
+  trick: { at: number; side: -1 | 1 } | null = null;
   /** Altındaki yüzey: konumdan bulunur (yükseklik gönderilmez; engelin içine yerden girilemez). */
   baseY = 0;
   private lastJumpSeq = -1;
@@ -276,6 +278,14 @@ export class Remotes {
     if (!r) return;
     r.info.pet = pet;
     r.info.skin = skin;
+  }
+
+  /** Sunucu taşıdı (stadyuma giriş/çıkış): ara geçiş olmadan oraya. */
+  teleport(sid: number, x: number, z: number, rot: number, at = 0): void {
+    const r = this.map.get(sid);
+    if (!r) return;
+    r.teleport(x, z, rot, at);
+    this.changed = true;
   }
 
   /** Sürgün durumu değişti: etiketi güncelle, ışınlanmayı interpolasyonsuz uygula. */

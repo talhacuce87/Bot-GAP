@@ -2,7 +2,8 @@
 // Top sunucudan gelir (konum + hız, `at` anında); burada ileri tahmin edilip yumuşatılarak çizilir.
 import * as THREE from "three";
 import type { BallState } from "../../../shared/protocol";
-import { BALL_R, PITCH } from "../../../shared/zones";
+import { BALL_R, type Field, PITCH } from "../../../shared/zones";
+import { TRICK_ANIM } from "../avatars/avatars";
 /** Sunucuyla aynı: top ayaktayken oyuncunun bu kadar önünde. */
 const DRIBBLE_AHEAD = 0.62;
 import type { Builder } from "./builder";
@@ -16,8 +17,8 @@ function line(b: Builder, x: number, z: number, w: number, d: number): void {
 }
 
 /** Kale: direkler, üst direk, arka çerçeve; file ayrı (saydam). */
-function goal(b: Builder, side: -1 | 1, nets: THREE.BufferGeometry[]): void {
-  const gx = PITCH.x + side * PITCH.hx, { goalHalf: gh, goalH: h } = PITCH;
+function goal(b: Builder, F: Field, side: -1 | 1, nets: THREE.BufferGeometry[]): void {
+  const gx = F.x + side * F.hx, { goalHalf: gh, goalH: h } = F;
   const depth = 1.2;
   const post = (x: number, z: number, len: number, horiz: "x" | "z" | null) => {
     const g = new THREE.CylinderGeometry(0.06, 0.06, len, 8);
@@ -25,21 +26,21 @@ function goal(b: Builder, side: -1 | 1, nets: THREE.BufferGeometry[]): void {
     if (horiz === "x") g.rotateZ(Math.PI / 2);
     b.add(part(g, "#ffffff", mat(x, horiz ? h : len / 2, z)));
   };
-  post(gx, PITCH.z - gh, h, null);
-  post(gx, PITCH.z + gh, h, null);
-  post(gx, PITCH.z, gh * 2, "z");
+  post(gx, F.z - gh, h, null);
+  post(gx, F.z + gh, h, null);
+  post(gx, F.z, gh * 2, "z");
   // Arka çerçeve
   const bx = gx + side * depth;
   for (const sz of [-1, 1]) {
-    b.add(part(new THREE.CylinderGeometry(0.035, 0.035, depth, 6).rotateZ(Math.PI / 2), "#d8d8d8", mat(gx + side * depth / 2, h, PITCH.z + sz * gh)));
-    b.add(part(new THREE.CylinderGeometry(0.035, 0.035, h, 6), "#d8d8d8", mat(bx, h / 2, PITCH.z + sz * gh)));
+    b.add(part(new THREE.CylinderGeometry(0.035, 0.035, depth, 6).rotateZ(Math.PI / 2), "#d8d8d8", mat(gx + side * depth / 2, h, F.z + sz * gh)));
+    b.add(part(new THREE.CylinderGeometry(0.035, 0.035, h, 6), "#d8d8d8", mat(bx, h / 2, F.z + sz * gh)));
   }
-  b.colliders.circle(gx, PITCH.z - gh, 0.12);
-  b.colliders.circle(gx, PITCH.z + gh, 0.12);
+  b.colliders.circle(gx, F.z - gh, 0.12);
+  b.colliders.circle(gx, F.z + gh, 0.12);
   // File: arka, iki yan ve üst yüzey
-  const back = new THREE.PlaneGeometry(gh * 2, h).rotateY(Math.PI / 2).translate(bx, h / 2, PITCH.z);
-  const top = new THREE.PlaneGeometry(depth, gh * 2).rotateX(-Math.PI / 2).translate(gx + side * depth / 2, h, PITCH.z);
-  const sideA = new THREE.PlaneGeometry(depth, h).translate(gx + side * depth / 2, h / 2, PITCH.z - gh);
+  const back = new THREE.PlaneGeometry(gh * 2, h).rotateY(Math.PI / 2).translate(bx, h / 2, F.z);
+  const top = new THREE.PlaneGeometry(depth, gh * 2).rotateX(-Math.PI / 2).translate(gx + side * depth / 2, h, F.z);
+  const sideA = new THREE.PlaneGeometry(depth, h).translate(gx + side * depth / 2, h / 2, F.z - gh);
   const sideB = sideA.clone().translate(0, 0, gh * 2);
   nets.push(back, top, sideA, sideB);
 }
@@ -83,7 +84,9 @@ export interface Pitch {
   /** Kalecinin çizildiği yer: -1 batı, 1 doğu (şut nişanı uzak köşeyi seçer). */
   keeper(side: -1 | 1): { x: number; z: number };
   /** Nişan oku: topun yanında vuruş yönü ve gücü (null gizle). */
-  setAim(aim: { ang: number; power: number; kind: "shot" | "pass" | "lob" } | null): void;
+  setAim(aim: { ang: number; power: number; kind: "shot" | "pass" | "lob" | "power" } | null): void;
+  /** Çalım: `by` topu ayağındayken top yanından (`side`) yarım daire çizip önüne döner. */
+  trick(by: number, side: -1 | 1, serverNow: number): void;
   /** Gol: top fileye çarptı, file dalgalanır. */
   netHit(x: number, y: number, z: number, time: number): void;
 }
@@ -122,14 +125,13 @@ function keeperMesh(kit: string): { root: THREE.Group; body: THREE.Group; legs: 
   return { root, body, legs };
 }
 
-/** Projektör kuleleri: sahanın dört köşesinin dışında, kafaları ortaya dönük. */
-const TOWER_H = 9;
-function towers(b: Builder): { x: number; z: number; head: THREE.Vector3 }[] {
-  const { x: cx, z: cz, hx, hz } = PITCH;
+/** Projektör kuleleri: sahanın dört köşesinin dışında (`off` kadar), kafaları ortaya dönük. */
+function towers(b: Builder, F: Field, TOWER_H: number, off: [number, number]): { x: number; z: number; head: THREE.Vector3 }[] {
+  const { x: cx, z: cz, hx, hz } = F;
   const out: { x: number; z: number; head: THREE.Vector3 }[] = [];
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
-      const x = cx + sx * (hx + 2.4), z = cz + sz * (hz + 2.6);
+      const x = cx + sx * (hx + off[0]), z = cz + sz * (hz + off[1]);
       const face = Math.atan2(cx - x, cz - z);
       b.add(part(new THREE.CylinderGeometry(0.12, 0.2, TOWER_H, 6), "#59606e", mat(x, TOWER_H / 2, z)));
       // Kafa: lamba ızgarası, ortaya ve hafif aşağı bakar
@@ -184,15 +186,33 @@ function beamMaterial(): THREE.ShaderMaterial {
   });
 }
 
-export function pitch(b: Builder): Pitch {
-  const { x: cx, z: cz, hx, hz } = PITCH;
-  b.clearBox(cx - hx - 2.5, cx + hx + 2.5, cz - hz - 2, cz + hz + 2);
+/** Saha seçenekleri: stadyumda projektörler tribünlerin üstünde, panolar sahayı çevreler, tabelalar dev ekran. */
+export interface PitchOptions {
+  stadium?: boolean;
+}
+
+/** Skor tabelası: yer, yön (rotY), boy ve tabelaya bakanın solunda batı (kırmızı) mı. */
+interface BoardSpot {
+  x: number;
+  y: number;
+  z: number;
+  ry: number;
+  w: number;
+  westLeft: boolean;
+}
+
+export function pitch(b: Builder, F: Field = PITCH, opt: PitchOptions = {}): Pitch {
+  const { x: cx, z: cz, hx, hz } = F;
+  /** Çizgilerin ölçeği (salon 40 m'lik sahaya göre). */
+  const k = hx / 20;
+  const sidePad = F.sidePad ?? 0;
+  b.clearBox(cx - hx - 2.5, cx + hx + 2.5, cz - hz - 2 - sidePad, cz + hz + 2 + sidePad);
 
   // Çim şeritleri
-  const stripes = 12;
+  const stripes = Math.round(12 * k);
   for (let i = 0; i < stripes; i++) {
     const w = (hx * 2 + 2) / stripes;
-    b.add(part(new THREE.PlaneGeometry(w, hz * 2 + 2), i % 2 ? "#5f9b45" : "#6aa94e", flatMat(cx - hx - 1 + (i + 0.5) * w, 0.02, cz), 0.03, b.rand));
+    b.add(part(new THREE.PlaneGeometry(w, hz * 2 + 2 + sidePad * 2), i % 2 ? "#5f9b45" : "#6aa94e", flatMat(cx - hx - 1 + (i + 0.5) * w, 0.02, cz), 0.03, b.rand));
   }
   // Çizgiler: kenarlar, orta çizgi, orta yuvarlak, ceza sahaları
   line(b, cx, cz - hz, hx * 2 + LINE_W, LINE_W);
@@ -200,18 +220,18 @@ export function pitch(b: Builder): Pitch {
   line(b, cx - hx, cz, LINE_W, hz * 2);
   line(b, cx + hx, cz, LINE_W, hz * 2);
   line(b, cx, cz, LINE_W, hz * 2);
-  b.add(part(new THREE.RingGeometry(3.6, 3.6 + LINE_W, 48), LINE, flatMat(cx, 0.034, cz)));
+  b.add(part(new THREE.RingGeometry(3.6 * k, 3.6 * k + LINE_W, 48), LINE, flatMat(cx, 0.034, cz)));
   b.add(part(new THREE.CircleGeometry(0.15, 12), LINE, flatMat(cx, 0.035, cz)));
   for (const s of [-1, 1]) {
-    // Ceza sahası (5 m derin, 14 m geniş), kale alanı (2 m, 8 m), penaltı noktası
+    // Ceza sahası (salonda 5 m derin, 14 m geniş), kale alanı (2 m, 8 m), penaltı noktası
     const box = (depth: number, half: number) => {
       line(b, cx + s * (hx - depth), cz, LINE_W, half * 2);
       line(b, cx + s * (hx - depth / 2), cz - half, depth, LINE_W);
       line(b, cx + s * (hx - depth / 2), cz + half, depth, LINE_W);
     };
-    box(5, 7);
-    box(2, 4);
-    b.add(part(new THREE.CircleGeometry(0.12, 10), LINE, flatMat(cx + s * (hx - 3.6), 0.035, cz)));
+    box(5 * k, 7 * k);
+    box(2 * k, 4 * k);
+    b.add(part(new THREE.CircleGeometry(0.12, 10), LINE, flatMat(cx + s * (hx - 3.6 * k), 0.035, cz)));
   }
   // Köşe bayrakları
   for (const sx of [-1, 1]) {
@@ -223,27 +243,45 @@ export function pitch(b: Builder): Pitch {
     }
   }
   const nets: THREE.BufferGeometry[] = [];
-  goal(b, -1, nets);
-  goal(b, 1, nets);
-  const lampTowers = towers(b);
+  goal(b, F, -1, nets);
+  goal(b, F, 1, nets);
+  const lampTowers = opt.stadium ? towers(b, F, 26, [15, 15]) : towers(b, F, 9, [2.4, 2.6]);
 
-  // Uzun kenarlarda alçak reklam panoları (ortada giriş boşluğu)
   const boards = ["#2f6fd0", "#e04a3a", "#f2c230", "#3a9a5a"];
-  for (const sz of [-1, 1]) {
-    for (let i = 0; i < Math.floor((hx * 2) / 2.6); i++) {
-      const x = cx - hx + 1.3 + i * 2.6;
-      if (Math.abs(x - cx) < 2) continue;
-      b.add(part(new THREE.BoxGeometry(2.4, 0.55, 0.12), boards[i % 4], mat(x, 0.28, cz + sz * (hz + 0.9)), 0.05, b.rand));
-      b.colliders.segment(x - 1.2, cz + sz * (hz + 0.9), x + 1.2, cz + sz * (hz + 0.9), 0.1);
+  if (opt.stadium) {
+    // Reklam panoları sahayı çevreler: yanlarda topun sektiği yerde, kale çizgisinde kalenin iki yanında
+    const bz = hz + sidePad + 0.08;
+    for (const sz of [-1, 1]) {
+      for (let i = 0; i < Math.floor((hx * 2 + 2) / 2.6); i++) {
+        const x = cx - hx - 1 + 1.3 + i * 2.6;
+        b.add(part(new THREE.BoxGeometry(2.5, 0.8, 0.12), boards[i % 4], mat(x, 0.4, cz + sz * bz), 0.05, b.rand));
+      }
     }
-  }
-  // Seyirci bankları: kuzey kenarında
-  for (let i = 0; i < 5; i++) {
-    const x = cx - 16 + i * 8, z = cz - hz - 2.2;
-    b.add(part(new THREE.BoxGeometry(3, 0.1, 0.45), "#a0703f", mat(x, 0.45, z)));
-    for (const lx of [-1.3, 1.3]) b.add(part(new THREE.BoxGeometry(0.08, 0.45, 0.4), "#5b3f25", mat(x + lx, 0.22, z)));
-    b.colliders.segment(x - 1.5, z, x + 1.5, z, 0.3);
-    for (const o of [-0.9, 0, 0.9]) b.seats.push({ x: x + o, z, rot: 0 });
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const z0 = F.goalHalf + 0.15, len = bz - z0;
+        b.add(part(new THREE.BoxGeometry(0.12, 0.8, len), boards[(sx + sz + 4) % 4], mat(cx + sx * (hx + 0.1), 0.4, cz + sz * (z0 + len / 2)), 0.05, b.rand));
+        b.colliders.segment(cx + sx * (hx + 0.1), cz + sz * z0, cx + sx * (hx + 0.1), cz + sz * bz, 0.1);
+      }
+    }
+  } else {
+    // Uzun kenarlarda alçak reklam panoları (ortada giriş boşluğu)
+    for (const sz of [-1, 1]) {
+      for (let i = 0; i < Math.floor((hx * 2) / 2.6); i++) {
+        const x = cx - hx + 1.3 + i * 2.6;
+        if (Math.abs(x - cx) < 2) continue;
+        b.add(part(new THREE.BoxGeometry(2.4, 0.55, 0.12), boards[i % 4], mat(x, 0.28, cz + sz * (hz + 0.9)), 0.05, b.rand));
+        b.colliders.segment(x - 1.2, cz + sz * (hz + 0.9), x + 1.2, cz + sz * (hz + 0.9), 0.1);
+      }
+    }
+    // Seyirci bankları: kuzey kenarında
+    for (let i = 0; i < 5; i++) {
+      const x = cx - 16 + i * 8, z = cz - hz - 2.2;
+      b.add(part(new THREE.BoxGeometry(3, 0.1, 0.45), "#a0703f", mat(x, 0.45, z)));
+      for (const lx of [-1.3, 1.3]) b.add(part(new THREE.BoxGeometry(0.08, 0.45, 0.4), "#5b3f25", mat(x + lx, 0.22, z)));
+      b.colliders.segment(x - 1.5, z, x + 1.5, z, 0.3);
+      for (const o of [-0.9, 0, 0.9]) b.seats.push({ x: x + o, z, rot: 0 });
+    }
   }
 
   const group = new THREE.Group();
@@ -272,48 +310,66 @@ export function pitch(b: Builder): Pitch {
   netMesh.matrixAutoUpdate = false;
   group.add(netMesh);
 
-  // Skor tabelası: güney kenarında direkli pano
-  const sc = document.createElement("canvas");
-  sc.width = 256;
-  sc.height = 96;
-  const scoreTex = new THREE.CanvasTexture(sc);
-  scoreTex.colorSpace = THREE.SRGBColorSpace;
+  // Skor tabelaları: salonda güney kenarında direkli pano (sahaya döner); stadyumda iki uzun kenarın
+  // tribünlerinin üstünde dev ekran. Takım renkleri bakanın gördüğü yöne göre: sahaya bakarken batı
+  // kalesi (kırmızı) solundaysa kırmızı solda.
+  const spots: BoardSpot[] = opt.stadium
+    ? [
+        { x: cx, y: 17, z: cz - hz - 17, ry: 0, w: 12, westLeft: true },
+        { x: cx, y: 17, z: cz + hz + 17, ry: Math.PI, w: 12, westLeft: false },
+      ]
+    : [{ x: cx, y: 3.1, z: cz + hz + 2.2, ry: Math.PI, w: 2.6, westLeft: false }];
+  const screens = spots.map((spot) => {
+    const sc = document.createElement("canvas");
+    sc.width = 256;
+    sc.height = 96;
+    const tex = new THREE.CanvasTexture(sc);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(spot.w, spot.w * 0.377), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+    mesh.position.set(spot.x, spot.y, spot.z);
+    mesh.rotation.y = spot.ry;
+    group.add(mesh);
+    return { sc, tex, westLeft: spot.westLeft };
+  });
   let lastBoard = "";
   const drawScore = (s: [number, number], clock: string | null = null) => {
     const key = `${s[0]}-${s[1]}-${clock}`;
     if (key === lastBoard) return;
     lastBoard = key;
-    const g = sc.getContext("2d")!;
-    g.fillStyle = "#14171c";
-    g.fillRect(0, 0, 256, 96);
-    g.textAlign = "center";
-    if (clock) {
-      // Maç: takım renkleri ve süre
-      g.fillStyle = "#e04a3a";
-      g.fillRect(8, 40, 10, 46);
-      g.fillStyle = "#2f6fd0";
-      g.fillRect(238, 40, 10, 46);
-      g.fillStyle = "#f2c230";
-      g.font = "700 22px ui-monospace, monospace";
-      g.fillText(`⏱ ${clock}`, 128, 26);
-    } else {
-      g.fillStyle = "#f2c230";
-      g.font = "700 22px system-ui, sans-serif";
-      g.fillText("GAP FUTBOL", 128, 26);
+    for (const { sc, tex, westLeft } of screens) {
+      const g = sc.getContext("2d")!;
+      g.fillStyle = "#14171c";
+      g.fillRect(0, 0, 256, 96);
+      g.textAlign = "center";
+      // Soldaki ve sağdaki takım (0 kırmızı batı, 1 mavi doğu)
+      const [left, right] = westLeft ? [0, 1] : [1, 0];
+      if (clock) {
+        // Maç: takım renkleri ve süre
+        const colors = ["#e04a3a", "#2f6fd0"];
+        g.fillStyle = colors[left];
+        g.fillRect(8, 40, 10, 46);
+        g.fillStyle = colors[right];
+        g.fillRect(238, 40, 10, 46);
+        g.fillStyle = "#f2c230";
+        g.font = "700 22px ui-monospace, monospace";
+        g.fillText(`⏱ ${clock}`, 128, 26);
+      } else {
+        g.fillStyle = "#f2c230";
+        g.font = "700 22px system-ui, sans-serif";
+        g.fillText(opt.stadium ? "GAP STADYUMU" : "GAP FUTBOL", 128, 26);
+      }
+      g.fillStyle = "#ffffff";
+      g.font = "800 50px ui-monospace, monospace";
+      g.fillText(`${s[left]} - ${s[right]}`, 128, 82);
+      tex.needsUpdate = true;
     }
-    g.fillStyle = "#ffffff";
-    g.font = "800 50px ui-monospace, monospace";
-    g.fillText(`${s[0]} - ${s[1]}`, 128, 82);
-    scoreTex.needsUpdate = true;
   };
   drawScore([0, 0]);
-  const board = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.98), new THREE.MeshBasicMaterial({ map: scoreTex, toneMapped: false }));
-  board.position.set(cx, 3.1, cz + hz + 2.2);
-  board.rotation.y = Math.PI;
-  group.add(board);
-  for (const sx of [-1.2, 1.2]) b.add(part(new THREE.CylinderGeometry(0.06, 0.08, 3.6, 6), "#2f3440", mat(cx + sx, 1.8, cz + hz + 2.25)));
-  b.colliders.circle(cx - 1.2, cz + hz + 2.25, 0.1);
-  b.colliders.circle(cx + 1.2, cz + hz + 2.25, 0.1);
+  if (!opt.stadium) {
+    for (const sx of [-1.2, 1.2]) b.add(part(new THREE.CylinderGeometry(0.06, 0.08, 3.6, 6), "#2f3440", mat(cx + sx, 1.8, cz + hz + 2.25)));
+    b.colliders.circle(cx - 1.2, cz + hz + 2.25, 0.1);
+    b.colliders.circle(cx + 1.2, cz + hz + 2.25, 0.1);
+  }
 
   // Top: beyaz ikosahedron, beşgen lekeler siyah
   const ballGeo = new THREE.IcosahedronGeometry(BALL_R, 1).toNonIndexed();
@@ -390,7 +446,7 @@ export function pitch(b: Builder): Pitch {
   arrow.visible = false;
   arrow.renderOrder = 3;
   group.add(arrow);
-  const AIM_COLORS = { shot: new THREE.Color("#ffd23f"), pass: new THREE.Color("#7dff9a"), lob: new THREE.Color("#7fc8ff") };
+  const AIM_COLORS = { shot: new THREE.Color("#ffd23f"), pass: new THREE.Color("#7dff9a"), lob: new THREE.Color("#7fc8ff"), power: new THREE.Color("#ff5a36") };
 
   // Hız izi: hızlı topun arkasında solan küçük toplar
   const TRAIL = 14;
@@ -413,6 +469,8 @@ export function pitch(b: Builder): Pitch {
   let state: BallState = { x: cx, y: 0, z: cz, vx: 0, vy: 0, vz: 0, at: 0 };
   /** Sürme adımı: koşarken top her adımda öne itilir, oyuncu yetişir (top ayağa yapışık durmaz). */
   let touchPhase = 0;
+  /** Süren çalım: yapan, yan, başladığı sunucu anı (ms). */
+  let trick = { by: 0, side: 1, at: -Infinity };
   const shown = new THREE.Vector3(cx, BALL_R, cz);
   const predicted = new THREE.Vector3();
   const axis = new THREE.Vector3();
@@ -434,7 +492,7 @@ export function pitch(b: Builder): Pitch {
     }
     out.set(s.x + vx * (air ? t : k), y + BALL_R, s.z + vz * (air ? t : k));
     out.x = Math.max(cx - hx - 1.6, Math.min(cx + hx + 1.6, out.x));
-    out.z = Math.max(cz - hz - 0.75, Math.min(cz + hz + 0.75, out.z));
+    out.z = Math.max(cz - hz - sidePad - 0.75, Math.min(cz + hz + sidePad + 0.75, out.z));
     return out;
   };
 
@@ -443,6 +501,9 @@ export function pitch(b: Builder): Pitch {
     ball: shown,
     setBall(bs) {
       state = bs;
+    },
+    trick(by, side, serverNow) {
+      trick = { by, side, at: serverNow };
     },
     get owner() {
       return state.owner ?? 0;
@@ -499,7 +560,12 @@ export function pitch(b: Builder): Pitch {
         touchPhase += dt * (p.run === 2 ? 8.5 : 6.5) * (p.run ? 1 : 0);
         const push = p.run ? (0.16 + 0.2 * p.run) * (0.5 - 0.5 * Math.cos(touchPhase)) : 0;
         const ahead = DRIBBLE_AHEAD + push;
-        predicted.set(p.x + Math.sin(p.rot) * ahead, BALL_R, p.z + Math.cos(p.rot) * ahead);
+        const tu = trick.by === owner ? (serverNow - trick.at) / 1000 / TRICK_ANIM : -1;
+        if (tu >= 0 && tu < 1) {
+          // Çalım: top ayağın altında yanından arkaya, oradan yine öne (yarım daire), hafif havada
+          const a = p.rot - trick.side * Math.PI * 0.5 * (1 - Math.cos(tu * Math.PI * 2)), r = DRIBBLE_AHEAD * (1 - 0.35 * Math.sin(tu * Math.PI));
+          predicted.set(p.x + Math.sin(a) * r, BALL_R + Math.sin(tu * Math.PI) * 0.12, p.z + Math.cos(a) * r);
+        } else predicted.set(p.x + Math.sin(p.rot) * ahead, BALL_R, p.z + Math.cos(p.rot) * ahead);
         // İlk dokunuş: gelen top birden ayağa yapışmaz, kısa sürede kontrole girer
         if (shown.distanceTo(predicted) > 3) shown.copy(predicted);
         else shown.lerp(predicted, 1 - Math.exp(-dt * 14));

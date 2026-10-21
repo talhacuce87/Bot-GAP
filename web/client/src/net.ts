@@ -88,11 +88,13 @@ export class Net {
   onCosm: (sid: number, pet: string | null, skin: string | null) => void = () => {};
   onTable: (t: TableState) => void = () => {};
   onBall: (b: BallState) => void = () => {};
-  onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number], assist?: string, own?: boolean) => void = () => {};
+  onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number], assist?: string, own?: boolean, f?: 1) => void = () => {};
   /** Futbol maçı başladı/değişti/bitti. */
   onMatch: (m: MatchState | null) => void = () => {};
   /** Kaleciler (x, z, eğilme ×2) ve hakem kararı. */
-  onGk: (k: number[]) => void = () => {};
+  onGk: (k: number[], f?: 1) => void = () => {};
+  /** Sunucu bir oyuncuyu taşıdı (stadyuma giriş/çıkış). */
+  onTeleport: (x: number, z: number, rot: number) => void = () => {};
   /** Sunucudaki istemci sürümü (deploy sonrası farklıysa yenilenir). */
   onVersion: (v: string) => void = () => {};
   onFb: (text: string) => void = () => {};
@@ -100,7 +102,7 @@ export class Net {
   onPlots: (plots: PlotState[]) => void = () => {};
   onPlot: (plot: PlotState) => void = () => {};
   onBset: (plot: number, i: number, j: number, k: number, b: number, r: number) => void = () => {};
-  onScore: (score: [number, number]) => void = () => {};
+  onScore: (score: [number, number], f?: 1) => void = () => {};
   onTag: (s: TagState | null) => void = () => {};
   onPairReq: (from: number, name: string, kind: "five" | "hug") => void = () => {};
   onPair: (a: number, b: number, kind: "five" | "hug") => void = () => {};
@@ -290,6 +292,10 @@ export class Net {
         if (ev.sid === this.you) this.onJail(ev.jailed, ev.x, ev.z, ev.rot);
         else this.remotes.setJailed(ev.sid, ev.jailed, ev.x, ev.z, ev.rot, ev.at);
         break;
+      case "tp":
+        if (ev.sid === this.you) this.onTeleport(ev.x, ev.z, ev.rot);
+        else this.remotes.teleport(ev.sid, ev.x, ev.z, ev.rot, ev.at);
+        break;
       case "board":
         this.onBoard(ev.entries, ev.updated);
         break;
@@ -384,13 +390,13 @@ export class Net {
         break;
       }
       case "goal":
-        this.onGoal(ev.side, ev.sid, ev.name, ev.score, ev.assist, ev.own);
+        this.onGoal(ev.side, ev.sid, ev.name, ev.score, ev.assist, ev.own, ev.f);
         break;
       case "match":
         this.onMatch(ev.match);
         break;
       case "gk":
-        this.onGk(ev.k);
+        this.onGk(ev.k, ev.f);
         break;
       case "version":
         this.onVersion(ev.v);
@@ -408,7 +414,7 @@ export class Net {
         this.onBset(ev.plot, ev.i, ev.j, ev.k, ev.b, ev.r);
         break;
       case "score":
-        this.onScore(ev.score);
+        this.onScore(ev.score, ev.f);
         break;
       case "tag":
         this.onTag(ev.state);

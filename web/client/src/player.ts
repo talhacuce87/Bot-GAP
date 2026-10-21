@@ -100,6 +100,8 @@ export class Player implements AvatarView, PlayerState {
   /** Bu yüzeyin üstündeki yükseklik (zıplarken, düşerken). */
   jumpY = 0;
   pair: AvatarView["pair"] = null;
+  slide: number | null = null;
+  trick: { at: number; side: -1 | 1 } | null = null;
   mic = false;
   hideName = false;
   hidden = false;
@@ -392,6 +394,14 @@ export class Player implements AvatarView, PlayerState {
     this.resetHeight();
     this.rot = d.h;
     this.flags = this.jumpBits();
+  }
+
+  /** Futbol: `t` sn kontrolsüz sürat (çalımda öne atılma, kayarak müdahale); hız yavaşça söner. */
+  dash(vx: number, vz: number, t: number): void {
+    if (this.driving || this.seat || this.vehicle) return;
+    this.vx = vx;
+    this.vz = vz;
+    this.knockT = t;
   }
 
   /** Mermi savurdu: (vx, vz) hızıyla fırlar ve zıplar. Tanktaysa etkilenmez. */

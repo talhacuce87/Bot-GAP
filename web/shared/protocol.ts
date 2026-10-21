@@ -110,12 +110,20 @@ export interface BallState {
   by?: number;
   /** Top kimin ayağında: oyuncu sid'i; -1 batı, -2 doğu kalecisi; yoksa serbest. */
   owner?: number;
+  /** Hangi saha: 1 stadyum, yoksa salon. */
+  f?: 1;
+  /** Çalımda topun döndüğü yan (1 sağ, -1 sol). */
+  side?: -1 | 1;
 }
 
-export type BallEvent = "shot" | "pass" | "lob" | "head" | "post" | "bar" | "save" | "tackle";
-export type KickKind = "shot" | "pass" | "lob";
+/**
+ * "skill": çalım (roulette: top yanından yarım daire çizer), "rainbow": top arkadan başın üstünden öne,
+ * "slide": kayarak müdahale başladı (yapan yere yatar), "power": power şut.
+ */
+export type BallEvent = KickKind | "head" | "post" | "bar" | "save" | "tackle" | "skill" | "rainbow" | "slide";
+export type KickKind = "shot" | "pass" | "lob" | "power";
 
-/** Futbol maçı: süre, takımlar (sid listeleri; 0 kırmızı batıyı savunur, 1 mavi doğuyu). */
+/** Futbol maçı (stadyumda): süre, takımlar (sid listeleri; 0 kırmızı batıyı savunur, 1 mavi doğuyu). */
 export interface MatchState {
   endsAt: number;
   teams: [number[], number[]];
@@ -299,17 +307,19 @@ export type ServerEvent =
   | { t: "cosm"; sid: number; pet: string | null; skin: string | null }
   | ({ t: "table" } & TableState)
   | ({ t: "ball" } & BallState)
-  | { t: "goal"; side: 0 | 1; sid: number; name: string; score: [number, number]; assist?: string; own?: boolean }
+  | { t: "goal"; side: 0 | 1; sid: number; name: string; score: [number, number]; assist?: string; own?: boolean; f?: 1 }
   | { t: "match"; match: MatchState | null }
   /** Kaleciler: [batı x, z, eğilme, doğu x, z, eğilme] (eğilme: plonjon, -1…1). */
-  | { t: "gk"; k: number[] }
+  | { t: "gk"; k: number[]; f?: 1 }
   /** Futbol hakem kararı (taç, korner, aut…): düdük ve kısa yazı. */
   | { t: "fb"; text: string }
   /** Mahalle: bütün arsalar (girişte), tek arsa (sahiplenme/boşaltma), tek blok değişimi (b 0: silindi). */
   | { t: "plots"; plots: PlotState[] }
   | { t: "plot"; plot: PlotState }
   | { t: "bset"; plot: number; i: number; j: number; k: number; b: number; r: number }
-  | { t: "score"; score: [number, number] }
+  | { t: "score"; score: [number, number]; f?: 1 }
+  /** Sunucu oyuncuyu bir yere taşıdı (stadyuma giriş/çıkış): ara geçiş olmadan oraya konur. */
+  | { t: "tp"; sid: number; x: number; z: number; rot: number; at: number }
   | { t: "tag"; state: TagState | null }
   /** İkili etkileşim isteği (yalnızca hedefe) ve gerçekleşen etkileşim (herkese). */
   | { t: "pairreq"; from: number; name: string; kind: "five" | "hug" }
@@ -356,8 +366,13 @@ export type ClientEvent =
   | { t: "tresign"; id: number }
   /** Topa vur: yön (radyan), güç (0–1), tür ve falso (-1 sola … 1 sağa). */
   | { t: "kick"; dir: number; power: number; kind?: KickKind; curve?: number }
-  /** Rakibin ayağındaki topa müdahale. */
-  | { t: "tackle" }
+  /** Rakibin ayağındaki topa müdahale; `slide`: koşarken kayarak (uzun menzil, kaçarsa yerde kalır). */
+  | { t: "tackle"; slide?: boolean }
+  /** Çalım (roulette; `side` topun döndüğü yan) ve rainbow; stadyumda takım değiştir, dünyaya dön. */
+  | { t: "skill"; side?: -1 | 1 }
+  | { t: "rainbow" }
+  | { t: "fbteam"; team: 0 | 1 }
+  | { t: "fbhome" }
   /** İnşa: boş arsa sahiplen, kendi arsana blok koy/sil (b 0), arsanı boşalt. */
   | { t: "bclaim" }
   | { t: "bset"; i: number; j: number; k: number; b: number; r: number }

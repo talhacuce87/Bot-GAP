@@ -1,7 +1,7 @@
 // Dünya odasının oyunları ve sosyal etkileşimleri tek yerde: kahvehane masaları, futbol, ebelemece/saklambaç,
 // sahne/DJ, ikili etkileşimler (beşlik, sarılma), havai fişek, görev olayları.
 import type { ServerEvent, TagMode, Weather } from "../../../shared/protocol";
-import { SAKURA_SPOT } from "../../../shared/zones";
+import { inStadium, PITCH, SAKURA_SPOT, STADIUM_PITCH } from "../../../shared/zones";
 import type { Conn, Room } from "../room";
 import type { Builds } from "./build";
 import { Football } from "./football";
@@ -22,6 +22,8 @@ const RIDE_MIN_MS = 4000;
 export class WorldGames {
   readonly tables: Tables;
   readonly football: Football;
+  /** Stadyum: maçlar burada (oyuncular ışınlanır). */
+  readonly stadium: Football;
   readonly tag: Tag;
   readonly stage: Stage;
   readonly sky: Sky;
@@ -46,6 +48,7 @@ export class WorldGames {
     const r = (sid: number, event: string) => report(sid, event);
     this.tables = new Tables(room, r);
     this.football = new Football(room, r);
+    this.stadium = new Football(room, r, STADIUM_PITCH, { home: PITCH });
     this.tag = new Tag(room, r);
     this.stage = new Stage(room, host, r);
     this.sky = new Sky(room, liveWeather);
@@ -54,6 +57,7 @@ export class WorldGames {
   join(sid: number, conn: Conn): void {
     this.tables.sendAll(conn, sid);
     this.football.sendTo(conn);
+    this.stadium.sendTo(conn);
     this.tag.sendTo(conn);
     this.stage.sendTo(conn);
     this.sky.sendTo(conn);
@@ -63,6 +67,7 @@ export class WorldGames {
   leave(sid: number): void {
     this.tables.leave(sid);
     this.football.leave(sid);
+    this.stadium.leave(sid);
     this.tag.leave(sid);
     this.stage.leave(sid);
     this.sky.leave(sid);
@@ -76,6 +81,7 @@ export class WorldGames {
   tick(now: number): void {
     this.tables.tick(now);
     this.football.tick(now);
+    this.stadium.tick(now);
     this.tag.tick(now);
     this.sky.tick(now);
     if (now - this.lastScan > 1000) {
@@ -134,6 +140,12 @@ export class WorldGames {
     this.report(sid, req.kind);
   }
 
+  /** Oyuncunun bulunduğu saha: stadyumdaysa stadyum, yoksa salon. */
+  private fieldOf(sid: number): Football {
+    const p = this.room.players.get(sid);
+    return p && inStadium(p.state.x, p.state.z) ? this.stadium : this.football;
+  }
+
   /** Dünya oyun mesajları (true: işlendi). */
   handle(sid: number, msg: Record<string, unknown>, now = Date.now()): boolean {
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
@@ -163,10 +175,24 @@ export class WorldGames {
         this.builds?.free(sid);
         return true;
       case "tackle":
-        this.football.tackle(sid, now);
+        this.fieldOf(sid).tackle(sid, now, msg.slide === true);
+        return true;
+      case "skill":
+        this.fieldOf(sid).skill(sid, now, msg.side === -1 ? -1 : 1);
+        return true;
+      case "rainbow":
+        this.fieldOf(sid).rainbow(sid, now);
+        return true;
+      case "fbteam": {
+        const err = this.stadium.switchTeam(sid, msg.team === 1 ? 1 : 0, now);
+        if (err) this.send(sid, { t: "notice", text: err });
+        return true;
+      }
+      case "fbhome":
+        this.stadium.goHome(sid, now);
         return true;
       case "kick":
-        this.football.kick(sid, num(msg.dir), num(msg.power), now, (msg.kind ?? "shot") as never, num(msg.curve ?? 0));
+        this.fieldOf(sid).kick(sid, num(msg.dir), num(msg.power), now, (msg.kind ?? "shot") as never, num(msg.curve ?? 0));
         return true;
       case "tagjoin":
         this.tag.join(sid);

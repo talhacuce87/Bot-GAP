@@ -80,8 +80,33 @@ export const TABLE_WATCH_R = 3.2;
 export const TEA_COUNTER = { x: KX - 5.6, z: KZ + 3.6, r: 2.4 };
 export const TEA_MAKER = { x: KX - 5.6, z: KZ + 5.75, rot: Math.PI };
 
+/**
+ * Futbol sahası: merkez, yarı en/boy, kale ağzının yarı genişliği ve yüksekliği. `sidePad`: yan
+ * duvarlar (top seker) taç çizgisinin bu kadar dışında (stadyumda panolar çizgiden geride).
+ */
+export interface Field {
+  x: number;
+  z: number;
+  hx: number;
+  hz: number;
+  goalHalf: number;
+  goalH: number;
+  sidePad?: number;
+}
+
 // ---- Futbol sahası: nehrin doğusunda, kapalı salonun içinde; 40×26 m ----
-export const PITCH = { x: 66, z: 58, hx: 20, hz: 13, goalHalf: 3, goalH: 2.2 };
+export const PITCH: Field = { x: 66, z: 58, hx: 20, hz: 13, goalHalf: 3, goalH: 2.2 };
+
+// ---- Stadyum: dünyanın dışında (kuzeyde, ufkun ardında), yalnızca "!maç" ile ışınlanılan 64×40 m saha ----
+// Konumlar ağda ±327 m'ye sığmalı (bkz. protocol quantPos).
+export const STADIUM_PITCH: Field = { x: 0, z: -280, hx: 32, hz: 20, goalHalf: 3.66, goalH: 2.44, sidePad: 1.4 };
+/** Stadyumda yürünebilen alan (oyuncu merkezi): sahanın çevresi, kale fileleri dahil. */
+export const STADIUM = { x: STADIUM_PITCH.x, z: STADIUM_PITCH.z, hw: STADIUM_PITCH.hx + 1.6, hd: STADIUM_PITCH.hz + 1.0 };
+
+/** Nokta stadyumun bulunduğu bölgede mi (dünyadan ayrı; oraya yalnızca ışınlanılır). */
+export function inStadium(x: number, z: number): boolean {
+  return Math.abs(x - STADIUM.x) < STADIUM.hw + 40 && Math.abs(z - STADIUM.z) < STADIUM.hd + 40;
+}
 /** Salonun duvarları (dış kenar yarı ölçüleri) ve yüksekliği. */
 export const HALL = { x: PITCH.x, z: PITCH.z, hw: PITCH.hx + 4.6, hd: PITCH.hz + 5, h: 11, door: 3.4 };
 export const BALL_R = 0.32;
