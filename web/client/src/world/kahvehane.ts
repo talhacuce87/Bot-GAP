@@ -1,4 +1,4 @@
-// Kahvehane: ahşap döşeme, çardak direkleri ve ampul zinciri, tavla/satranç/okey masaları, hasır tabureler,
+// Kahvehane: ahşap döşeme, çardak direkleri ve ampul zinciri, tavla/satranç/okey/bilek güreşi masaları, hasır tabureler,
 // çay ocağı (semaver, ince belli bardaklar). Hepsi statik (Builder); tabureler masaya bağlı oturak.
 import * as THREE from "three";
 import { KAHVEHANE, TABLES, TEA_COUNTER } from "../../../shared/zones";
@@ -72,6 +72,16 @@ function okeyTable(b: Builder, x: number, z: number): void {
   for (let i = 0; i < 4; i++) box(b, 0.07, 0.03 + i * 0.012, 0.1, "#f3eee0", x - 0.12 + i * 0.08, 0.8, z, 0.2 * i, 0);
 }
 
+/** Bilek güreşi masası: ortada iki dirsek minderi (kırmızı batıda, mavi doğuda) ve yanlarda tutamak. */
+function bilekTable(b: Builder, x: number, z: number): void {
+  box(b, 0.66, 0.012, 0.5, "#3b4250", x, 0.784, z, 0, 0.04);
+  for (const [dx, c] of [[-1, "#c0392b"], [1, "#2e6fd0"]] as const) {
+    cyl(b, 0.075, 0.075, 0.025, c, x + dx * 0.15, 0.795, z, 12);
+    // Boştaki elin tuttuğu kazık
+    cyl(b, 0.018, 0.018, 0.14, "#c7ccd1", x + dx * 0.24, 0.86, z + dx * 0.17, 8);
+  }
+}
+
 /** Hasır tabure: masaya bağlı oturak. */
 function stool(b: Builder, x: number, z: number): void {
   cyl(b, 0.22, 0.2, 0.06, "#c9a35a", x, 0.44, z, 8);
@@ -118,6 +128,9 @@ export function kahvehane(b: Builder): { signAt: THREE.Matrix4[] } {
     if (t.kind === "okey") {
       table(b, t.x, t.z, 1.2, 1.2, "#8f6640");
       okeyTable(b, t.x, t.z);
+    } else if (t.kind === "bilek") {
+      table(b, t.x, t.z, 0.72, 0.56, "#6b4a2c");
+      bilekTable(b, t.x, t.z);
     } else {
       table(b, t.x, t.z, 0.95, 0.75, "#8f6640");
       if (t.kind === "tavla") tavlaBoard(b, t.x, t.z);

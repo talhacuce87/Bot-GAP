@@ -34,6 +34,8 @@ export interface LimbPose {
   pedal: number;
   /** 0..1 sağ el ağza (karaoke mikrofonu). */
   mic: number;
+  /** 0..1 bilek güreşi: aynı kol öne, masaya uzanır. */
+  grip: number;
   time: number;
 }
 
@@ -218,6 +220,12 @@ export class ChibiLayer {
 }
 
 /**
+ * Kaldırılmış kolun açısı (salınımla en çok ~1.85): daha yukarısında el koca kafanın içine giriyor.
+ */
+const WAVE_RAISE = 1.65;
+const DANCE_RAISE = 1.6;
+
+/**
  * Uzuv açıları: 2-3 kollar, 4-5 bacaklar. Paketteki "_L" bakanın solu: 2 ve 4 −X, 3 ve 5 +X
  * tarafında (karakter +Z'ye bakar). z ekseni etrafında + açı +X'teki kolu yukarı kaldırır.
  */
@@ -242,7 +250,7 @@ export function setLimbs(a: THREE.Vector2[], p: LimbPose): void {
   }
   if (p.wave > 0) {
     // +X'teki kol yukarı, el sallanır
-    a[3].y = 2.3 * p.wave + Math.sin(p.time * 14) * 0.25 * p.wave;
+    a[3].y = (WAVE_RAISE + Math.sin(p.time * 14) * 0.2) * p.wave;
     a[3].x = 0;
   }
   if (p.hug > 0) {
@@ -254,10 +262,14 @@ export function setLimbs(a: THREE.Vector2[], p: LimbPose): void {
     a[3].x = -2.3 * p.mic;
     a[3].y = 0.5 * p.mic;
   }
+  if (p.grip > 0) {
+    a[3].x = -1.45 * p.grip;
+    a[3].y = -0.45 * p.grip;
+  }
   if (p.dance > 0) {
     const w = Math.sin(p.time * 8);
-    a[2].y = (-2.2 + w * 0.3) * p.dance;
-    a[3].y = (2.2 + w * 0.3) * p.dance;
+    a[2].y = (-DANCE_RAISE + w * 0.25) * p.dance;
+    a[3].y = (DANCE_RAISE + w * 0.25) * p.dance;
     a[2].x = a[3].x = 0;
   }
 }

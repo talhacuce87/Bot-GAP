@@ -101,6 +101,7 @@ export class Player implements AvatarView, PlayerState {
   jumpY = 0;
   pair: AvatarView["pair"] = null;
   mic = false;
+  grip = false;
   hideName = false;
   hidden = false;
   /** Zıplamanın başından geçen süre; yerdeyken JUMP_TIME. */

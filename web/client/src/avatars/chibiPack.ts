@@ -50,6 +50,9 @@ export const DEFAULT_LOOK: Look = {
   colors: {},
 };
 
+/** Kol dönme noktası: kolun en üstünden bu kadar (m) aşağısına kadarki köşelerin x ortası. */
+const SHOULDER_BAND = 0.12;
+
 /** Uzuvlar: 0 gövde, 1 kafa, 2-3 kol (sol/sağ), 4-5 bacak (sol/sağ). */
 export const LIMB_COUNT = 6;
 
@@ -263,9 +266,20 @@ export class ChibiPack {
         hi[l * 3 + c] = Math.max(hi[l * 3 + c], val);
       }
     }
+    // Kollar A duruşunda yana açık: kutunun ortası omzun ~20 cm dışında kalıyor, kol kalkınca omuz
+    // gövdeden kopuyordu. Kollarda x, en üstteki şeridin (omuz topuzu) ortası.
+    const top = new Float32Array(LIMB_COUNT * 2).fill(0);
+    for (let k = 0; k < p.vCount; k++) {
+      const o = p.vOff + k * m.stride;
+      const l = dv.getUint8(o + 13);
+      if (l !== 2 && l !== 3) continue;
+      if (dv.getInt16(o + 2, true) * m.posScale < hi[l * 3 + 1] - SHOULDER_BAND) continue;
+      top[l * 2] += dv.getInt16(o, true) * m.posScale;
+      top[l * 2 + 1]++;
+    }
     for (let l = 0; l < LIMB_COUNT; l++) {
       if (!Number.isFinite(lo[l * 3])) continue;
-      this.pivots[l * 3] = (lo[l * 3] + hi[l * 3]) / 2;
+      this.pivots[l * 3] = top[l * 2 + 1] ? top[l * 2] / top[l * 2 + 1] : (lo[l * 3] + hi[l * 3]) / 2;
       // Kollarda omuz ucu, bacaklarda kalça: uzvun en üstünden biraz aşağısı
       this.pivots[l * 3 + 1] = hi[l * 3 + 1] - (l >= 4 ? 0.05 : 0.08);
       this.pivots[l * 3 + 2] = (lo[l * 3 + 2] + hi[l * 3 + 2]) / 2;

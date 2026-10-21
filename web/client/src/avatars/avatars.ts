@@ -36,6 +36,8 @@ export interface AvatarView {
   pair?: { kind: "five" | "hug"; at: number; face: number } | null;
   /** Karaoke: elde mikrofon. */
   mic?: boolean;
+  /** Bilek güreşi: kol öne, masadaki kenetli ele. */
+  grip?: boolean;
   /** İsim etiketi gizli (saklambaçta saklananlar). */
   hideName?: boolean;
   /** Avatar çizilmez (birinci şahıs kamerada kendin); gölge ve evcil hayvan kalır. */
@@ -155,7 +157,7 @@ export class AvatarRenderer {
   private xAxis = new THREE.Vector3(1, 0, 0);
   private zAxis = new THREE.Vector3(0, 0, 1);
   private count = 0;
-  private limbs: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, time: 0 };
+  private limbs: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, grip: 0, time: 0 };
 
   constructor(
     atlas: AvatarAtlas,
@@ -273,6 +275,7 @@ export class AvatarRenderer {
     l.hug = hug;
     l.pedal = vehicle === 1 && moving ? 11 : 0;
     l.mic = v.mic ? 1 : 0;
+    l.grip = v.grip ? 1 : 0;
     l.time = time;
     const asChibi = !v.hidden && (this.chibi?.place(v.outfit, v.x, v.z, this.m, l, self) ?? false);
     if (seated && !vehicle && !asChibi) {

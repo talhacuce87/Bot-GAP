@@ -4,6 +4,7 @@ import type { PlotState } from "./build";
 import type { Source } from "./media";
 import type { Phase } from "./arena";
 import type { Shot } from "./tank";
+import type { BilekMove, BilekState } from "./games/bilek";
 import type { ChessMove, ChessState } from "./games/chess";
 import type { OkeyMove, OkeyState } from "./games/okey";
 import type { TavlaMove, TavlaState } from "./games/tavla";
@@ -77,9 +78,10 @@ export type OkeyView = Omit<OkeyState, "hands" | "pile"> & { hand: number[]; cou
 export type TableGame =
   | { kind: "tavla"; state: TavlaState }
   | { kind: "satranc"; state: ChessState }
-  | { kind: "okey"; state: OkeyView };
+  | { kind: "okey"; state: OkeyView }
+  | { kind: "bilek"; state: BilekState };
 
-export type TableMove = TavlaMove | ChessMove | OkeyMove;
+export type TableMove = TavlaMove | ChessMove | OkeyMove | BilekMove;
 
 /** Kahvehane masası: oturanlar (sid, 0 boş), adları ve oyun (yoksa bekliyor). */
 export interface TableState {

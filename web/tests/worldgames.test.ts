@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { BILEK_LOSE } from "../shared/games/bilek";
 import { CTF_TARGET, flagHome } from "../shared/arena";
 import type { ServerEvent } from "../shared/protocol";
 import { PITCH, TABLES } from "../shared/zones";
@@ -290,6 +291,43 @@ describe("kahvehane masaları", () => {
     // Kalkan oyunu bitirir
     games.handle(sb, { t: "tleave" });
     expect(a.last("table")?.game).toBeNull();
+  });
+
+  it("bilek güreşi: çember sunucu saatinde döner, yayda basan tutturur, ${BILEK_LOSE} fark kaçıran kaybeder", () => {
+    const { games, a, sa, sb, place, reports } = world();
+    const t = TABLES.find((x) => x.kind === "bilek")!;
+    place(sa, t.seats[0].x, t.seats[0].z);
+    place(sb, t.seats[1].x, t.seats[1].z);
+    games.handle(sa, { t: "tsit", id: t.id, seat: 0 });
+    games.handle(sb, { t: "tsit", id: t.id, seat: 1 });
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      games.handle(sa, { t: "tstart", id: t.id });
+      const state = () => {
+        const g = a.last("table")!.game!;
+        if (g.kind !== "bilek") throw new Error("bilek değil");
+        return g.state;
+      };
+      for (let i = 0; i < BILEK_LOSE; i++) {
+        now = Math.max(now, state().next) + 1;
+        games.tick(now);
+        const c = state().checks[0]!;
+        // a yayın ortasında basar; b hiç basmaz, süre dolunca kaçırır
+        const p = c.zone + c.width / 2;
+        now = c.at + p * c.dur + 60;
+        games.handle(sa, { t: "tmove", id: t.id, move: { kind: "press", n: c.n, p } });
+        expect(state().checks[0]!.res).toBe("hit");
+        now = c.at + c.dur + 1000;
+        games.tick(now);
+      }
+      expect(state().misses).toEqual([0, BILEK_LOSE]);
+      expect(state().winner).toBe(0);
+      expect(a.last("table")!.note).toContain("bilek güreşini kazandı");
+      expect(reports).toContainEqual([sa, "game_win", 1]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 });
 
