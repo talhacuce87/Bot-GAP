@@ -529,6 +529,7 @@ Harita yaklaşık 200 m çapında. Meydandan her bölgeye lambalı taş yollar g
    - **Activities → URL Mappings:** `/` → `world.<domain>`.
    - YouTube testi için ek mapping'ler: `/youtube` → `www.youtube.com`, `/ytimg` → `i.ytimg.com`.
 4. Ses kanalında 🚀 Activities menüsünden uygulamayı başlat. Aynı kanalda başlatan herkes aynı odaya düşer.
+5. **Hızlı yol (UDP):** Konum ve snapshot'lar WebRTC veri kanalından gider (sırasız, yeniden göndermesiz; TCP'deki gibi kaybolan paket arkasındakileri bekletmez). Compose `40000/udp`'yi dışarı açar; sağlayıcının güvenlik duvarında da açık olmalı. Oracle Cloud'da: **Networking → VCN → Security Lists** (ya da instance'ın Network Security Group'u) → Ingress kuralı: kaynak `0.0.0.0/0`, protokol UDP, hedef port `40000`. UDP, alan adının vekilinden (Cloudflare) geçmez: site ve WebSocket Cloudflare'den gitmeye devam eder, veri kanalı doğrudan sunucunun IP'sine bağlanır. Sunucu bu IP'yi açılışta STUN'la kendisi öğrenir (gerekirse `WORLD_RTC_IP` ile elle verilir). Bu IP oyunculara görünür: Cloudflare'in sakladığı gerçek IP açığa çıkar, bu yüzden 80/443'ü yalnızca Cloudflare'in IP aralıklarına açmak iyi olur. Açılırken logda `[rtc] hızlı yol açık: udp <ip>:40000` çıkar. Kanal kurulamayan (UDP'yi engelleyen ağ) ya da Activity'den gelen istemci WebSocket'le devam eder.
 
 **Oyun içi sohbet:** **Enter** ile yazılır, **Esc** ile çıkılır. Mesajlar odadaki herkese gider; oda başına son 30 mesaj bellekte tutulur (yeni gelen görür, kalıcı kayıt yok). `!` ya da `/` ile başlayan mesajlar komuttur ve cevabı yalnızca sorana gelir:
 
@@ -549,6 +550,8 @@ Sınırlar: mesaj en fazla 200 karakter, kişi başı 0.6 sn'de bir; sinema 10 s
 - **Güvenlik:** Sunucu yalnızca o sinemanın kaynağıyla aynı origin'e (ve çalma listesinin işaret ettiği CDN'lere) istek atar. Özel/iç ağ adresleri (127.x, 10.x, 172.16–31.x, 192.168.x, 169.254.x, IPv6 yerel, Docker servisleri) engellenir; denetim bağlantı anında yapılır (DNS rebinding'e kapalı), yönlendirmeler tek tek denetlenir.
 - **Bant genişliği:** Her izleyici videoyu bizim sunucudan çeker (TRT 720p ≈ 4 Mbit/sn kişi başı). HLS parçaları 60 sn bellekte tutulur (en çok 256 MB): kaynak sunucudan her parça bir kez çekilir, izleyicilere bellekten dağıtılır.
 - **İzleme:** `!dünyadurum` (admin) anlık upload'u (Mbit/sn), akışları, önbellek isabetini ve toplam gönderilen veriyi gösterir; aktarım sürerken dünya logunda dakikada bir `[media]` satırı çıkar. `/internal/stats` aynı bilgiyi JSON verir (`x-world-secret` ister).
+
+**Bağlantı özeti:** Dünya logunda dakikada bir `[net]` satırı çıkar: oyuncuların ping ortancası (ve en kötüsü), uzak oyuncuların çizim gecikmesi, hareket eden biri beklenirken (örnek yetmedi: takılma) geçen karelerin oranı, kaçının hızlı yoldan (UDP) bağlı olduğu ve sunucunun event loop gecikmesi (p99). Her istemci 30 sn'de bir kendi özetini yollar.
 
 **Watch party (`!izle <link>`):**
 - **Nasıl çalışır:** Discord'da `!izle <link>` yazılır, bot bir izleme odası açıp "İzlemeye katıl" düğmesini kanala atar. Düğmeye basan kişi tarayıcıda dünyayı açar, Discord ile giriş yapar ve sinemanın koridorunda doğar.

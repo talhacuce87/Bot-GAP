@@ -1,4 +1,5 @@
 // WebSocket istemcisi: zaman damgalı konum gönderimi (SEND_HZ), snapshot alımı, saat senkronu ve yeniden bağlanma.
+// Konum ve snapshot'lar sunucu açtıysa hızlı yoldan (WebRTC/UDP, rtc.ts), olaylar her zaman WebSocket'ten.
 import { type Act, SEND_HZ } from "../../shared/constants";
 import type { Shot } from "../../shared/tank";
 import type { BattleState } from "../../shared/protocol";
@@ -28,12 +29,17 @@ import {
 import type { Remotes } from "./avatars/remotes";
 import { Pacer, ServerClock } from "./clock";
 import { InterpDelay } from "./jitter";
+import { FastLink } from "./rtc";
 import { RttMonitor } from "./rtt";
 
 export type NetStatus = "connecting" | "online" | "offline" | "denied" | "notfound";
 
 const KEEPALIVE_MS = 1000;
 const PING_MS = 2000;
+/** Duran oyuncunun son durumu bu kadar kez daha gider: hızlı yolda biri kaybolsa da son yeri ulaşır. */
+const REPEAT = 3;
+/** Bağlantı özeti (sunucu loguna) bu aralıkla gider. */
+const NETSTAT_MS = 30_000;
 
 export class Net {
   status: NetStatus = "connecting";
@@ -53,7 +59,8 @@ export class Net {
   onTaim: (h: number, tr: number, el: number) => void = () => {};
   onShell: (sid: number, shot: Shot, hits: { sid: number; vx: number; vz: number }[]) => void = () => {};
   onBattle: (s: BattleState) => void = () => {};
-  onSpawn: (sid: number, x: number, z: number, h: number) => void = () => {};
+  /** `at`: doğmanın sunucu saati (uzak oyuncunun daha eski konum örnekleri yok sayılır). */
+  onSpawn: (sid: number, x: number, z: number, h: number, at: number) => void = () => {};
   onBaim: (sid: number, h: number, tr: number, el: number) => void = () => {};
   onKill: (killer: number, victim: number) => void = () => {};
   /** Kendi kıyafetimiz (girişte bottan, gardıroptan kaydedince). */
@@ -100,6 +107,9 @@ export class Net {
   private pacer = new Pacer(SEND_HZ);
   private lastSent = { x: NaN, z: NaN, rot: NaN, flags: -1 };
   private lastSentAt = 0;
+  private repeat = 0;
+  private lastStat = performance.now();
+  private fast: FastLink | null = null;
   private pingTimer = 0;
   private retry = 0;
   private clock = new ServerClock();
@@ -136,6 +146,11 @@ export class Net {
     return this.clock.now(performance.timeOrigin + performance.now());
   }
 
+  /** Konum ve snapshot'lar hızlı yoldan (UDP) gidiyor. */
+  get udp(): boolean {
+    return this.fast?.open ?? false;
+  }
+
   /** Sunucu saati − yerel saat (ms). */
   get offset(): number {
     return this.clock.offsetAt(performance.timeOrigin + performance.now());
@@ -165,6 +180,8 @@ export class Net {
 
   private dropped(code: number): void {
     window.clearInterval(this.pingTimer);
+    this.fast?.close();
+    this.fast = null;
     this.ws = null;
     this.you = -1;
     if (this.closed) return;
@@ -221,7 +238,7 @@ export class Net {
         break;
       case "jail":
         if (ev.sid === this.you) this.onJail(ev.jailed, ev.x, ev.z, ev.rot);
-        else this.remotes.setJailed(ev.sid, ev.jailed, ev.x, ev.z, ev.rot);
+        else this.remotes.setJailed(ev.sid, ev.jailed, ev.x, ev.z, ev.rot, ev.at);
         break;
       case "board":
         this.onBoard(ev.entries, ev.updated);
@@ -255,7 +272,7 @@ export class Net {
         break;
       }
       case "spawn":
-        this.onSpawn(ev.sid, ev.x, ev.z, ev.h);
+        this.onSpawn(ev.sid, ev.x, ev.z, ev.h, ev.at ?? 0);
         break;
       case "baim":
         this.onBaim(ev.sid, ev.h, ev.tr, ev.el);
@@ -366,6 +383,24 @@ export class Net {
       case "season":
         this.onSeason(ev.season, ev.top);
         break;
+      case "rtcon":
+        if (typeof RTCPeerConnection !== "undefined" && !this.fast) {
+          const link = new FastLink(
+            (e) => this.send(e),
+            (d) => this.onMessage(d),
+            () => {
+              if (this.fast === link) this.fast = null;
+            },
+          );
+          this.fast = link;
+        }
+        break;
+      case "rtc":
+        void this.fast?.answer(ev.sdp);
+        break;
+      case "rtcice":
+        this.fast?.candidate(ev.c, ev.mid);
+        break;
       case "pong": {
         const rtt = this.clock.sample(ev.c, ev.s, performance.timeOrigin + performance.now());
         if (this.monitor.sample(rtt, performance.now()) && !document.hidden) this.reconnect();
@@ -378,6 +413,7 @@ export class Net {
   close(): void {
     this.closed = true;
     window.clearInterval(this.pingTimer);
+    this.fast?.close();
     this.ws?.close(1000, "mode");
   }
 
@@ -395,10 +431,15 @@ export class Net {
     if (!ws || ws.readyState !== WebSocket.OPEN || this.you < 0) return;
     const l = this.lastSent;
     const now = performance.now();
+    if (now - this.lastStat > NETSTAT_MS) {
+      this.lastStat = now;
+      this.send({ t: "netstat", rtt: Math.round(this.rtt), delay: Math.round(this.interp.delay), starve: this.remotes.takeStarve(), udp: this.udp });
+    }
     const same = Math.abs(l.x - s.x) < 0.005 && Math.abs(l.z - s.z) < 0.005 && Math.abs(l.rot - s.rot) < 0.005 && l.flags === s.flags;
-    if (same && now - this.lastSentAt < KEEPALIVE_MS) return;
+    if (same && this.repeat <= 0 && now - this.lastSentAt < KEEPALIVE_MS) return;
+    this.repeat = same ? this.repeat - 1 : REPEAT;
     encodeState(this.sendView, s, this.clock.synced ? this.serverNow() : 0);
-    ws.send(this.sendBuf);
+    if (!this.fast?.send(this.sendBuf)) ws.send(this.sendBuf);
     l.x = s.x;
     l.z = s.z;
     l.rot = s.rot;

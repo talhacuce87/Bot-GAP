@@ -279,13 +279,13 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
     myView.shown = !!mine && mine.team >= 0;
     renderUi();
   };
-  net.onSpawn = (sid, x, z, h) => {
+  net.onSpawn = (sid, x, z, h, at) => {
     if (sid === net.you) {
       me.enterTank(x, z, h, h);
       input.setPointerLock(true);
       picker.classList.remove("show");
     } else {
-      remotes.map.get(sid)?.teleport(x, z, h);
+      remotes.map.get(sid)?.teleport(x, z, h, at);
       const foe = foes.get(sid);
       if (foe) foe.aim = { h, tr: h, el: DEFAULT_ELEV };
     }

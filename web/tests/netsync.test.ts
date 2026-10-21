@@ -50,6 +50,7 @@ class Sim {
 interface LineSpec {
   base: number;
   jitter: number;
+  /** TCP: takılma olasılığı (paket başına), UDP: kayıp olasılığı. */
   stallP?: number;
   stallMs?: number;
 }
@@ -60,12 +61,19 @@ class Line {
     private sim: Sim,
     private rand: () => number,
     private spec: LineSpec,
+    /** Hızlı yol (UDP): sırasız, yeniden göndermesiz; kaybolan paket atlanır, arkadakiler beklemez. */
+    private udp = false,
   ) {}
 
   send(fn: () => void): void {
     const { base, jitter, stallP = 0, stallMs = 0 } = this.spec;
-    const t = this.sim.now + base + this.rand() * jitter + (this.rand() < stallP ? stallMs : 0);
-    this.last = Math.max(this.last, t);
+    const t = this.sim.now + base + this.rand() * jitter;
+    const lost = this.rand() < stallP;
+    if (this.udp) {
+      if (!lost) this.sim.at(t, fn);
+      return;
+    }
+    this.last = Math.max(this.last, t + (lost ? stallMs : 0));
     this.sim.at(this.last, fn);
   }
 }
@@ -75,6 +83,8 @@ interface PeerSpec {
   skew: number;
   up: LineSpec;
   down: LineSpec;
+  /** Konum ve snapshot'lar hızlı yoldan (UDP, aynı hat özellikleriyle); ping her zaman WebSocket'ten. */
+  udp?: boolean;
 }
 
 interface Scenario {
@@ -110,18 +120,25 @@ function simulate(sc: Scenario, seed = 7): Report[] {
     sid: number;
     up: Line;
     down: Line;
+    /** Konum/snapshot hattı: UDP ya da WebSocket'in kendisi. */
+    fastUp: Line;
+    fastDown: Line;
     clock: ServerClock;
     local: () => number;
   }
   const peers: Peer[] = [];
   const onSnapshot = new Map<Peer, (view: DataView) => void>();
   const addPeer = (spec: PeerSpec, name: string): Peer => {
-    const p = { spec, sid: 0, up: new Line(sim, rand, spec.up), down: new Line(sim, rand, spec.down), clock: new ServerClock(), local: () => T0 + spec.skew + sim.now };
+    const up = new Line(sim, rand, spec.up);
+    const down = new Line(sim, rand, spec.down);
+    const fastUp = spec.udp ? new Line(sim, rand, spec.up, true) : up;
+    const fastDown = spec.udp ? new Line(sim, rand, spec.down, true) : down;
+    const p = { spec, sid: 0, up, down, fastUp, fastDown, clock: new ServerClock(), local: () => T0 + spec.skew + sim.now };
     const conn: Conn = {
       bufferedAmount: 0,
       send: (data) => {
         if (typeof data === "string") return;
-        p.down.send(() => onSnapshot.get(p)?.(new DataView(data.buffer, data.byteOffset, data.byteLength)));
+        p.fastDown.send(() => onSnapshot.get(p)?.(new DataView(data.buffer, data.byteOffset, data.byteLength)));
       },
     };
     p.sid = room.join({ id: name, name, avatar: null, guest: true }, conn, serverNow());
@@ -157,7 +174,7 @@ function simulate(sc: Scenario, seed = 7): Report[] {
       const pos = truth(sim.now);
       encodeState(view, { ...pos, rot: 0, flags: FLAG_WALKING }, a.clock.synced ? a.clock.now(a.local()) : 0);
       const msg = new DataView(buf.slice(0));
-      a.up.send(() => {
+      a.fastUp.send(() => {
         const s: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
         const sentAt = decodeState(msg, s);
         if (sentAt >= 0) room.applyState(a.sid, s, serverNow(), sentAt);
@@ -242,6 +259,10 @@ const stalling: Scenario = {
   observers: [jittery.observers[0], { ...jittery.observers[1], down: { base: 60, jitter: 80, stallP: 0.03, stallMs: 250 } }],
 };
 
+// Aynı hatlar, aynı kayıp oranı; konum ve snapshot'lar hızlı yoldan (UDP)
+const udp = (p: PeerSpec): PeerSpec => ({ ...p, udp: true });
+const stallingUdp: Scenario = { ...stalling, walker: udp(stalling.walker), observers: stalling.observers.map(udp) };
+
 describe("network sync (end to end)", () => {
   it("everyone sees a jittery walker smoothly and where they really were", () => {
     for (let seed = 1; seed <= 12; seed++) {
@@ -258,6 +279,18 @@ describe("network sync (end to end)", () => {
       }
       // İyi ve kötü hattaki iki kişi A'yı aynı sapmayla görür (fark yalnızca A'nın saat tahmininden)
       expect(Math.abs(b.errP99 - c.errP99)).toBeLessThan(0.02);
+    }
+  });
+
+  it("over the fast path, the same losses cause no freezes at all", () => {
+    for (let seed = 1; seed <= 12; seed++) {
+      for (const r of simulate(stallingUdp, seed)) {
+        expect(r.frozen).toBe(0);
+        expect(r.speedMin).toBeGreaterThan(0.5);
+        expect(r.speedMax).toBeLessThan(1.5);
+        expect(r.errP99).toBeLessThan(0.12);
+        expect(r.errMax).toBeLessThan(0.3);
+      }
     }
   });
 

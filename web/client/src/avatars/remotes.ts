@@ -124,14 +124,21 @@ export class Remote implements AvatarView {
     return true;
   }
 
-  /** Tamponu sıfırlayıp tek örnekle başlatır: aradaki yol boyunca kaymasın. */
-  teleport(x: number, z: number, rot: number): void {
-    // Zaman 0: sonraki her snapshot daha yeni sayılır, interpolasyon hemen yeni konuma oturur.
+  /**
+   * Tamponu sıfırlayıp tek örnekle başlatır: aradaki yol boyunca kaymasın. `at`: ışınlanmanın sunucu saati;
+   * ondan eski örnekler (hızlı yolda olaydan sonra gelen eski snapshot) yok sayılır. 0: sonraki her örnek kabul.
+   */
+  teleport(x: number, z: number, rot: number, at = 0): void {
     this.n = 0;
     this.head = 0;
     this.basis = NaN;
     this.ex = this.ez = 0;
-    this.push(0, x, z, rot, 0);
+    this.push(at, x, z, rot, 0);
+  }
+
+  /** Hareket ediyor ama örnekleri yetmedi (bekleniyor ya da ileri tahmin ediliyor). */
+  get starved(): boolean {
+    return !Number.isNaN(this.basis) && this.moving;
   }
 
   /**
@@ -234,6 +241,8 @@ export class Remote implements AvatarView {
 export class Remotes {
   readonly map = new Map<number, Remote>();
   private changed = true;
+  private frames = 0;
+  private starvedFrames = 0;
 
   constructor(private atlas: AvatarAtlas) {}
 
@@ -269,12 +278,12 @@ export class Remotes {
   }
 
   /** Sürgün durumu değişti: etiketi güncelle, ışınlanmayı interpolasyonsuz uygula. */
-  setJailed(sid: number, jailed: boolean, x: number, z: number, rot: number): void {
+  setJailed(sid: number, jailed: boolean, x: number, z: number, rot: number, at = 0): void {
     const r = this.map.get(sid);
     if (!r) return;
     r.info.jailed = jailed;
     this.atlas.setName(r.cell, r.info.name, jailed);
-    r.teleport(x, z, rot);
+    r.teleport(x, z, rot, at);
     this.changed = true;
   }
 
@@ -300,9 +309,20 @@ export class Remotes {
   }
 
   update(renderTime: number, dt: number, ground?: Ground): void {
+    let starved = false;
     for (const r of this.map.values()) {
       r.sample(renderTime, dt, ground);
+      if (r.starved) starved = true;
       if (r.leaving && r.alpha <= 0) this.drop(r.info.sid);
     }
+    this.frames++;
+    if (starved) this.starvedFrames++;
+  }
+
+  /** Son çağrıdan beri, hareket eden biri beklenirken (örnekleri yetmedi) geçen karelerin oranı. */
+  takeStarve(): number {
+    const r = this.frames ? this.starvedFrames / this.frames : 0;
+    this.frames = this.starvedFrames = 0;
+    return Math.round(r * 1000) / 1000;
   }
 }

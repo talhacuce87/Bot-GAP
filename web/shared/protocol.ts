@@ -252,7 +252,8 @@ export type ServerEvent =
   | { t: "version"; v: string }
   | { t: "join"; player: PlayerInfo }
   | { t: "leave"; sid: number }
-  | { t: "jail"; sid: number; jailed: boolean; x: number; z: number; rot: number }
+  /** `at`: ışınlanmanın sunucu saati; bundan eski konum örnekleri (geç gelen UDP paketi) yok sayılır. */
+  | { t: "jail"; sid: number; jailed: boolean; x: number; z: number; rot: number; at?: number }
   | { t: "board"; updated: number; entries: BoardEntry[] }
   /** `link`: izleme odasının tarayıcı adresi (Activity'de "Tarayıcıda izle" için). */
   | ({ t: "watch"; link?: string } & WatchState)
@@ -271,6 +272,11 @@ export type ServerEvent =
   /** Odadaki ekran paylaşımı: `sid` 0 ise paylaşım yok. */
   | { t: "share"; sid: number; name: string }
   | { t: "pong"; c: number; s: number }
+  /** Hızlı yol (WebRTC veri kanalı) açık: istemci teklif gönderebilir. */
+  | { t: "rtcon" }
+  /** Hızlı yol sinyalleşmesi: sunucunun cevabı ve adayları. */
+  | { t: "rtc"; sdp: string }
+  | { t: "rtcice"; c: string; mid: string }
   /** Tankın durumu (biri binince/inince ve girişte): `driver` 0 ise park halinde. */
   | { t: "tank"; driver: number; x: number; z: number; h: number; tr: number; el: number }
   /** Sürücünün gövde ve kule açısı (konumu sürücünün kendi snapshot'ından gelir). */
@@ -279,7 +285,7 @@ export type ServerEvent =
   | { t: "shell"; sid: number; shot: Shot; hits: { sid: number; vx: number; vz: number }[] }
   | ({ t: "battle" } & BattleState)
   /** Savaşta (yeniden) doğma: sunucu konumu belirler, o oyuncu tankını oraya koyar. */
-  | { t: "spawn"; sid: number; x: number; z: number; h: number }
+  | { t: "spawn"; sid: number; x: number; z: number; h: number; at?: number }
   /** Savaşta bir tankın gövde/kule/namlu açısı (konumu snapshot'tan). */
   | { t: "baim"; sid: number; h: number; tr: number; el: number }
   | { t: "kill"; killer: number; victim: number }
@@ -314,6 +320,13 @@ export type ServerEvent =
 /** İstemcinin gönderdiği JSON olaylar. */
 export type ClientEvent =
   | { t: "ping"; c: number }
+  /** Hızlı yol teklifi (WebRTC). */
+  | { t: "rtc"; sdp: string }
+  /**
+   * Bağlantı özeti (30 sn'de bir, sunucu loguna): ping ortancası, çizim gecikmesi (ms), hareket eden biri
+   * beklenirken (örnek yetmedi) geçen karelerin oranı, hızlı yol açık mı.
+   */
+  | { t: "netstat"; rtt: number; delay: number; starve: number; udp: boolean }
   | { t: "wcmd"; op: "play" | "pause" | "seek"; pos?: number }
   | { t: "wload"; url: string }
   | { t: "emote"; e: number }

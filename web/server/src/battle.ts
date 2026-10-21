@@ -165,8 +165,8 @@ export class Battle {
       s = spawnPoint(team, mates.indexOf(t.sid));
     }
     Object.assign(t, { hp: TANK_HP, alive: true, respawnAt: 0, h: s.h, tr: s.h, el: DEFAULT_ELEV });
-    this.room.teleport(t.sid, s.x, s.z, s.h, now);
-    this.room.broadcast({ t: "spawn", sid: t.sid, x: s.x, z: s.z, h: s.h });
+    const at = this.room.teleport(t.sid, s.x, s.z, s.h, now);
+    this.room.broadcast({ t: "spawn", sid: t.sid, x: s.x, z: s.z, h: s.h, at });
   }
 
   aim(sid: number, h: unknown, tr: unknown, el: unknown): void {

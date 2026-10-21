@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
@@ -14,6 +15,7 @@ import { type Board, Boards } from "./board";
 import { CHAT_COOLDOWN_MS, CHAT_HISTORY, CINEMA_COOLDOWN_MS, cleanChat, parseCommand, runCommand } from "./chat";
 import { type BotPost, fetchLook, fetchWardrobe, OUTFIT_COOLDOWN_MS, sanitizeLook, saveLook, WARDROBE_COOLDOWN_MS } from "./looks";
 import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
+import { type FastLink, setupRtc } from "./rtc";
 import { MediaProxy } from "./mediaProxy";
 import { resolveMedia, type Watch, Watches } from "./watch";
 import { type Share, SHARE_MIME, Shares } from "./share";
@@ -38,6 +40,10 @@ const ALLOW_GUESTS = (process.env.WORLD_ALLOW_GUESTS ?? "true").toLowerCase() !=
 const SESSION_SECRET = SHARED_SECRET || randomBytes(32).toString("hex");
 /** Tarayıcıdan erişilen adres (bot'un attığı izleme linkleri ve OAuth dönüşü için). */
 const PUBLIC_URL = (process.env.WORLD_PUBLIC_URL || "").replace(/\/+$/, "");
+/** Hızlı yol (WebRTC/UDP) portu; boşsa kapalı. Konteynerde aynı port UDP olarak dışarı açılmalı. */
+const RTC_PORT = Number(process.env.WORLD_RTC_PORT || 0);
+/** Hızlı yolun duyurulacak genel IP'si; boşsa sunucu STUN'la kendisi öğrenir. */
+const RTC_IP = process.env.WORLD_RTC_IP || "";
 /** Discord ayarlıysa izleme odalarına yalnızca Discord ile giriş yapanlar girer. */
 const LOGIN_REQUIRED = !!(CLIENT_ID && CLIENT_SECRET);
 const SESSION_COOKIE = "gw_session";
@@ -75,6 +81,9 @@ const CLIENT_VERSION = (() => {
 
 const rooms = new Rooms();
 const watches = new Watches();
+const rtc = await setupRtc(RTC_PORT, RTC_IP);
+/** İstemcilerin son bağlantı özeti (30 sn'de bir gelir); dakikada bir loga yazılır. */
+const netStats = new Map<WebSocket, { rtt: number; delay: number; starve: number; udp: boolean; at: number }>();
 /** Oda başına ekran paylaşımı (oda anahtarıyla). */
 const shares = new Shares();
 
@@ -854,7 +863,27 @@ async function sendSeason(ws: WebSocket, guild: string | null): Promise<void> {
 
 function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions, watch?: Watch): void {
   const room = rooms.get(key);
-  const sid = room.join(user, ws, Date.now(), opts);
+  // Snapshot'lar hızlı yol açıksa ondan, değilse WebSocket'ten; olaylar her zaman WebSocket'ten (sıralı, kaybolmaz)
+  let fast: FastLink | null = null;
+  const conn: Conn = {
+    send: (data) => ws.send(data),
+    get bufferedAmount() {
+      return ws.bufferedAmount;
+    },
+    sendFast: (data) => fast?.send(data) ?? false,
+  };
+  const sid = room.join(user, conn, Date.now(), opts);
+  const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
+  const onState = (buf: Buffer) => {
+    const sentAt = decodeState(new DataView(buf.buffer, buf.byteOffset, buf.byteLength), incoming);
+    if (sentAt >= 0) room.applyState(sid, incoming, Date.now(), sentAt);
+  };
+  if (rtc) {
+    fast = rtc.link((ev) => ws.send(JSON.stringify(ev)), onState);
+    ws.send(JSON.stringify({ t: "rtcon" }));
+  }
+  let lastOffer = 0;
+  let lastStat = 0;
   /** Oyuncunun sunucusu: bağlanınca bilinmiyorsa (tarayıcı, deploy sonrası) bot bildirince atanır. */
   const myGuild = () => room.players.get(sid)?.guild ?? opts.guild ?? null;
   if (CLIENT_VERSION) ws.send(JSON.stringify({ t: "version", v: CLIENT_VERSION }));
@@ -884,24 +913,28 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   let lastProfile = 0;
   let lastSeason = 0;
   const cinemaGate = { last: 0 };
-  const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   alive.add(ws);
 
   ws.on("pong", () => alive.add(ws));
   ws.on("message", (data, isBinary) => {
-    if (isBinary) {
-      const buf = data as Buffer;
-      const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-      const sentAt = decodeState(view, incoming);
-      if (sentAt >= 0) room.applyState(sid, incoming, Date.now(), sentAt);
-      return;
-    }
+    if (isBinary) return onState(data as Buffer);
     try {
       const msg = JSON.parse(data.toString());
       if (msg && typeof msg === "object" && room.battle?.handle(sid, msg)) {
         // savaş mesajı işlendi
       } else if (msg?.t === "ping" && typeof msg.c === "number") {
         ws.send(JSON.stringify({ t: "pong", c: msg.c, s: Date.now() }));
+      } else if (msg?.t === "rtc" && fast) {
+        const now = Date.now();
+        if (now - lastOffer < 5000) return;
+        lastOffer = now;
+        fast.offer(msg.sdp);
+      } else if (msg?.t === "netstat") {
+        const now = Date.now();
+        const num = (v: unknown, max: number) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : 0);
+        if (now - lastStat < 10_000) return;
+        lastStat = now;
+        netStats.set(ws, { rtt: num(msg.rtt, 10_000), delay: num(msg.delay, 10_000), starve: num(msg.starve, 1), udp: msg.udp === true, at: now });
       } else if (msg?.t === "act" && ACTS.includes(msg.a)) {
         // Yalnızca o noktanın yanındaysa; sürgündekiler parmaklıktan bir şey atamaz.
         const a = msg.a as Act;
@@ -992,6 +1025,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
     }
   });
   ws.on("close", () => {
+    fast?.close();
+    netStats.delete(ws);
     const s = shares.get(room.key);
     if (s?.sid === sid) {
       s.closeSender();
@@ -1074,6 +1109,25 @@ setInterval(() => {
   if (s.active > 0 || s.mbps > 0) {
     console.log(`[media] ${s.mbps} Mbit/sn · ${s.active} akış · önbellek ${s.hits}/${s.requests} · toplam ${(s.bytes / 1e9).toFixed(2)} GB`);
   }
+}, 60_000);
+
+// Bağlantı özeti (dakikada bir): oyuncuların pingi, çizim gecikmesi, bekleme oranı, hızlı yol ve sunucunun tıkanması.
+const loopDelay = monitorEventLoopDelay({ resolution: 10 });
+loopDelay.enable();
+setInterval(() => {
+  const now = Date.now();
+  const s = [...netStats.values()].filter((v) => now - v.at < 90_000);
+  const lag = loopDelay.percentile(99) / 1e6;
+  loopDelay.reset();
+  if (!s.length && lag < 50) return;
+  const med = (a: number[]) => [...a].sort((x, y) => x - y)[a.length >> 1] ?? 0;
+  const rtt = s.map((v) => v.rtt);
+  const starve = s.map((v) => v.starve);
+  console.log(
+    `[net] ${s.length} oyuncu · ping ${med(rtt)} ms (en kötü ${Math.max(0, ...rtt)}) · çizim gecikmesi ${med(s.map((v) => v.delay))} ms` +
+      ` · bekleme %${(med(starve) * 100).toFixed(1)} (en kötü %${(Math.max(0, ...starve) * 100).toFixed(1)})` +
+      ` · UDP ${s.filter((v) => v.udp).length}/${s.length} · event loop p99 ${lag.toFixed(0)} ms`,
+  );
 }, 60_000);
 
 // Boş ve eskimiş izleme odalarını temizle.

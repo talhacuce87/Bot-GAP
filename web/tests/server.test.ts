@@ -82,10 +82,36 @@ describe("Room", () => {
     readSnapshot(new DataView(last.binary[0].buffer), () => count++);
     expect(count).toBe(ROOM_MAX_PLAYERS);
 
-    room.tick(2);
-    expect(last.binary.length).toBe(1); // değişiklik yok → yayın yok
-    room.tick(3, true);
-    expect(last.binary.length).toBe(2);
+    // Son değişiklik birkaç yayın daha gider (hızlı yolda biri kaybolabilir), sonra susar
+    for (let t = 2; t < 10; t++) room.tick(t);
+    expect(last.binary.length).toBe(3);
+    room.tick(10, true);
+    expect(last.binary.length).toBe(4);
+  });
+
+  it("sends snapshots over the fast path when it is open, otherwise over the socket", () => {
+    const room = new Room("g:test");
+    const slow = new FakeConn();
+    const fast = Object.assign(new FakeConn(), { udp: [] as Uint8Array[], sendFast(d: Uint8Array) { this.udp.push(d); return true; } });
+    room.join(user("a"), slow);
+    room.join(user("b"), fast);
+    room.tick(1, true);
+    expect(slow.binary.length).toBe(1);
+    expect(fast.binary.length).toBe(0);
+    expect(fast.udp.length).toBe(1);
+  });
+
+  it("ignores a reordered older state, but follows a client clock that jumped back", () => {
+    const room = new Room("g:test");
+    const sid = room.join(user("a"), new FakeConn(), 0);
+    const p = room.players.get(sid)!;
+    const at = (x: number, now: number, sentAt: number) => room.applyState(sid, { x, z: p.state.z, rot: 0, flags: 1 }, now, sentAt);
+    const x0 = p.state.x;
+    at(x0 + 0.2, 1000, 990);
+    at(x0 + 0.1, 1010, 960); // UDP'de geç gelen eski paket
+    expect(p.state.x).toBeCloseTo(x0 + 0.2, 2);
+    at(x0 + 0.3, 1100, 400); // saat büyük düzeltmeyle geri atladı
+    expect(p.state.x).toBeCloseTo(x0 + 0.3, 2);
   });
 
   it("promotes the oldest spectator when an active player leaves", () => {
@@ -115,6 +141,19 @@ describe("Room", () => {
     expect(times.get(sb)).toBe(1000);
   });
 
+  it("repeats an idle player's sample time exactly, whatever the clock's fractions", () => {
+    const room = new Room("g:test");
+    const a = new FakeConn();
+    const sid = room.join(user("a"), a, 1000.3);
+    room.applyState(sid, { x: 0, z: 0, rot: 0, flags: 1 }, 1100.7, 1080.45);
+    const seen = new Set<number>();
+    for (const now of [1133.2, 1166.6, 1199.9, 1250.5]) {
+      room.tick(now, true);
+      readSnapshot(new DataView(a.binary.at(-1)!.buffer), (s, _x, _z, _r, _f, time) => s === sid && seen.add(time));
+    }
+    expect([...seen]).toEqual([1080]);
+  });
+
   it("never trusts a sample time from the future, the distant past or before the previous one", () => {
     const room = new Room("g:test");
     const sid = room.join(user("a"), new FakeConn(), 0);
@@ -126,7 +165,8 @@ describe("Room", () => {
     expect(p.sampledAt).toBe(19_000);
     move(20_030, 19_990);
     expect(p.sampledAt).toBe(19_990);
-    move(20_060, 19_980);
+    // İstemcinin saati büyük düzeltmeyle geri atladı: kabul edilir ama örnek zamanı geriye gitmez
+    move(20_060, 19_700);
     expect(p.sampledAt).toBe(19_991);
     // Zaman damgasız (eski sayfa, saat henüz belli değil): varış anı
     move(20_200, 0);

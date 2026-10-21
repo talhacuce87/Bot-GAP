@@ -24,6 +24,11 @@ services:
       - .env
     environment:
       - SERVICE_FQDN_WORLD_3000
+      # Hızlı yol (WebRTC/UDP): konum ve snapshot'lar. Sunucunun güvenlik duvarında 40000/udp açık olmalı;
+      # kapalıysa istemciler birkaç saniye içinde WebSocket'le devam eder.
+      - WORLD_RTC_PORT=40000
+    ports:
+      - "40000:40000/udp"
     logging:
       driver: json-file
       options:

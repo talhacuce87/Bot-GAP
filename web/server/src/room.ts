@@ -48,6 +48,8 @@ export interface Conn {
   send(data: string | Uint8Array): void;
   /** Gönderilmeyi bekleyen bayt; yavaş istemcilere snapshot atlanır. */
   readonly bufferedAmount: number;
+  /** Hızlı yol (UDP, kaybolabilir): snapshot gittiyse true, yoksa WebSocket'ten gider. */
+  sendFast?(data: Uint8Array): boolean;
 }
 
 interface Player {
@@ -60,6 +62,8 @@ interface Player {
   state: PlayerState;
   /** `state`'in ait olduğu an (sunucu saati): istemcinin bildirdiği örnek zamanı, doğrulanmış. */
   sampledAt: number;
+  /** Kabul edilen son istemci zamanı (ham): UDP'de sırası karışıp geç gelen eski konum yok sayılır. */
+  sentAt: number;
   /** Son konum mesajının geldiği an (hız kontrolü buna göre). */
   lastUpdate: number;
   joinedAt: number;
@@ -70,14 +74,22 @@ const MAX_BUFFERED = 64 * 1024;
 const SPAWN_RADIUS = 3;
 /** İstemcinin örnek zamanı varış anından bundan daha eski olamaz (takılmış hat, bozuk saat). */
 const MAX_SAMPLE_AGE_MS = 1000;
+/**
+ * Bundan kısa süre geriden gelen konum, sırası karışmış eski pakettir (yok sayılır); daha da geriye gitmişse
+ * istemcinin saati büyük bir düzeltmeyle atlamıştır (kabul edilir).
+ */
+const REORDER_MS = 250;
+/** Son değişiklik bu kadar yayında daha gider: hızlı yolda biri kaybolsa da duran oyuncunun son yeri ulaşır. */
+const TRAIL_TICKS = 3;
 
 /**
  * Konumun ait olduğu an: istemci kendi saatini sunucu saatine çevirip yollar (`sentAt`, 0: bilinmiyor).
- * Gelecekte olamaz, çok eski olamaz ve oyuncunun bir önceki örneğinden geriye gidemez.
+ * Gelecekte olamaz, çok eski olamaz ve oyuncunun bir önceki örneğinden geriye gidemez. Tam ms: snapshot'ta
+ * yaş olarak gider, istemci her yayında birebir aynı zamanı okumalı (yoksa duran oyuncu "yeni örnek" sanılır).
  */
 function sampleTime(sentAt: number, prev: number, now: number): number {
   const t = sentAt > 0 ? Math.min(now, Math.max(now - MAX_SAMPLE_AGE_MS, sentAt)) : now;
-  return Math.max(t, prev + 1);
+  return Math.max(Math.round(t), prev + 1);
 }
 
 export class Room {
@@ -94,7 +106,8 @@ export class Room {
   /** Görev/sayaç olayı (botta): sunucu bağlar; tank isabeti, savaşta vuruş ve galibiyet buradan. */
   onReport: (sid: number, event: string, amount?: number) => void = () => {};
   private nextSid = 1;
-  private dirty = false;
+  /** Kalan yayın sayısı (değişiklikten sonra TRAIL_TICKS). */
+  private dirty = 0;
 
   constructor(readonly key: string) {
     this.battle = key.startsWith("b:") ? new Battle(this) : null;
@@ -138,7 +151,8 @@ export class Room {
       guild: opts.guild ?? null,
       forceJail: !!opts.forceJail,
       state,
-      sampledAt: now,
+      sampledAt: Math.round(now),
+      sentAt: 0,
       lastUpdate: now,
       joinedAt: now,
       conn,
@@ -148,7 +162,7 @@ export class Room {
     else this.sendTo(conn, this.tankEvent());
     this.games?.join(sid, conn);
     this.broadcast({ t: "join", player: info }, sid);
-    this.dirty = true;
+    this.dirty = TRAIL_TICKS;
     return sid;
   }
 
@@ -170,7 +184,7 @@ export class Room {
         break;
       }
     }
-    this.dirty = true;
+    this.dirty = TRAIL_TICKS;
   }
 
   /**
@@ -185,6 +199,8 @@ export class Room {
       p.lastUpdate = now;
       return;
     }
+    if (sentAt > 0 && sentAt <= p.sentAt && sentAt > p.sentAt - REORDER_MS) return;
+    if (sentAt > 0) p.sentAt = sentAt;
     const dt = Math.min(1, Math.max(0, (now - p.lastUpdate) / 1000));
     // Araçtan inip binerken iki durumun hızlısı (bisikletten inen bir an daha hızlı gidebilir)
     const maxStep = Math.max(maxSpeed(s.flags), maxSpeed(p.state.flags)) * dt * 1.3 + 0.5;
@@ -205,7 +221,7 @@ export class Room {
     p.state.flags = s.flags & FLAG_MASK & (this.tank.driver === sid ? FLAG_MASK : ~FLAG_DRIVING);
     p.sampledAt = sampleTime(sentAt, p.sampledAt, now);
     p.lastUpdate = now;
-    this.dirty = true;
+    this.dirty = TRAIL_TICKS;
   }
 
   /** Odaya sohbet satırı: geçmişe eklenir ve herkese gider. */
@@ -248,19 +264,23 @@ export class Room {
       p.sampledAt = sampleTime(0, p.sampledAt, now);
       p.lastUpdate = now;
       const { x, z, rot } = p.state;
-      this.broadcast({ t: "jail", sid, jailed, x, z, rot });
-      this.dirty = true;
+      this.broadcast({ t: "jail", sid, jailed, x, z, rot, at: p.sampledAt });
+      this.dirty = TRAIL_TICKS;
     }
   }
 
-  /** Sunucunun belirlediği yere koyar (savaşta doğma); sonraki hız kontrolü buradan başlar. */
-  teleport(sid: number, x: number, z: number, rot: number, now = Date.now()): void {
+  /**
+   * Sunucunun belirlediği yere koyar (savaşta doğma); sonraki hız kontrolü buradan başlar.
+   * Işınlanmanın zamanını döndürür (istemciye duyurulur: daha eski konum örnekleri yok sayılsın).
+   */
+  teleport(sid: number, x: number, z: number, rot: number, now = Date.now()): number {
     const p = this.players.get(sid);
-    if (!p) return;
+    if (!p) return 0;
     Object.assign(p.state, { x, z, rot });
     p.sampledAt = sampleTime(0, p.sampledAt, now);
     p.lastUpdate = now;
-    this.dirty = true;
+    this.dirty = TRAIL_TICKS;
+    return p.sampledAt;
   }
 
   private tankEvent(): ServerEvent {
@@ -279,7 +299,7 @@ export class Room {
     p.state.x = t.x;
     p.state.z = t.z;
     this.broadcast(this.tankEvent());
-    this.dirty = true;
+    this.dirty = TRAIL_TICKS;
     return true;
   }
 
@@ -338,17 +358,20 @@ export class Room {
       this.broadcast(this.tankEvent());
     }
     if (!this.dirty && !force) return;
-    this.dirty = false;
+    if (this.dirty) this.dirty--;
     let count = 0;
     for (const p of this.players.values()) if (!p.info.spectator) count++;
     const buf = new Uint8Array(snapshotSize(count));
     const view = new DataView(buf.buffer);
-    writeSnapshotHeader(view, now, count);
+    // Tam ms: zaman − yaş, örnek zamanını birebir verir
+    const at = Math.round(now);
+    writeSnapshotHeader(view, at, count);
     let i = 0;
     for (const [sid, p] of this.players) {
-      if (!p.info.spectator) writeSnapshotEntry(view, i++, sid, p.state, now - p.sampledAt);
+      if (!p.info.spectator) writeSnapshotEntry(view, i++, sid, p.state, at - p.sampledAt);
     }
     for (const p of this.players.values()) {
+      if (p.conn.sendFast?.(buf)) continue;
       if (p.conn.bufferedAmount < MAX_BUFFERED) p.conn.send(buf);
     }
   }
