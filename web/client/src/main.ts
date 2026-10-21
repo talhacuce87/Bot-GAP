@@ -34,7 +34,7 @@ import { onBinds } from "./input/keybinds";
 import { Net } from "./net";
 import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
-import { lowPowerDevice as lowPower, onSettings, settings } from "./settings";
+import { lowPowerDevice as lowPower, onSettings, settings, updateSettings } from "./settings";
 import { Bubbles } from "./ui/bubbles";
 import { Hud } from "./ui/hud";
 import { sakuraEntrance } from "./ui/sakuraFx";
@@ -285,6 +285,10 @@ async function start(): Promise<void> {
   if (params.has("debug")) hud.enableDebug(() => void openYoutubeTest(hudRoot, session));
   syncFps();
   life.onStop(onSettings(syncFps));
+  // Ağ paneli: ayardan ya da kısayolla (F3)
+  const syncNet = () => (settings.showNet ? hud.enableNet(net, () => updateSettings({ showNet: false })) : hud.disableNet());
+  syncNet();
+  life.onStop(onSettings(syncNet));
   new SettingsPanel(hudRoot, () => switchMode(false));
 
   // Watch party: video perdede, kontroller altta. Odaya giren sinemanın koridorunda başlar.
@@ -861,6 +865,8 @@ async function start(): Promise<void> {
     renderScene(dt);
     perf.frame(dtMs, performance.now() - t0);
     hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);
+    if (input.consumeKey("net")) updateSettings({ showNet: !settings.showNet });
+    hud.updateNet(now);
   };
 
   // Görünmezken çizme: pil ve Discord'un kendisi için. Ağ bağlantısı açık kalır.

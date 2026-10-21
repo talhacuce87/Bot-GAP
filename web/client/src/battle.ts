@@ -135,6 +135,9 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   const syncFps = () => (settings.showFps ? hud.enableDebug() : hud.disableDebug());
   syncFps();
   life.onStop(onSettings(syncFps));
+  const syncNet = () => (settings.showNet ? hud.enableNet(net, () => updateSettings({ showNet: false })) : hud.disableNet());
+  syncNet();
+  life.onStop(onSettings(syncNet));
 
   // ---- Arayüz ----
   const exit = el("button", "battle-exit", hudRoot, "🏠 Dünyaya dön");
@@ -442,6 +445,8 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
     renderer.render(scene, camera);
     perf.frame(dtMs, performance.now() - t0);
     hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);
+    if (input.consumeKey("net")) updateSettings({ showNet: !settings.showNet });
+    hud.updateNet(now);
   };
   const run = () => {
     last = performance.now();

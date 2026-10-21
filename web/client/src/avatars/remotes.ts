@@ -241,8 +241,9 @@ export class Remote implements AvatarView {
 export class Remotes {
   readonly map = new Map<number, Remote>();
   private changed = true;
-  private frames = 0;
-  private starvedFrames = 0;
+  /** Toplam kare ve bunlardan hareket eden biri beklenirken (örnekleri yetmedi) geçenler: okuyan farkını alır. */
+  frames = 0;
+  starvedFrames = 0;
 
   constructor(private atlas: AvatarAtlas) {}
 
@@ -317,12 +318,5 @@ export class Remotes {
     }
     this.frames++;
     if (starved) this.starvedFrames++;
-  }
-
-  /** Son çağrıdan beri, hareket eden biri beklenirken (örnekleri yetmedi) geçen karelerin oranı. */
-  takeStarve(): number {
-    const r = this.frames ? this.starvedFrames / this.frames : 0;
-    this.frames = this.starvedFrames = 0;
-    return Math.round(r * 1000) / 1000;
   }
 }

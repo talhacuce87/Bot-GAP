@@ -24,6 +24,8 @@ export class InterpDelay {
   /** Şu an kullanılan gecikme (ms). */
   delay = INTERP_DELAY_MS;
   target = INTERP_DELAY_MS;
+  /** Her ihtiyaç ölçümünde (ağ paneli). */
+  onNeed: (need: number, now: number) => void = () => {};
   private needs: number[] = [];
   private times: number[] = [];
   private nextCalc = 0;
@@ -39,6 +41,7 @@ export class InterpDelay {
 
   /** Hareket eden oyuncunun yeni örneği geldi: `need` bir öncekinin o anki yaşı (ms), `now` yerel saat (ms). */
   arrived(need: number, now: number): void {
+    this.onNeed(need, now);
     this.needs.push(need);
     this.times.push(now);
     if (now >= this.nextCalc) this.recalc(now);

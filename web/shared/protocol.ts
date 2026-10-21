@@ -11,6 +11,8 @@ import type { TableKind } from "./zones";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
 export const MSG_SNAPSHOT = 2; // sunucu → istemci: odadaki herkesin konumu
+export const MSG_PING = 3; // istemci → sunucu, hızlı yol: yolun kendi gidiş-dönüşü ve kaybı
+export const MSG_PONG = 4; // sunucu → istemci, hızlı yol
 
 const TAU = Math.PI * 2;
 
@@ -323,10 +325,11 @@ export type ClientEvent =
   /** Hızlı yol teklifi (WebRTC). */
   | { t: "rtc"; sdp: string }
   /**
-   * Bağlantı özeti (30 sn'de bir, sunucu loguna): ping ortancası, çizim gecikmesi (ms), hareket eden biri
-   * beklenirken (örnek yetmedi) geçen karelerin oranı, hızlı yol açık mı.
+   * Bağlantı özeti (30 sn'de bir, sunucu loguna): ping ortancası (hızlı yol açıksa onun, `ws` WebSocket'in),
+   * hızlı yolda kayıp oranı, çizim gecikmesi (ms), hareket eden biri beklenirken (örnek yetmedi) geçen
+   * karelerin oranı, hızlı yol açık mı.
    */
-  | { t: "netstat"; rtt: number; delay: number; starve: number; udp: boolean }
+  | { t: "netstat"; rtt: number; ws: number; loss: number; delay: number; starve: number; udp: boolean }
   | { t: "wcmd"; op: "play" | "pause" | "seek"; pos?: number }
   | { t: "wload"; url: string }
   | { t: "emote"; e: number }
@@ -440,6 +443,33 @@ export function writeSnapshotEntry(view: DataView, index: number, sid: number, s
   view.setUint16(o + 6, quantRot(s.rot), true);
   view.setUint8(o + 8, s.flags & 0xff);
   view.setUint16(o + 9, Math.max(0, Math.min(MAX_AGE_MS, Math.round(age))), true);
+}
+
+export const PING_BYTES = 11;
+export const PONG_BYTES = 19;
+
+/** [type u8][seq u16][c f64] — `c`: istemcinin gönderdiği an (yerel saat, ms). */
+export function writePing(view: DataView, seq: number, c: number): void {
+  view.setUint8(0, MSG_PING);
+  view.setUint16(1, seq & 0xffff, true);
+  view.setFloat64(3, c, true);
+}
+
+/** Ping'in cevabı: [type u8][seq u16][c f64][s f64] — `s`: sunucunun cevapladığı an. Ping değilse null. */
+export function pongFor(ping: DataView, s: number): Uint8Array | null {
+  if (ping.byteLength !== PING_BYTES || ping.getUint8(0) !== MSG_PING) return null;
+  const out = new Uint8Array(PONG_BYTES);
+  const view = new DataView(out.buffer);
+  view.setUint8(0, MSG_PONG);
+  view.setUint16(1, ping.getUint16(1, true), true);
+  view.setFloat64(3, ping.getFloat64(3, true), true);
+  view.setFloat64(11, s, true);
+  return out;
+}
+
+export function readPong(view: DataView): { seq: number; c: number; s: number } | null {
+  if (view.byteLength !== PONG_BYTES || view.getUint8(0) !== MSG_PONG) return null;
+  return { seq: view.getUint16(1, true), c: view.getFloat64(3, true), s: view.getFloat64(11, true) };
 }
 
 /**

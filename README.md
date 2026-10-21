@@ -551,7 +551,9 @@ Sınırlar: mesaj en fazla 200 karakter, kişi başı 0.6 sn'de bir; sinema 10 s
 - **Bant genişliği:** Her izleyici videoyu bizim sunucudan çeker (TRT 720p ≈ 4 Mbit/sn kişi başı). HLS parçaları 60 sn bellekte tutulur (en çok 256 MB): kaynak sunucudan her parça bir kez çekilir, izleyicilere bellekten dağıtılır.
 - **İzleme:** `!dünyadurum` (admin) anlık upload'u (Mbit/sn), akışları, önbellek isabetini ve toplam gönderilen veriyi gösterir; aktarım sürerken dünya logunda dakikada bir `[media]` satırı çıkar. `/internal/stats` aynı bilgiyi JSON verir (`x-world-secret` ister).
 
-**Bağlantı özeti:** Dünya logunda dakikada bir `[net]` satırı çıkar: oyuncuların ping ortancası (ve en kötüsü), uzak oyuncuların çizim gecikmesi, hareket eden biri beklenirken (örnek yetmedi: takılma) geçen karelerin oranı, kaçının hızlı yoldan (UDP) bağlı olduğu ve sunucunun event loop gecikmesi (p99). Her istemci 30 sn'de bir kendi özetini yollar.
+**Bağlantı özeti:** Dünya logunda dakikada bir `[net]` satırı çıkar: oyuncuların ping ortancası (ve en kötüsü), uzak oyuncuların çizim gecikmesi, hareket eden biri beklenirken (örnek yetmedi: takılma) geçen karelerin oranı, kaçının hızlı yoldan (UDP) bağlı olduğu ve sunucunun event loop gecikmesi (p99). Her istemci 30 sn'de bir kendi özetini yollar (hızlı yolun ve WebSocket'in pingi, hızlı yolda paket kaybı dahil).
+
+**Ağ paneli:** Oyunda **F3** (ya da Ayarlar → Arayüz → Ağ paneli) anlık bağlantı durumunu açar: ping (UDP ve WebSocket), dalgalanma, paket kaybı, çizim gecikmesi ve hedefi, takılma oranı, snapshot hızı, gelen/giden veri; son 60 sn'lik ping grafiği, son 30 sn'lik teslim grafiği (uzak oyuncuların en geç gelen örneği ve çizim gecikmesi; gecikmeyi aşan an turuncu) ve aynı değerlerin özet tablosu. Grafiklerin üzerine gelince (ya da odaklanıp oklarla) o anın değerleri görünür. Ekrandaki ping hızlı yol açıksa onun pingidir (hareket o yoldan gider).
 
 **Watch party (`!izle <link>`):**
 - **Nasıl çalışır:** Discord'da `!izle <link>` yazılır, bot bir izleme odası açıp "İzlemeye katıl" düğmesini kanala atar. Düğmeye basan kişi tarayıcıda dünyayı açar, Discord ile giriş yapar ve sinemanın koridorunda doğar.

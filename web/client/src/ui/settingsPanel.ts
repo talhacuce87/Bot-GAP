@@ -11,7 +11,7 @@ import {
   settings,
   updateSettings,
 } from "../settings";
-import { type Action, ACTION_NAMES, type Bind, bindLabel, binds, RESERVED, resetBinds, setBind } from "../input/keybinds";
+import { type Action, ACTION_NAMES, actionLabel, type Bind, bindLabel, binds, RESERVED, resetBinds, setBind } from "../input/keybinds";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text = ""): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -158,6 +158,7 @@ export class SettingsPanel {
     this.section("Arayüz");
     this.toggleRow("Konuşma balonları", s.bubbles, (v) => this.set({ bubbles: v }));
     this.toggleRow("FPS göstergesi", s.showFps, (v) => this.set({ showFps: v }));
+    this.toggleRow(`Ağ paneli (${actionLabel("net")})`, s.showNet, (v) => this.set({ showNet: v }));
 
     const reset = el("button", "settings-reset", b, "Varsayılana dön");
     reset.addEventListener("click", () => {
