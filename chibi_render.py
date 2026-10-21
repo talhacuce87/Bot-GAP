@@ -62,6 +62,72 @@ def load_pack(pack_dir: Path = PACK_DIR) -> tuple[dict, dict[str, Part]]:
     return manifest, parts
 
 
+# Şapka takınca saç şapkanın iç yüzeyinin bu kadar içine, şapkayı kesen gözlük kısmı bunun içine çekilir
+HAT_HAIR_GAP = 0.005
+HAT_GLASSES_GAP = 0.006
+# Kafa merkezinden bu kadar önde (+z) olan gözlük köşeleri ön çerçeve: şapkanın önüne itilir (en çok PUSH)
+HAT_GLASSES_FRONT = 0.4
+HAT_GLASSES_PUSH = 0.04
+# Üçgen çekmede saç şapka kabuğunun dış yüzeyinin bu kadar içine (kabuk kalınlığının en çok yarısı) alınır
+SHELL_IN = 0.004
+
+
+TRI_SAMPLES = ((1 / 3, 1 / 3, 1 / 3), (0.5, 0.5, 0), (0, 0.5, 0.5), (0.5, 0, 0.5),
+               (0.7, 0.15, 0.15), (0.15, 0.7, 0.15), (0.15, 0.15, 0.7))
+
+
+def pull_triangles(pos: list, tris, hc, cap) -> None:
+    """
+    Köşeler şapkanın içine bastırıldıktan sonra ikinci geçiş (chibiPack.ts pullTriangles ile aynı): içinde
+    şapkanın dış yüzeyinden taşan nokta olan üçgenin üç köşesi, o nokta kabuğun içine girecek kadar kafa
+    merkezine çekilir.
+    """
+    for _ in range(2):
+        for tri in tris:
+            f = 1.0
+            for w in TRI_SAMPLES:
+                d = [sum(w[j] * pos[tri[j]][k] for j in range(3)) - hc[k] for k in range(3)]
+                r = math.sqrt(d[0] ** 2 + d[1] ** 2 + d[2] ** 2)
+                ri, ro, _ = cap(d, r)
+                lim = ro - min(SHELL_IN, (ro - ri) / 2)
+                if ri and r > lim:
+                    f = min(f, lim / r)
+            if f >= 1:
+                continue
+            for v in tri:
+                pos[v] = tuple(hc[k] + (pos[v][k] - hc[k]) * f for k in range(3))
+
+
+@lru_cache(maxsize=None)
+def hat_cap(hat_id: str, pack_dir: Path = PACK_DIR):
+    """
+    Şapka haritası okuyucu (bake-chibi.mjs HAT_CAP): kafa merkezine göre d yönündeki şapka iç, dış ve
+    saç (aşındırılmış iç) uzaklığı; o yönde şapka yoksa sıfırlar. En yakın ızgara hücresi (chibiPack.ts
+    ile aynı). Eski pakette None.
+    """
+    manifest, _ = load_pack(pack_dir)
+    g, off = manifest.get("hatCap"), manifest["parts"][hat_id].get("cap")
+    if not g or off is None:
+        return None
+    n = g["az"] * g["el"]
+    cells = (pack_dir / "chibi.bin").read_bytes()[off:off + 3 * n]
+
+    def at(d, r):
+        if r < 1e-6:
+            return 0.0, 0.0, 0.0
+        el = math.asin(max(-1.0, min(1.0, d[1] / r)))
+        # floor(x + 0.5): JS Math.round ile aynı (Python round yarımları çifte yuvarlar)
+        ei = math.floor((el - g["elMin"]) / (math.pi / 2 - g["elMin"]) * (g["el"] - 1) + 0.5)
+        if ei < 0:
+            return 0.0, 0.0, 0.0
+        az = math.atan2(d[0], d[2]) % (2 * math.pi)
+        ai = math.floor(az / (2 * math.pi) * g["az"] + 0.5) % g["az"]
+        k = min(ei, g["el"] - 1) * g["az"] + ai
+        return cells[k] * g["unit"], cells[n + k] * g["unit"], cells[2 * n + k] * g["unit"]
+
+    return at
+
+
 def compose(outfit: dict[str, str | None]) -> list[Part]:
     """Kıyafete göre çizilecek parçalar; boş üst/alt için temel atlet/şort, tek parça üst altı gizler."""
     _, parts = load_pack()
@@ -109,9 +175,11 @@ def render(outfit: dict | None = None, size: int = 512, yaw_deg: float = -24.0,
     manifest, _ = load_pack()
     chosen = compose(outfit)
     colors = {k: _hex((outfit.get("colors") or {}).get(k)) for k in COLOR_KEYS}
-    hat = any(p.cat == "hats" for p in chosen)
+    hat_part = next((p for p in chosen if p.cat == "hats"), None)
+    hat = hat_part is not None
     hc = manifest["headCenter"]
     hat_r = manifest["hatHairRadius"]
+    cap = hat_cap(hat_part.id) if hat else None
 
     ss = 2  # süper örnekleme: büyük çizip küçült (kenar yumuşatma)
     W = size * ss
@@ -139,14 +207,33 @@ def render(outfit: dict | None = None, size: int = 512, yaw_deg: float = -24.0,
             want, ref = colors[name], part.ref.get(name)
             if want and ref:
                 recolor[t] = (want, max(_lum(ref), 1.0))
-        vpos = []
+        wpos = []
         for i, p in enumerate(part.pos):
-            if hat and part.cat == "hair":
+            if hat and (part.cat == "hair" or (cap and part.cat == "glasses")):
                 d = [p[k] - hc[k] for k in range(3)]
                 r = math.sqrt(d[0] ** 2 + d[1] ** 2 + d[2] ** 2)
-                if r > hat_r and p[1] > hc[1] - 0.1:
-                    p = tuple(hc[k] + d[k] * hat_r / r for k in range(3))
-            vpos.append(view(p))
+                to = 0.0
+                if cap:
+                    # Şapkanın kapladığı yönde: saç iç yüzeyin içine. Gözlükte şapka kabuğunu kesen saplar
+                    # içeri, ön çerçeve kabuğun önüne (içeri çekilirse şapkanın içine kıvrılıyordu); çok uzaksa
+                    # dokunulmaz.
+                    ri, ro, rh = cap(d, r)
+                    if part.cat == "hair":
+                        to = rh - HAT_HAIR_GAP if rh and r > rh - HAT_HAIR_GAP else 0.0
+                    elif not ri or r < min(ri, rh) - HAT_GLASSES_GAP or r > ro + HAT_GLASSES_GAP:
+                        to = 0.0
+                    elif d[2] < HAT_GLASSES_FRONT:
+                        to = rh - HAT_GLASSES_GAP
+                    elif ro + HAT_GLASSES_GAP - r <= HAT_GLASSES_PUSH:
+                        to = ro + HAT_GLASSES_GAP
+                elif r > hat_r and p[1] > hc[1] - 0.1:
+                    to = hat_r
+                if to > 0:
+                    p = tuple(hc[k] + d[k] * to / r for k in range(3))
+            wpos.append(p)
+        if cap and part.cat == "hair":
+            pull_triangles(wpos, part.tris, hc, cap)
+        vpos = [view(p) for p in wpos]
         vnor = [view(n) for n in part.nor]
         bias = LAYER_BIAS.get(part.cat, 0.0)
         pts_all.extend(vpos)

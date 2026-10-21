@@ -52,21 +52,61 @@ describe("chibi paketi", () => {
     expect(at(2).y).toBeGreaterThan(at(4).y);
   });
 
-  it("şapka takınca saç kafa merkezine bastırılır", () => {
-    const hair = { hair: "hair_uzun_dalgali" } satisfies Look;
-    // Kafa merkezinin üstünde, bastırma yarıçapı dışında kalan köşe sayısı
-    const outside = (look: Look) => {
-      const [hx, hy, hz] = manifest.headCenter;
+  it("şapka takınca saç her şapkanın kendi iç yüzeyine bastırılır", () => {
+    const [hx, hy, hz] = manifest.headCenter;
+    const hats = Object.keys(manifest.parts).filter((id) => manifest.parts[id].cat === "hats");
+    expect(hats.length).toBeGreaterThan(0);
+    // Saç köşelerinin birleşik geometrideki aralığı: compose sırasına göre
+    const hairRange = (look: Look) => {
+      let start = 0;
+      for (const id of pack.compose(look)) {
+        if (manifest.parts[id].cat === "hair") return [start, start + manifest.parts[id].vCount];
+        start += manifest.parts[id].vCount;
+      }
+      throw new Error("saç yok");
+    };
+    // Şapkanın saç katmanının kapladığı yönde, iç yüzeyin dışında kalan saç köşesi sayısı
+    const outside = (look: Look, hat: string) => {
+      const cap = pack.hatCap(hat)!;
       const pos = pack.build({ tops: null, ...look }).attributes.position.array;
+      const [a, b] = hairRange(look);
       let n = 0;
-      for (let i = 0; i < pos.length; i += 3) {
-        if (pos[i + 1] > hy - 0.1 && Math.hypot(pos[i] - hx, pos[i + 1] - hy, pos[i + 2] - hz) > manifest.hatHairRadius + 1e-4) n++;
+      for (let v = a; v < b; v++) {
+        const dx = pos[v * 3] - hx, dy = pos[v * 3 + 1] - hy, dz = pos[v * 3 + 2] - hz;
+        const r = Math.hypot(dx, dy, dz);
+        const rh = cap(dx, dy, dz, r)[2];
+        if (rh && r > rh + 1e-4) n++;
       }
       return n;
     };
-    expect(outside({ ...hair, hair: "hair_uzun_dalgali" })).toBeGreaterThan(100);
-    // Şapkalıyken dışarıda kalan her şey şapkanın kendisi: saç tamamen içeri çekilmiş
-    expect(outside({ ...hair, hats: "hat_bere" })).toBe(outside({ hair: null, hats: "hat_bere" }));
+    const hair = { hair: "hair_uzun_dalgali" } satisfies Look;
+    expect(pack.hatCap("hat_bere")).not.toBeNull();
+    // Şapkasız saç berenin dışına taşar; her şapkayla tamamen içeride kalır
+    expect(outside(hair, "hat_bere")).toBeGreaterThan(100);
+    for (const hat of hats) expect(outside({ ...hair, hats: hat }, hat), hat).toBe(0);
+  });
+
+  it("şapkalıyken hiçbir saç üçgeni şapkanın dış yüzeyinden taşmaz", () => {
+    const [hx, hy, hz] = manifest.headCenter;
+    const of = (cat: string) => Object.keys(manifest.parts).filter((id) => manifest.parts[id].cat === cat && !id.startsWith("base"));
+    let bad = 0;
+    for (const hat of of("hats")) {
+      const cap = pack.hatCap(hat)!;
+      for (const hair of of("hair")) {
+        const look = { hair, hats: hat, tops: null } satisfies Look;
+        let istart = 0;
+        for (const id of pack.compose(look)) { if (id === hair) break; istart += manifest.parts[id].iCount; }
+        const geo = pack.build(look);
+        const pos = geo.attributes.position.array, idx = geo.index!.array;
+        for (let t = istart; t < istart + manifest.parts[hair].iCount; t += 3) {
+          const p = [0, 1, 2].map((k) => (pos[idx[t] * 3 + k] + pos[idx[t + 1] * 3 + k] + pos[idx[t + 2] * 3 + k]) / 3);
+          const d = [p[0] - hx, p[1] - hy, p[2] - hz], r = Math.hypot(d[0], d[1], d[2]);
+          const [ri, ro] = cap(d[0], d[1], d[2], r);
+          if (ri && r > ro + 0.002) bad++;
+        }
+      }
+    }
+    expect(bad).toBe(0);
   });
 
   it("saç rengi değişince saç köşelerinin rengi değişir, ten değişmez", () => {
