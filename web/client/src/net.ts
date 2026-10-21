@@ -24,7 +24,8 @@ import {
   type StageState,
   STATE_BYTES,
   type TableState,
-  type TagState,
+  type RaceState,
+  TagState,
   type WardrobeInfo,
   type WatchState,
   type Weather,
@@ -102,6 +103,8 @@ export class Net {
   onBset: (plot: number, i: number, j: number, k: number, b: number, r: number) => void = () => {};
   onScore: (score: [number, number]) => void = () => {};
   onTag: (s: TagState | null) => void = () => {};
+  onRace: (s: RaceState | null) => void = () => {};
+  onRcars: (c: number[]) => void = () => {};
   onPairReq: (from: number, name: string, kind: "five" | "hug") => void = () => {};
   onPair: (a: number, b: number, kind: "five" | "hug") => void = () => {};
   onQuest: (completed: QuestDone[]) => void = () => {};
@@ -412,6 +415,12 @@ export class Net {
         break;
       case "tag":
         this.onTag(ev.state);
+        break;
+      case "race":
+        this.onRace(ev.state);
+        break;
+      case "rcars":
+        this.onRcars(ev.c);
         break;
       case "pairreq":
         this.onPairReq(ev.from, ev.name, ev.kind);

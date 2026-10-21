@@ -5,6 +5,7 @@ import { SAKURA_SPOT } from "../../../shared/zones";
 import type { Conn, Room } from "../room";
 import type { Builds } from "./build";
 import { Football } from "./football";
+import { Race } from "./race";
 import { Sky } from "./sky";
 import { Stage, type StageHost } from "./stage";
 import { Tables } from "./tables";
@@ -25,6 +26,7 @@ export class WorldGames {
   readonly tag: Tag;
   readonly stage: Stage;
   readonly sky: Sky;
+  readonly race: Race;
   /** Mahalle (bot bağlıysa kalıcı). */
   builds: Builds | null = null;
   /** Hedef → bekleyen istek. */
@@ -49,6 +51,7 @@ export class WorldGames {
     this.tag = new Tag(room, r);
     this.stage = new Stage(room, host, r);
     this.sky = new Sky(room, liveWeather);
+    this.race = new Race(room, r);
   }
 
   join(sid: number, conn: Conn): void {
@@ -57,6 +60,7 @@ export class WorldGames {
     this.tag.sendTo(conn);
     this.stage.sendTo(conn);
     this.sky.sendTo(conn);
+    this.race.sendTo(conn);
     this.builds?.sendTo(conn);
   }
 
@@ -66,6 +70,7 @@ export class WorldGames {
     this.tag.leave(sid);
     this.stage.leave(sid);
     this.sky.leave(sid);
+    this.race.leave(sid);
     this.pairs.delete(sid);
     for (const [to, req] of this.pairs) if (req.from === sid) this.pairs.delete(to);
     this.sakura.delete(sid);
@@ -78,6 +83,7 @@ export class WorldGames {
     this.football.tick(now);
     this.tag.tick(now);
     this.sky.tick(now);
+    this.race.tick(now);
     if (now - this.lastScan > 1000) {
       this.lastScan = now;
       for (const [sid, p] of this.room.players) {
@@ -170,6 +176,21 @@ export class WorldGames {
         return true;
       case "tagjoin":
         this.tag.join(sid);
+        return true;
+      case "rjoin":
+        this.race.join(sid);
+        return true;
+      case "rleave":
+        this.race.leave(sid, now);
+        return true;
+      case "rtrack":
+        this.race.setTrack(sid, num(msg.i));
+        return true;
+      case "rstart":
+        this.race.start(sid, now);
+        return true;
+      case "rcar":
+        this.race.car(sid, num(msg.x), num(msg.z), num(msg.a), num(msg.f) | 0, now);
         return true;
       case "pair":
         this.pair(sid, msg.kind, msg.to, now);

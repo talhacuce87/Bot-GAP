@@ -135,6 +135,26 @@ export interface TagState {
   result: string;
 }
 
+/** Oyuncak pist yarışçısı: `lap` 1'den başlar (0: çizgiye gelmedi); bitirdiyse `place` ve `time` (ms). */
+export interface RacePlayer {
+  sid: number;
+  lap: number;
+  place: number;
+  time: number;
+}
+
+/** Oyuncak pist: lobi (ilk giren başlatır), geri sayım, yarış, sonuç. */
+export interface RaceState {
+  phase: "lobby" | "countdown" | "race" | "end";
+  host: number;
+  track: number;
+  players: RacePlayer[];
+  /** Yeşil ışık (sunucu saati, ms). */
+  startAt: number;
+  /** Yarış/sonuç ekranının bittiği an. */
+  endsAt: number;
+}
+
 /** Sinema kuyruğu, DJ ve sahne. `show` ışık şovu (0 kapalı). */
 export interface StageState {
   dj: number;
@@ -311,6 +331,9 @@ export type ServerEvent =
   | { t: "bset"; plot: number; i: number; j: number; k: number; b: number; r: number }
   | { t: "score"; score: [number, number] }
   | { t: "tag"; state: TagState | null }
+  | { t: "race"; state: RaceState | null }
+  /** Yarıştaki arabalar: [sid, x×10, z×10, açı×100, bayrak] tekrarlı (pist birimi). */
+  | { t: "rcars"; c: number[] }
   /** İkili etkileşim isteği (yalnızca hedefe) ve gerçekleşen etkileşim (herkese). */
   | { t: "pairreq"; from: number; name: string; kind: "five" | "hug" }
   | { t: "pair"; a: number; b: number; kind: "five" | "hug" }
@@ -363,6 +386,12 @@ export type ClientEvent =
   | { t: "bset"; i: number; j: number; k: number; b: number; r: number }
   | { t: "bfree" }
   | { t: "tagjoin" }
+  /** Oyuncak pist: katıl/ayrıl, pist seç ve başlat (lobiyi açan), araba konumu (yarışta ~15 Hz). */
+  | { t: "rjoin" }
+  | { t: "rleave" }
+  | { t: "rtrack"; i: number }
+  | { t: "rstart" }
+  | { t: "rcar"; x: number; z: number; a: number; f: number }
   | { t: "pair"; kind: "five" | "hug"; to: number }
   | { t: "pairok"; from: number }
   | { t: "profile"; sid: number }
