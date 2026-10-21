@@ -117,6 +117,8 @@ export type ServerEvent =
   | { t: "emote"; sid: number; e: number }
   | { t: "act"; sid: number; a: Act }
   | { t: "fish"; sid: number; name: string; catch: FishCatch }
+  /** Yalnızca soran oyuncuya: sonraki balık hakkının açılacağı an (epoch ms); hak varsa 0. */
+  | { t: "fishwait"; at: number }
   | { t: "look"; sid: number; look: Look }
   | { t: "chat"; line: ChatLine }
   | { t: "chatlog"; lines: ChatLine[] }
@@ -147,6 +149,8 @@ export type ClientEvent =
   | { t: "emote"; e: number }
   | { t: "act"; a: Act }
   | { t: "fish" }
+  /** Gölün yanına gelince: sonraki balık hakkı ne zaman? (cevap "fishwait") */
+  | { t: "fishq" }
   | { t: "wardrobe" }
   | { t: "outfit"; outfit: Look }
   | { t: "chat"; text: string }

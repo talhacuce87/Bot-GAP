@@ -147,6 +147,7 @@ class WorldCog(commands.Cog):
         self.board_loop.start()
         app = web.Application(client_max_size=4096)
         app.router.add_post("/internal/fish", self.handle_fish)
+        app.router.add_post("/internal/fish_status", self.handle_fish_status)
         app.router.add_post("/internal/outfits", self.handle_outfits)
         app.router.add_post("/internal/wardrobe", self.handle_wardrobe)
         app.router.add_post("/internal/outfit", self.handle_save_outfit)
@@ -189,7 +190,7 @@ class WorldCog(commands.Cog):
             return web.json_response({"ok": False, "reason": "exiled"})
         result = await fishing.catch(guild_id, user_id)
         if result is None:
-            return web.json_response({"ok": False, "reason": "already"})
+            return web.json_response({"ok": False, "reason": "already", "next": await fishing.next_catch_at(guild_id, user_id)})
         log.info("Balık: %s %s (%s saat, seri %s)", user_id, result["rarity"], result["hours"], result["streak"])
         # Balık boost'u, XP kayıtlarında yönetici !boost'undan ayırt edilebilsin diye ayrıca kaydedilir
         activitylog.record(
@@ -203,6 +204,17 @@ class WorldCog(commands.Cog):
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
         return web.json_response({"ok": True, **result})
+
+    async def handle_fish_status(self, request: web.Request) -> web.Response:
+        """Dünyadan: {"guild", "user"} → {"next": sonraki balık hakkı (epoch sn), hak varsa 0}."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+            guild_id, user_id = int(body["guild"]), int(body["user"])
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild and user required"}, status=400)
+        return web.json_response({"next": await fishing.next_catch_at(guild_id, user_id)})
 
     async def handle_outfits(self, request: web.Request) -> web.Response:
         """Dünyadan: {"guild", "users": [...]} → odadakilerin kıyafetleri (kayıtsızlara varsayılan)."""

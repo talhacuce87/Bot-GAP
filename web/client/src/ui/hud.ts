@@ -165,7 +165,14 @@ export class Hud {
   setActs(list: { key: "f" | "g"; label: string }[], touch: boolean, onAct: (k: "f" | "g") => void): void {
     const key = list.map((a) => a.key + a.label).join("|");
     if (key === this.actsKey) return;
+    // Yalnızca yazı değiştiyse (ör. balık geri sayımı) düğmeler yerinde kalır, dokunuş kaybolmaz.
+    const keys = list.map((a) => a.key).join("|");
+    const same = keys === this.actsKey.split("|").map((k) => k[0]).join("|") && this.acts.children.length === list.length;
     this.actsKey = key;
+    if (same && list.length) {
+      list.forEach((a, i) => (this.acts.children[i].textContent = touch ? a.label : `${a.key.toUpperCase()} · ${a.label}`));
+      return;
+    }
     this.acts.replaceChildren(
       ...list.map((a) => {
         const b = document.createElement("button");

@@ -518,6 +518,17 @@ async function start(): Promise<void> {
       hud.toast(`🎣 ${name} ${c.label.toLowerCase()} bir ${c.fish} tuttu!`);
     }
   };
+  // Günlük balık hakkı: göle gelince sunucuya sorulur; doluysa "Balık tut" yerine geri sayım çıkar.
+  let fishAt = 0;
+  let atPond = false;
+  net.onFishWait = (at) => (fishAt = at);
+  const fishLabel = (): string => {
+    const left = Math.ceil((fishAt - net.serverNow()) / 1000);
+    if (left <= 0) return "Balık tut 🎣";
+    const h = Math.floor(left / 3600), m = Math.floor((left % 3600) / 60), s = left % 60;
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    return `🎣 Sonraki balık: ${h ? `${h}sa ` : ""}${p2(m)}dk ${p2(s)}sn`;
+  };
   const nearActs = (): { key: "f" | "g"; label: string; act: Act | "fish" | "cinema" | "watch" | "tankin" | "tankout" }[] => {
     if (me.jailed) return [];
     if (me.driving) return [{ key: "f", label: "Tanktan in 🚪", act: "tankout" }];
@@ -536,7 +547,10 @@ async function start(): Promise<void> {
     }
     const g = ACT_SPOTS.grill, bars = ACT_SPOTS.bars;
     if (Math.hypot(me.x - g.x, me.z - g.z) <= g.r) return [{ key: "f", label: "Şiş çevir 🍢", act: "grill" }];
-    if (Math.hypot(me.x - FISH_SPOT.x, me.z - FISH_SPOT.z) <= FISH_SPOT.r) return [{ key: "f", label: "Balık tut 🎣", act: "fish" }];
+    const pond = Math.hypot(me.x - FISH_SPOT.x, me.z - FISH_SPOT.z) <= FISH_SPOT.r;
+    if (pond && !atPond) net.send({ t: "fishq" });
+    atPond = pond;
+    if (pond) return [{ key: "f", label: fishLabel(), act: "fish" }];
     if (Math.hypot(me.x - bars.x, me.z - bars.z) <= bars.r) {
       return [
         { key: "f", label: "Çay ver 🍵", act: "tea" },

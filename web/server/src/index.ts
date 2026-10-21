@@ -565,6 +565,26 @@ async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser,
   );
 }
 
+/**
+ * Yerel geliştirme: WORLD_DEV_FISH=<saniye> ise bot olmadan da balık tutulur; günlük hak yerine
+ * bu kadar saniye sonra yenilenir (geri sayımı denemek için). Canlıda tanımlanmaz.
+ */
+const DEV_FISH_S = Number(process.env.WORLD_DEV_FISH) || 0;
+const devFishAt = new Map<string, number>();
+function devFish(ws: WebSocket, room: Room, sid: number, user: SessionUser, query: boolean): void {
+  const send = (ev: object) => ws.send(JSON.stringify(ev));
+  const at = devFishAt.get(user.id) ?? 0;
+  if (query || at > Date.now()) {
+    send({ t: "fishwait", at: at > Date.now() ? at : 0 });
+    if (!query) send({ t: "notice", text: FISH_REFUSED.already });
+    return;
+  }
+  const next = Date.now() + DEV_FISH_S * 1000;
+  devFishAt.set(user.id, next);
+  send({ t: "fishwait", at: next });
+  room.broadcast({ t: "fish", sid, name: user.name, catch: { rarity: "common", label: "Yaygın", fish: "Sazan", hours: 1, streak: 1, luck: 0 } });
+}
+
 const FISH_REFUSED: Record<string, string> = {
   already: "🎣 Bugünkü balığını tuttun. Yarın tekrar gel, serin bozulmasın!",
   exiled: "⛓️ Sürgündeyken balık tutamazsın.",
@@ -574,6 +594,7 @@ const FISH_REFUSED: Record<string, string> = {
 /** Bot'a günün balığını sorar; tutulduysa odaya duyurur, tutulamadıysa yalnızca tutana söyler. */
 async function fish(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null): Promise<void> {
   const notice = (text: string) => ws.send(JSON.stringify({ t: "notice", text }));
+  if (DEV_FISH_S && (user.guest || !guild || !SHARED_SECRET)) return devFish(ws, room, sid, user, false);
   if (user.guest || !guild) return notice("🎣 Balık tutmak için dünyaya Discord'dan (ses kanalındaki Activity ile) gir.");
   if (!SHARED_SECRET) return notice("🎣 Göl şu an kapalı (bot bağlı değil).");
   try {
@@ -583,7 +604,8 @@ async function fish(ws: WebSocket, room: Room, sid: number, user: SessionUser, g
       body: JSON.stringify({ guild, user: user.id }),
       signal: AbortSignal.timeout(5000),
     });
-    const body = (await r.json()) as { ok?: boolean; reason?: string } & Partial<FishCatch>;
+    const body = (await r.json()) as { ok?: boolean; reason?: string; next?: number } & Partial<FishCatch>;
+    if (r.ok && typeof body.next === "number") ws.send(JSON.stringify({ t: "fishwait", at: body.next * 1000 }));
     if (!r.ok || !body.ok) return notice(FISH_REFUSED[body.reason ?? ""] ?? "🎣 Olta takıldı, biraz sonra tekrar dene.");
     const c: FishCatch = {
       rarity: body.rarity!,
@@ -597,6 +619,23 @@ async function fish(ws: WebSocket, room: Room, sid: number, user: SessionUser, g
   } catch (err) {
     console.warn("[fish]", (err as Error).message);
     notice("🎣 Olta takıldı, biraz sonra tekrar dene.");
+  }
+}
+
+/** Gölün yanına gelen oyuncuya sonraki balık hakkının ne zaman açılacağını söyler (misafire söylenmez). */
+async function fishWait(ws: WebSocket, user: SessionUser, guild: string | null): Promise<void> {
+  if (user.guest || !guild || !SHARED_SECRET) return;
+  try {
+    const r = await fetch(`${BOT_URL}/internal/fish_status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-world-secret": SHARED_SECRET },
+      body: JSON.stringify({ guild, user: user.id }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const body = (await r.json()) as { next?: number };
+    if (r.ok && typeof body.next === "number") ws.send(JSON.stringify({ t: "fishwait", at: body.next * 1000 }));
+  } catch (err) {
+    console.warn("[fishq]", (err as Error).message);
   }
 }
 
@@ -620,6 +659,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   let lastEmote = 0;
   let lastAct = 0;
   let lastFish = 0;
+  let lastFishQ = 0;
   let lastAim = 0;
   let lastWardrobe = 0;
   let lastOutfit = 0;
@@ -660,6 +700,13 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (near && !p.info.spectator && !p.info.jailed && now - lastFish >= FISH_COOLDOWN_MS) {
           lastFish = now;
           void fish(ws, room, sid, user, opts.guild ?? null);
+        }
+      } else if (msg?.t === "fishq") {
+        const now = Date.now();
+        if (now - lastFishQ >= FISH_COOLDOWN_MS) {
+          lastFishQ = now;
+          if (DEV_FISH_S && (user.guest || !opts.guild || !SHARED_SECRET)) devFish(ws, room, sid, user, true);
+          else void fishWait(ws, user, opts.guild ?? null);
         }
       } else if (msg?.t === "chat") {
         const now = Date.now();
@@ -819,5 +866,5 @@ setInterval(() => {
 }, 1000 / TICK_HZ);
 
 server.listen(PORT, () => {
-  console.log(`[world] listening on :${PORT} (guests ${ALLOW_GUESTS ? "on" : "off"}, discord ${CLIENT_ID ? "on" : "off"}${DEV_WARDROBE ? ", yerel gardırop on" : ""})`);
+  console.log(`[world] listening on :${PORT} (guests ${ALLOW_GUESTS ? "on" : "off"}, discord ${CLIENT_ID ? "on" : "off"}${DEV_WARDROBE ? ", yerel gardırop on" : ""}${DEV_FISH_S ? `, yerel göl ${DEV_FISH_S} sn` : ""})`);
 });

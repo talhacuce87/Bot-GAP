@@ -95,4 +95,10 @@ async def catch(guild_id: int, user_id: int, rand: Callable[[], float] = random.
         "streak": streak,
         "luck": round(luck_bonus(streak - 1), 1),
         "boost_until": boost_until,
+        "next": db.next_day_start(),
     }
+
+
+async def next_catch_at(guild_id: int, user_id: int) -> float:
+    """Bir sonraki balık hakkının açılacağı an (epoch sn); hak şu an varsa 0."""
+    return db.next_day_start() if await db.fish_caught_today(guild_id, user_id) else 0.0
