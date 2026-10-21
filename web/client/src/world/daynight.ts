@@ -2,7 +2,7 @@
 // Birkaç saniyede bir güncellenir (renk/yoğunluk/yön ataması); kare başına maliyeti yok.
 import * as THREE from "three";
 import type { Weather } from "../../../shared/protocol";
-import { cloudUniform } from "./geo";
+import { cloudUniform, timeUniform } from "./geo";
 
 /** Türkiye UTC+3 (yaz saati yok). `override` ile (?hour=21) test edilebilir. */
 export function istanbulHour(now = Date.now(), override?: number): number {
@@ -201,6 +201,70 @@ function starField(radius: number): THREE.Points {
   return p;
 }
 
+/**
+ * Kayan yıldızlar: birkaç çizgi, tamamen vertex shader'da. Her biri kendi aralığıyla (8–20 sn) gökte rastgele
+ * bir yerden aşağı doğru kısa bir iz çizip söner; herkes aynı saatle aynı anda görür (tohum sabit).
+ */
+const METEORS = 4;
+function meteors(radius: number): THREE.LineSegments {
+  const seed = new Float32Array(METEORS * 2), end = new Float32Array(METEORS * 2);
+  for (let i = 0; i < METEORS; i++) {
+    seed.set([i + 0.37, i + 0.37], i * 2);
+    end.set([0, 1], i * 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(METEORS * 6), 3));
+  g.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
+  g.setAttribute("aEnd", new THREE.BufferAttribute(end, 1));
+  const m = new THREE.LineSegments(
+    g,
+    new THREE.ShaderMaterial({
+      uniforms: { uTime: timeUniform, uOpacity: { value: 0 } },
+      vertexShader: /* glsl */ `
+        attribute float aSeed;
+        attribute float aEnd;
+        uniform float uTime;
+        varying float vA;
+        float h(float x) { return fract(sin(x * 91.3458) * 47453.5453); }
+        void main() {
+          float period = 8.0 + h(aSeed) * 12.0;
+          float k = (uTime + h(aSeed * 3.1) * 60.0) / period;
+          float cycle = floor(k);
+          float t = fract(k) * period;
+          float dur = 0.7 + h(aSeed + cycle) * 0.5;
+          float az = h(cycle * 1.7 + aSeed) * 6.2832;
+          float el = 0.35 + h(cycle * 2.3 + aSeed) * 0.4;
+          vec3 start = vec3(cos(az) * cos(el), sin(el), sin(az) * cos(el));
+          // Yana ve aşağı kayar
+          vec3 side = normalize(cross(start, vec3(0.0, 1.0, 0.0)));
+          vec3 vel = normalize(side * (h(cycle + aSeed * 5.0) > 0.5 ? 1.0 : -1.0) - vec3(0.0, 0.55, 0.0)) * 0.32;
+          float p = clamp(t / dur, 0.0, 1.0);
+          vec3 head = normalize(start + vel * p);
+          vec3 tail = normalize(start + vel * max(p - 0.35, 0.0));
+          vec3 pos = mix(head, tail, aEnd) * ${radius.toFixed(1)};
+          vA = t < dur ? sin(p * 3.1416) * (1.0 - aEnd) : 0.0;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform float uOpacity;
+        varying float vA;
+        void main() {
+          gl_FragColor = vec4(vec3(1.0, 0.97, 0.9) * 2.2, vA * uOpacity);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+    }),
+  );
+  m.frustumCulled = false;
+  m.matrixAutoUpdate = false;
+  m.renderOrder = -1;
+  return m;
+}
+
 /** Hava → gökyüzünün kapalılığı (0 açık, 1 tamamen kapalı), sis mesafeleri ve bulut gölgesi kapsamı. */
 function weatherLook(w: Weather): { overcast: number; fog: [number, number]; shadows: number } {
   switch (w.kind) {
@@ -227,6 +291,7 @@ export class DayNight {
   private grey = new THREE.Color();
   private glow: THREE.InstancedMesh;
   private stars: THREE.Points;
+  private meteors: THREE.LineSegments;
   private horizon = new THREE.Color();
   private top = new THREE.Color();
   private sunDir = new THREE.Vector3();
@@ -244,7 +309,8 @@ export class DayNight {
   ) {
     this.glow = glowMesh(p.bulbMatrices);
     this.stars = starField(p.sky.radius * 0.95);
-    p.scene.add(this.glow, this.stars);
+    this.meteors = meteors(p.sky.radius * 0.93);
+    p.scene.add(this.glow, this.stars, this.meteors);
     this.apply(Date.now());
   }
 
@@ -338,6 +404,8 @@ export class DayNight {
     const starA = (1 - smooth(0.0, 0.35, day)) * 0.9 * (1 - oc);
     (this.stars.material as THREE.PointsMaterial).opacity = starA;
     this.stars.visible = starA > 0.01;
+    (this.meteors.material as THREE.ShaderMaterial).uniforms.uOpacity.value = starA;
+    this.meteors.visible = starA > 0.05;
 
     p.cloudMaterial.color.copy(PAL.cloudNight).lerp(PAL.cloudDay, day).multiplyScalar(1 - oc * 0.45);
     p.cloudMaterial.emissive.copy(PAL.cloudGlowNight).lerp(PAL.cloudGlowDay, day).lerp(PAL.cloudGlowDusk, dusk);

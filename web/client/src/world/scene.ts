@@ -14,7 +14,7 @@ import { DayNight, skyDome } from "./daynight";
 import { GrassField } from "./grassField";
 import { NightFx } from "./night";
 import { FameBoard, fameStatics } from "./fame";
-import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, windMaterial, withCloudShadows } from "./geo";
+import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, wetEnv, wetUniform, windMaterial, withCloudShadows, withWetness } from "./geo";
 import { kahvehane } from "./kahvehane";
 import { type Pitch, pitch } from "./pitch";
 import { djBooth, type StageLights, stageLights, stageTruss } from "./stageFx";
@@ -62,6 +62,8 @@ export interface World {
   setMusic(on: boolean): void;
   /** Hoparlörlerin üstü: nota efektleri buradan çıkar. */
   speakers: { x: number; y: number; z: number }[];
+  /** Güneşin gökteki yönü (ufkun altındaysa y < 0): ışık huzmeleri ve lens parlaması için. */
+  sunDir: THREE.Vector3;
 }
 
 export type Season = "spring" | "summer" | "autumn" | "winter";
@@ -586,7 +588,7 @@ function propMeshes(b: Builder, scene: THREE.Scene): { bulbMaterial: THREE.MeshB
     log: part(new THREE.CylinderGeometry(0.22, 0.24, 1.55, 7), "#7b5233", new THREE.Matrix4().makeRotationZ(Math.PI / 2), 0.15, r),
   };
   const lambert = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const flat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const flat = withWetness(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
   const materials: Record<PropKind, THREE.Material> = {
     pine: withCloudShadows(windMaterial(0.03, { side: THREE.DoubleSide })),
     oak: withCloudShadows(windMaterial(0.04, { side: THREE.DoubleSide })),
@@ -869,6 +871,12 @@ export function buildWorld(opts: WorldOptions = {}): World {
   waterEnv.uSkyT.value = sky.uniforms.uTop.value;
   waterEnv.uSunDir.value = sky.uniforms.uSunDir.value;
   waterEnv.uFrozen.value = SEASON === "winter" ? 1 : 0;
+  waterEnv.uMoonDir.value.copy(MOON_DIR);
+  wetEnv.uWetSkyH.value = sky.uniforms.uHorizon.value;
+  wetEnv.uWetSkyT.value = sky.uniforms.uTop.value;
+  wetEnv.uWetSun.value = sky.uniforms.uSunDir.value;
+  /** Yağmurda zemin ıslanır (~40 sn), bitince yavaşça kurur (~4 dk). */
+  let wetTarget = 0, lastTime = 0, weatherKnown = false;
 
   ground(b);
   plaza(b);
@@ -896,7 +904,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
   paths(b);
   nature(b);
 
-  const statics = new THREE.Mesh(mergeGeometries(b.statics), withCloudShadows(new THREE.MeshLambertMaterial({ vertexColors: true })));
+  const statics = new THREE.Mesh(mergeGeometries(b.statics), withWetness(withCloudShadows(new THREE.MeshLambertMaterial({ vertexColors: true }))));
   statics.matrixAutoUpdate = false;
   statics.castShadow = statics.receiveShadow = true;
   scene.add(statics);
@@ -996,6 +1004,10 @@ export function buildWorld(opts: WorldOptions = {}): World {
     spawn: { x: 0, z: 8, rot: Math.PI },
     update(time: number, focus?: { x: number; z: number }) {
       timeUniform.value = time;
+      const dt = Math.min(0.25, Math.max(0, time - lastTime));
+      lastTime = time;
+      const wet = wetUniform.value;
+      wetUniform.value = wet < wetTarget ? Math.min(wetTarget, wet + dt / 40) : Math.max(wetTarget, wet - dt / 240);
       night.update(time, env.lights, focus?.x ?? 0, focus?.z ?? 8);
       music += ((musicOn ? 1 : 0) - music) * 0.08;
       speakers.update(time, music);
@@ -1008,6 +1020,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       coalColor.copy(coalA).lerp(coalB, Math.min(1, flick + boost * 0.5));
       if (fire) fire.intensity = (0.6 + env.lights * 3.2) * (0.75 + 0.35 * flick + boost * 0.4);
       dayNight.update(Date.now());
+      waterEnv.uNight.value = 1 - env.day;
       // Damlalar ışıktan etkilenmez: gece gökyüzüyle birlikte kararsınlar
       fnt.light.value = 0.35 + 0.65 * Math.min(1, hemi.intensity / 1.6);
       if (sun.castShadow) {
@@ -1035,6 +1048,12 @@ export function buildWorld(opts: WorldOptions = {}): World {
     setWeather(w: Weather) {
       dayNight.setWeather(w);
       waterEnv.uRain.value = w.kind === "rain" || w.kind === "storm" ? 0.4 + 0.6 * w.intensity : 0;
+      wetEnv.uWetRain.value = waterEnv.uRain.value;
+      // Kışın kar yağar, zemin ıslanmaz; sis hafif nem bırakır
+      wetTarget = SEASON === "winter" || w.kind === "snow" ? 0 : waterEnv.uRain.value ? 0.6 + 0.4 * w.intensity : w.kind === "fog" ? 0.25 : 0;
+      // Girişte yağıyorsa zemin zaten ıslak
+      if (!weatherKnown) wetUniform.value = wetTarget;
+      weatherKnown = true;
     },
     flash(v: number) {
       hemi.intensity = dayNight.hemiBase + v * 2.5;
@@ -1060,6 +1079,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       cam.updateProjectionMatrix();
     },
     sakura: garden,
+    sunDir: sky.uniforms.uSunDir.value,
     env,
     grass,
     setMusic(on: boolean) {

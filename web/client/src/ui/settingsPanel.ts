@@ -120,6 +120,7 @@ export class SettingsPanel {
     this.toggleRow("Işık parlaması (bloom)", s.bloom, (v) => this.set({ bloom: v }));
     this.toggleRow("Renk efekti ve kenar karartma", s.grade, (v) => this.set({ grade: v }));
     this.toggleRow("Sık çimen", s.grass, (v) => this.set({ grass: v }));
+    this.toggleRow("Güneş huzmeleri ve lens parlaması", s.godrays, (v) => this.set({ godrays: v }));
     this.toggleRow("Kenar yumuşatma", s.antialias, (v) => this.set({ antialias: v }));
     this.slider("Gece lamba ışıkları", s.lamps, 0, 8, 1, (v) => `${v}`, (v) => this.set({ lamps: v }));
     this.slider("Çözünürlük", s.maxDpr, 0.5, 2, 0.25, (v) => `${Math.round(Math.min(v, devicePixelRatio) * 100)}%`, (v) => this.set({ maxDpr: v }));

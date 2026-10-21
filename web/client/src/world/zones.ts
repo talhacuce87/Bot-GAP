@@ -270,6 +270,9 @@ export const waterEnv = {
   uSkyH: { value: new THREE.Color("#a9cfee") },
   uSkyT: { value: new THREE.Color("#5b8fd6") },
   uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+  /** Ay yönü ve gecelik (0 gündüz, 1 gece): suda ay ışığı yolu. */
+  uMoonDir: { value: new THREE.Vector3(0, 1, 0) },
+  uNight: { value: 0 },
   uRain: { value: 0 },
   uFrozen: { value: 0 },
   uRipples: { value: Array.from({ length: RIPPLES }, () => new THREE.Vector3(0, 0, -100)) },
@@ -315,6 +318,8 @@ export function waterMaterial(
         uniform vec3 uSkyH;
         uniform vec3 uSkyT;
         uniform vec3 uSunDir;
+        uniform vec3 uMoonDir;
+        uniform float uNight;
         uniform float uRain;
         uniform float uFrozen;
         uniform vec3 uRipples[${RIPPLES}];
@@ -369,6 +374,15 @@ export function waterMaterial(
           vec3 sky = mix(uSkyH, uSkyT, pow(max(R.y, 0.0), 0.7));
           float glint = pow(max(dot(R, normalize(uSunDir)), 0.0), 240.0) * 2.5;
           totalEmissiveRadiance += (sky * fres * 0.7 + vec3(1.0, 0.95, 0.85) * glint) * (1.0 - uFrozen * 0.7);
+          // Alçak güneşte suda altın yol, gece ay yolu: dalgalarda pırıl pırıl kıvılcımlar
+          vec2 sc = floor(vWater * 16.0 + vec2(uTime * 2.1, uTime * 1.4));
+          float sparkle = step(0.86, fract(sin(dot(sc, vec2(12.9898, 78.233))) * 43758.5453)) * (0.5 + 0.5 * sin(uTime * 9.0 + sc.x));
+          vec3 Sd = normalize(uSunDir);
+          float low = smoothstep(0.4, 0.04, Sd.y) * smoothstep(-0.06, 0.03, Sd.y);
+          float path = pow(max(dot(R, Sd), 0.0), 22.0);
+          float mpath = pow(max(dot(R, normalize(uMoonDir)), 0.0), 30.0);
+          totalEmissiveRadiance += (vec3(1.0, 0.6, 0.25) * path * (0.25 + sparkle * 2.2) * low
+            + vec3(0.65, 0.78, 1.0) * mpath * (0.1 + sparkle * 1.2) * uNight) * (1.0 - uFrozen * 0.7);
         }`,
       );
   };

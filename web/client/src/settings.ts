@@ -16,6 +16,8 @@ export interface Settings {
   grade: boolean;
   /** Oyuncunun çevresindeki sık çimen. */
   grass: boolean;
+  /** Güneş ışık huzmeleri ve lens parlaması. */
+  godrays: boolean;
   /** Kenar yumuşatma (MSAA). */
   antialias: boolean;
   /** Gece gerçek lamba ışığı sayısı. */
@@ -49,13 +51,13 @@ export interface Settings {
   cinemaDim: boolean;
 }
 
-type Graphics = Pick<Settings, "shadows" | "bloom" | "grade" | "grass" | "antialias" | "lamps" | "maxDpr">;
+type Graphics = Pick<Settings, "shadows" | "bloom" | "grade" | "grass" | "godrays" | "antialias" | "lamps" | "maxDpr">;
 
 export const PRESETS: Record<Preset, Graphics> = {
-  low: { shadows: "off", bloom: false, grade: false, grass: false, antialias: false, lamps: 0, maxDpr: 1 },
-  medium: { shadows: "low", bloom: true, grade: false, grass: true, antialias: true, lamps: 4, maxDpr: 1.25 },
-  high: { shadows: "high", bloom: true, grade: true, grass: true, antialias: true, lamps: 6, maxDpr: 1.5 },
-  ultra: { shadows: "high", bloom: true, grade: true, grass: true, antialias: true, lamps: 8, maxDpr: 2 },
+  low: { shadows: "off", bloom: false, grade: false, grass: false, godrays: false, antialias: false, lamps: 0, maxDpr: 1 },
+  medium: { shadows: "low", bloom: true, grade: false, grass: true, godrays: false, antialias: true, lamps: 4, maxDpr: 1.25 },
+  high: { shadows: "high", bloom: true, grade: true, grass: true, godrays: true, antialias: true, lamps: 6, maxDpr: 1.5 },
+  ultra: { shadows: "high", bloom: true, grade: true, grass: true, godrays: true, antialias: true, lamps: 8, maxDpr: 2 },
 };
 
 export const PRESET_NAMES: Record<Preset, string> = { low: "Düşük", medium: "Orta", high: "Yüksek", ultra: "Ultra" };

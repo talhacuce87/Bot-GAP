@@ -24,7 +24,8 @@ import { falloff, sfx } from "./ui/sfx";
 import { WorldHud } from "./ui/worldHud";
 import { daylight, istanbulHour } from "./world/daynight";
 import { Fireworks } from "./world/fireworks";
-import type { World } from "./world/scene";
+import { SCREEN_H, SCREEN_W, type World } from "./world/scene";
+import { ScreenGlow } from "./world/screenGlow";
 import { WeatherFx } from "./world/weather";
 
 /** Yakındaki etkileşim (F/G düğmesi). */
@@ -59,6 +60,8 @@ export interface FeatureContext {
   music(): number;
   /** Sinemada video açık ve oyuncu perdenin önünde. */
   inCinema(): boolean;
+  /** Sinemada bir şey oynuyor (perdede ya da tarayıcıda). */
+  cinemaOn(): boolean;
 }
 
 /** Kişisel saat ayarı → saat; sinema modu en az bu kadar karanlık. */
@@ -73,6 +76,7 @@ export class Features {
   private companions = new Companions();
   private weatherFx: WeatherFx;
   private fireworks = new Fireworks();
+  private screenGlow: ScreenGlow;
   private boards: BoardGameUi;
   private profile: ProfileUi;
   private hub: Hub;
@@ -99,6 +103,8 @@ export class Features {
     world.scene.add(this.companions.group, this.fireworks.points);
     this.weatherFx = new WeatherFx(c.lowPower);
     world.scene.add(this.weatherFx.group);
+    this.screenGlow = new ScreenGlow(world.screen, SCREEN_W, SCREEN_H);
+    world.scene.add(this.screenGlow.group);
     c.life.onStop(() => this.fireworks.dispose());
 
     // Ocakçı: çay ocağının arkasında duran sabit karakter
@@ -445,6 +451,8 @@ export class Features {
     // Karartma, karartılmış gökten değil asıl saatten karar verir (yoksa kararınca kapanıp gidip gelir)
     if (settings.clock === "auto" && settings.cinemaDim && this.c.inCinema() && daylight(hour ?? istanbulHour()) > 0.3) hour = CINEMA_HOUR;
     world.setHour(hour);
+
+    this.screenGlow.update(now, dt, this.c.cinemaOn(), document.querySelector<HTMLVideoElement>(".screen-players video"), world.env.day);
 
     // Sahne: nasıl inilirse inilsin sunucuya bildir (sunucu sahneyi aldıysa bu mesaj yok sayılır)
     if (this.wasOnStage && !me.onStage) net.send({ t: "stage", on: false });

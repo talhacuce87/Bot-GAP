@@ -614,12 +614,13 @@ async function start(): Promise<void> {
   if (bots) bots.onEmote = (sid, e) => net.onEmote(sid, e);
 
   // Çizim: son işlem açıksa (ya da fotoğraf filtresi varsa) composer, değilse doğrudan
-  const postOpts = { bloom: false, grade: false, filter: 0 };
+  const postOpts = { bloom: false, grade: false, filter: 0, godrays: false, sunDir: world.sunDir };
   const renderScene = (dt: number) => {
     postOpts.bloom = settings.bloom;
     postOpts.grade = settings.grade;
     postOpts.filter = features.filter;
-    if ((postOpts.bloom || postOpts.grade || postOpts.filter) && !screen.isActive) {
+    postOpts.godrays = settings.godrays;
+    if ((postOpts.bloom || postOpts.grade || postOpts.filter || postOpts.godrays) && !screen.isActive) {
       post ??= new PostFx(renderer, world.scene, camera, settings.antialias ? 4 : 0);
       post.render(dt, world.env, postOpts);
     } else {
@@ -635,6 +636,7 @@ async function start(): Promise<void> {
     say: (text) => net.send({ t: "chat", text }),
     battle: () => switchMode(true),
     music: () => (musicOn ? 1 : 0),
+    cinemaOn: () => cinemaOn,
     inCinema: () => {
       const c = CINEMA_FRONT;
       return cinemaOn && me.x >= c.minX && me.x <= c.maxX && me.z >= c.minZ && me.z <= c.maxZ;
