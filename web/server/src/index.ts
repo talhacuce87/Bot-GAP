@@ -558,7 +558,7 @@ server.on("upgrade", (req, socket, head) => {
     if (!watch) return close(4004, "watch not found");
     // Activity'den açılan sinemanın linkiyle gelen, o Activity'nin odasına (aynı dünyaya) girer.
     if (user && (!user.guest || !LOGIN_REQUIRED)) key = Watches.roomKeyOf(watch);
-  } else if (user) key = WORLD_ROOM;
+  } else if (user && (!user.guest || ALLOW_GUESTS)) key = WORLD_ROOM; // misafir girişi kapalıysa eski misafir oturumu da girmez
   if (!user || !key) {
     // HTTP 401 tarayıcıda 1006 olarak görünür; 4001 ile kapatırsak istemci yeniden denemeyi bırakır.
     return close(4001, "unauthorized");
