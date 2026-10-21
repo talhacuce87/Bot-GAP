@@ -2,7 +2,7 @@
 // ebelemece/saklambaç, beşlik/sarılma, araçlar ve evcil hayvanlar, görevler, oyuncu kartı, fotoğraf modu.
 // main.ts her kare `update` çağırır; yakındaki etkileşimleri `acts` ile ekler.
 import * as THREE from "three";
-import { FLAG_WALKING, vehicleOf, type Vehicle } from "../../shared/constants";
+import { FLAG_RUNNING, FLAG_WALKING, vehicleOf, type Vehicle } from "../../shared/constants";
 import { DJ_BOOTH, DOCK, KICK_REACH, PITCH, POND_AREA, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
 import { type AvatarRenderer, type AvatarView, colorFor } from "./avatars/avatars";
 import { Companions } from "./avatars/companions";
@@ -22,7 +22,9 @@ import { canvasToJpeg, PhotoMode } from "./ui/photo";
 import { ProfileUi } from "./ui/profile";
 import { falloff, sfx } from "./ui/sfx";
 import { WorldHud } from "./ui/worldHud";
+import { Confetti, Mist, SeasonParticles, Splashes, StageHaze } from "./world/ambient";
 import { daylight, istanbulHour } from "./world/daynight";
+import { wetUniform } from "./world/geo";
 import { Fireworks } from "./world/fireworks";
 import { SCREEN_H, SCREEN_W, type World } from "./world/scene";
 import { ScreenGlow } from "./world/screenGlow";
@@ -77,6 +79,14 @@ export class Features {
   private weatherFx: WeatherFx;
   private fireworks = new Fireworks();
   private screenGlow: ScreenGlow;
+  private mist = new Mist();
+  private leaves: SeasonParticles;
+  private confetti = new Confetti();
+  private splashes = new Splashes();
+  private haze = new StageHaze();
+  /** Islak zeminde son adım anı (sid → sn): sıçrama adım ritminde. */
+  private lastStep = new Map<number, number>();
+  private fogColor = new THREE.Color();
   private boards: BoardGameUi;
   private profile: ProfileUi;
   private hub: Hub;
@@ -105,6 +115,9 @@ export class Features {
     world.scene.add(this.weatherFx.group);
     this.screenGlow = new ScreenGlow(world.screen, SCREEN_W, SCREEN_H);
     world.scene.add(this.screenGlow.group);
+    this.leaves = new SeasonParticles(world.season, c.lowPower);
+    world.scene.add(this.mist.mesh, this.confetti.mesh, this.splashes.mesh, this.haze.mesh);
+    if (this.leaves.mesh) world.scene.add(this.leaves.mesh);
     c.life.onStop(() => this.fireworks.dispose());
 
     // Ocakçı: çay ocağının arkasında duran sabit karakter
@@ -183,6 +196,7 @@ export class Features {
       const t = performance.now() / 1000;
       const gx = PITCH.x + (side ? 1 : -1) * PITCH.hx;
       c.emoteFx.emit(gx, 1, PITCH.z, FX_CELL.party, t, 0.5, 6);
+      this.confetti.burst(gx - (side ? 1 : -1) * 1.5, 1.5, PITCH.z, t);
       c.emoteFx.emit(gx, 1.5, PITCH.z, FX_CELL.ball, t + 0.2, 0.5, 3);
       hud.toast(`⚽ GOL! ${sid === net.you ? "Sen attın" : name} · ${s[0]}–${s[1]}`);
     };
@@ -453,6 +467,7 @@ export class Features {
     world.setHour(hour);
 
     this.screenGlow.update(now, dt, this.c.cinemaOn(), document.querySelector<HTMLVideoElement>(".screen-players video"), world.env.day);
+    this.ambient(time, dt, world);
 
     // Sahne: nasıl inilirse inilsin sunucuya bildir (sunucu sahneyi aldıysa bu mesaj yok sayılır)
     if (this.wasOnStage && !me.onStage) net.send({ t: "stage", on: false });
@@ -539,6 +554,38 @@ export class Features {
     // Hava ve havai fişek
     this.weatherFx.update(time, dt, camera.position, 0.35 + 0.65 * world.env.day);
     world.flash(this.weatherFx.flash);
+  }
+
+  /** Sis, mevsim parçacıkları, sahne dumanı, konfeti ışığı ve ıslak zeminde adım sıçramaları. */
+  private ambient(time: number, dt: number, world: World): void {
+    const { camera, me, remotes, net } = this.c;
+    const day = world.env.day;
+    const w = this.weatherFx.current;
+    // Sis: gün doğumunda pus, akşam hafif; sisli havada yoğun, yağmurda orta
+    const h = world.hour();
+    const dawn = Math.max(0, 1 - Math.abs(h - 6.9) / 2.2), evening = Math.max(0, 1 - Math.abs(h - 20.6) / 1.6) * 0.45;
+    const weather = w.kind === "fog" ? 1 : w.kind === "rain" || w.kind === "storm" ? 0.45 : w.kind === "snow" ? 0.35 : 0;
+    this.fogColor.copy((world.scene.fog as THREE.Fog).color);
+    this.mist.update(camera.position, Math.max(dawn, evening, weather), this.fogColor, dt);
+    this.leaves.update(camera.position, 0.35 + 0.65 * day, w.kind === "storm" ? 2.2 : w.kind === "rain" ? 1.4 : 1);
+    this.haze.update(this.stage.show > 0, 1 - day, dt);
+    const light = 0.4 + 0.6 * day;
+    this.confetti.light = light;
+    this.splashes.light = light;
+    // Adım sıçraması: ıslak zeminde yürüyen/koşan (araçsız, yerde) herkes
+    const wet = wetUniform.value;
+    if (wet < 0.25) return;
+    const step = (sid: number, x: number, z: number, flags: number, air: number) => {
+      if (!(flags & FLAG_WALKING) || vehicleOf(flags) || air > 0.05) return;
+      if (Math.hypot(x - camera.position.x, z - camera.position.z) > 30) return;
+      const run = (flags & FLAG_RUNNING) !== 0;
+      const last = this.lastStep.get(sid) ?? 0;
+      if (time - last < (run ? 0.26 : 0.36)) return;
+      this.lastStep.set(sid, time);
+      this.splashes.step(x, z, time, wet * (run ? 1 : 0.6));
+    };
+    if (!me.onStage && !me.seated) step(net.you, me.x, me.z, me.flags, me.jumpY);
+    for (const r of remotes.map.values()) if (r.hasData && !r.leaving && !r.lift) step(r.info.sid, r.x, r.z, r.flags, r.jumpY);
   }
 
   /** Avatar çiziminden önce: kendi ve uzak avatarların ek durumları (sahne, mikrofon, isim gizleme). */

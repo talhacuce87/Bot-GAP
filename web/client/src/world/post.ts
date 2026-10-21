@@ -119,7 +119,67 @@ const RAYS = {
     }
   `,
 };
+/**
+ * Alan derinliği (fotoğraf modu): odaktaki karakter net, önü ve arkası derinliğe göre bulanık (bokeh).
+ * Derinlik ayrı ve opak nesnelerle çizilir; parçacıklar/saydamlar derinliğe yazılmaz.
+ */
+const DOF = {
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    tDepth: { value: null as THREE.Texture | null },
+    uFocus: { value: 8 },
+    uNear: { value: 0.1 },
+    uFar: { value: 260 },
+    uAspect: { value: 1 },
+    uAmount: { value: 0 },
+  },
+  vertexShader: GRADE.vertexShader,
+  fragmentShader: /* glsl */ `
+    #include <packing>
+    uniform sampler2D tDiffuse;
+    uniform sampler2D tDepth;
+    uniform float uFocus;
+    uniform float uNear;
+    uniform float uFar;
+    uniform float uAspect;
+    uniform float uAmount;
+    varying vec2 vUv;
+    float dist(vec2 uv) {
+      float d = unpackRGBAToDepth(texture2D(tDepth, uv));
+      return -perspectiveDepthToViewZ(d, uNear, uFar);
+    }
+    float coc(float z) {
+      // Odak çevresinde net bölge; uzaklaştıkça bulanıklık artar (önde daha hızlı)
+      float k = z > uFocus ? (z - uFocus) / (uFocus * 2.5) : (uFocus - z) / (uFocus * 0.6);
+      return clamp(k - 0.08, 0.0, 1.0);
+    }
+    void main() {
+      float c = coc(dist(vUv)) * uAmount;
+      vec4 base = texture2D(tDiffuse, vUv);
+      if (c < 0.01) { gl_FragColor = base; return; }
+      // Altın açılı spiral: 24 örnek, parlaklar ağırlıklı (bokeh daireleri)
+      vec3 acc = base.rgb;
+      float wsum = 1.0;
+      float r = c * 0.012;
+      for (int i = 1; i < 24; i++) {
+        float fi = float(i);
+        float a = fi * 2.39996;
+        vec2 o = vec2(cos(a), sin(a)) * sqrt(fi / 24.0) * r * vec2(1.0 / uAspect, 1.0) * 1.6;
+        vec2 uv = vUv + o;
+        // Arkaplan örneği öndeki nete taşmasın
+        float w = coc(dist(uv)) * uAmount >= c * 0.5 ? 1.0 : 0.2;
+        vec3 col = texture2D(tDiffuse, uv).rgb;
+        w *= 1.0 + 2.0 * smoothstep(0.9, 1.6, dot(col, vec3(0.333)));
+        acc += col * w;
+        wsum += w;
+      }
+      gl_FragColor = vec4(acc / wsum, base.a);
+    }
+  `,
+};
+
 const _sun = new THREE.Vector3();
+const _clear = new THREE.Color();
 const _fwd = new THREE.Vector3();
 
 const TINT_DAY =new THREE.Vector3(1.02, 1.0, 0.97);
@@ -136,6 +196,8 @@ export interface PostOptions {
   /** Işık huzmeleri ve lens parlaması; `sunDir` güneşin gökteki yönü. */
   godrays?: boolean;
   sunDir?: THREE.Vector3;
+  /** Alan derinliği: odak uzaklığı (m), 0 kapalı. */
+  dof?: number;
 }
 
 export class PostFx {
@@ -143,11 +205,15 @@ export class PostFx {
   private bloom: UnrealBloomPass;
   private grade: ShaderPass;
   private rays: ShaderPass;
+  private dof: ShaderPass;
+  private depthTarget: THREE.WebGLRenderTarget | null = null;
+  private depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  private hidden: THREE.Object3D[] = [];
   private size = { pr: 0, w: 0, h: 0 };
 
   constructor(
     private renderer: THREE.WebGLRenderer,
-    scene: THREE.Scene,
+    private scene: THREE.Scene,
     private camera: THREE.Camera,
     samples: number,
   ) {
@@ -158,6 +224,9 @@ export class PostFx {
     this.composer.addPass(this.bloom);
     this.rays = new ShaderPass(RAYS);
     this.composer.addPass(this.rays);
+    this.dof = new ShaderPass(DOF);
+    this.dof.enabled = false;
+    this.composer.addPass(this.dof);
     this.grade = new ShaderPass(GRADE);
     this.composer.addPass(this.grade);
     this.composer.addPass(new OutputPass());
@@ -182,6 +251,8 @@ export class PostFx {
       this.bloom.radius = 0.55;
     }
     this.rays.enabled = !!o.godrays && !!o.sunDir && this.aimRays(o.sunDir, env);
+    this.dof.enabled = !!o.dof;
+    if (o.dof) this.renderDepth(o.dof);
     const filter = o.filter ?? 0;
     this.grade.enabled = o.grade || filter > 0;
     this.grade.uniforms.uFilter.value = filter;
@@ -194,6 +265,48 @@ export class PostFx {
       u.uSat.value = 1.0 + 0.1 * env.day;
     }
     this.composer.render(dt);
+  }
+
+  /** Alan derinliği için derinlik görüntüsü: yalnızca derinliğe yazan opak nesneler. */
+  private renderDepth(focus: number): void {
+    const r = this.renderer;
+    const w = Math.max(1, Math.floor(innerWidth * r.getPixelRatio() * 0.5)), h = Math.max(1, Math.floor(innerHeight * r.getPixelRatio() * 0.5));
+    if (!this.depthTarget || this.depthTarget.width !== w || this.depthTarget.height !== h) {
+      this.depthTarget?.dispose();
+      this.depthTarget = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    }
+    // Parçacıklar, ışık konileri, sis: shader'da konumlanır ya da saydamdır, derinliğe karışmasın
+    this.hidden.length = 0;
+    this.scene.traverseVisible((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (m && !Array.isArray(m) && (m.transparent || !m.depthWrite || (o as THREE.Points).isPoints || (o as THREE.Line).isLine)) this.hidden.push(o);
+    });
+    for (const o of this.hidden) o.visible = false;
+    const bg = this.scene.background, fog = this.scene.fog;
+    this.scene.background = null;
+    this.scene.fog = null;
+    this.scene.overrideMaterial = this.depthMaterial;
+    const prevTarget = r.getRenderTarget();
+    r.getClearColor(_clear);
+    const clearAlpha = r.getClearAlpha();
+    r.setRenderTarget(this.depthTarget);
+    r.setClearColor(0xffffff, 1);
+    r.clear();
+    r.render(this.scene, this.camera);
+    r.setRenderTarget(prevTarget);
+    r.setClearColor(_clear, clearAlpha);
+    this.scene.overrideMaterial = null;
+    this.scene.background = bg;
+    this.scene.fog = fog;
+    for (const o of this.hidden) o.visible = true;
+    const cam = this.camera as THREE.PerspectiveCamera;
+    const u = this.dof.uniforms;
+    u.tDepth.value = this.depthTarget.texture;
+    u.uFocus.value = focus;
+    u.uNear.value = cam.near;
+    u.uFar.value = cam.far;
+    u.uAspect.value = innerWidth / innerHeight;
+    u.uAmount.value = 1;
   }
 
   /** Güneşin ekrandaki yeri ve ışın gücü; güneş arkada ya da batmışsa false (geçiş atlanır). */
@@ -220,6 +333,7 @@ export class PostFx {
   }
 
   dispose(): void {
+    this.depthTarget?.dispose();
     this.composer.dispose();
   }
 }

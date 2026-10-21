@@ -47,8 +47,10 @@ export interface World {
   setWeather(w: Weather): void;
   /** Saati sabitle (Türkiye saati), null: gerçek saat; gök yumuşakça geçer. */
   setHour(h: number | null): void;
-  /** Şimşek parlaması (0–1), her kare. */
+  /** Şimşek parlaması (0–1), her kare: ortam aydınlanır, güneş ışığı bir an sert gölge düşürür. */
   flash(v: number): void;
+  /** Gökte gösterilen saat (Türkiye saati, ondalıklı). */
+  hour(): number;
   /** Futbol sahası ve top. */
   pitch: Pitch;
   /** Sahne ışıkları (DJ şovu, karaoke takip spotu). */
@@ -985,6 +987,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     env,
   );
   let boostUntil = 0;
+  let lastFlash = 0;
 
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(SCREEN_W, SCREEN_H), new THREE.MeshBasicMaterial({ map: screenTexture(), fog: false }));
   screen.position.set(0, 1.2 + SCREEN_H / 2, SCREEN_Z - 1.38);
@@ -1057,7 +1060,12 @@ export function buildWorld(opts: WorldOptions = {}): World {
     },
     flash(v: number) {
       hemi.intensity = dayNight.hemiBase + v * 2.5;
+      sun.intensity = dayNight.sunBase + v * 6;
+      if (v > 0.01) sun.color.setRGB(0.85, 0.9, 1);
+      else if (lastFlash > 0.01) dayNight.refresh();
+      lastFlash = v;
     },
+    hour: () => dayNight.hour,
     pitch: field,
     stageLights: lights,
     ripple: addRipple,

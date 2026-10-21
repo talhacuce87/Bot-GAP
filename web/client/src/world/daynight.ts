@@ -287,6 +287,10 @@ export class DayNight {
   readonly lightDir = new THREE.Vector3(0, 1, 0);
   /** Havaya göre hesaplanan ortam ışığı (şimşek bunun üstüne eklenir). */
   hemiBase = 1.6;
+  /** Güneşin (ya da ayın) havaya göre gücü; şimşek bunun üstüne eklenir. */
+  sunBase = 1.7;
+  /** Gösterilen saat (geçiş sırasında ara değer). */
+  hour = 12;
   private weather: Weather = { kind: "clear", intensity: 0, cloud: 0.2, temp: null };
   private grey = new THREE.Color();
   private glow: THREE.InstancedMesh;
@@ -338,6 +342,11 @@ export class DayNight {
   }
 
   /** Her karede çağrılabilir; gerçek iş 3 saniyede bir (saat geçişi sürerken sık). */
+  /** Hemen yeniden hesapla (ör. şimşek bitince güneş rengi geri gelsin). */
+  refresh(): void {
+    this.apply(Date.now());
+  }
+
   update(nowMs: number): void {
     const fading = nowMs - this.fadeStart < HOUR_FADE_MS + 100;
     if (nowMs - this.lastUpdate < (fading ? 50 : 3000)) return;
@@ -348,6 +357,7 @@ export class DayNight {
     this.lastUpdate = nowMs;
     const p = this.p;
     const h = this.hourAt(nowMs);
+    this.hour = h;
     const day = daylight(h);
     const dusk = duskAmount(h) * 0.75;
 
@@ -387,7 +397,8 @@ export class DayNight {
     p.hemi.intensity = this.hemiBase;
     p.hemi.color.copy(PAL.hemiNightSky).lerp(PAL.hemiDaySky, day).lerp(PAL.hemiDuskSky, dusk * 0.5);
     p.hemi.groundColor.copy(PAL.hemiNightGround).lerp(PAL.hemiDayGround, day);
-    p.sun.intensity = (0.32 + 1.38 * day) * (1 - 0.72 * oc);
+    this.sunBase = (0.32 + 1.38 * day) * (1 - 0.72 * oc);
+    p.sun.intensity = this.sunBase;
     p.sun.color.copy(PAL.moon).lerp(PAL.sunDay, day).lerp(PAL.sunDusk, dusk);
     // Gölge: gündüz koyu, ay ışığında silik
     p.sun.shadow.intensity = (0.3 + 0.45 * day) * (1 - oc * 0.8);
