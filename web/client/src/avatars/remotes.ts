@@ -14,12 +14,17 @@ const FADE_PER_SEC = 3;
  * zaten yeter; bu yalnızca takılmada devreye girer. Duran oyuncunun fazla gidişi yumuşakça geri alınır.
  */
 const EXTRAP_MS = 200;
-/** Son iki örnek bundan uzak aralıklıysa (duran oyuncu, seyrek yayın) tahmin yapılmaz. */
-const EXTRAP_SPAN_MS = 250;
+/**
+ * Son iki örnek bundan uzak aralıklıysa hız bilinmiyor sayılır. Gönderenin hattı takılınca örnekler
+ * birkaç yüz ms aralıklı gelir, hız yine de geçerlidir; duran oyuncu zaten bayrak/yer değiştirmeyle elenir.
+ */
+const EXTRAP_SPAN_MS = 1000;
 /** Bu bayraklardan biri varken yer değiştiren oyuncu hareket ediyor sayılır. */
 const MOVE_FLAGS = FLAG_WALKING | FLAG_DRIVING;
-/** İleri tahmin yeni örnekle düzeltilince kalan fark saniyede bu hızla (üstel) kapanır. */
+/** Örnekler yetmediği an (bekleme, ileri tahmin) bitince kalan fark saniyede bu hızla (üstel) kapanır... */
 const CORRECT_PER_SEC = 10;
+/** ...ama saniyede en fazla bu kadar metre: oyuncu ışınlanmaz, kısa bir hamleyle yetişir. */
+const CORRECT_MAX_MPS = 6;
 /** Bundan büyük fark yumuşatılmaz (ışınlanma, sunucunun düzeltmesi); bisikletle 200 ms ~2 m. */
 const SNAP_M = 3;
 const TAU = Math.PI * 2;
@@ -64,9 +69,9 @@ export class Remote implements AvatarView {
   private bf = new Uint8Array(BUF);
   private head = 0; // bir sonraki yazılacak yer
   private n = 0;
-  /** Son karede ileri tahminin dayandığı örneğin zamanı (tahmin yoksa NaN). */
+  /** Son karede örnekler yetmediyse (bekleme/ileri tahmin) dayanılan en yeni örneğin zamanı, yoksa NaN. */
   private basis = NaN;
-  /** Düzeltilen ileri tahminden kalan, yavaşça kapanan fark. */
+  /** Bekleme/ileri tahmin bitince kalan, yavaşça kapanan fark. */
   private ex = 0;
   private ez = 0;
   private ox = 0;
@@ -151,18 +156,21 @@ export class Remote implements AvatarView {
     this.alpha = this.leaving ? Math.max(0, this.alpha - dt * FADE_PER_SEC) : Math.min(1, this.alpha + dt * FADE_PER_SEC);
     if (this.n === 0) return;
     const basis = this.locate(renderTime);
-    // İleri tahmin yeni örnekle düzeldi: eski tahminin şimdi göstereceği yerle yenisi arasındaki fark tek karede değil, yavaşça kapanır
+    // Yeni örnek geldi: eski dayanağın şimdi göstereceği yerle yenisi arasındaki fark tek karede değil, yavaşça kapanır
     if (!Number.isNaN(this.basis) && basis !== this.basis) this.correct(this.basis, renderTime);
     this.basis = basis;
-    const k = Math.exp(-dt * CORRECT_PER_SEC);
-    this.ex *= k;
-    this.ez *= k;
-    if (this.ex * this.ex + this.ez * this.ez > SNAP_M * SNAP_M) this.ex = this.ez = 0;
+    const e = Math.hypot(this.ex, this.ez);
+    if (e > SNAP_M) this.ex = this.ez = 0;
+    else if (e > 0) {
+      const f = 1 - Math.min(e * (1 - Math.exp(-dt * CORRECT_PER_SEC)), CORRECT_MAX_MPS * dt) / e;
+      this.ex *= f;
+      this.ez *= f;
+    }
     this.x += this.ex;
     this.z += this.ez;
   }
 
-  /** Konumu `renderTime`'a göre örneklerden bulur; ileri tahmin yapıldıysa dayandığı örneğin zamanını, yoksa NaN döndürür. */
+  /** Konumu `renderTime`'a göre örneklerden bulur; örnekler yetmediyse (bekleme/ileri tahmin) en yeninin zamanını, yoksa NaN döndürür. */
   private locate(renderTime: number): number {
     const newest = (this.head + BUF - 1) % BUF;
     if (renderTime >= this.t[newest] || this.n === 1) {
@@ -174,9 +182,8 @@ export class Remote implements AvatarView {
       if (this.n > 1 && this.lead(newest, renderTime)) {
         this.x += this.ox;
         this.z += this.oz;
-        return this.t[newest];
       }
-      return NaN;
+      return this.t[newest];
     }
     // En yeniden geriye doğru, renderTime'ı kapsayan iki örneği bul.
     for (let k = 1; k < this.n; k++) {
@@ -211,15 +218,14 @@ export class Remote implements AvatarView {
     return true;
   }
 
-  /** `basis` zamanlı örneğe dayanan tahminin şimdi göstereceği yerle bulunan yer arasındaki farkı ex/ez'ye ekler. */
+  /** `basis` zamanlı örneğe dayanan bekleme/tahminin şimdi göstereceği yerle bulunan yer arasındaki farkı ex/ez'ye ekler. */
   private correct(basis: number, renderTime: number): void {
-    for (let k = 0; k < this.n - 1; k++) {
+    for (let k = 0; k < this.n; k++) {
       const i = (this.head + 2 * BUF - 1 - k) % BUF;
       if (this.t[i] !== basis) continue;
-      if (this.lead(i, renderTime)) {
-        this.ex += this.bx[i] + this.ox - this.x;
-        this.ez += this.bz[i] + this.oz - this.z;
-      }
+      const led = k < this.n - 1 && this.lead(i, renderTime);
+      this.ex += this.bx[i] + (led ? this.ox : 0) - this.x;
+      this.ez += this.bz[i] + (led ? this.oz : 0) - this.z;
       return;
     }
   }

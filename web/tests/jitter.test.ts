@@ -138,6 +138,21 @@ describe("Remote", () => {
     expect(r.x).toBeCloseTo(0.4, 2);
   });
 
+  it("eases out the gap after a hold instead of jumping", () => {
+    const r = new Remote(info, 0);
+    r.push(1000, 0, 0, 0, FLAG_WALKING);
+    // Gönderenin hattı takıldı: örnekler arası çok uzun, hız bilinmiyor, oyuncu yerinde bekler
+    r.push(2300, 1, 0, 0, FLAG_WALKING);
+    r.sample(2500, 1 / 60);
+    expect(r.x).toBe(1);
+    r.push(2400, 1.4, 0, 0, FLAG_WALKING);
+    r.sample(2516, 1 / 60);
+    // Yeni yer ~1.86; tek karede en fazla saniyede 6 m'lik hamle kadar yaklaşır
+    expect(r.x).toBeLessThan(1 + 6 / 60 + 0.01);
+    for (let i = 0; i < 60; i++) r.sample(2516, 1 / 60);
+    expect(r.x).toBeCloseTo(1.4 + 0.4 * (116 / 100), 3);
+  });
+
   it("follows the new sample seamlessly when the player kept walking", () => {
     const r = new Remote(info, 0);
     r.push(1000, 0, 0, 0, FLAG_WALKING);
