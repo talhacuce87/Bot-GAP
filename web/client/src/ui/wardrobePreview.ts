@@ -1,9 +1,10 @@
-// Gardırop önizlemesi: pencerenin solunda kendi küçük sahnesinde dönen büyük karakter.
+// Gardırop sahnesi: pencerenin ortasında platformda dönen büyük karakter + parça kartlarının küçük
+// 3D resimleri (aynı WebGL bağlamında, ekran dışı hedefe çizilip resme çevrilir).
 // Dünyanın indirdiği chibi paketini paylaşır; yalnızca gardırop açıkken çizer.
 import * as THREE from "three";
 import type { Look } from "../../../shared/protocol";
 import { CHIBI_SCALE, ChibiLayer, type LimbPose } from "../avatars/chibi";
-import type { ChibiPack } from "../avatars/chibiPack";
+import { type ChibiPack, lookKey } from "../avatars/chibiPack";
 
 const FOV = 28;
 /**
@@ -11,10 +12,41 @@ const FOV = 28;
  * Tüm boy; kafa ve omuzlar (saç, şapka, gözlük, sakal sekmeleri).
  */
 const FRAMES = {
-  body: { y: 0.5, view: 1.2 },
+  body: { y: 0.5, view: 1.25 },
   head: { y: 0.72, view: 0.9 },
 };
 export type PreviewFocus = keyof typeof FRAMES;
+
+/** Kart resimlerinde karakterin hangi bölgesi görünür (boya oranla) ve hangi açıdan. */
+const REGIONS = {
+  head: { y: 0.77, view: 0.6, yaw: 0.4 },
+  torso: { y: 0.39, view: 0.44, yaw: 0.3 },
+  legs: { y: 0.2, view: 0.44, yaw: 0.3 },
+  feet: { y: 0.06, view: 0.22, yaw: 0.8 },
+};
+export type ThumbRegion = keyof typeof REGIONS;
+const THUMB_PX = 192;
+/** Kare başına en fazla bu kadar kart resmi (her biri bir kıyafet geometrisi kurar). */
+const THUMBS_PER_FRAME = 2;
+const THUMB_CACHE_MAX = 400;
+
+const IDLE: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, time: 0 };
+
+interface ThumbJob {
+  key: string;
+  look: Look;
+  region: ThumbRegion;
+  done: ((url: string) => void)[];
+}
+
+function addLights(scene: THREE.Scene): void {
+  scene.add(new THREE.HemisphereLight("#eef4ff", "#4a3f5a", 1.7));
+  const key = new THREE.DirectionalLight("#fff3df", 2.1);
+  key.position.set(2.5, 4, 3.5);
+  const rim = new THREE.DirectionalLight("#9fb8ff", 1.4);
+  rim.position.set(-3, 2.5, -3);
+  scene.add(key, rim);
+}
 
 export class WardrobePreview {
   readonly el: HTMLDivElement;
@@ -22,17 +54,20 @@ export class WardrobePreview {
   private renderer: THREE.WebGLRenderer | null = null;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 50);
-  /** Karakter boyu (m); paket inince temel gövdeden ölçülür. */
-  private height = 1.6;
   private layer = new ChibiLayer(1, 1000);
   private pose = new THREE.Matrix4();
-  private limbs: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, time: 0 };
+  private limbs: LimbPose = { ...IDLE };
   private look: Look | null = null;
   private status: HTMLDivElement;
   private resize: ResizeObserver;
+  private ring: THREE.Mesh;
+  /** Karakter boyu (m); paket inince temel gövdeden ölçülür. */
+  private height = 1.6;
   /** Karakterin dönüşü (radyan); 0 kameraya bakar. */
   private yaw = 0;
   private targetYaw = 0;
+  /** Basılı tutulan döndürme tuşu: -1 sola, 1 sağa. */
+  private spin = 0;
   private zoom = 1;
   private focus: PreviewFocus = "body";
   private camY = 0;
@@ -42,34 +77,52 @@ export class WardrobePreview {
   private last = 0;
   private waveT = 0;
 
+  private thumbScene = new THREE.Scene();
+  private thumbLayer = new ChibiLayer(1, 1000);
+  private thumbCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 50);
+  private thumbTarget: THREE.WebGLRenderTarget | null = null;
+  private thumbPose = new THREE.Matrix4();
+  private thumbPixels = new Uint8Array(THUMB_PX * THUMB_PX * 4);
+  private thumbCanvas = document.createElement("canvas");
+  private thumbs = new Map<string, string>();
+  private queue: ThumbJob[] = [];
+
   constructor(
     parent: HTMLElement,
     private getPack: () => ChibiPack | null,
   ) {
     this.el = document.createElement("div");
-    this.el.className = "wardrobe-stage";
+    this.el.className = "wd-canvas";
     this.canvas = document.createElement("canvas");
     this.status = document.createElement("div");
-    this.status.className = "wardrobe-stage-msg";
-    const hint = document.createElement("div");
-    hint.className = "wardrobe-stage-hint";
-    hint.textContent = "Sürükle: döndür · Tekerlek: yakınlaş · Çift tık: öne çevir";
-    this.el.append(this.canvas, this.status, hint);
+    this.status.className = "wd-canvas-msg";
+    this.el.append(this.canvas, this.status);
     parent.append(this.el);
 
-    this.scene.add(new THREE.HemisphereLight("#eef4ff", "#5a4a3a", 1.7));
-    const key = new THREE.DirectionalLight("#fff3df", 2.1);
-    key.position.set(2.5, 4, 3.5);
-    const rim = new THREE.DirectionalLight("#9fb8ff", 1.1);
-    rim.position.set(-3, 2.5, -3);
-    this.scene.add(key, rim, this.layer.group);
-    const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(0.75, 48),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28, depthWrite: false }),
+    addLights(this.scene);
+    this.scene.add(this.layer.group);
+    // Platform: koyu disk, üstünde parlayan halka
+    const disc = new THREE.Mesh(
+      new THREE.CircleGeometry(0.56, 64),
+      new THREE.MeshBasicMaterial({ color: 0x05060c, transparent: true, opacity: 0.4, depthWrite: false }),
     );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = 0.002;
-    this.scene.add(floor);
+    this.ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.53, 0.57, 96),
+      new THREE.MeshBasicMaterial({ color: 0x8b7bff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    const halo = new THREE.Mesh(
+      new THREE.RingGeometry(0.57, 0.85, 96),
+      new THREE.MeshBasicMaterial({ color: 0x4fd1ff, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    for (const m of [disc, this.ring, halo]) {
+      m.rotation.x = -Math.PI / 2;
+      m.position.y = 0.003;
+      this.scene.add(m);
+    }
+
+    addLights(this.thumbScene);
+    this.thumbScene.add(this.thumbLayer.group);
+    this.thumbCanvas.width = this.thumbCanvas.height = THUMB_PX;
 
     this.canvas.addEventListener("pointerdown", (e) => {
       this.dragId = e.pointerId;
@@ -86,11 +139,7 @@ export class WardrobePreview {
     };
     this.canvas.addEventListener("pointerup", up);
     this.canvas.addEventListener("pointercancel", up);
-    this.canvas.addEventListener("dblclick", () => {
-      // En yakın tam tura döner: ters yönde fırıl fırıl dönmesin
-      this.targetYaw = Math.round(this.targetYaw / (Math.PI * 2)) * Math.PI * 2;
-      this.zoom = 1;
-    });
+    this.canvas.addEventListener("dblclick", () => this.front());
     this.canvas.addEventListener("wheel", (e) => {
       e.preventDefault();
       this.zoom = THREE.MathUtils.clamp(this.zoom * (e.deltaY > 0 ? 1.1 : 0.9), 0.55, 1.6);
@@ -111,6 +160,39 @@ export class WardrobePreview {
     this.zoom = 1;
   }
 
+  /** Düğmeyle sekizde bir tur döndür. */
+  turn(dir: number): void {
+    this.targetYaw += dir * (Math.PI / 4);
+  }
+
+  setSpin(dir: number): void {
+    this.spin = dir;
+  }
+
+  /** Yüzü öne: en yakın tam tura döner (ters yönde fırıl fırıl dönmesin). */
+  front(): void {
+    this.targetYaw = Math.round(this.targetYaw / (Math.PI * 2)) * Math.PI * 2;
+    this.zoom = 1;
+  }
+
+  /**
+   * Kart resmi: hazırsa adresi döner; değilse sıraya alır, hazır olunca `done` çağrılır.
+   * Sıra her liste çiziminde `clearThumbs` ile boşaltılır (görünmeyen sekmenin resimleri beklemesin).
+   */
+  thumb(look: Look, region: ThumbRegion, done: (url: string) => void): string | null {
+    const key = `${region}|${lookKey(look)}`;
+    const url = this.thumbs.get(key);
+    if (url) return url;
+    const job = this.queue.find((j) => j.key === key);
+    if (job) job.done.push(done);
+    else this.queue.push({ key, look, region, done: [done] });
+    return null;
+  }
+
+  clearThumbs(): void {
+    this.queue.length = 0;
+  }
+
   start(): void {
     if (!this.renderer) {
       try {
@@ -121,9 +203,12 @@ export class WardrobePreview {
       }
       this.renderer.toneMapping = THREE.NeutralToneMapping;
       this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      this.thumbTarget = new THREE.WebGLRenderTarget(THUMB_PX, THUMB_PX, { samples: 4 });
+      this.thumbTarget.texture.colorSpace = THREE.SRGBColorSpace;
     }
     this.yaw = this.targetYaw = 0;
     this.zoom = 1;
+    this.spin = 0;
     // Açılışta kamera kayarak gelmesin
     this.camY = this.camDist = 0;
     this.last = performance.now();
@@ -134,11 +219,14 @@ export class WardrobePreview {
   stop(): void {
     this.renderer?.setAnimationLoop(null);
     this.dragId = -1;
+    this.spin = 0;
+    this.queue.length = 0;
   }
 
   dispose(): void {
     this.stop();
     this.resize.disconnect();
+    this.thumbTarget?.dispose();
     this.renderer?.dispose();
     this.renderer?.forceContextLoss();
     this.renderer = null;
@@ -153,11 +241,13 @@ export class WardrobePreview {
   }
 
   private frame(now: number): void {
+    const renderer = this.renderer!;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     const pack = this.getPack();
     if (pack && !this.layer.pack) {
       this.layer.usePack(pack);
+      this.thumbLayer.usePack(pack);
       const geo = pack.build(null);
       geo.computeBoundingBox();
       this.height = geo.boundingBox!.max.y * CHIBI_SCALE;
@@ -165,8 +255,12 @@ export class WardrobePreview {
       this.camY = this.camDist = 0;
     }
     this.status.textContent = this.layer.pack ? "" : "Karakter yükleniyor…";
+    if (this.layer.pack) {
+      for (let n = 0; n < THUMBS_PER_FRAME && this.queue.length; n++) this.renderThumb(this.queue.shift()!);
+    }
 
     const k = 1 - Math.exp(-dt * 10);
+    this.targetYaw += this.spin * dt * 2.6;
     this.yaw += (this.targetYaw - this.yaw) * k;
     const f = FRAMES[this.focus];
     const y = f.y * this.height;
@@ -184,10 +278,46 @@ export class WardrobePreview {
     // Nefes: kollar hafifçe sallanır; yeni seçimde el sallar
     this.limbs.swing = Math.sin(this.limbs.time * 1.6) * 0.06;
     this.limbs.wave = Math.min(1, this.waveT * 3);
+    (this.ring.material as THREE.MeshBasicMaterial).opacity = 0.75 + Math.sin(this.limbs.time * 2.2) * 0.2;
     this.pose.makeRotationY(this.yaw);
     this.layer.begin(this.camera.position);
     this.layer.place(this.look, 0, 0, this.pose, this.limbs, true);
     this.layer.end();
-    this.renderer!.render(this.scene, this.camera);
+    renderer.render(this.scene, this.camera);
+  }
+
+  private renderThumb(job: ThumbJob): void {
+    const renderer = this.renderer!;
+    const r = REGIONS[job.region];
+    const h = this.height;
+    const half = (r.view * h) / 2;
+    const cam = this.thumbCam;
+    cam.left = cam.bottom = -half;
+    cam.right = cam.top = half;
+    cam.position.set(0, r.y * h, 10);
+    cam.lookAt(0, r.y * h, 0);
+    cam.updateProjectionMatrix();
+    this.thumbPose.makeRotationY(r.yaw);
+    this.thumbLayer.begin(cam.position);
+    const ok = this.thumbLayer.place(job.look, 0, 0, this.thumbPose, IDLE, true);
+    this.thumbLayer.end();
+    if (!ok) return;
+
+    renderer.setRenderTarget(this.thumbTarget);
+    renderer.clear();
+    renderer.render(this.thumbScene, cam);
+    renderer.readRenderTargetPixels(this.thumbTarget!, 0, 0, THUMB_PX, THUMB_PX, this.thumbPixels);
+    renderer.setRenderTarget(null);
+
+    // WebGL satırları alttan üste: resim için ters çevrilir
+    const ctx = this.thumbCanvas.getContext("2d")!;
+    const img = ctx.createImageData(THUMB_PX, THUMB_PX);
+    const row = THUMB_PX * 4;
+    for (let y = 0; y < THUMB_PX; y++) img.data.set(this.thumbPixels.subarray((THUMB_PX - 1 - y) * row, (THUMB_PX - y) * row), y * row);
+    ctx.putImageData(img, 0, 0);
+    const url = this.thumbCanvas.toDataURL("image/png");
+    if (this.thumbs.size >= THUMB_CACHE_MAX) this.thumbs.delete(this.thumbs.keys().next().value!);
+    this.thumbs.set(job.key, url);
+    for (const done of job.done) done(url);
   }
 }

@@ -297,6 +297,8 @@ async function start(): Promise<void> {
   // ---- Gardırop: seçim kendi karakterinde canlı görünür; kayıt botta doğrulanır ----
   let savedLook: Look | null = null;
   let saveTimer = 0;
+  // Gardırop ekranı kaplarken dünya çizilmez (son kare arkada donuk kalır), GPU önizlemeye kalır
+  let worldPaused = false;
   const wardrobe = new Wardrobe(hudRoot, chibiManifest as ChibiManifest, {
     request: () => net.send({ t: "wardrobe" }),
     preview: (look) => (me.outfit = look),
@@ -309,11 +311,12 @@ async function start(): Promise<void> {
     cancel: () => (me.outfit = savedLook),
     opened: () => me.faceCamera(),
     modal: (open) => {
+      worldPaused = open;
       input.setBlocked(open);
       hudRoot.classList.toggle("modal-open", open);
     },
     pack: () => chibi.pack,
-  });
+  }, session.user.name);
   life.onStop(() => wardrobe.dispose());
   net.onWardrobe = (w) => wardrobe.onInfo(w);
   const showStatus = net.onStatus;
@@ -629,6 +632,7 @@ async function start(): Promise<void> {
   // Çizim: son işlem açıksa (ya da fotoğraf filtresi varsa) composer, değilse doğrudan
   const postOpts = { bloom: false, grade: false, filter: 0, godrays: false, sunDir: world.sunDir, dof: 0 };
   const renderScene = (dt: number) => {
+    if (worldPaused) return;
     postOpts.bloom = settings.bloom;
     postOpts.grade = settings.grade;
     postOpts.filter = features.filter;
