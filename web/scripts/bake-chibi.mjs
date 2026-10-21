@@ -8,7 +8,8 @@
 //
 // Her parça tek ağa birleştirilir, malzeme rengi köşe rengine gömülür ve sadeleştirilir.
 // Köşe düzeni (16 bayt): konum int16×3 (POS_SCALE), normal int8×3, renk u8×3 (sRGB),
-// renk sınıfı u8 (0 sabit, 1 ten, 2 saç, 3 göz), uzuv u8 (LIMB), 1 bayt boşluk.
+// renk sınıfı u8 (0 sabit, 1 ten, 2 saç, 3 göz), uzuv u8 (LIMB), kontur u8 (0 tam, 1..255 → 0..1
+// inceltilmiş; thinOutline), 1 bayt boşluk.
 // İndeksler u16, parçanın ilk köşesine göre.
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -25,6 +26,22 @@ const TINT = { none: 0, skin: 1, hair: 2, eye: 3 };
 /** Kategori başına parça üçgen bütçesi (sadeleştirme hedefi). */
 const BUDGET = { base: 9000, hair: 4000, tops: 3000, bottoms: 1500, shoes: 1000, hats: 1200, glasses: 600, facial: 600 };
 const CATS = ["hair", "tops", "bottoms", "shoes", "hats", "glasses", "facial"];
+const KEEP_SMALL = 256;
+/**
+ * Şapka haritası: kafa merkezinden az×el yöne ışın, şapkanın ilk (iç) ve son (dış) kesişim uzaklığı
+ * unit katı olarak u8 (0: o yönde şapka yok). Şapka takınca saç ve gözlük bu iç yüzeyin içine çekilir.
+ * Yön: açı atan2(x, z) ∈ [0, 2π), yükseklik asin(y/r) ∈ [elMin, π/2].
+ * Üç katman: iç, dış, saç. Saç katmanı iç uzaklığın ±erode hücrelik komşulukta en küçüğü: kep
+ * siperliği gibi uzak yüzeylerin altındaki perçem de tepeyle birlikte içeri alınır. Şapkanın kenarından
+ * dışarı da `fade` hücre, hücre başına `fadeStep` gevşeyerek uzanır: bastırılan ve bastırılmayan saç
+ * köşeleri arasındaki üçgenler gerilip şapka kenarından diken gibi çıkmasın. Saç katmanı kafatasının
+ * `floor` dışından içeri inmez: aşındırma ve kenar geçişi fes gibi kafaya oturan şapkalarda değeri derinin
+ * altına düşürüp saç tabanını kafatasına gömüyor, kafa kel görünüyordu. (Oyun saçı katmanın GAME_HAIR_GAP içine
+ * çeker: taban 2.6 cm → saç derinin ≥2 cm dışında.)
+ */
+/** chibiPack.ts HAT_HAIR_GAP: oyun saçı saç katmanının bu kadar içine çeker. */
+const GAME_HAIR_GAP = 0.005;
+const HAT_CAP = { az: 128, el: 64, elMin: -1.0, unit: 0.005, erode: 4, fade: 6, fadeStep: 0.0075, floor: 0.026, minFloor: 0.016 };
 
 // ---------------------------------------------------------------------------
 // GLB okuma
@@ -250,10 +267,45 @@ function orient(P, N, idx) {
   return out;
 }
 
+/**
+ * İnce parça konturu: oyundaki kontur kabuğu normal boyunca OUTLINE_MODEL şişer. Siperlik gibi bundan
+ * ince plakalarda arka yüzün kabuğu ön yüzden testere dişi gibi çıkıyordu. Kalınlık: köşeye en yakın,
+ * köşe normaline ters bakan (karşı yüz) üçgenin uzaklığı; kontur bunun THIN_RATIO katına iner (keskin kenarda üst/alt yüz kabukları ayrışıp
+ * diş diş görünmesin). 0 = tam kontur.
+ */
+const OUTLINE_MODEL = 0.012 / 0.72;
+const THIN_CATS = new Set(["hats"]);
+const THIN_RATIO = 0.25;
+function thinOutline(verts, index) {
+  const out = new Uint8Array(verts.length);
+  const tris = [];
+  for (let k = 0; k < index.length; k += 3) {
+    const [a, b, c] = [verts[index[k]].p, verts[index[k + 1]].p, verts[index[k + 2]].p];
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+    const l = Math.hypot(...n) || 1;
+    tris.push([index[k], index[k + 1], index[k + 2], n.map((x) => x / l)]);
+  }
+  for (let i = 0; i < verts.length; i++) {
+    const v = verts[i];
+    let t = Infinity;
+    for (const [a, b, c, n] of tris) {
+      if (a === i || b === i || c === i) continue;
+      if (n[0] * v.n[0] + n[1] * v.n[1] + n[2] * v.n[2] > -0.5) continue;
+      t = Math.min(t, pointTri(v.p, verts[a].p, verts[b].p, verts[c].p));
+    }
+    const s = Math.min(1, (t * THIN_RATIO) / OUTLINE_MODEL);
+    if (s < 1) out[i] = 1 + Math.round(s * 254);
+  }
+  return out;
+}
+
 /** Parçaları bütçeye göre sadeleştirip tek köşe/indeks dizisine paketler. */
-function bake(parts, budget) {
+function bake(parts, budget, cat) {
   const total = parts.reduce((s, p) => s + p.tris, 0);
-  const done = parts.map((p) => simplify(p, Math.max(24, Math.round((p.tris / total) * budget))));
+  // Küçük parçalar (≤ KEEP_SMALL üçgen) sadeleştirilmez: kep siperliği gibi ince plakaların kenar şeridi
+  // payına düşen birkaç düzine üçgenle parçalanıp zikzak görünüyordu
+  const done = parts.map((p) => simplify(p, Math.max(Math.min(p.tris, KEEP_SMALL), Math.round((p.tris / total) * budget))));
   const verts = [], index = [];
   for (const p of done) {
     // Kullanılmayan köşeleri at
@@ -264,6 +316,7 @@ function bake(parts, budget) {
   }
   if (verts.length > 65535) throw new Error(`u16 sınırı aşıldı: ${verts.length} köşe`);
   const vb = Buffer.alloc(verts.length * STRIDE);
+  const thin = THIN_CATS.has(cat) ? thinOutline(verts, index) : null;
   verts.forEach((v, i) => {
     const o = i * STRIDE;
     for (let k = 0; k < 3; k++) vb.writeInt16LE(Math.round(v.p[k] / POS_SCALE), o + k * 2);
@@ -271,6 +324,7 @@ function bake(parts, budget) {
     for (let k = 0; k < 3; k++) vb.writeUInt8(toSrgb(v.c[k]), o + 9 + k);
     vb.writeUInt8(v.tint, o + 12);
     vb.writeUInt8(v.limb, o + 13);
+    if (thin) vb.writeUInt8(thin[i], o + 14);
   });
   const ib = Buffer.from(new Uint16Array(index).buffer);
   // Renk sınıfı başına ortalama renk: kullanıcının seçtiği renk bu referansa oranla uygulanır
@@ -287,6 +341,129 @@ function bake(parts, budget) {
     if (s) ref[name] = [0, 1, 2].map((k) => Math.round(s[k] / s[3]));
   }
   return { vb, ib, vertCount: verts.length, triCount: index.length / 3, ref };
+}
+
+/** HAT_CAP ızgarasındaki her yön için ışının ağa ilk ve son çarptığı uzaklık (çarpmıyorsa 0). */
+function capRays(b, center, keep = () => true) {
+  const P = [], L = [];
+  for (let i = 0; i < b.vertCount; i++) {
+    P.push([0, 1, 2].map((k) => b.vb.readInt16LE(i * STRIDE + k * 2) * POS_SCALE));
+    L.push(b.vb.readUInt8(i * STRIDE + 13));
+  }
+  const I = new Uint16Array(b.ib.buffer, b.ib.byteOffset, b.ib.length / 2);
+  const { az, el, elMin } = HAT_CAP;
+  const near = new Float32Array(az * el), far = new Float32Array(az * el);
+  for (let ei = 0; ei < el; ei++) {
+    const e = elMin + (ei / (el - 1)) * (Math.PI / 2 - elMin);
+    for (let ai = 0; ai < az; ai++) {
+      const a = (ai / az) * 2 * Math.PI;
+      const d = [Math.cos(e) * Math.sin(a), Math.sin(e), Math.cos(e) * Math.cos(a)];
+      let n = Infinity, f = 0;
+      for (let t = 0; t < I.length; t += 3) {
+        if (!keep(L[I[t]])) continue;
+        const h = rayTri(center, d, P[I[t]], P[I[t + 1]], P[I[t + 2]]);
+        if (h > 0) { n = Math.min(n, h); f = Math.max(f, h); }
+      }
+      if (f > 0) { near[ei * az + ai] = n; far[ei * az + ai] = f; }
+    }
+  }
+  return { near, far };
+}
+
+/** Bake edilmiş (nicelenmiş) şapka ağından HAT_CAP haritası: [iç, dış, saç] × az·el. skull: kafatası uzaklıkları. */
+function hatCap(b, center, skull) {
+  const { az, el, unit, erode, fade, fadeStep, floor, minFloor } = HAT_CAP;
+  const out = new Uint8Array(az * el * 3);
+  const q = (r) => Math.min(255, Math.max(1, Math.round(r / unit)));
+  const { near, far } = capRays(b, center);
+  for (let k = 0; k < az * el; k++) if (far[k] > 0) { out[k] = q(near[k]); out[az * el + k] = q(far[k]); }
+  for (let ei = 0; ei < el; ei++) {
+    for (let ai = 0; ai < az; ai++) {
+      if (!out[ei * az + ai]) continue;
+      let m = 255;
+      for (let de = -erode; de <= erode; de++) {
+        const e = ei + de;
+        if (e < 0 || e >= el) continue;
+        for (let da = -erode; da <= erode; da++) {
+          const v = out[e * az + ((ai + da + az) % az)];
+          if (v) m = Math.min(m, v);
+        }
+      }
+      out[2 * az * el + ei * az + ai] = m;
+    }
+  }
+  const hair = out.subarray(2 * az * el);
+  const edge = Uint8Array.from(hair);
+  for (let ei = 0; ei < el; ei++) {
+    for (let ai = 0; ai < az; ai++) {
+      if (edge[ei * az + ai]) continue;
+      let m = Infinity;
+      for (let de = -fade; de <= fade; de++) {
+        const e = ei + de;
+        if (e < 0 || e >= el) continue;
+        for (let da = -fade; da <= fade; da++) {
+          const v = edge[e * az + ((ai + da + az) % az)];
+          // İlk halka gevşemez: şapka kenarındaki hücreyi kısmen örtüyor, orada gevşeyen saç kabuktan taşıyordu
+          if (v) m = Math.min(m, v * unit + (Math.max(Math.abs(de), Math.abs(da)) - 1) * fadeStep);
+        }
+      }
+      if (m < Infinity) hair[ei * az + ai] = q(m);
+    }
+  }
+  // Taban şapkanın iç yüzeyini aşmaz (kep arkası gibi kafaya sıkı oturan kenarda saç şapkanın içinde kalır),
+  // ama hiçbir yerde kafatası + minFloor altına inmez: saçların kafatasını saran taban katmanı (Base/Buzz)
+  // derinin içine girince şapka kenarında deri görünüyordu (fes).
+  for (let k = 0; k < az * el; k++) {
+    if (!hair[k] || !(skull[k] > 0)) continue;
+    const h = Math.max(hair[k], q(skull[k] + floor));
+    // (şapkanın iç yüzeyi kafatasının altındaysa — börk, kalpak — en alt sınır da iç yüzeyi aşmaz; fes gibi deriye
+    // tam oturan şapkada aşar, yoksa kenarın altında saç deriye girip şerit hâlinde kel kalıyordu, saç tabanı kafatasında gizli kalır)
+    const lo = q(skull[k] + minFloor);
+    hair[k] = Math.max(out[k] ? Math.min(h, Math.max(hair[k], out[k])) : h, out[k] && out[k] < q(skull[k]) ? Math.min(lo, out[k]) : lo);
+    // Şapkanın altında deriye yakın kenar (fes): oyun saçı katmanın HAT_HAIR_GAP içine çeker; deri ile şapka
+    // arasında yer varsa saç derinin hemen dışında kalsın (kenarın altından içeri bakınca deri görünüyordu)
+    if (out[k] && out[k] >= q(skull[k])) hair[k] = Math.max(hair[k], q(Math.min(skull[k] + 0.004, out[k] * unit - 0.002) + GAME_HAIR_GAP));
+  }
+  return Buffer.from(out.buffer);
+}
+
+/** Noktanın üçgene en kısa uzaklığı (Ericson, Real-Time Collision Detection 5.1.5). */
+function pointTri(p, a, b, c) {
+  const sub = (x, y) => [x[0] - y[0], x[1] - y[1], x[2] - y[2]];
+  const dot = (x, y) => x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+  const ab = sub(b, a), ac = sub(c, a), ap = sub(p, a);
+  const at = (q) => Math.hypot(...sub(p, q));
+  const lerp = (x, y, t) => [x[0] + (y[0] - x[0]) * t, x[1] + (y[1] - x[1]) * t, x[2] + (y[2] - x[2]) * t];
+  const d1 = dot(ab, ap), d2 = dot(ac, ap);
+  if (d1 <= 0 && d2 <= 0) return at(a);
+  const bp = sub(p, b), d3 = dot(ab, bp), d4 = dot(ac, bp);
+  if (d3 >= 0 && d4 <= d3) return at(b);
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) return at(lerp(a, b, d1 / (d1 - d3)));
+  const cp = sub(p, c), d5 = dot(ab, cp), d6 = dot(ac, cp);
+  if (d6 >= 0 && d5 <= d6) return at(c);
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) return at(lerp(a, c, d2 / (d2 - d6)));
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) return at(lerp(b, c, (d4 - d3) / (d4 - d3 + (d5 - d6))));
+  const den = 1 / (va + vb + vc), v = vb * den, w = vc * den;
+  return at([a[0] + ab[0] * v + ac[0] * w, a[1] + ab[1] * v + ac[1] * w, a[2] + ab[2] * v + ac[2] * w]);
+}
+
+/** Möller–Trumbore: ışının üçgene uzaklığı, kesmiyorsa 0. */
+function rayTri(o, d, a, b, c) {
+  const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const p = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+  const det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
+  if (Math.abs(det) < 1e-12) return 0;
+  const inv = 1 / det, s = [o[0] - a[0], o[1] - a[1], o[2] - a[2]];
+  const u = (s[0] * p[0] + s[1] * p[1] + s[2] * p[2]) * inv;
+  if (u < 0 || u > 1) return 0;
+  const qv = [s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0]];
+  const v = (d[0] * qv[0] + d[1] * qv[1] + d[2] * qv[2]) * inv;
+  if (v < 0 || u + v > 1) return 0;
+  const t = (e2[0] * qv[0] + e2[1] * qv[1] + e2[2] * qv[2]) * inv;
+  return t > 0 ? t : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -324,12 +501,20 @@ async function main() {
   const parts = {};
   const stats = [];
 
+  let headCenter = null, skull = null, baseBaked = null;
   const add = (id, cat, glbParts, extra = {}) => {
-    const b = bake(glbParts, BUDGET[cat]);
+    const b = bake(glbParts, BUDGET[cat], cat);
+    if (id === "base") baseBaked = b;
     const align = (n) => (4 - (n % 4)) % 4;
     const vOff = offset; chunks.push(b.vb); offset += b.vb.length;
     const iOff = offset; chunks.push(b.ib); offset += b.ib.length;
     const pad = align(offset); if (pad) { chunks.push(Buffer.alloc(pad)); offset += pad; }
+    if (cat === "hats") {
+      extra = { ...extra, cap: offset };
+      skull ||= capRays(baseBaked, headCenter, (limb) => limb === LIMB.head).near;
+      const cap = hatCap(b, headCenter, skull);
+      chunks.push(cap); offset += cap.length;
+    }
     parts[id] = { cat, vOff, vCount: b.vertCount, iOff, iCount: b.triCount * 3, ...(Object.keys(b.ref).length ? { ref: b.ref } : {}), ...extra };
     stats.push([id, b.triCount]);
   };
@@ -345,7 +530,7 @@ async function main() {
   for (const p of collect(baseGlb, "base", (n) => n.includes("Head_Skull"))) {
     for (let i = 0; i < p.P.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.P[i + k]); hi[k] = Math.max(hi[k], p.P[i + k]); }
   }
-  const headCenter = lo.map((v, k) => +((v + hi[k]) / 2).toFixed(4));
+  headCenter = lo.map((v, k) => +((v + hi[k]) / 2).toFixed(4));
 
   const skinBase = [0.92, 0.65, 0.51];
   for (const cat of CATS) {
@@ -369,6 +554,7 @@ async function main() {
     tints: TINT,
     headCenter,
     hatHairRadius: 0.55,
+    hatCap: HAT_CAP,
     parts,
   };
   for (const out of OUT_DIRS) {
