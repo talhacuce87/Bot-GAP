@@ -2,12 +2,14 @@
 // cam, kapı, lamba…). Sunucu ve istemci aynı tanımları kullanır; arsalar bot veritabanında saklanır.
 
 /** Arsa kenarı (blok) ve en yüksek kat. */
-export const PLOT_SIZE = 9;
-export const PLOT_H = 10;
-export const PLOT_MAX_BLOCKS = 700;
-const GAP = 2.5;
-/** Mahallenin köşesi (dünya, en küçük x/z): meydanın kuzeydoğusu, nehrin batısı. */
-export const HOOD = { x0: -80, z0: 18, cols: 3, rows: 3 };
+export const PLOT_SIZE = 18;
+export const PLOT_H = 16;
+export const PLOT_MAX_BLOCKS = 3000;
+/** Arsalar arası sokak genişliği. */
+export const HOOD_GAP = 3;
+/** Mahallenin en küçük köşesi (dünya x/z): kahvehanenin güneyi, gölün kuzeyi, nehrin batısı. */
+export const HOOD = { x0: -133, z0: -34, cols: 3, rows: 2 };
+const GAP = HOOD_GAP;
 
 export interface Plot {
   id: number;
@@ -25,10 +27,10 @@ for (let r = 0; r < HOOD.rows; r++) {
 
 /** Mahallenin kapladığı kutu (ağaç/kaya dikilmez). */
 export const HOOD_BOX = {
-  minX: HOOD.x0 - 1,
-  maxX: HOOD.x0 + HOOD.cols * PLOT_SIZE + (HOOD.cols - 1) * GAP + 1,
-  minZ: HOOD.z0 - 1,
-  maxZ: HOOD.z0 + HOOD.rows * PLOT_SIZE + (HOOD.rows - 1) * GAP + 1,
+  minX: HOOD.x0 - 2,
+  maxX: HOOD.x0 + HOOD.cols * PLOT_SIZE + (HOOD.cols - 1) * GAP + 2,
+  minZ: HOOD.z0 - 2,
+  maxZ: HOOD.z0 + HOOD.rows * PLOT_SIZE + (HOOD.rows - 1) * GAP + 2,
 };
 
 export type BlockKind = "cube" | "slab" | "wedge" | "glass" | "door" | "lamp" | "plant" | "fence";

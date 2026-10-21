@@ -7,7 +7,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { WORLD_BOUNDS } from "../../../shared/constants";
 import type { Weather } from "../../../shared/protocol";
 import { BRIDGE, CAVE, HALL, KAHVEHANE, LAKE, PLAZA, RIVER, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
-import { HOOD_BOX } from "../../../shared/build";
+import { HOOD, HOOD_BOX, HOOD_GAP, PLOT_SIZE } from "../../../shared/build";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
@@ -166,7 +166,7 @@ function screenTexture(): THREE.CanvasTexture {
 
 /** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
 /** Meydandaki yön tabelası (doğma noktasından kuzeye bakana göre oklar). */
-const DIRECTIONS = ["↑ KAHVEHANE · GÖL", "↗ MAHALLE (İNŞA)", "↗ SİNEMA · DJ", "↗ SAKURA BAHÇESİ", "→ ŞÖHRET KÜRSÜSÜ", "→ KÖPRÜ · KAPALI SAHA", "→ ŞELALE · ZİNDAN", "→ TANK", "↓ MANGAL"];
+const DIRECTIONS = ["↑ KAHVEHANE · GÖL", "↑ MAHALLE (İNŞA)", "↗ SİNEMA · DJ", "↗ SAKURA BAHÇESİ", "→ ŞÖHRET KÜRSÜSÜ", "→ KÖPRÜ · KAPALI SAHA", "→ ŞELALE · ZİNDAN", "→ TANK", "↓ MANGAL"];
 const SIGN_DUNGEON = 0;
 const SIGN_GROVE = 1;
 const SIGN_KAHVE = 2;
@@ -533,13 +533,19 @@ function paths(b: Builder): void {
   };
   const [b1w, b1e] = ends(0), [b2w, b2e] = ends(1);
   const P = PLAZA, K = KAHVEHANE, H = HALL;
-  // Meydan → kahvehane → göl
+  // Mahallenin sokakları (arsaların arası): doğu sokağı kahvehaneden göle giden yolun da parçası
+  const streetX = [0, 1].map((c) => HOOD.x0 + (c + 1) * PLOT_SIZE + c * HOOD_GAP + HOOD_GAP / 2);
+  const streetZ = HOOD.z0 + PLOT_SIZE + HOOD_GAP / 2;
+  const hoodTop = HOOD_BOX.maxZ + 0.5;
+  // Meydan → kahvehane → (mahallenin doğu sokağından) göl
   route([P.x, P.z - 10.9], [K.x + 1, K.z + K.hd + 1.4]);
-  route([K.x - 1, K.z - K.hd - 1.6], [LAKE.x - 4, LAKE.z + LAKE.r + 2.6]);
-  // Meydan → mahalle (arsaların güneybatı köşesi)
-  route([P.x + 7.7, P.z - 7.7], [HOOD_BOX.minX + 2, HOOD_BOX.maxZ + 1.5]);
-  // Kahvehane → 1. köprü → sinema
-  route([K.x + K.hw + 1.2, K.z - 2], [b1w[0], b1w[1]]);
+  route([K.x - 1, K.z - K.hd - 1.6], [streetX[1], hoodTop], [streetX[1], HOOD_BOX.minZ - 0.5], [LAKE.x - 4, LAKE.z + LAKE.r + 2.6]);
+  route([streetX[0], hoodTop], [streetX[0], HOOD_BOX.minZ + 1]);
+  route([HOOD_BOX.minX + 1, streetZ], [HOOD_BOX.maxX - 1, streetZ]);
+  // Meydan → mahalle (kahvehanenin doğusundan)
+  route([P.x + 7.7, P.z - 7.7], [streetX[1], 24], [streetX[1], hoodTop]);
+  // Kahvehane → (mahallenin kuzeyinden) 1. köprü → sinema
+  route([K.x + K.hw + 1.2, K.z - 2], [HOOD_BOX.maxX + 1, hoodTop], [b1w[0], b1w[1]]);
   route([b1e[0], b1e[1]], [-6, -6], [0, -9]);
   // Meydan → 2. köprü → kapalı saha; köprüden şelaleye ve mağaraya
   route([P.x + 10.9, P.z], [b2w[0], b2w[1]]);
