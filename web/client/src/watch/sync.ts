@@ -26,6 +26,9 @@ export class WatchSync {
   private acc = 0;
   private cooldown = 0;
   private distanceGain = 1;
+  /** Bu kaynağın sonuna gelindi (kuyruktaki sıradakini istemek için bir kez bildirilir). */
+  private endedSent = false;
+  onEnded: () => void = () => {};
 
   constructor(
     private screen: ScreenVideo,
@@ -37,6 +40,7 @@ export class WatchSync {
     const changed = !this.state || !sameSource(this.state.source, s.source);
     this.state = s;
     if (changed) {
+      this.endedSent = false;
       this.player?.destroy();
       this.screen.host.replaceChildren();
       this.player = s.source ? createPlayer(this.screen.host, s.source) : null;
@@ -107,6 +111,10 @@ export class WatchSync {
     const dur = p.duration();
     let want = this.target();
     if (Number.isFinite(dur) && want > dur - 0.3) want = dur; // bitti: sonda bekle
+    if (Number.isFinite(dur) && dur > 5 && this.target() >= dur - 0.5 && !this.endedSent) {
+      this.endedSent = true;
+      this.onEnded();
+    }
     const limit = s.source?.kind === "file" ? DRIFT_SEEK.file : DRIFT_SEEK.other;
     if (Math.abs(now - want) > limit) {
       p.seek(want);

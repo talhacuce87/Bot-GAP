@@ -72,6 +72,17 @@ async function loadModel(): Promise<Model> {
   return { hull: mergeGeometries(parts.hull), turret: mergeGeometries(parts.turret), gun };
 }
 
+/** Kamuflaj desenleri: üç renk lekesi (gövdenin dünya konumuna değil kendi uzayına göre: tankla döner). */
+const CAMO: Record<string, [string, string, string] | null> = {
+  std: null,
+  desert: ["#c9a66b", "#a8834e", "#e2c690"],
+  forest: ["#4a5e32", "#2f3d22", "#6f7a45"],
+  winter: ["#e8eef2", "#b9c3c9", "#8f9aa1"],
+  urban: ["#7d8288", "#4e5358", "#a9adb2"],
+  pink: ["#f29ac0", "#d9659a", "#ffd0e3"],
+  gold: ["#e8b923", "#b98a12", "#fff0a0"],
+};
+
 export class TankView {
   readonly group = new THREE.Group();
   private hull: THREE.Mesh;
@@ -81,6 +92,12 @@ export class TankView {
   private material: THREE.MeshLambertMaterial;
   private loaded = false;
   private tint = new THREE.Color(OLIVE);
+  private camo = {
+    uCamoOn: { value: 0 },
+    uCamoA: { value: new THREE.Color() },
+    uCamoB: { value: new THREE.Color() },
+    uCamoC: { value: new THREE.Color() },
+  };
   /** Savaşta: verisi gelmemiş tank gizlenir. */
   shown = true;
   /** Vurulmuş: kararır (enkaz). */
@@ -95,6 +112,45 @@ export class TankView {
   constructor() {
     // Modelde normali içe bakan yüzler var (Blender çift taraflı çizdiği için fark edilmemiş): iki yüz de çizilsin
     const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    // Kamuflaj: yerel konuma göre değer gürültüsüyle üç renkli leke; paletli yürüyen aksam (koyu) etkilenmez
+    material.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, this.camo);
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vCamoP;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvCamoP = position;");
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+          uniform float uCamoOn;
+          uniform vec3 uCamoA;
+          uniform vec3 uCamoB;
+          uniform vec3 uCamoC;
+          varying vec3 vCamoP;
+          float camoN(vec3 p) {
+            vec3 i = floor(p), f = fract(p);
+            f = f * f * (3.0 - 2.0 * f);
+            float n = dot(i, vec3(1.0, 57.0, 113.0));
+            vec4 h = fract(sin(vec4(n, n + 1.0, n + 57.0, n + 58.0)) * 43758.5453);
+            vec4 h2 = fract(sin(vec4(n + 113.0, n + 114.0, n + 170.0, n + 171.0)) * 43758.5453);
+            vec4 m = mix(h, h2, f.z);
+            return mix(mix(m.x, m.y, f.x), mix(m.z, m.w, f.x), f.y);
+          }`,
+        )
+        .replace(
+          "#include <color_fragment>",
+          `#include <color_fragment>
+          if (uCamoOn > 0.5) {
+            float lum = dot(diffuseColor.rgb, vec3(0.3, 0.55, 0.15));
+            float n = camoN(vCamoP * 1.6) * 0.65 + camoN(vCamoP * 3.7 + 7.0) * 0.35;
+            vec3 camo = n < 0.42 ? uCamoB : n < 0.6 ? uCamoA : uCamoC;
+            // Koyu parçalar (palet, teker) ve çok açıklar (far) olduğu gibi kalır
+            float body = smoothstep(0.08, 0.18, lum) * (1.0 - smoothstep(0.75, 0.9, lum));
+            diffuseColor.rgb = mix(diffuseColor.rgb, camo * (0.75 + lum * 0.6), body);
+          }`,
+        );
+    };
+    material.customProgramCacheKey = () => "tank-camo";
     this.material = material;
     this.hull = new THREE.Mesh(new THREE.BufferGeometry(), material);
     this.turret = new THREE.Mesh(new THREE.BufferGeometry(), material);
@@ -119,6 +175,16 @@ export class TankView {
     this.tint.set(color);
   }
 
+  /** Kamuflaj (SKINS id; "std" ya da bilinmeyen: düz). Desenliyken takım tonu hafifletilir. */
+  setSkin(id: string | null | undefined): void {
+    const c = CAMO[id ?? "std"] ?? null;
+    this.camo.uCamoOn.value = c ? 1 : 0;
+    if (!c) return;
+    this.camo.uCamoA.value.set(c[0]);
+    this.camo.uCamoB.value.set(c[1]);
+    this.camo.uCamoC.value.set(c[2]);
+  }
+
   /** `k` 1: anında (kendi tankı / park), küçükse uzak sürücünün açılarına yumuşakça yaklaşır. */
   set(x: number, z: number, h: number, tr: number, el: number, k = 1): void {
     const lerpAngle = (a: number, b: number) => {
@@ -141,7 +207,9 @@ export class TankView {
   update(time: number, moving: number): void {
     // Hareket ederken motor titremesi; ateşte kule geri teper
     this.group.visible = this.loaded && this.shown;
-    this.material.color.copy(this.tint).multiplyScalar(this.dead ? 0.22 : 1);
+    // Desenliyken takım rengi hafif bir ton olarak kalır (kırmızı/mavi ayırt edilsin)
+    if (this.camo.uCamoOn.value) this.material.color.set("#ffffff").lerp(this.tint, 0.35).multiplyScalar(this.dead ? 0.22 : 1);
+    else this.material.color.copy(this.tint).multiplyScalar(this.dead ? 0.22 : 1);
     const shake = this.dead ? 0 : moving * 0.015 * Math.sin(time * 40);
     this.group.position.set(this.x, shake, this.z);
     this.group.rotation.y = this.h;

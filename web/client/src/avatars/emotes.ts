@@ -7,7 +7,7 @@ import { timeUniform } from "../world/geo";
 const POOL = 64;
 const PER_EMOTE = 3;
 const DURATION = 1.8;
-const GRID: [number, number] = [4, 4]; // 512×512 atlas, 128px hücre
+const GRID: [number, number] = [8, 4]; // 1024×512 atlas, 128px hücre
 
 /** Emote'lardan sonraki hücreler: etkileşim efektleri. */
 export const FX_CELL = {
@@ -20,8 +20,18 @@ export const FX_CELL = {
   sparkle: EMOTES.length + 6,
   note: EMOTES.length + 7,
   notes: EMOTES.length + 8,
+  five: EMOTES.length + 9,
+  hug: EMOTES.length + 10,
+  ball: EMOTES.length + 11,
+  party: EMOTES.length + 12,
+  mic: EMOTES.length + 13,
+  trophy: EMOTES.length + 14,
+  camera: EMOTES.length + 15,
+  dice: EMOTES.length + 16,
+  hearts: EMOTES.length + 17,
+  eyes: EMOTES.length + 18,
 };
-const FX_EMOJI = ["🍢", "🍅", "🍵", "💥", "🎣", "🐟", "✨", "🎵", "🎶"];
+const FX_EMOJI = ["🍢", "🍅", "🍵", "💥", "🎣", "🐟", "✨", "🎵", "🎶", "🙌", "🤗", "⚽", "🎉", "🎤", "🏆", "📸", "🎲", "💞", "👀"];
 const CELL = 128;
 /** Emoji isim etiketinin üstünden çıkar: yüzü ve ismi kapatmasın. */
 const HEAD_Y = 2.6;

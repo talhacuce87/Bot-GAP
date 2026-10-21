@@ -12,8 +12,12 @@ import {
   jumpHeight,
   PLAYER_RADIUS,
   RUN_MULTIPLIER,
+  type Vehicle,
+  VEHICLE_SHIFT,
+  VEHICLES,
   WALK_SPEED,
 } from "../../shared/constants";
+import { BOAT_R, POND_AREA, STAGE, STAGE_AREA } from "../../shared/zones";
 import type { Look, PlayerState } from "../../shared/protocol";
 import { settings } from "./settings";
 import {
@@ -82,6 +86,10 @@ export class Player implements AvatarView, PlayerState {
   emoteAt = 0;
   /** Zemin üstü yükseklik (zıplarken). */
   jumpY = 0;
+  pair: AvatarView["pair"] = null;
+  mic = false;
+  hideName = false;
+  hidden = false;
   /** Zıplamanın başından geçen süre; yerdeyken JUMP_TIME. */
   private jumpT = JUMP_TIME;
   private jumpSeq = 0;
@@ -105,6 +113,23 @@ export class Player implements AvatarView, PlayerState {
   /** Yürürken içinden geçilemeyen tank (gövde daireleri); main.ts her kare günceller. */
   obstacle: [number, number, number, number] | null = null;
   private knockT = 0;
+  /** Araç: 0 yaya, 1 bisiklet, 2 kaykay, 3 kayık. */
+  vehicle: Vehicle = 0;
+  /** Bisiklet/kaykayla gidilen yol (m): görev için ara ara sunucuya bildirilir. */
+  rideMeters = 0;
+  /** Sahnede (karaoke): sahne alanında kalır, sahne yüksekliğinde çizilir. */
+  onStage = false;
+  /** Fotoğraf modunda kamera daha uzağa açılır. */
+  photo = false;
+
+  get lift(): number {
+    return this.onStage ? STAGE.h : 0;
+  }
+
+  /** Oturulan koltuğun masası (kahvehane), yoksa null. */
+  get seatTable(): { id: number; seat: number } | null {
+    return this.seat?.table ?? null;
+  }
 
   private vx = 0;
   private vz = 0;
@@ -138,10 +163,11 @@ export class Player implements AvatarView, PlayerState {
     const sens = settings.sensitivity;
     const lookY = this.look.y * 0.004 * sens * (settings.invertY ? -1 : 1);
     this.yaw -= this.look.x * 0.006 * sens;
+    const fp = settings.firstPerson && !this.driving && !this.photo;
     this.pitch = this.driving
       ? THREE.MathUtils.clamp(this.pitch + lookY, TANK_PITCH_MIN, TANK_PITCH_MAX)
-      : THREE.MathUtils.clamp(this.pitch + lookY, 0.05, 1.25);
-    this.dist = THREE.MathUtils.clamp(this.dist + input.consumeZoom() * 0.6, 2.5, 12);
+      : THREE.MathUtils.clamp(this.pitch + lookY, fp ? -1.2 : this.photo ? -0.3 : 0.05, fp ? 1.2 : 1.35);
+    this.dist = THREE.MathUtils.clamp(this.dist + input.consumeZoom() * 0.6, 2.5, this.photo ? 30 : 12);
 
     if (this.driving) {
       this.drive(dt, input);
@@ -158,8 +184,8 @@ export class Player implements AvatarView, PlayerState {
       jump = false; // kalkarken zıplama
     }
 
-    // Zıplama: ortak eğri (jumpHeight); uzak istemciler aynı yayı sayaçtan çizer.
-    if (jump && this.jumpT >= JUMP_TIME) {
+    // Zıplama: ortak eğri (jumpHeight); uzak istemciler aynı yayı sayaçtan çizer. Kayıkta zıplanmaz.
+    if (jump && this.jumpT >= JUMP_TIME && this.vehicle !== 3) {
       this.jumpT = 0;
       this.jumpSeq = (this.jumpSeq + 1) & 3;
     }
@@ -179,14 +205,26 @@ export class Player implements AvatarView, PlayerState {
       this.vx *= f;
       this.vz *= f;
     } else {
-      const accel = 1 - Math.exp(-dt * 12);
-      const speedMax = WALK_SPEED * (input.run ? RUN_MULTIPLIER : 1);
+      // Araçta koşma yok: hız aracın; bisiklet ve kaykay yavaş hızlanır, kayık ağır
+      const accel = 1 - Math.exp(-dt * (this.vehicle ? (this.vehicle === 3 ? 1.5 : 3.5) : 12));
+      const speedMax = WALK_SPEED * (this.vehicle ? VEHICLES[this.vehicle].speed : input.run ? RUN_MULTIPLIER : 1);
       this.vx += (mx * speedMax - this.vx) * accel;
       this.vz += (mz * speedMax - this.vz) * accel;
     }
     this.x += this.vx * dt;
     this.z += this.vz * dt;
-    this.world.colliders.resolve(this, PLAYER_RADIUS);
+    if (this.vehicle === 3) {
+      // Kayık yalnızca gölde: kıyıya değince durur
+      const dx = this.x - POND_AREA.x, dz = this.z - POND_AREA.z, d = Math.hypot(dx, dz);
+      if (d > BOAT_R) {
+        this.x = POND_AREA.x + (dx / d) * BOAT_R;
+        this.z = POND_AREA.z + (dz / d) * BOAT_R;
+      }
+    } else this.world.colliders.resolve(this, PLAYER_RADIUS);
+    if (this.onStage) {
+      this.x = THREE.MathUtils.clamp(this.x, STAGE_AREA.minX, STAGE_AREA.maxX);
+      this.z = THREE.MathUtils.clamp(this.z, STAGE_AREA.minZ, STAGE_AREA.maxZ);
+    }
     const o = this.obstacle;
     if (o) {
       pushOut(this, o[0], o[1], TANK_HULL_R + PLAYER_RADIUS);
@@ -195,16 +233,61 @@ export class Player implements AvatarView, PlayerState {
     if (this.jailed) clampToJail(this);
 
     const speed = Math.hypot(this.vx, this.vz);
-    if (speed > 0.3) this.rot = dampAngle(this.rot, Math.atan2(this.vx, this.vz), 1 - Math.exp(-dt * 12));
-    this.flags = (speed > 0.6 ? FLAG_WALKING : 0) | (speed > WALK_SPEED * 1.15 ? FLAG_RUNNING : 0) | this.jumpBits();
+    if (speed > 0.3) this.rot = dampAngle(this.rot, Math.atan2(this.vx, this.vz), 1 - Math.exp(-dt * (this.vehicle ? 5 : 12)));
+    if (this.vehicle === 1 || this.vehicle === 2) this.rideMeters += speed * dt;
+    this.flags =
+      (speed > 0.6 ? FLAG_WALKING : 0) |
+      (!this.vehicle && speed > WALK_SPEED * 1.15 ? FLAG_RUNNING : 0) |
+      this.jumpBits() |
+      (this.vehicle << VEHICLE_SHIFT);
 
-    this.nearSeat = this.findSeat();
+    this.nearSeat = this.vehicle ? null : this.findSeat();
     if (action && this.nearSeat) this.sitOn(this.nearSeat);
+  }
+
+  /** Dışarıdan kaldırma (ör. tabureye başkası oturdu). */
+  standUpNow(): void {
+    if (this.seat) this.standUp();
+  }
+
+  /** Araca bin/in. Kayık iskelede binilir ve gölün içine konur; inince iskeleye çıkılır. */
+  setVehicle(v: Vehicle, dock?: { x: number; z: number }): void {
+    if (this.driving || this.jailed) return;
+    if (this.seat) this.standUp();
+    if (this.vehicle === 3 && v !== 3 && dock) {
+      this.x = dock.x;
+      this.z = dock.z;
+    }
+    if (v === 3) {
+      this.x = POND_AREA.x - BOAT_R + 0.6;
+      this.z = POND_AREA.z;
+      this.rot = Math.PI / 2;
+    }
+    this.vehicle = v;
+    this.vx = this.vz = 0;
+    if (v) this.onStage = false;
+    this.flags = (this.flags & ~(3 << VEHICLE_SHIFT)) | (v << VEHICLE_SHIFT);
+  }
+
+  /** Sahneye çık (karaoke) ya da in. */
+  setStage(on: boolean): void {
+    this.onStage = on;
+    if (on) {
+      this.setVehicle(0);
+      this.x = 0;
+      this.z = STAGE_AREA.maxZ - 0.4;
+      this.rot = 0;
+      this.yaw = Math.PI;
+    } else if (this.z < STAGE_AREA.maxZ + 1) {
+      this.z = STAGE_AREA.maxZ + 2.2;
+    }
   }
 
   /** Tankı sür: gövde (x, z, h), kule tr. Kamera tankın arkasına geçer. */
   enterTank(x: number, z: number, h: number, tr: number, el = DEFAULT_ELEV): void {
     this.seat = null;
+    this.vehicle = 0;
+    this.onStage = false;
     this.knockT = 0;
     this.jumpY = 0;
     this.jumpT = JUMP_TIME;
@@ -289,6 +372,8 @@ export class Player implements AvatarView, PlayerState {
   /** Sunucunun belirlediği yere ışınlanır (zindana giriş/çıkış). */
   teleport(x: number, z: number, rot: number): void {
     this.driving = null;
+    this.vehicle = 0;
+    this.onStage = false;
     this.knockT = 0;
     this.seat = null;
     this.jumpY = 0;
@@ -353,8 +438,17 @@ export class Player implements AvatarView, PlayerState {
 
   updateCamera(camera: THREE.PerspectiveCamera, dt: number): void {
     const k = 1 - Math.exp(-dt * 14);
+    if (settings.firstPerson && !this.driving && !this.photo) {
+      // Birinci şahıs: göz hizasından, bakış yönü kameranın açısı
+      const eye = (this.seat ? 1.0 : 1.32) + this.jumpY + this.lift + (this.vehicle === 1 ? 0.3 : this.vehicle === 2 ? 0.14 : 0);
+      this.target.set(this.x, eye, this.z);
+      camera.position.copy(this.target);
+      const cp = Math.cos(this.pitch);
+      camera.lookAt(this.x - Math.sin(this.yaw) * cp, eye - Math.sin(this.pitch), this.z - Math.cos(this.yaw) * cp);
+      return;
+    }
     // Zıplarken kamera yarısı kadar yükselir: sarsmadan takip eder.
-    const ty = this.driving ? TANK_CAM_Y : (this.seat ? 1.15 : 1.45) + this.jumpY * 0.5;
+    const ty = this.driving ? TANK_CAM_Y : (this.seat ? 1.15 : 1.45) + this.jumpY * 0.5 + this.lift;
     this.target.x += (this.x - this.target.x) * k;
     this.target.y += (ty - this.target.y) * k;
     this.target.z += (this.z - this.target.z) * k;
@@ -363,7 +457,8 @@ export class Player implements AvatarView, PlayerState {
     const dist = this.jailed ? Math.min(this.dist, 3.4) : this.driving ? Math.max(this.dist, TANK_CAM_DIST) : this.dist;
     camera.position.set(
       this.target.x + Math.sin(this.yaw) * cp * dist,
-      this.target.y + Math.sin(this.pitch) * dist,
+      // Aşağıdan bakarken (fotoğraf modu) kamera zeminin altına inmesin
+      Math.max(0.3, this.target.y + Math.sin(this.pitch) * dist),
       this.target.z + Math.cos(this.yaw) * cp * dist,
     );
     camera.lookAt(this.target);

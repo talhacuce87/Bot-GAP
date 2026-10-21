@@ -3,6 +3,10 @@ import { type Act, POS_SCALE } from "./constants";
 import type { Source } from "./media";
 import type { Phase } from "./arena";
 import type { Shot } from "./tank";
+import type { ChessMove, ChessState } from "./games/chess";
+import type { OkeyMove, OkeyState } from "./games/okey";
+import type { TavlaMove, TavlaState } from "./games/tavla";
+import type { TableKind } from "./zones";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
 export const MSG_SNAPSHOT = 2; // sunucu → istemci: odadaki herkesin konumu
@@ -33,6 +37,121 @@ export interface PlayerInfo {
   jailed: boolean;
   /** Bottan gelen kıyafet; yoksa (misafir, henüz yüklenmedi) varsayılan karakter. */
   look?: Look | null;
+  /** Peşinden gelen evcil hayvan (PETS) ve tank kamuflajı (SKINS); istemcide saklanır. */
+  pet?: string | null;
+  skin?: string | null;
+}
+
+export const PETS = [
+  { id: "duck", name: "Ördek yavrusu", emoji: "🐥" },
+  { id: "cat", name: "Kedi", emoji: "🐱" },
+  { id: "dog", name: "Köpek", emoji: "🐶" },
+  { id: "bunny", name: "Tavşan", emoji: "🐰" },
+] as const;
+
+export const SKINS = [
+  { id: "std", name: "Standart" },
+  { id: "desert", name: "Çöl" },
+  { id: "forest", name: "Orman" },
+  { id: "winter", name: "Kış" },
+  { id: "urban", name: "Şehir" },
+  { id: "pink", name: "Pembe" },
+  { id: "gold", name: "Altın" },
+] as const;
+
+/** İstanbul'un anlık havası (Open-Meteo): `intensity` yağış şiddeti, `cloud` bulutluluk (0–1). */
+export type WeatherKind = "clear" | "cloudy" | "fog" | "rain" | "storm" | "snow";
+export interface Weather {
+  kind: WeatherKind;
+  intensity: number;
+  cloud: number;
+  temp: number | null;
+}
+
+/** Okey'de herkes yalnızca kendi elini görür. */
+export type OkeyView = Omit<OkeyState, "hands" | "pile"> & { hand: number[]; counts: number[]; pileCount: number };
+
+export type TableGame =
+  | { kind: "tavla"; state: TavlaState }
+  | { kind: "satranc"; state: ChessState }
+  | { kind: "okey"; state: OkeyView };
+
+export type TableMove = TavlaMove | ChessMove | OkeyMove;
+
+/** Kahvehane masası: oturanlar (sid, 0 boş), adları ve oyun (yoksa bekliyor). */
+export interface TableState {
+  id: number;
+  kind: TableKind;
+  seats: number[];
+  names: string[];
+  game: TableGame | null;
+  /** Oyundakilerin sırası (sid): tavla/satrançta 0 beyaz; okey'de oyuncu sırası. */
+  order: number[];
+  /** Son olay ("Ali kazandı", "Sıra Ayşe'de"…). */
+  note: string;
+}
+
+/** Futbol topu: `at` sunucu zamanındaki konum ve hız (istemci ileri tahmin eder). */
+export interface BallState {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  at: number;
+}
+
+export type TagMode = "ebelemece" | "saklambac";
+/** Ebelemece / saklambaç turu. `it` ebe; `found` saklambaçta bulunanlar; `scores` ebelikte geçen sn. */
+export interface TagState {
+  mode: TagMode;
+  phase: "join" | "hide" | "play" | "end";
+  it: number;
+  players: number[];
+  found: number[];
+  endsAt: number;
+  scores: Record<number, number>;
+  /** Bitince sonuç cümlesi. */
+  result: string;
+}
+
+/** Sinema kuyruğu, DJ ve sahne. `show` ışık şovu (0 kapalı). */
+export interface StageState {
+  dj: number;
+  show: number;
+  singer: number;
+  queue: { title: string; by: string }[];
+}
+
+export interface QuestDone {
+  key: string;
+  title: string;
+  xp: number;
+}
+
+/** Oyuncu kartı (bottan). */
+export interface Profile {
+  level: number;
+  xp: number;
+  floor: number;
+  ceiling: number;
+  rank: number;
+  streak: number;
+  fish: Record<string, number>;
+  stats: Record<string, number>;
+  season: { key: string; tank_kills?: number; tank_wins?: number; goals?: number };
+  quests: { key: string; title: string; target: number; progress: number; done: boolean; xp: number }[];
+}
+
+export type BattleMode = "tdm" | "ffa" | "ctf";
+
+/** Bayrak kapmaca: takımın bayrağı nerede (`carrier` taşıyan sid, 0 yok; `home` üssünde). */
+export interface FlagState {
+  x: number;
+  z: number;
+  carrier: number;
+  home: boolean;
 }
 
 /**
@@ -94,6 +213,8 @@ export interface Fighter {
   alive: boolean;
   kills: number;
   deaths: number;
+  /** Tank kamuflajı (SKINS). */
+  skin?: string;
 }
 
 /** Tank savaşının durumu (değişince herkese): `endsAt` evrenin bittiği sunucu zamanı (ms). */
@@ -102,6 +223,9 @@ export interface BattleState {
   endsAt: number;
   score: [number, number];
   fighters: Fighter[];
+  mode?: BattleMode;
+  /** Bayrak kapmacada iki takımın bayrağı. */
+  flags?: [FlagState, FlagState];
 }
 
 /** Sunucunun gönderdiği JSON olaylar. */
@@ -139,7 +263,23 @@ export type ServerEvent =
   | { t: "spawn"; sid: number; x: number; z: number; h: number }
   /** Savaşta bir tankın gövde/kule/namlu açısı (konumu snapshot'tan). */
   | { t: "baim"; sid: number; h: number; tr: number; el: number }
-  | { t: "kill"; killer: number; victim: number };
+  | { t: "kill"; killer: number; victim: number }
+  | { t: "weather"; weather: Weather }
+  /** Havai fişek gösterisi: `seed` herkes aynı patlamaları görsün, `at` başlangıç (sunucu ms). */
+  | { t: "fireworks"; seed: number; at: number; count: number }
+  | { t: "cosm"; sid: number; pet: string | null; skin: string | null }
+  | ({ t: "table" } & TableState)
+  | ({ t: "ball" } & BallState)
+  | { t: "goal"; side: 0 | 1; sid: number; name: string; score: [number, number] }
+  | { t: "score"; score: [number, number] }
+  | { t: "tag"; state: TagState | null }
+  /** İkili etkileşim isteği (yalnızca hedefe) ve gerçekleşen etkileşim (herkese). */
+  | { t: "pairreq"; from: number; name: string; kind: "five" | "hug" }
+  | { t: "pair"; a: number; b: number; kind: "five" | "hug" }
+  | { t: "quest"; completed: QuestDone[] }
+  | { t: "profile"; sid: number; name: string; profile: Profile | null; error?: string }
+  | ({ t: "stage" } & StageState)
+  | { t: "season"; season: string; top: { id: string; name: string; kills: number; wins: number }[] };
 
 /** İstemcinin gönderdiği JSON olaylar. */
 export type ClientEvent =
@@ -160,7 +300,31 @@ export type ClientEvent =
   | { t: "fire"; h: number; tr: number; el: number }
   | { t: "team"; team: 0 | 1 }
   /** Activity'den paylaşılamıyorsa: aynı odanın tarayıcı linki istenir (cevap "open"). */
-  | { t: "sharelink" };
+  | { t: "sharelink" }
+  | { t: "cosm"; pet: string | null; skin: string | null }
+  /** Masaya otur / kalk / oyunu başlat / hamle / pes et. */
+  | { t: "tsit"; id: number; seat: number }
+  | { t: "tleave" }
+  | { t: "tstart"; id: number }
+  | { t: "tmove"; id: number; move: TableMove }
+  | { t: "tresign"; id: number }
+  /** Topa vur: yön (radyan) ve güç (0–1). */
+  | { t: "kick"; dir: number; power: number }
+  | { t: "tagjoin" }
+  | { t: "pair"; kind: "five" | "hug"; to: number }
+  | { t: "pairok"; from: number }
+  | { t: "profile"; sid: number }
+  | { t: "fireworks" }
+  /** DJ kabini: kabine geç/bırak, ışık şovu, şarkı geç. Sahne: çık/in. */
+  | { t: "dj"; op: "take" | "leave" | "show" | "skip"; show?: number }
+  | { t: "stage"; on: boolean }
+  /** Perdedeki video bitti (sıradaki çalsın). */
+  | { t: "wended" }
+  /** Bisiklet/kaykayla gidilen yol (m), görev için. */
+  | { t: "ride"; m: number }
+  | { t: "season" }
+  | { t: "bmode"; mode: BattleMode }
+  | { t: "skin"; skin: string };
 
 export const STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;

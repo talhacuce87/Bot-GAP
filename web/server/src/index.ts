@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
-import { decodeState, type FishCatch, type Look, type PlayerState, type ServerEvent } from "../../shared/protocol";
+import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
 import { CHAT_COOLDOWN_MS, CHAT_HISTORY, CINEMA_COOLDOWN_MS, cleanChat, parseCommand, runCommand } from "./chat";
@@ -16,6 +16,8 @@ import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
 import { MediaProxy } from "./mediaProxy";
 import { resolveMedia, type Watch, Watches } from "./watch";
 import { type Share, SHARE_MIME, Shares } from "./share";
+import { WorldGames } from "./games/world";
+import { WeatherWatch } from "./weather";
 
 /** Sinema videosu (dosya/HLS) sunucu üzerinden: Activity'de perdede oynar. */
 const mediaProxy = new MediaProxy();
@@ -48,6 +50,73 @@ const watches = new Watches();
 const shares = new Shares();
 
 const boards = new Boards();
+
+/** İstanbul'un havası: değişince bütün dünya odalarına. */
+const weather = new WeatherWatch();
+weather.onChange = (w) => {
+  for (const room of rooms.all()) if (!room.battle) room.broadcast({ t: "weather", weather: w });
+};
+weather.start();
+
+// ---------------------------------------------------------------------------
+// Görev olayları: bota toplu gider (aynı oyuncunun aynı olayı 3 sn içinde birleşir)
+// ---------------------------------------------------------------------------
+
+const pendingReports = new Map<string, { guild: string; user: string; event: string; amount: number; room: Room }>();
+
+/** Tamamlanan görevleri o kullanıcının odadaki bağlantılarına bildirir. */
+function notifyQuests(room: Room, userId: string, completed: unknown): void {
+  if (!Array.isArray(completed) || !completed.length) return;
+  const ev: ServerEvent = { t: "quest", completed: completed as QuestDone[] };
+  for (const p of room.players.values()) if (p.user.id === userId) room.sendTo(p.conn, ev);
+}
+
+function reportEvent(room: Room, sid: number, event: string, amount = 1): void {
+  const p = room.players.get(sid);
+  if (!p || p.user.guest || !p.guild || !SHARED_SECRET || !(amount > 0)) return;
+  const key = `${p.guild}:${p.user.id}:${event}`;
+  const cur = pendingReports.get(key);
+  if (cur) {
+    cur.amount += amount;
+    cur.room = room;
+    return;
+  }
+  pendingReports.set(key, { guild: p.guild, user: p.user.id, event, amount, room });
+  setTimeout(() => {
+    const e = pendingReports.get(key);
+    pendingReports.delete(key);
+    if (!e) return;
+    botPost("/internal/world_event", { guild: e.guild, user: e.user, event: e.event, amount: e.amount })
+      .then((r) => notifyQuests(e.room, e.user, r.body.completed))
+      .catch((err) => console.warn("[quest]", (err as Error).message));
+  }, 3000);
+}
+
+/** Odanın sinemasını yükleyen ve soran yardımcı (kuyruk/DJ için). */
+function stageHost(room: Room) {
+  const guild = () => {
+    for (const p of room.players.values()) if (p.guild) return p.guild;
+    return null;
+  };
+  return {
+    play: async (url: string, by: string) => {
+      const r = await openCinema(url, guild(), by, room);
+      if ("error" in r) return r;
+      room.say({ kind: "system", sid: 0, name: "Bot GAP", text: `🎵 Sıradaki: ${r.title} (${by})`, at: Date.now() }, CHAT_HISTORY);
+      return { title: r.title };
+    },
+    title: async (url: string) => (await resolveMedia(url))?.title ?? null,
+    loadedAt: () => {
+      const w = room.watchId ? watches.get(room.watchId) : undefined;
+      return w?.state.source ? w.loadedAt : 0;
+    },
+  };
+}
+
+rooms.onCreate = (room) => {
+  room.onReport = (sid, event, amount) => reportEvent(room, sid, event, amount);
+  if (!room.battle) room.games = new WorldGames(room, room.onReport, stageHost(room));
+};
 
 function sendBoard(conn: Conn, board: Board | null): void {
   if (board) conn.send(JSON.stringify({ t: "board", updated: board.updated, entries: board.entries }));
@@ -375,8 +444,49 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { id: w.id, url: `${PUBLIC_URL || "http://localhost:5173"}/w/${w.id}`, title: media.title, kind: media.source.kind });
   }
 
+  if (path === "/api/photo" && method === "POST") return postPhoto(req, res);
+
   if (method === "GET" || method === "HEAD") return serveStatic(req, res, path);
   res.writeHead(405).end();
+}
+
+// ---------------------------------------------------------------------------
+// Fotoğraf modu: dünyadan çekilen kare bot üzerinden Discord kanalına
+// ---------------------------------------------------------------------------
+
+const PHOTO_COOLDOWN_MS = 30_000;
+const lastPhoto = new Map<string, number>();
+
+async function postPhoto(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: Record<string, unknown>;
+  try {
+    body = await readJson(req, 4_600_000);
+  } catch {
+    return json(res, 413, { error: "Fotoğraf çok büyük." });
+  }
+  const user = verifySession(String(body.session || "") || cookies(req)[SESSION_COOKIE] || "", SESSION_SECRET);
+  const w = typeof body.watch === "string" ? watches.get(body.watch) : undefined;
+  const guild = w?.guild ?? (typeof body.guild === "string" && /^\d{5,20}$/.test(body.guild) ? body.guild : null);
+  if (!user || user.guest || !guild) return json(res, 403, { error: "Fotoğraf göndermek için dünyaya Discord'dan gir." });
+  if (!SHARED_SECRET) return json(res, 503, { error: "Fotoğraf gönderme şu an kapalı (bot bağlı değil)." });
+  if (typeof body.image !== "string" || !body.image) return json(res, 400, { error: "Fotoğraf okunamadı." });
+  const now = Date.now();
+  if (now - (lastPhoto.get(user.id) ?? 0) < PHOTO_COOLDOWN_MS) return json(res, 429, { error: "Biraz bekle: 30 sn'de bir fotoğraf." });
+  lastPhoto.set(user.id, now);
+  try {
+    const r = await fetch(`${BOT_URL}/internal/photo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-world-secret": SHARED_SECRET },
+      body: JSON.stringify({ guild, user: user.id, image: body.image }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const out = (await r.json().catch(() => ({}))) as { ok?: boolean; reason?: string; completed?: unknown };
+    if (!r.ok || !out.ok) return json(res, 400, { error: out.reason === "no_channel" ? "Fotoğraf kanalı ayarlı değil." : "Fotoğraf gönderilemedi." });
+    return json(res, 200, { ok: true, completed: out.completed ?? [] });
+  } catch (err) {
+    console.warn("[photo]", (err as Error).message);
+    return json(res, 502, { error: "Bot şu an cevap vermiyor." });
+  }
 }
 
 const server = createServer((req, res) => {
@@ -559,6 +669,17 @@ async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser,
         cinemaGate.last = now;
         return true;
       },
+      world: room.games
+        ? {
+            weather: () => weather.describe(),
+            fireworks: () => room.games!.fireworks(Date.now(), 12),
+            tag: (mode) => room.games!.openTag(sid, mode),
+            tagJoin: () => room.games!.tag.join(sid),
+            enqueue: (url) => room.games!.stage.enqueue(url, user.name),
+            queueText: () => room.games!.stage.listText(),
+            skip: () => room.games!.stage.djCommand(sid, "skip"),
+          }
+        : undefined,
     },
     parsed.cmd,
     parsed.args,
@@ -616,6 +737,7 @@ async function fish(ws: WebSocket, room: Room, sid: number, user: SessionUser, g
       luck: Number(body.luck),
     };
     room.broadcast({ t: "fish", sid, name: user.name, catch: c });
+    notifyQuests(room, user.id, (body as { completed?: unknown }).completed);
   } catch (err) {
     console.warn("[fish]", (err as Error).message);
     notice("🎣 Olta takıldı, biraz sonra tekrar dene.");
@@ -639,6 +761,38 @@ async function fishWait(ws: WebSocket, user: SessionUser, guild: string | null):
   }
 }
 
+/** Oyuncu kartı: bottan seviye, albüm, sayaçlar; başkasının kartında görevler gösterilmez. */
+async function sendProfile(ws: WebSocket, room: Room, me: number, target: number): Promise<void> {
+  const p = room.players.get(target);
+  if (!p) return;
+  const send = (profile: ServerEvent & { t: "profile" }) => ws.send(JSON.stringify(profile));
+  const base = { t: "profile" as const, sid: target, name: p.info.name };
+  if (p.user.guest || !p.guild) return send({ ...base, profile: null, error: "Misafir oyuncunun kartı yok." });
+  if (!SHARED_SECRET) return send({ ...base, profile: null, error: "Kartlar şu an kapalı (bot bağlı değil)." });
+  try {
+    const r = await botPost("/internal/profile", { guild: p.guild, user: p.user.id });
+    if (!r.ok || !r.body.ok) return send({ ...base, profile: null, error: "Bu sunucunun üyesi değil." });
+    const profile = r.body as unknown as Profile;
+    if (target !== me) profile.quests = [];
+    send({ ...base, profile });
+  } catch (err) {
+    console.warn("[profile]", (err as Error).message);
+    send({ ...base, profile: null, error: "Bot şu an cevap vermiyor." });
+  }
+}
+
+/** Tank sezonu sıralaması (bu ay). */
+async function sendSeason(ws: WebSocket, guild: string | null): Promise<void> {
+  const empty = { t: "season" as const, season: "", top: [] };
+  if (!guild || !SHARED_SECRET) return void ws.send(JSON.stringify(empty));
+  try {
+    const r = await botPost("/internal/season", { guild });
+    ws.send(JSON.stringify(r.ok ? { t: "season", season: String(r.body.season ?? ""), top: Array.isArray(r.body.top) ? r.body.top : [] } : empty));
+  } catch {
+    ws.send(JSON.stringify(empty));
+  }
+}
+
 function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions, watch?: Watch): void {
   const room = rooms.get(key);
   const sid = room.join(user, ws, Date.now(), opts);
@@ -653,6 +807,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   const current = roomWatch();
   if (current) sendWatch(ws, current);
   if (room.chat.length) ws.send(JSON.stringify({ t: "chatlog", lines: room.chat }));
+  if (!room.battle) ws.send(JSON.stringify({ t: "weather", weather: weather.current }));
   const share = shares.get(room.key);
   if (share) ws.send(JSON.stringify({ t: "share", sid: share.sid, name: share.name }));
   const limiter = { last: 0 };
@@ -664,6 +819,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   let lastWardrobe = 0;
   let lastOutfit = 0;
   let lastChat = 0;
+  let lastProfile = 0;
+  let lastSeason = 0;
   const cinemaGate = { last: 0 };
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   alive.add(ws);
@@ -692,6 +849,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (near && !p.info.spectator && !(a !== "grill" && p.info.jailed) && now - lastAct >= ACT_COOLDOWN_MS) {
           lastAct = now;
           room.broadcast({ t: "act", sid, a }, sid);
+          if (a === "grill") reportEvent(room, sid, "grill");
+          else if (a === "cay") reportEvent(room, sid, "tea");
         }
       } else if (msg?.t === "fish") {
         const p = room.players.get(sid);
@@ -745,7 +904,22 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (Number.isInteger(e) && e >= 0 && e < EMOTES.length && now - lastEmote >= EMOTE_COOLDOWN_MS) {
           lastEmote = now;
           room.broadcast({ t: "emote", sid, e }, sid);
+          reportEvent(room, sid, "emote");
         }
+      } else if (msg?.t === "cosm") {
+        room.setCosmetics(sid, msg.pet, msg.skin);
+      } else if (msg?.t === "profile" && typeof msg.sid === "number") {
+        const now = Date.now();
+        if (now - lastProfile < 1000) return;
+        lastProfile = now;
+        void sendProfile(ws, room, sid, msg.sid);
+      } else if (msg?.t === "season") {
+        const now = Date.now();
+        if (now - lastSeason < 5000) return;
+        lastSeason = now;
+        void sendSeason(ws, opts.guild ?? null);
+      } else if (msg && typeof msg === "object" && room.games?.handle(sid, msg)) {
+        // dünya oyunu mesajı işlendi
       } else if (msg && typeof msg === "object") {
         const w = roomWatch();
         if (w) onWatchMessage(ws, room, w, user, msg, limiter);
@@ -855,6 +1029,20 @@ setInterval(() => {
     alive.delete(ws);
     ws.ping();
   }
+}, 20_000);
+
+// Özel günlerde havai fişek: Cumhuriyet Bayramı, 23 Nisan, 19 Mayıs, 30 Ağustos akşamı 21.00 ve 21.30'da, yılbaşı gece yarısı.
+const FIREWORK_DAYS = new Set(["04-23", "05-19", "08-30", "10-29"]);
+let lastFireworkSlot = "";
+setInterval(() => {
+  const tr = new Date(Date.now() + 3 * 3600_000);
+  const md = `${String(tr.getUTCMonth() + 1).padStart(2, "0")}-${String(tr.getUTCDate()).padStart(2, "0")}`;
+  const h = tr.getUTCHours(), m = tr.getUTCMinutes();
+  const show = (FIREWORK_DAYS.has(md) && h === 21 && (m === 0 || m === 30)) || (md === "01-01" && h === 0 && m <= 1);
+  const slot = `${md}-${h}-${m >= 30 ? 30 : 0}`;
+  if (!show || slot === lastFireworkSlot) return;
+  lastFireworkSlot = slot;
+  for (const room of rooms.all()) room.games?.fireworks(Date.now(), 40, true);
 }, 20_000);
 
 // Snapshot yayını: değişiklik varsa her tick, yoksa saniyede bir.

@@ -13,12 +13,19 @@ düğme dünyayı tarayıcıda açar ve video sinema perdesinde herkes için sen
 
 Ters yön: dünya, gölde balık tutulunca botun iç HTTP ucuna (`WORLD_BOT_PORT`,
 varsayılan 8081) `POST /internal/fish` atar; zar, seri ve boost botta (fishing.py).
+Dünyadaki olaylar (gol, oyun galibiyeti, çay…) `/internal/world_event` ile gelir: günlük görevler
+ilerler, tamamlanınca XP verilir (world_quests.py). Profil kartı `/internal/profile`, tank sezonu
+`/internal/season`, dünyada çekilen fotoğraflar `/internal/photo` (PHOTO_CHANNEL_ID kanalına).
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import datetime
 import hmac
+import io
 import logging
 import os
 import time
@@ -32,6 +39,7 @@ import activitylog
 import database as db
 import fishing
 import outfit
+import world_quests
 from xp import format_duration, streak_multiplier
 from xproles import XPRoleManager
 from font_utils import clean_display_name
@@ -52,6 +60,12 @@ WATCH_KIND_LABELS = {
     "file": "Video dosyası",
 }
 WATCH_USAGE = "!izle <link> — YouTube, Twitch, Kick, tabii (TRT canlı) ya da .mp4/.webm/.m3u8 linki"
+
+# Dünyada çekilen fotoğrafların gönderileceği kanal (boşsa balık kanalı; o da yoksa kapalı)
+PHOTO_CHANNEL_ID = int(os.getenv("PHOTO_CHANNEL_ID", "0") or 0) or FISH_CHANNEL_ID
+PHOTO_MAX_BYTES = 3 * 1024 * 1024
+# Sayaçları başarımlara da işlenen dünya olayları
+ACHIEVEMENT_EVENTS = {"goal", "game_win", "tank_kill", "photo"}
 
 PUSH_SECONDS = 20
 BOARD_MINUTES = 1
@@ -126,6 +140,11 @@ async def game_command_text(guild_id: int, user_id: int, command: str, roles: XP
         return f"🔊 Toplam ses süren: {format_duration(seconds)}"
     return None
 
+def _today() -> datetime.date:
+    """Görev günü: Türkiye saatiyle (seriyle aynı gün sınırı)."""
+    return datetime.datetime.now(db.STREAK_TZ).date()
+
+
 class WorldCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -152,6 +171,10 @@ class WorldCog(commands.Cog):
         app.router.add_post("/internal/wardrobe", self.handle_wardrobe)
         app.router.add_post("/internal/outfit", self.handle_save_outfit)
         app.router.add_post("/internal/command", self.handle_command)
+        app.router.add_post("/internal/world_event", self.handle_world_event)
+        app.router.add_post("/internal/profile", self.handle_profile)
+        app.router.add_post("/internal/season", self.handle_season)
+        app.router.add_post("/internal/photo", self.handle_photo)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         await web.TCPSite(self._runner, "0.0.0.0", self.port).start()
@@ -198,6 +221,10 @@ class WorldCog(commands.Cog):
             rarity=result["rarity"], hours=result["hours"], streak=result["streak"],
             boost_until=round(result["boost_until"]),
         )
+        # Balık albümü ve günün "balık tut" görevi
+        await db.add_world_stats(guild_id, user_id, {f"fish:{result['rarity']}": 1})
+        completed = await world_quests.record(guild_id, user_id, "fish", 1, _today())
+        result = {**result, "completed": await self._grant_quests(guild, user_id, completed)}
         if FISH_CHANNEL_ID and fishing.RANK[result["rarity"]] >= fishing.RANK[FISH_ANNOUNCE_MIN_RARITY]:
             # Arka planda: Discord gecikmesi dünyadaki tutuş bildirimini bekletmesin
             task = asyncio.create_task(self._announce_fish(guild, user_id, result))
@@ -284,6 +311,136 @@ class WorldCog(commands.Cog):
             return web.json_response({"error": "unknown command"}, status=400)
         activitylog.record("command", guild_id, user_id, name=command, source="world")
         return web.json_response({"text": text})
+
+    async def _member_request(self, request: web.Request) -> tuple[discord.Guild, int, dict] | web.Response:
+        """Ortak giriş: secret, {"guild", "user"} ve üyelik. Hata durumunda hazır cevap döner."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+            guild_id, user_id = int(body["guild"]), int(body["user"])
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild and user required"}, status=400)
+        guild = self.bot.get_guild(guild_id)
+        if guild is None or guild.get_member(user_id) is None:
+            return web.json_response({"ok": False, "reason": "not_member"})
+        return guild, user_id, body
+
+    async def _grant_quests(self, guild: discord.Guild, user_id: int, quests: list[world_quests.Quest]) -> list[dict]:
+        """Tamamlanan görevlerin XP'sini verir (sürgünde XP yok, görev yine tamamlanır)."""
+        if not quests:
+            return []
+        exile = await db.get_exile(guild.id, user_id)
+        exiled = exile is not None and not db.exile_expired(exile)
+        total = 0 if exiled else sum(q.xp for q in quests)
+        if total:
+            await db.add_text_xp(guild.id, user_id, total)
+            member = guild.get_member(user_id)
+            xp_cog = self.bot.get_cog("XPTrackerCog") if hasattr(self.bot, "get_cog") else None
+            if xp_cog is not None and isinstance(member, discord.Member):
+                await xp_cog._sync_role(member)
+        for q in quests:
+            activitylog.record("xp_world_quest", guild.id, user_id, amount=0 if exiled else q.xp, quest=q.key)
+            activitylog.record("world", guild.id, user_id, amount=1, kind="quest")
+        log.info("Dünya görevi: %s %s (+%d XP)", user_id, [q.key for q in quests], total)
+        return [{"key": q.key, "title": q.title, "xp": 0 if exiled else q.xp} for q in quests]
+
+    async def handle_world_event(self, request: web.Request) -> web.Response:
+        """Dünyadan: {"guild", "user", "event", "amount"} → tamamlanan görevler ({"completed": [...]})."""
+        parsed = await self._member_request(request)
+        if isinstance(parsed, web.Response):
+            return parsed
+        guild, user_id, body = parsed
+        event = str(body.get("event", ""))
+        try:
+            amount = max(1, min(10_000, int(body.get("amount", 1))))
+        except (TypeError, ValueError):
+            amount = 1
+        if event not in world_quests.EVENTS and event not in world_quests.EXTRA_EVENTS:
+            return web.json_response({"error": "unknown event"}, status=400)
+        completed = await world_quests.record(guild.id, user_id, event, amount, _today())
+        if event in ACHIEVEMENT_EVENTS:
+            activitylog.record("world", guild.id, user_id, amount=amount, kind=event)
+        return web.json_response({"ok": True, "completed": await self._grant_quests(guild, user_id, completed)})
+
+    async def handle_profile(self, request: web.Request) -> web.Response:
+        """Oyuncu kartı: seviye, XP, sıra, balık albümü, dünya sayaçları, sezon ve günün görevleri."""
+        parsed = await self._member_request(request)
+        if isinstance(parsed, web.Response):
+            return parsed
+        guild, user_id, _body = parsed
+        row = await db.get_user_row(guild.id, user_id)
+        total = int(row["total_xp"]) if row else 0
+        level, _next, floor, ceiling, _ratio = self._roles.get_progress_data(total)
+        stats = await db.get_world_stats(guild.id, user_id)
+        today = _today()
+        season = world_quests.season_key(today)
+        return web.json_response({
+            "ok": True,
+            "level": level,
+            "xp": total,
+            "floor": floor,
+            "ceiling": ceiling,
+            "rank": await db.get_user_rank(guild.id, user_id),
+            "streak": db.current_streak(row) if row else 0,
+            "fish": {r.key: stats.get(f"fish:{r.key}", 0) for r in fishing.RARITIES},
+            "stats": {k: stats.get(k, 0) for k in set(world_quests.STAT_KEYS.values())},
+            "season": {"key": season, **{k: stats.get(f"s:{season}:{k}", 0) for k in set(world_quests.SEASON_KEYS.values())}},
+            "quests": await world_quests.quest_status(guild.id, user_id, today),
+        })
+
+    async def handle_season(self, request: web.Request) -> web.Response:
+        """Tank sezonu (bu ay): en çok tank vuran 10 üye, isim ve galibiyetleriyle."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            guild_id = int((await request.json())["guild"])
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild required"}, status=400)
+        guild = self.bot.get_guild(guild_id)
+        season = world_quests.season_key(_today())
+        top = await db.world_stat_top(guild_id, f"s:{season}:tank_kills", 10)
+        entries = []
+        for uid, kills in top:
+            stats = await db.get_world_stats(guild_id, uid)
+            member = guild.get_member(uid) if guild is not None else None
+            entries.append({
+                "id": str(uid),
+                "name": clean_display_name(member, fallback=f"Kullanıcı {str(uid)[-4:]}"),
+                "kills": kills,
+                "wins": stats.get(f"s:{season}:tank_wins", 0),
+            })
+        return web.json_response({"season": season, "top": entries})
+
+    async def handle_photo(self, request: web.Request) -> web.Response:
+        """Dünyada çekilen fotoğraf: {"guild", "user", "image" (base64 JPEG)} → fotoğraf kanalına gönderilir."""
+        parsed = await self._member_request(request)
+        if isinstance(parsed, web.Response):
+            return parsed
+        guild, user_id, body = parsed
+        if not PHOTO_CHANNEL_ID:
+            return web.json_response({"ok": False, "reason": "no_channel"})
+        try:
+            data = base64.b64decode(str(body["image"]), validate=True)
+        except (KeyError, binascii.Error, ValueError):
+            return web.json_response({"error": "image required"}, status=400)
+        if not data.startswith(b"\xff\xd8") or len(data) > PHOTO_MAX_BYTES:
+            return web.json_response({"error": "jpeg up to 3 MB"}, status=400)
+        channel = guild.get_channel(PHOTO_CHANNEL_ID)
+        if not isinstance(channel, discord.abc.Messageable):
+            return web.json_response({"ok": False, "reason": "no_channel"})
+        try:
+            await channel.send(
+                f"📸 <@{user_id}> GAP Dünyası'ndan bir kare paylaştı!",
+                file=discord.File(io.BytesIO(data), filename="gap-dunyasi.jpg"),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.HTTPException as err:
+            log.warning("Fotoğraf gönderilemedi: %s", err)
+            return web.json_response({"ok": False, "reason": "send_failed"})
+        activitylog.record("world", guild.id, user_id, amount=1, kind="photo")
+        completed = await world_quests.record(guild.id, user_id, "photo", 1, _today())
+        return web.json_response({"ok": True, "completed": await self._grant_quests(guild, user_id, completed)})
 
     async def _announce_fish(self, guild: discord.Guild, user_id: int, result: dict) -> None:
         channel = guild.get_channel(FISH_CHANNEL_ID)

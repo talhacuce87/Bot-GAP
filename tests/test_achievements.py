@@ -51,14 +51,14 @@ def _facts(**kw) -> MemberFacts:
 # ---------------------------------------------------------------------------
 
 def test_catalog_matches_requests():
-    assert len(ACHIEVEMENTS) == 47 and len(BY_KEY) == 47
+    assert len(ACHIEVEMENTS) == 54 and len(BY_KEY) == 54
     assert {"podyum", "zirve", "hizli_yukselis", "kefil", "kurucu_kadro", "kanal_hoplayan", "sohbet_baslatan",
             "can_dostu"}.isdisjoint(BY_KEY)
     assert BY_KEY["ses_kurdu"].tiers == (250, 1000, 2000) and BY_KEY["maraton"].tiers == (12, 17, 24)
     assert BY_KEY["gece_nobeti"].tiers == (25, 50, 150) and BY_KEY["kalabalik_sever"].tiers == (10, 50, 150)
     assert BY_KEY["sosyal_kelebek"].tiers == (15, 20, 30) and BY_KEY["koleksiyoncu"].tiers == (10, 20, 30)
     assert BY_KEY["platin_avcisi"].tiers == (3, 7, 10) and BY_KEY["ataturkun_evlatlari"].name == "Atatürk'ün Evlatları"
-    assert len({a.icon for a in ACHIEVEMENTS}) == 47                       # her rozetin kendi simgesi
+    assert len({a.icon for a in ACHIEVEMENTS}) == 54                       # her rozetin kendi simgesi
     assert BY_KEY["yayinci"].tiers[0] == 100 and BY_KEY["yuzumuz_ortada"].tiers[0] == 5
     assert BY_KEY["kulak_misafiri"].tiers[0] == 50
     assert BY_KEY["kapiyi_acan"].tiers[0] == 40 and BY_KEY["isiklari_kapatan"].tiers[0] == 40
@@ -533,3 +533,15 @@ async def test_facts_use_xp_streak_and_voice_from_user_rows(db):
     await cog.run_once()
     got = (await db.get_achievements(1))[1]
     assert got["yukselen_yildiz"][0] == 1 and got["ses_kurdu"][0] == 1 and got["atesli_seri"][0] == 1
+
+
+def test_world_events_feed_world_achievements():
+    goal = {**_row(1, "world", {"kind": "goal"}), "amount": 3}
+    rows = [_row(1, "fish_catch", {"rarity": "legendary"}), _row(1, "fish_catch", {"rarity": "common"}), goal,
+            _row(1, "world", {"kind": "bilinmeyen"})]
+    out = ach.aggregate(rows, 60)
+    assert out.inc[1, 1, "fish"] == 2 and out.inc[1, 1, "fish_legend"] == 1
+    assert out.inc[1, 1, "w_goal"] == 3 and (1, 1, "w_bilinmeyen") not in out.inc
+    facts = _facts(counters={"fish": 10, "fish_legend": 1, "w_goal": 5})
+    earned = ach.evaluate(facts, {})
+    assert earned["balikci"] == 1 and earned["altin_sazan"] == 1 and earned["golcu"] == 1

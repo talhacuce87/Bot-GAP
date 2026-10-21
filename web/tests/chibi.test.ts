@@ -134,7 +134,7 @@ describe("chibi paketi", () => {
 describe("uzuv pozları", () => {
   const pose = (p: Partial<LimbPose>): THREE.Vector2[] => {
     const a = Array.from({ length: LIMB_COUNT }, () => new THREE.Vector2());
-    setLimbs(a, { swing: 0, seated: false, wave: 0, dance: 0, time: 0, ...p });
+    setLimbs(a, { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, time: 0, ...p });
     return a;
   };
   // Shader'daki limbMat ile aynı: rz * rx

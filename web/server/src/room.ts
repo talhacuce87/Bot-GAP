@@ -4,18 +4,19 @@ import {
   FLAG_DRIVING,
   FLAG_MASK,
   JAIL_SPAWN,
+  maxSpeed,
   RELEASE_SPAWN,
   ROOM_MAX_PLAYERS,
-  RUN_MULTIPLIER,
-  WALK_SPEED,
   WORLD_RADIUS,
 } from "../../shared/constants";
 import {
   type ChatLine,
   type Look,
   type PlayerInfo,
+  PETS,
   type PlayerState,
   type ServerEvent,
+  SKINS,
   snapshotSize,
   writeSnapshotEntry,
   writeSnapshotHeader,
@@ -23,6 +24,10 @@ import {
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
+import type { WorldGames } from "./games/world";
+
+const PET_IDS = new Set<string>(PETS.map((p) => p.id));
+const SKIN_IDS = new Set<string>(SKINS.map((s) => s.id));
 
 /** Odanın tek tankı. Sürücü varken konumu sürücünün konumudur. */
 interface Tank {
@@ -70,6 +75,10 @@ export class Room {
   readonly tank: Tank = { driver: 0, x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, lastFire: 0, idleSince: 0 };
   /** Tank savaşı odası ("b:..."): dünyanın tek tankı yerine takımlı maç. */
   readonly battle: Battle | null;
+  /** Dünya odasının oyunları (savaş odasında yok); sunucu oda açılınca kurar. */
+  games: WorldGames | null = null;
+  /** Görev/sayaç olayı (botta): sunucu bağlar; tank isabeti, savaşta vuruş ve galibiyet buradan. */
+  onReport: (sid: number, event: string, amount?: number) => void = () => {};
   private nextSid = 1;
   private dirty = false;
 
@@ -122,6 +131,7 @@ export class Room {
     this.sendTo(conn, { t: "welcome", you: sid, room: this.key, players: [info, ...others] });
     if (this.battle) this.battle.join(sid);
     else this.sendTo(conn, this.tankEvent());
+    this.games?.join(sid, conn);
     this.broadcast({ t: "join", player: info }, sid);
     this.dirty = true;
     return sid;
@@ -133,6 +143,7 @@ export class Room {
     if (this.tank.driver === sid) this.exitTank(sid);
     this.players.delete(sid);
     this.battle?.leave(sid);
+    this.games?.leave(sid);
     this.broadcast({ t: "leave", sid });
     // Boşalan yere en eski izleyici geçer; istemciler onu yeni katılan gibi görür.
     if (!p.info.spectator) {
@@ -152,8 +163,13 @@ export class Room {
     const p = this.players.get(sid);
     if (!p || p.info.spectator) return;
     if (this.battle && !this.battle.canMove(sid)) return;
+    if (this.games?.frozen(sid)) {
+      p.lastUpdate = now;
+      return;
+    }
     const dt = Math.min(1, Math.max(0, (now - p.lastUpdate) / 1000));
-    const maxStep = WALK_SPEED * RUN_MULTIPLIER * dt * 1.3 + 0.5;
+    // Araçtan inip binerken iki durumun hızlısı (bisikletten inen bir an daha hızlı gidebilir)
+    const maxStep = Math.max(maxSpeed(s.flags), maxSpeed(p.state.flags)) * dt * 1.3 + 0.5;
     let dx = s.x - p.state.x;
     let dz = s.z - p.state.z;
     const d = Math.hypot(dx, dz);
@@ -185,6 +201,16 @@ export class Room {
     this.chat.push(line);
     if (this.chat.length > max) this.chat.splice(0, this.chat.length - max);
     this.broadcast({ t: "chat", line });
+  }
+
+  /** Evcil hayvan ve tank kamuflajı (istemcide saklanır): geçerli değilse boş. */
+  setCosmetics(sid: number, pet: unknown, skin: unknown): void {
+    const p = this.players.get(sid);
+    if (!p) return;
+    p.info.pet = typeof pet === "string" && PET_IDS.has(pet) ? pet : null;
+    p.info.skin = typeof skin === "string" && SKIN_IDS.has(skin) ? skin : null;
+    this.broadcast({ t: "cosm", sid, pet: p.info.pet, skin: p.info.skin });
+    this.battle?.refresh();
   }
 
   /** Bottan gelen (doğrulanmış) kıyafeti uygular ve odaya duyurur. Oyuncu ayrıldıysa bir şey yapmaz. */
@@ -285,11 +311,13 @@ export class Room {
       .map(([s, q]) => ({ sid: s, x: q.state.x, z: q.state.z }));
     const { shot, hits } = computeShot(p.state.x, p.state.z, t.tr, targets, t.el);
     this.broadcast({ t: "shell", sid, shot, hits });
+    if (hits.length) this.onReport(sid, "tank_hit", hits.length);
   }
 
   /** Değişiklik varsa (ya da her saniye) tüm aktif oyuncuların konumunu yayınlar. */
   tick(now: number, force = false): void {
     this.battle?.tick(now);
+    this.games?.tick(now);
     const t = this.tank;
     if (!t.driver && t.idleSince && now - t.idleSince > TANK_RETURN_MS) {
       Object.assign(t, { x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, idleSince: 0 });
@@ -347,12 +375,15 @@ export interface JoinOptions {
 
 export class Rooms {
   private rooms = new Map<string, Room>();
+  /** Yeni oda açılınca (sunucu oyunları ve raporlamayı bağlar). */
+  onCreate: (room: Room) => void = () => {};
 
   get(key: string): Room {
     let r = this.rooms.get(key);
     if (!r) {
       r = new Room(key);
       this.rooms.set(key, r);
+      this.onCreate(r);
     }
     return r;
   }

@@ -8,6 +8,8 @@ export interface Seat {
   x: number;
   z: number;
   rot: number;
+  /** Kahvehane masası sandalyesi: oturunca masaya katılır. */
+  table?: { id: number; seat: number };
 }
 
 /** Tekrarlanan objeler: her biri tek InstancedMesh olarak çizilir. */

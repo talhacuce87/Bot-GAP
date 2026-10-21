@@ -5,6 +5,8 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { WORLD_RADIUS } from "../../../shared/constants";
+import type { Weather } from "../../../shared/protocol";
+import { KAHVEHANE, PITCH } from "../../../shared/zones";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
@@ -12,8 +14,11 @@ import { DayNight, skyDome } from "./daynight";
 import { GrassField } from "./grassField";
 import { NightFx } from "./night";
 import { FameBoard, fameStatics } from "./fame";
-import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, windMaterial } from "./geo";
-import { dungeon, GROVE, grove, GROVE_SIGN, POND, pond, signPost, steppingStones, waterMaterial } from "./zones";
+import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, windMaterial, withCloudShadows } from "./geo";
+import { kahvehane } from "./kahvehane";
+import { type Pitch, pitch } from "./pitch";
+import { djBooth, type StageLights, stageLights, stageTruss } from "./stageFx";
+import { addRipple, dungeon, GROVE, grove, GROVE_SIGN, POND, pond, signPost, steppingStones, waterEnv, waterMaterial } from "./zones";
 import { FAME } from "./fame";
 import { SAKURA, SAKURA_CONFIG, sakuraGarden, type SakuraGarden } from "./sakura";
 import { TANK_PARK } from "../../../shared/tank";
@@ -38,6 +43,17 @@ export interface World {
   env: { day: number; lights: number; dusk: number };
   /** Güneş gölgesi (renderer.shadowMap ayrıca açılmalı). */
   setShadows(level: ShadowLevel): void;
+  /** İstanbul'un havası (gök, sis, bulut gölgesi, göle yağmur). */
+  setWeather(w: Weather): void;
+  /** Şimşek parlaması (0–1), her kare. */
+  flash(v: number): void;
+  /** Futbol sahası ve top. */
+  pitch: Pitch;
+  /** Sahne ışıkları (DJ şovu, karaoke takip spotu). */
+  stageLights: StageLights;
+  /** Suda dalga halkası (göl, çeşme). */
+  ripple(x: number, z: number, time: number): void;
+  season: Season;
   /** Oyuncunun çevresindeki sık çimen (zayıf cihazda yok). */
   grass: GrassField | null;
   /** Sinemada bir şey oynuyor: hoparlörler ritimle titrer. */
@@ -46,9 +62,44 @@ export interface World {
   speakers: { x: number; y: number; z: number }[];
 }
 
+export type Season = "spring" | "summer" | "autumn" | "winter";
+
+/** Türkiye takvimine göre mevsim (?season= ile denenebilir). */
+export function seasonOf(now = Date.now()): Season {
+  const m = new Date(now + 3 * 3600_000).getUTCMonth();
+  return m <= 1 || m === 11 ? "winter" : m <= 4 ? "spring" : m <= 7 ? "summer" : "autumn";
+}
+
+/** Mevsim renkleri: çimen, ağaç tacı, çalı, çiçek (sonbaharda yaprak) paleti. */
+const SEASON_LOOK: Record<Season, { ground: [string, number]; oak: string[]; pine: [string, string]; sakura: string[]; bush: [string, string]; flowers: string[]; flowerClusters: number; tufts: number }> = {
+  spring: {
+    ground: ["#64a84a", 0.3], oak: ["#6ab24a", "#7cc257", "#5c9e40"], pine: ["#3f7a3a", "#4c8c42"],
+    sakura: ["#f7a3bd", "#fbbcd0", "#f08aac", "#ffd3e1"], bush: ["#5a9a40", "#6fb04e"],
+    flowers: ["#f4f1e6", "#f7d64a", "#e85a6f", "#b48ae8", "#f59a3c", "#ff9ec4"], flowerClusters: 140, tufts: 6500,
+  },
+  summer: {
+    ground: ["#6f9a4a", 0], oak: ["#5c9a3f", "#6aa847", "#4f8a37"], pine: ["#3f7a3a", "#4c8c42"],
+    sakura: ["#f7a3bd", "#fbbcd0", "#f08aac", "#ffd3e1"], bush: ["#4f8a3a", "#5f9c45"],
+    flowers: ["#f4f1e6", "#f7d64a", "#e85a6f", "#b48ae8", "#f59a3c"], flowerClusters: 80, tufts: 6500,
+  },
+  autumn: {
+    ground: ["#8c9147", 0.35], oak: ["#d9822b", "#e0a93a", "#c4561f"], pine: ["#3d7039", "#4a8040"],
+    sakura: ["#d97a4a", "#e8955a", "#c9603c", "#f0b070"], bush: ["#9a7a32", "#b8862f"],
+    flowers: ["#d9822b", "#c4561f", "#e0a93a", "#a8442a", "#b8862f"], flowerClusters: 150, tufts: 5000,
+  },
+  winter: {
+    ground: ["#e4eaef", 0.82], oak: ["#e6ecef", "#d7dfe3", "#f1f4f6"], pine: ["#3c6a3a", "#e2e9ec"],
+    sakura: ["#e9e2e5", "#ddd5d9", "#f3eef0", "#e4dde0"], bush: ["#d9e1e5", "#c8d2d6"],
+    flowers: [], flowerClusters: 0, tufts: 0,
+  },
+};
+let SEASON: Season = "summer";
+
 export interface WorldOptions {
   /** Gece/gündüz testi için saat (?hour=21); verilmezse Türkiye saati. */
   hour?: number;
+  /** Mevsim (verilmezse takvimden). */
+  season?: Season;
   /** Oyuncunun çevresinde sık çimen. */
   grass?: boolean;
   /** Gece gerçek ışık alan en yakın lamba sayısı (0: yalnızca ucuz zemin lekeleri). */
@@ -102,10 +153,11 @@ function screenTexture(): THREE.CanvasTexture {
 }
 
 /** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
-const DIRECTIONS = ["↑ SİNEMA", "SAKURA BAHÇESİ ↗", "← ZİNDAN", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "GÖLET ↘", "↖ TANK"];
+const DIRECTIONS = ["↑ SİNEMA · DJ", "SAKURA BAHÇESİ ↗", "← ZİNDAN", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "↙ KAHVEHANE", "↓ FUTBOL SAHASI", "GÖLET ↘", "↖ TANK"];
 const SIGN_DUNGEON = 0;
 const SIGN_GROVE = 1;
-const SIGN_DIR = 2;
+const SIGN_KAHVE = 2;
+const SIGN_DIR = 3;
 
 interface SignSpec {
   at: THREE.Matrix4;
@@ -133,6 +185,7 @@ function signsMesh(specs: SignSpec[]): THREE.Mesh {
     };
     board(SIGN_DUNGEON, "#2a2c31", "#141518", "ZİNDAN", "#e8d9b0", "900 78px system-ui, sans-serif");
     board(SIGN_GROVE, "#a8743e", "#5b3f25", "LAGER'İN MANGALI", "#fff3dc", "800 52px system-ui, sans-serif");
+    board(SIGN_KAHVE, "#7a2622", "#3d1512", "☕ KAHVEHANE", "#f6e7c8", "900 64px system-ui, sans-serif");
     DIRECTIONS.forEach((t, i) => board(SIGN_DIR + i, "#d0a56c", "#6b4a2b", t, "#2b1d10", "800 54px system-ui, sans-serif"));
   });
   const plane = ({ at, w, h, cell }: SignSpec) => {
@@ -152,10 +205,10 @@ function signsMesh(specs: SignSpec[]): THREE.Mesh {
 /** Meydandaki yön tabelası: doğma noktasına bakan, üst üste oklu levhalar. */
 function directionPost(b: Builder): SignSpec[] {
   const x = 3.6, z = 5.2;
-  b.add(part(new THREE.CylinderGeometry(0.08, 0.1, 3.1, 6), "#5b3f25", mat(x, 1.55, z)));
-  b.add(part(new THREE.ConeGeometry(0.16, 0.25, 6), "#5b3f25", mat(x, 3.2, z)));
+  b.add(part(new THREE.CylinderGeometry(0.08, 0.1, 3.7, 6), "#5b3f25", mat(x, 1.85, z)));
+  b.add(part(new THREE.ConeGeometry(0.16, 0.25, 6), "#5b3f25", mat(x, 3.8, z)));
   b.colliders.circle(x, z, 0.15);
-  return DIRECTIONS.map((_, i) => ({ at: mat(x, 2.9 - i * 0.4, z + 0.09), w: 1.7, h: 0.36, cell: SIGN_DIR + i }));
+  return DIRECTIONS.map((_, i) => ({ at: mat(x, 3.5 - i * 0.37, z + 0.09), w: 1.7, h: 0.33, cell: SIGN_DIR + i }));
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +227,9 @@ function groundColor(x: number, z: number, out: THREE.Color): THREE.Color {
   if (ds < SAKURA_CONFIG.radius + 2) out.lerp(tmp.set("#5e9a3e"), Math.min(1, (SAKURA_CONFIG.radius + 2 - ds) / 3) * 0.75);
   const dd = Math.hypot(x + 55, z - 5);
   if (dd < 11) out.lerp(tmp.set("#6b6f55"), (1 - dd / 11) * 0.6);
+  // Mevsim: sonbaharda sararır, kışın kar (lekeli), baharda canlanır
+  const [tint, k] = SEASON_LOOK[SEASON].ground;
+  if (k) out.lerp(tmp.set(tint), SEASON === "winter" ? Math.min(1, k + n * 0.08) : k);
   return out;
 }
 
@@ -421,6 +477,8 @@ function paths(b: Builder): void {
   radial(FAME.x, FAME.z, 3.6);
   radial(SAKURA.x, SAKURA.z, SAKURA_CONFIG.radius + 0.6);
   radial(TANK_PARK.x, TANK_PARK.z, 5);
+  radial(KAHVEHANE.x, KAHVEHANE.z, 8.4);
+  radial(PITCH.x, PITCH.z - PITCH.hz, 2.5);
 }
 
 function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matrix4[]): void {
@@ -446,9 +504,10 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matri
   const grass: THREE.Matrix4[] = [];
   const flowers: THREE.Matrix4[] = [];
   const flowerColors: THREE.Color[] = [];
-  const palette = ["#f4f1e6", "#f7d64a", "#e85a6f", "#b48ae8", "#f59a3c"].map((c) => new THREE.Color(c));
+  const look = SEASON_LOOK[SEASON];
+  const palette = look.flowers.map((c) => new THREE.Color(c));
   // Büyük haritada yoğunluk aynı; uzaktakiler shader'da gömüldüğü için maliyet sınırlı.
-  for (let i = 0; i < 14000 && grass.length < 6500; i++) {
+  for (let i = 0; i < 14000 && grass.length < look.tufts; i++) {
     const a = b.rand() * Math.PI * 2;
     const r = Math.sqrt(b.rand()) * (WORLD_RADIUS + 3);
     const x = Math.sin(a) * r, z = Math.cos(a) * r;
@@ -457,7 +516,7 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matri
     grass.push(mat(x, 0, z, b.rand() * 6, s));
   }
   // Çiçekler küme küme
-  for (let c = 0; c < 80; c++) {
+  for (let c = 0; c < look.flowerClusters; c++) {
     const a = b.rand() * Math.PI * 2;
     const r = 11 + b.rand() * (WORLD_RADIUS - 10);
     const cx = Math.sin(a) * r, cz = Math.cos(a) * r;
@@ -470,11 +529,14 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matri
     }
   }
   grass.push(...extraGrass);
-  const tufts = instanced(tuft, windMaterial(0.28, { side: THREE.DoubleSide }, [32, 44]), grass);
-  tufts.receiveShadow = true;
-  scene.add(tufts);
+  if (grass.length) {
+    const tufts = instanced(tuft, withCloudShadows(windMaterial(0.28, { side: THREE.DoubleSide }, [32, 44])), grass);
+    tufts.receiveShadow = true;
+    scene.add(tufts);
+  }
 
   const head = part(new THREE.OctahedronGeometry(0.075, 0), "#ffffff", new THREE.Matrix4().makeScale(1, 0.6, 1));
+  if (!flowers.length) return;
   const fm = instanced(head, windMaterial(0.5, {}, [40, 52]), flowers);
   flowerColors.forEach((c, i) => fm.setColorAt(i, c));
   scene.add(fm);
@@ -482,32 +544,33 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matri
 
 function propMeshes(b: Builder, scene: THREE.Scene): { bulbMaterial: THREE.MeshBasicMaterial } {
   const r = b.rand;
+  const look = SEASON_LOOK[SEASON];
   // Ağaçlarda alt kapaklar hiç görünmez (kamera zeminin altına inmez): openEnded ile üçgen sayısı yarıya iner.
   const geos: Record<PropKind, THREE.BufferGeometry> = {
     pine: mergeGeometries([
       part(new THREE.CylinderGeometry(0.18, 0.25, 1.4, 6, 1, true), "#6b4a2f", mat(0, 0.7, 0)),
-      part(new THREE.ConeGeometry(1.3, 2.2, 6, 1, true), "#3f7a3a", mat(0, 2.2, 0), 0.25, r),
-      part(new THREE.ConeGeometry(0.95, 1.8, 6, 1, true), "#4c8c42", mat(0, 3.2, 0), 0.25, r),
+      part(new THREE.ConeGeometry(1.3, 2.2, 6, 1, true), look.pine[0], mat(0, 2.2, 0), 0.25, r),
+      part(new THREE.ConeGeometry(0.95, 1.8, 6, 1, true), look.pine[1], mat(0, 3.2, 0), 0.25, r),
     ]),
     oak: mergeGeometries([
       part(new THREE.CylinderGeometry(0.16, 0.26, 1.8, 6, 1, true), "#6e4b2e", mat(0, 0.9, 0)),
-      part(new THREE.IcosahedronGeometry(1.25, 0), "#5c9a3f", mat(0, 2.6, 0, 0, 1, 0.9, 1), 0.3, r),
-      part(new THREE.IcosahedronGeometry(0.85, 0), "#6aa847", mat(0.6, 3.2, 0.3), 0.3, r),
-      part(new THREE.IcosahedronGeometry(0.7, 0), "#4f8a37", mat(-0.6, 2.9, -0.4), 0.3, r),
+      part(new THREE.IcosahedronGeometry(1.25, 0), look.oak[0], mat(0, 2.6, 0, 0, 1, 0.9, 1), 0.3, r),
+      part(new THREE.IcosahedronGeometry(0.85, 0), look.oak[1], mat(0.6, 3.2, 0.3), 0.3, r),
+      part(new THREE.IcosahedronGeometry(0.7, 0), look.oak[2], mat(-0.6, 2.9, -0.4), 0.3, r),
     ]),
     // Geniş, yayvan pembe taç; gövde hafif eğik
     sakura: mergeGeometries([
       part(new THREE.CylinderGeometry(0.13, 0.24, 1.9, 6, 1, true), "#4e342b", mat(0, 0.95, 0).multiply(new THREE.Matrix4().makeRotationZ(0.08))),
       part(new THREE.CylinderGeometry(0.06, 0.1, 1.2, 5, 1, true), "#4e342b", mat(0.45, 2.0, 0.1).multiply(new THREE.Matrix4().makeRotationZ(-0.7))),
-      part(new THREE.IcosahedronGeometry(1.3, 0), "#f7a3bd", mat(0.1, 2.55, 0, 0, 1.35, 0.75, 1.3), 0.25, r),
-      part(new THREE.IcosahedronGeometry(0.95, 0), "#fbbcd0", mat(1.0, 2.85, 0.35, 0, 1.1, 0.8, 1.1), 0.25, r),
-      part(new THREE.IcosahedronGeometry(0.85, 0), "#f08aac", mat(-0.85, 2.6, -0.45, 0, 1.15, 0.8, 1.1), 0.25, r),
-      part(new THREE.IcosahedronGeometry(0.65, 0), "#ffd3e1", mat(0.15, 3.3, -0.2), 0.25, r),
+      part(new THREE.IcosahedronGeometry(1.3, 0), look.sakura[0], mat(0.1, 2.55, 0, 0, 1.35, 0.75, 1.3), 0.25, r),
+      part(new THREE.IcosahedronGeometry(0.95, 0), look.sakura[1], mat(1.0, 2.85, 0.35, 0, 1.1, 0.8, 1.1), 0.25, r),
+      part(new THREE.IcosahedronGeometry(0.85, 0), look.sakura[2], mat(-0.85, 2.6, -0.45, 0, 1.15, 0.8, 1.1), 0.25, r),
+      part(new THREE.IcosahedronGeometry(0.65, 0), look.sakura[3], mat(0.15, 3.3, -0.2), 0.25, r),
     ]),
     rock: part(new THREE.IcosahedronGeometry(0.6, 0), "#8b8f94", undefined, 0.2, r),
     bush: mergeGeometries([
-      part(new THREE.IcosahedronGeometry(0.7, 0), "#4f8a3a", undefined, 0.3, r),
-      part(new THREE.IcosahedronGeometry(0.45, 0), "#5f9c45", mat(0.45, 0.15, 0.2), 0.3, r),
+      part(new THREE.IcosahedronGeometry(0.7, 0), look.bush[0], undefined, 0.3, r),
+      part(new THREE.IcosahedronGeometry(0.45, 0), look.bush[1], mat(0.45, 0.15, 0.2), 0.3, r),
     ]),
     stone: part(new THREE.CylinderGeometry(1, 1, 0.06, 7), "#b9b2a2", undefined, 0.1, r),
     post: part(new THREE.CylinderGeometry(0.07, 0.1, 2.6, 6), "#2f3440", mat(0, 1.3, 0)),
@@ -518,11 +581,11 @@ function propMeshes(b: Builder, scene: THREE.Scene): { bulbMaterial: THREE.MeshB
   const lambert = new THREE.MeshLambertMaterial({ vertexColors: true });
   const flat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const materials: Record<PropKind, THREE.Material> = {
-    pine: windMaterial(0.03, { side: THREE.DoubleSide }),
-    oak: windMaterial(0.04, { side: THREE.DoubleSide }),
-    sakura: windMaterial(0.04, { side: THREE.DoubleSide }),
+    pine: withCloudShadows(windMaterial(0.03, { side: THREE.DoubleSide })),
+    oak: withCloudShadows(windMaterial(0.04, { side: THREE.DoubleSide })),
+    sakura: withCloudShadows(windMaterial(0.04, { side: THREE.DoubleSide })),
     rock: flat,
-    bush: windMaterial(0.05),
+    bush: withCloudShadows(windMaterial(0.05)),
     stone: flat,
     post: lambert,
     bulb: new THREE.MeshBasicMaterial({ color: "#ffe9a8", fog: false }),
@@ -771,6 +834,7 @@ function smoke(at: THREE.Vector3): THREE.InstancedMesh {
 // ---------------------------------------------------------------------------
 
 export function buildWorld(opts: WorldOptions = {}): World {
+  SEASON = opts.season ?? seasonOf();
   const b = new Builder();
   const scene = new THREE.Scene();
   scene.background = SKY.clone();
@@ -791,9 +855,13 @@ export function buildWorld(opts: WorldOptions = {}): World {
   let shadowHalf = 0;
   const _right = new THREE.Vector3(), _up = new THREE.Vector3(), _snap = new THREE.Vector3();
 
-  // Gökyüzü kubbesi (tek draw call, sisten etkilenmez)
+  // Gökyüzü kubbesi (tek draw call, sisten etkilenmez); su aynı renkleri yansıtır
   const sky = skyDome(240);
   scene.add(sky.mesh);
+  waterEnv.uSkyH.value = sky.uniforms.uHorizon.value;
+  waterEnv.uSkyT.value = sky.uniforms.uTop.value;
+  waterEnv.uSunDir.value = sky.uniforms.uSunDir.value;
+  waterEnv.uFrozen.value = SEASON === "winter" ? 1 : 0;
 
   ground(b);
   plaza(b);
@@ -810,11 +878,18 @@ export function buildWorld(opts: WorldOptions = {}): World {
   tankPark(b);
   scene.add(pd.water, pd.ducks);
   fameStatics(b);
+  const kh = kahvehane(b);
+  const field = pitch(b);
+  scene.add(field.group);
+  djBooth(b);
+  stageTruss(b);
+  const lights = stageLights();
+  scene.add(lights.group);
   const dirSigns = directionPost(b);
   paths(b);
   nature(b);
 
-  const statics = new THREE.Mesh(mergeGeometries(b.statics), new THREE.MeshLambertMaterial({ vertexColors: true }));
+  const statics = new THREE.Mesh(mergeGeometries(b.statics), withCloudShadows(new THREE.MeshLambertMaterial({ vertexColors: true })));
   statics.matrixAutoUpdate = false;
   statics.castShadow = statics.receiveShadow = true;
   scene.add(statics);
@@ -830,6 +905,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     signsMesh([
       { at: dz.signAt, w: 2.8, h: 0.7, cell: SIGN_DUNGEON },
       { at: gr.signAt, w: 2.2, h: 0.55, cell: SIGN_GROVE },
+      { at: kh.signAt, w: 3.2, h: 0.8, cell: SIGN_KAHVE },
       ...dirSigns,
     ]),
   );
@@ -852,7 +928,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
     moonDir: MOON_DIR,
   });
   scene.add(night.group);
-  const grass = opts.grass === false
+  // Kışın çimen karın altında
+  const grass = opts.grass === false || SEASON === "winter"
     ? null
     : new GrassField(
         {
@@ -865,7 +942,15 @@ export function buildWorld(opts: WorldOptions = {}): World {
       );
   if (grass) {
     grass.mesh.receiveShadow = true;
+    withCloudShadows(grass.mesh.material as THREE.Material);
     scene.add(grass.mesh);
+  }
+  if (SEASON === "winter") pd.ducks.visible = false;
+  // Mangal ateşinin titreyen ışığı (gerçek lamba ışıkları açıksa)
+  const fire = (opts.lamps ?? 6) > 0 ? new THREE.PointLight("#ff8a3a", 0, 10, 1.7) : null;
+  if (fire) {
+    fire.position.copy(gr.smokeAt).setY(1.6);
+    scene.add(fire);
   }
   const env = { day: 1, lights: 0, dusk: 0 };
   let music = 0, musicOn = false;
@@ -914,6 +999,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       // Şiş çevrilince köz daha hızlı ve parlak titrer
       const flick = 0.5 + 0.5 * Math.sin(time * (7 + boost * 9)) * Math.sin(time * 3.3);
       coalColor.copy(coalA).lerp(coalB, Math.min(1, flick + boost * 0.5));
+      if (fire) fire.intensity = (0.6 + env.lights * 3.2) * (0.75 + 0.35 * flick + boost * 0.4);
       dayNight.update(Date.now());
       // Damlalar ışıktan etkilenmez: gece gökyüzüyle birlikte kararsınlar
       fnt.light.value = 0.35 + 0.65 * Math.min(1, hemi.intensity / 1.6);
@@ -936,6 +1022,17 @@ export function buildWorld(opts: WorldOptions = {}): World {
         sun.position.copy(sun.target.position).addScaledVector(dayNight.lightDir, 40);
       }
     },
+    setWeather(w: Weather) {
+      dayNight.setWeather(w);
+      waterEnv.uRain.value = w.kind === "rain" || w.kind === "storm" ? 0.4 + 0.6 * w.intensity : 0;
+    },
+    flash(v: number) {
+      hemi.intensity = dayNight.hemiBase + v * 2.5;
+    },
+    pitch: field,
+    stageLights: lights,
+    ripple: addRipple,
+    season: SEASON,
     setShadows(level: ShadowLevel) {
       const cfg = level === "off" ? null : SHADOW[level];
       sun.castShadow = !!cfg;

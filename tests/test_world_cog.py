@@ -298,3 +298,74 @@ async def test_world_stats_command_shows_upload(monkeypatch):
     assert fields["Video upload (son 10 sn)"] == "**42.5 Mbit/sn**"
     assert fields["Aktif akış"] == "7" and fields["Önbellek isabeti"] == "%90"
     assert fields["Toplam gönderilen"] == "2.50 GB" and fields["Oda / oyuncu"] == "2 / 15"
+
+
+def _member_req(body, secret="s3cret"):
+    async def _json():
+        return body
+    return SimpleNamespace(headers={"x-world-secret": secret}, json=_json)
+
+
+async def test_world_event_advances_daily_quests_and_grants_xp_once(db, monkeypatch):
+    import world_quests
+
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    guild = SimpleNamespace(id=1, get_member=lambda uid: object() if uid == 5 else None)
+    cog = world_cog.WorldCog(SimpleNamespace(get_guild=lambda gid: guild if gid == 1 else None))
+    today = world_cog._today()
+    quest = world_quests.daily(5, today)[0]
+
+    async def send(event, amount):
+        r = await cog.handle_world_event(_member_req({"guild": "1", "user": "5", "event": event, "amount": amount}))
+        return json.loads(r.text)
+
+    assert (await cog.handle_world_event(_member_req({"guild": "1", "user": "5", "event": "nope"}))).status == 400
+    assert (await send(quest.event, quest.target - 1 or 1))["ok"]
+    body = await send(quest.event, quest.target)
+    assert [c["key"] for c in body["completed"]] == [quest.key] or quest.target == 1
+    again = await send(quest.event, quest.target)
+    assert again["completed"] == []  # bir görev günde bir kez
+    row = await db.get_user_row(1, 5)
+    assert int(row["total_xp"]) == quest.xp
+
+
+async def test_profile_reports_album_stats_and_season(db, monkeypatch):
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    guild = SimpleNamespace(id=1, get_member=lambda uid: object())
+    cog = world_cog.WorldCog(SimpleNamespace(get_guild=lambda gid: guild))
+    season = world_cog._today().strftime("%Y-%m")
+    await db.add_world_stats(1, 5, {"fish:rare": 2, "goals": 3, f"s:{season}:tank_kills": 4})
+    await db.add_world_stats(1, 5, {"goals": 1})
+    r = json.loads((await cog.handle_profile(_member_req({"guild": "1", "user": "5"}))).text)
+    assert r["fish"]["rare"] == 2 and r["fish"]["legendary"] == 0
+    assert r["stats"]["goals"] == 4
+    assert r["season"]["tank_kills"] == 4
+    assert len(r["quests"]) == 3
+
+    top = json.loads((await cog.handle_season(_member_req({"guild": "1"}))).text)
+    assert top["season"] == season and top["top"][0]["kills"] == 4
+
+
+async def test_photo_requires_jpeg_and_channel(db, monkeypatch):
+    import base64
+
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    sent = []
+
+    class Channel(discord.abc.Messageable):
+        async def _get_channel(self):
+            return self
+
+        async def send(self, content=None, **kw):
+            sent.append((content, kw))
+
+    guild = SimpleNamespace(id=1, get_member=lambda uid: object(), get_channel=lambda cid: Channel())
+    cog = world_cog.WorldCog(SimpleNamespace(get_guild=lambda gid: guild))
+    monkeypatch.setattr(world_cog, "PHOTO_CHANNEL_ID", 0)
+    r = json.loads((await cog.handle_photo(_member_req({"guild": "1", "user": "5", "image": ""}))).text)
+    assert r == {"ok": False, "reason": "no_channel"}
+    monkeypatch.setattr(world_cog, "PHOTO_CHANNEL_ID", 42)
+    bad = await cog.handle_photo(_member_req({"guild": "1", "user": "5", "image": base64.b64encode(b"GIF89a").decode()}))
+    assert bad.status == 400
+    ok = json.loads((await cog.handle_photo(_member_req({"guild": "1", "user": "5", "image": base64.b64encode(b"\xff\xd8\xff\xe0jpeg").decode()}))).text)
+    assert ok["ok"] and len(sent) == 1

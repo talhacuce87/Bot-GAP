@@ -3,7 +3,7 @@
 // İsim billboard'u kameraya vertex shader'da döner ve uzakta solar (CPU'suz LOD).
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { EMOTES, FLAG_RUNNING, FLAG_SEATED, FLAG_WALKING } from "../../../shared/constants";
+import { EMOTES, FLAG_RUNNING, FLAG_SEATED, FLAG_WALKING, vehicleOf } from "../../../shared/constants";
 import type { Look } from "../../../shared/protocol";
 import { ATLAS_CELLS, type AvatarAtlas, NAME_GRID } from "./atlas";
 import type { ChibiLayer, LimbPose } from "./chibi";
@@ -28,7 +28,20 @@ export interface AvatarView {
   jumpY: number;
   /** Chibi kıyafeti; null/undefined ise varsayılan karakter. */
   outfit?: Look | null;
+  /** Zeminden ek yükseklik (sahne). */
+  lift?: number;
+  /** İkili etkileşim (beşlik/sarılma): başladığı an (sn) ve dönülecek yön. */
+  pair?: { kind: "five" | "hug"; at: number; face: number } | null;
+  /** Karaoke: elde mikrofon. */
+  mic?: boolean;
+  /** İsim etiketi gizli (saklambaçta saklananlar). */
+  hideName?: boolean;
+  /** Avatar çizilmez (birinci şahıs kamerada kendin); gölge ve evcil hayvan kalır. */
+  hidden?: boolean;
 }
+
+/** İkili etkileşim animasyonunun süresi (sn). */
+export const PAIR_ANIM = 1.8;
 
 /** Emote gövde animasyonlarının süresi (sn). */
 const EMOTE_ANIM = { wave: 1.2, hop: 0.45, dance: 2.6 } as const;
@@ -133,7 +146,7 @@ export class AvatarRenderer {
   private xAxis = new THREE.Vector3(1, 0, 0);
   private zAxis = new THREE.Vector3(0, 0, 1);
   private count = 0;
-  private limbs: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, time: 0 };
+  private limbs: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, time: 0 };
 
   constructor(
     atlas: AvatarAtlas,
@@ -179,16 +192,20 @@ export class AvatarRenderer {
   push(v: AvatarView, time: number, self = false): void {
     if (this.count >= MAX_AVATARS || v.alpha <= 0.01) return;
     const i = this.count++;
-    const seated = (v.flags & FLAG_SEATED) !== 0;
+    // Araçta: bisiklet ve kayıkta oturur (bisiklette pedal), kaykayda ayakta kayar
+    const vehicle = vehicleOf(v.flags);
+    const moving = (v.flags & FLAG_WALKING) !== 0;
+    const seated = (v.flags & FLAG_SEATED) !== 0 || vehicle === 1 || vehicle === 3;
     const airborne = v.jumpY > 0;
-    const walking = (v.flags & FLAG_WALKING) !== 0 && !seated && !airborne;
+    const walking = moving && !seated && !airborne && vehicle === 0;
     // Koşarken adımlar sıklaşır ve sallanma artar.
     const running = walking && (v.flags & FLAG_RUNNING) !== 0;
     const stepHz = running ? 14 : 9;
     const bob = walking ? Math.abs(Math.sin(time * stepHz + v.phase)) * (running ? 0.13 : 0.09) : 0;
     const sway = walking ? Math.sin(time * stepHz + v.phase) * (running ? 0.1 : 0.06) : 0;
     // Emote: dans döner, el sallama yana yatar, diğerleri zıplar.
-    let spin = 0, lean = 0, hop = 0, wave = 0, dance = 0;
+    let spin = 0, lean = 0, hop = 0, wave = 0, dance = 0, hug = 0;
+    let rot = v.rot;
     const et = time - v.emoteAt;
     if (v.emote >= 0 && et >= 0) {
       const anim = EMOTES[v.emote].anim;
@@ -196,8 +213,9 @@ export class AvatarRenderer {
         // Kol kalkıp inerken yumuşak zarf (chibi kolları için)
         const env = Math.min(1, et * 6, (EMOTE_ANIM[anim] - et) * 6);
         if (anim === "dance") {
-          spin = et * 6;
-          hop = Math.abs(Math.sin(et * 8)) * 0.16;
+          // Ortak saat: aynı anda dans edenler birlikte döner ve zıplar (senkron dans)
+          spin = time * 6;
+          hop = Math.abs(Math.sin(time * 8)) * 0.16;
           dance = env;
         } else if (anim === "wave") {
           lean = Math.sin(et * 14) * 0.2 * (1 - et / EMOTE_ANIM.wave);
@@ -207,13 +225,32 @@ export class AvatarRenderer {
         }
       }
     }
-    const y = (seated ? -SEAT_DROP : 0) + bob + hop + v.jumpY;
+    // Beşlik: karşıya dönüp sağ el yukarı, vuruş anında küçük zıplama • sarılma: kollar öne, hafif eğilme
+    const pt = v.pair ? time - v.pair.at : -1;
+    if (v.pair && pt >= 0 && pt < PAIR_ANIM) {
+      const env = Math.min(1, pt * 5, (PAIR_ANIM - pt) * 5);
+      rot = v.pair.face;
+      spin = 0;
+      if (v.pair.kind === "five") {
+        wave = env;
+        hop = Math.max(hop, Math.max(0, Math.sin(((pt - 0.35) / 0.3) * Math.PI)) * 0.18 * (pt > 0.35 && pt < 0.65 ? 1 : 0));
+      } else {
+        hug = env;
+        lean = 0;
+      }
+    }
+    // Araç yüksekliği (oturuşa göre): bisiklet selesi, kaykay tahtası, kayıkta su üstünde sallanma
+    const ride = vehicle === 1 ? 0.3 : vehicle === 2 ? 0.14 : vehicle === 3 ? -0.12 + Math.sin(time * 1.7 + v.phase) * 0.04 : 0;
+    const y = (seated && !vehicle ? -SEAT_DROP : 0) + ride + bob + hop + v.jumpY + (v.lift ?? 0);
     // Belirip kaybolurken alfa yerine ölçek: gövde opak kalır, sıralama sorunu olmaz.
     const s = v.alpha < 1 ? 0.3 + 0.7 * v.alpha : 1;
 
-    this.quat.setFromAxisAngle(this.up, v.rot + spin);
+    this.quat.setFromAxisAngle(this.up, rot + spin);
     if (sway !== 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, sway * 0.5));
     if (lean !== 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, lean));
+    if (hug > 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, 0.18 * hug));
+    // Kaykayda yana duruş ve hafif yatış
+    if (vehicle === 2) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, moving ? Math.sin(time * 2.2 + v.phase) * 0.08 : 0));
     this.pos.set(v.x, y, v.z);
     this.scl.set(s, s, s);
     this.m.compose(this.pos, this.quat, this.scl);
@@ -222,20 +259,23 @@ export class AvatarRenderer {
     l.seated = seated;
     l.wave = wave;
     l.dance = dance;
+    l.hug = hug;
+    l.pedal = vehicle === 1 && moving ? 11 : 0;
+    l.mic = v.mic ? 1 : 0;
     l.time = time;
-    const asChibi = this.chibi?.place(v.outfit, v.x, v.z, this.m, l, self) ?? false;
-    this.body.setMatrixAt(i, asChibi ? HIDDEN : this.m);
+    const asChibi = !v.hidden && (this.chibi?.place(v.outfit, v.x, v.z, this.m, l, self) ?? false);
+    this.body.setMatrixAt(i, asChibi || v.hidden ? HIDDEN : this.m);
     this.body.setColorAt(i, v.color);
 
-    this.m.makeTranslation(v.x, y + NAME_Y * s, v.z);
+    this.m.makeTranslation(v.x, y + NAME_Y * s + (vehicle === 1 ? 0.25 : 0), v.z);
     this.name.setMatrixAt(i, this.m);
     // Havadayken gölge küçülür: yükseklik hissi.
     const sh = 0.95 * s * Math.max(0.45, 1 - v.jumpY * 0.45);
-    this.m.makeScale(sh, 1, sh).setPosition(v.x, 0.04, v.z);
+    this.m.makeScale(sh, 1, sh).setPosition(v.x, 0.04 + (v.lift ?? 0), v.z);
     this.shadow.setMatrixAt(i, this.m);
 
     this.nameCell.setX(i, v.cell);
-    this.nameAlpha.setX(i, v.alpha);
+    this.nameAlpha.setX(i, v.hideName || v.hidden ? 0 : v.alpha);
   }
 
   end(): void {

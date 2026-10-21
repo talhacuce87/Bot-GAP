@@ -123,7 +123,14 @@ export class SettingsPanel {
       { value: 30, label: "30" },
     ], (v) => this.set({ fpsCap: v }));
 
+    this.section("Ses");
+    const pct = (v: number) => `${Math.round(v * 100)}%`;
+    this.slider("Sinema perdesi", s.cinemaVolume, 0, 1, 0.05, pct, (v) => this.set({ cinemaVolume: v }));
+    this.slider("Ekran paylaşımı", s.shareVolume, 0, 1, 0.05, pct, (v) => this.set({ shareVolume: v }));
+    this.slider("Efektler", s.sfxVolume, 0, 1, 0.05, pct, (v) => this.set({ sfxVolume: v }));
+
     this.section("Kamera ve kontrol");
+    this.toggleRow("Birinci şahıs kamera (V)", s.firstPerson, (v) => this.set({ firstPerson: v }));
     this.slider("Görüş açısı", s.fov, 50, 90, 5, (v) => `${v}°`, (v) => this.set({ fov: v }));
     this.slider("Bakış hassasiyeti", s.sensitivity, 0.3, 2.5, 0.1, (v) => `${v.toFixed(1)}×`, (v) => this.set({ sensitivity: v }));
     this.toggleRow("Dikey bakışı ters çevir", s.invertY, (v) => this.set({ invertY: v }));

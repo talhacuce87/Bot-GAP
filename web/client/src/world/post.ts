@@ -14,6 +14,7 @@ const GRADE = {
     uTint: { value: new THREE.Vector3(1, 1, 1) },
     uVignette: { value: 0.4 },
     uLift: { value: new THREE.Vector3(0, 0, 0) },
+    uFilter: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -28,6 +29,7 @@ const GRADE = {
     uniform vec3 uTint;
     uniform float uVignette;
     uniform vec3 uLift;
+    uniform float uFilter;
     varying vec2 vUv;
     void main() {
       vec4 c = texture2D(tDiffuse, vUv);
@@ -35,6 +37,15 @@ const GRADE = {
       c.rgb = max(mix(vec3(l), c.rgb, uSat), 0.0) * uTint;
       // Gölgelere hafif renk (gece mavi, akşam mor): düz siyah yerine
       c.rgb += uLift * (1.0 - smoothstep(0.0, 0.25, l));
+      // Fotoğraf filtreleri: 1 sıcak, 2 soğuk, 3 siyah-beyaz, 4 sepya, 5 nostalji
+      if (uFilter > 0.5) {
+        float L = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+        if (uFilter < 1.5) c.rgb *= vec3(1.12, 1.0, 0.84);
+        else if (uFilter < 2.5) c.rgb *= vec3(0.86, 0.98, 1.16);
+        else if (uFilter < 3.5) c.rgb = vec3(L) * 1.05;
+        else if (uFilter < 4.5) c.rgb = vec3(L) * vec3(1.22, 1.0, 0.72);
+        else c.rgb = mix(vec3(L), c.rgb, 0.55) * vec3(1.1, 1.0, 0.8) + vec3(0.025, 0.018, 0.0);
+      }
       float v = smoothstep(0.85, 0.2, length(vUv - 0.5));
       c.rgb *= mix(1.0, v, uVignette);
       gl_FragColor = c;
@@ -51,6 +62,8 @@ const LIFT_NIGHT = new THREE.Vector3(0.0, 0.006, 0.018);
 export interface PostOptions {
   bloom: boolean;
   grade: boolean;
+  /** Fotoğraf filtresi (0 yok); varsa renk düzenleme zorla açılır. */
+  filter?: number;
 }
 
 export class PostFx {
@@ -93,8 +106,11 @@ export class PostFx {
       this.bloom.strength = 0.85 * env.lights + 0.4 * env.day;
       this.bloom.radius = 0.55;
     }
-    this.grade.enabled = o.grade;
-    if (o.grade) {
+    const filter = o.filter ?? 0;
+    this.grade.enabled = o.grade || filter > 0;
+    this.grade.uniforms.uFilter.value = filter;
+    this.grade.uniforms.uVignette.value = filter ? 0.65 : 0.4;
+    if (this.grade.enabled) {
       const u = this.grade.uniforms;
       const night = 1 - env.day;
       (u.uTint.value as THREE.Vector3).copy(TINT_DAY).lerp(TINT_NIGHT, night).lerp(TINT_DUSK, Math.min(1, env.dusk * 1.3));

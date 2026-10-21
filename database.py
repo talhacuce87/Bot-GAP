@@ -153,6 +153,30 @@ CREATE TABLE IF NOT EXISTS fishing (
     PRIMARY KEY (guild_id, user_id)
 );
 
+-- GAP Dünyası sayaçları (world_quests.py): balık albümü, gol, oyun galibiyeti, tank vuruşu.
+-- Sezonluk anahtarlar "s:<YYYY-MM>:<ad>" biçimindedir.
+CREATE TABLE IF NOT EXISTS world_stats (
+    guild_id INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    key      TEXT    NOT NULL,
+    value    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_world_stats_key
+    ON world_stats (guild_id, key, value DESC);
+
+-- GAP Dünyası günlük görevleri: gün (Türkiye), görev, ilerleme, tamamlandı mı
+CREATE TABLE IF NOT EXISTS world_quests (
+    guild_id INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    day      TEXT    NOT NULL,
+    key      TEXT    NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    done     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, day, key)
+);
+
 -- Chibi karakter kıyafeti (outfit.py): parça kimlikleri ve renkler, JSON
 CREATE TABLE IF NOT EXISTS avatar_outfit (
     guild_id   INTEGER NOT NULL,
@@ -683,6 +707,92 @@ async def record_fish_catch(
             await db.rollback()
             raise
 
+
+
+async def add_world_stats(guild_id: int, user_id: int, deltas: dict[str, int]) -> None:
+    """Dünya sayaçlarını artırır (balık albümü, gol, galibiyet, sezon anahtarları)."""
+    if not deltas:
+        return
+    async with _db() as db:
+        await db.executemany(
+            """
+            INSERT INTO world_stats (guild_id, user_id, key, value) VALUES (?, ?, ?, ?)
+            ON CONFLICT (guild_id, user_id, key) DO UPDATE SET value = value + excluded.value
+            """,
+            [(guild_id, user_id, k, int(v)) for k, v in deltas.items()],
+        )
+        await db.commit()
+
+
+async def get_world_stats(guild_id: int, user_id: int) -> dict[str, int]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT key, value FROM world_stats WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        ) as cur:
+            return {row[0]: int(row[1]) async for row in cur}
+
+
+async def world_stat_top(guild_id: int, key: str, limit: int = 10) -> list[tuple[int, int]]:
+    """Bir sayaçta en yüksek üyeler: [(üye, değer)], büyükten küçüğe."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT user_id, value FROM world_stats WHERE guild_id = ? AND key = ? AND value > 0 "
+            "ORDER BY value DESC, user_id LIMIT ?",
+            (guild_id, key, limit),
+        ) as cur:
+            return [(int(r[0]), int(r[1])) async for r in cur]
+
+
+async def get_world_quests(guild_id: int, user_id: int, day: str) -> dict[str, tuple[int, bool]]:
+    """{görev: (ilerleme, tamamlandı)} — o günün kayıtlı görev ilerlemesi."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT key, progress, done FROM world_quests WHERE guild_id = ? AND user_id = ? AND day = ?",
+            (guild_id, user_id, day),
+        ) as cur:
+            return {r[0]: (int(r[1]), bool(r[2])) async for r in cur}
+
+
+async def advance_world_quests(
+    guild_id: int, user_id: int, day: str, quests: list[tuple[str, int]], amounts: dict[str, int],
+) -> list[str]:
+    """
+    Günün görevlerini (anahtar, hedef) tek işlemde ilerletir; `amounts` görev başına artış.
+    Bu çağrıda tamamlanan görevlerin anahtarlarını döner (her görev bir kez tamamlanır).
+    """
+    completed: list[str] = []
+    async with _db() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            for key, target in quests:
+                add = int(amounts.get(key, 0))
+                if add <= 0:
+                    continue
+                async with db.execute(
+                    "SELECT progress, done FROM world_quests WHERE guild_id = ? AND user_id = ? AND day = ? AND key = ?",
+                    (guild_id, user_id, day, key),
+                ) as cur:
+                    row = await cur.fetchone()
+                progress, done = (int(row[0]), bool(row[1])) if row else (0, False)
+                if done:
+                    continue
+                progress = min(target, progress + add)
+                done = progress >= target
+                await db.execute(
+                    """
+                    INSERT INTO world_quests (guild_id, user_id, day, key, progress, done) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (guild_id, user_id, day, key) DO UPDATE SET progress = excluded.progress, done = excluded.done
+                    """,
+                    (guild_id, user_id, day, key, progress, int(done)),
+                )
+                if done:
+                    completed.append(key)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return completed
 
 
 async def fish_caught_today(guild_id: int, user_id: int) -> bool:

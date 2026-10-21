@@ -2,7 +2,27 @@
 import { type Act, SEND_HZ } from "../../shared/constants";
 import type { Shot } from "../../shared/tank";
 import type { BattleState } from "../../shared/protocol";
-import { type BoardEntry, type ChatLine, type ClientEvent, encodeState, type FishCatch, type Look, type PlayerState, readSnapshot, type ServerEvent, STATE_BYTES, type WardrobeInfo, type WatchState } from "../../shared/protocol";
+import {
+  type BallState,
+  type BoardEntry,
+  type ChatLine,
+  type ClientEvent,
+  encodeState,
+  type FishCatch,
+  type Look,
+  type PlayerState,
+  type Profile,
+  type QuestDone,
+  readSnapshot,
+  type ServerEvent,
+  type StageState,
+  STATE_BYTES,
+  type TableState,
+  type TagState,
+  type WardrobeInfo,
+  type WatchState,
+  type Weather,
+} from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
 
 export type NetStatus = "connecting" | "online" | "offline" | "denied" | "notfound";
@@ -43,6 +63,21 @@ export class Net {
   onOpen: (url: string) => void = () => {};
   /** Odadaki ekran paylaşımı değişti (`sid` 0: yok). */
   onShare: (sid: number, name: string) => void = () => {};
+  onWeather: (w: Weather) => void = () => {};
+  onFireworks: (seed: number, at: number, count: number) => void = () => {};
+  /** Kendi evcil hayvanımız/kamuflajımız sunucudan döndü (diğerlerininki Remotes'a yazılır). */
+  onCosm: (sid: number, pet: string | null, skin: string | null) => void = () => {};
+  onTable: (t: TableState) => void = () => {};
+  onBall: (b: BallState) => void = () => {};
+  onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number]) => void = () => {};
+  onScore: (score: [number, number]) => void = () => {};
+  onTag: (s: TagState | null) => void = () => {};
+  onPairReq: (from: number, name: string, kind: "five" | "hug") => void = () => {};
+  onPair: (a: number, b: number, kind: "five" | "hug") => void = () => {};
+  onQuest: (completed: QuestDone[]) => void = () => {};
+  onProfile: (sid: number, name: string, profile: Profile | null, error?: string) => void = () => {};
+  onStage: (s: StageState) => void = () => {};
+  onSeason: (season: string, top: { id: string; name: string; kills: number; wins: number }[]) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -203,6 +238,55 @@ export class Net {
       }
       case "leave":
         this.remotes.leave(ev.sid);
+        break;
+      case "weather":
+        this.onWeather(ev.weather);
+        break;
+      case "fireworks":
+        this.onFireworks(ev.seed, ev.at, ev.count);
+        break;
+      case "cosm":
+        this.remotes.setCosmetics(ev.sid, ev.pet, ev.skin);
+        this.onCosm(ev.sid, ev.pet, ev.skin);
+        break;
+      case "table": {
+        const { t: _t, ...table } = ev;
+        this.onTable(table);
+        break;
+      }
+      case "ball": {
+        const { t: _t, ...ball } = ev;
+        this.onBall(ball);
+        break;
+      }
+      case "goal":
+        this.onGoal(ev.side, ev.sid, ev.name, ev.score);
+        break;
+      case "score":
+        this.onScore(ev.score);
+        break;
+      case "tag":
+        this.onTag(ev.state);
+        break;
+      case "pairreq":
+        this.onPairReq(ev.from, ev.name, ev.kind);
+        break;
+      case "pair":
+        this.onPair(ev.a, ev.b, ev.kind);
+        break;
+      case "quest":
+        this.onQuest(ev.completed);
+        break;
+      case "profile":
+        this.onProfile(ev.sid, ev.name, ev.profile, ev.error);
+        break;
+      case "stage": {
+        const { t: _t, ...stage } = ev;
+        this.onStage(stage);
+        break;
+      }
+      case "season":
+        this.onSeason(ev.season, ev.top);
         break;
       case "pong": {
         // NTP benzeri: en düşük RTT'li örneğin ofseti en güvenilirdir.

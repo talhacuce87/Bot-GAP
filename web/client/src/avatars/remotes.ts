@@ -27,6 +27,10 @@ export class Remote implements AvatarView {
   emote = -1;
   emoteAt = 0;
   jumpY = 0;
+  lift = 0;
+  mic = false;
+  hideName = false;
+  pair: AvatarView["pair"] = null;
   private lastJumpSeq = -1;
   private jumpT = JUMP_TIME;
   leaving = false;
@@ -155,6 +159,14 @@ export class Remotes {
   setLook(sid: number, look: PlayerInfo["look"]): void {
     const r = this.map.get(sid);
     if (r) r.info.look = look;
+  }
+
+  /** Evcil hayvan ve tank kamuflajı. */
+  setCosmetics(sid: number, pet: string | null, skin: string | null): void {
+    const r = this.map.get(sid);
+    if (!r) return;
+    r.info.pet = pet;
+    r.info.skin = skin;
   }
 
   /** Sürgün durumu değişti: etiketi güncelle, ışınlanmayı interpolasyonsuz uygula. */

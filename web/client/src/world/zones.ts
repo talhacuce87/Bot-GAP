@@ -2,6 +2,7 @@
 // Hepsi Builder'a parça ekler; kendi draw call'ları yalnızca animasyonlu kısımlar (köz, duman, su, ördekler).
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { DOCK } from "../../../shared/zones";
 import type { Builder } from "./builder";
 import { flatMat, mat, part, timeUniform } from "./geo";
 
@@ -198,18 +199,19 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
   box(b, 0.66, 0.08, 0.46, "#f2f2f2", gx + 3.2, 0.43, gz + 2.6, 0.3);
   b.colliders.circle(gx + 3.2, gz + 2.6, 0.4);
 
-  // Ağaçlar arası ışık zinciri: 3 direk, sarkan küçük ampuller
-  const posts: [number, number][] = [[gx - 2.5, gz - 4.6], [gx + 3.8, gz - 3.6], [gx + 4.6, gz + 4.2]];
+  // Ağaçlar arası ışık zinciri: oturma alanını çevreleyen 4 direk, sarkan küçük ampuller (kapalı halka)
+  const posts: [number, number][] = [[gx - 2.5, gz - 4.6], [gx + 3.8, gz - 3.6], [gx + 4.6, gz + 4.2], [gx - 4.8, gz + 1.4]];
   for (const [px, pz] of posts) {
     b.add(part(new THREE.CylinderGeometry(0.07, 0.09, 2.8, 6), WOOD_DARK, mat(px, 1.4, pz)));
     b.colliders.circle(px, pz, 0.12);
   }
-  for (let s = 0; s < posts.length - 1; s++) {
-    const [ax, az] = posts[s], [bx, bz] = posts[s + 1];
-    for (let i = 1; i < 10; i++) {
-      const t = i / 10;
-      const sag = Math.sin(t * Math.PI) * 0.5;
-      b.prop("bulb", mat(ax + (bx - ax) * t, 2.7 - sag, az + (bz - az) * t, 0, 0.32));
+  for (let s = 0; s < posts.length; s++) {
+    const [ax, az] = posts[s], [bx, bz] = posts[(s + 1) % posts.length];
+    const n = Math.round(Math.hypot(bx - ax, bz - az) * 2);
+    for (let i = 1; i < n; i++) {
+      const t = i / n;
+      const sag = Math.sin(t * Math.PI) * 0.55;
+      b.prop("bulb", mat(ax + (bx - ax) * t, 2.7 - sag, az + (bz - az) * t, 0, 0.3));
     }
   }
 
@@ -257,6 +259,26 @@ export function signPost(b: Builder, x: number, z: number, h: number): void {
 export const POND = { x: 24, z: 56 };
 
 /**
+ * Suyun çevresi: gökyüzü yansıması (DayNight renkleri), yağmur damlaları, donma ve dalga halkaları
+ * (kıyıda yürüyen, balık, kayık). scene.ts gökyüzü uniform'larını buraya bağlar.
+ */
+export const RIPPLES = 8;
+export const waterEnv = {
+  uSkyH: { value: new THREE.Color("#a9cfee") },
+  uSkyT: { value: new THREE.Color("#5b8fd6") },
+  uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+  uRain: { value: 0 },
+  uFrozen: { value: 0 },
+  uRipples: { value: Array.from({ length: RIPPLES }, () => new THREE.Vector3(0, 0, -100)) },
+};
+let rippleNext = 0;
+
+/** Suya bir halka bırak (x, z dünya; `time` döngü saati sn). */
+export function addRipple(x: number, z: number, time: number): void {
+  waterEnv.uRipples.value[rippleNext++ % RIPPLES].set(x, z, time);
+}
+
+/**
  * Su yüzeyi: dalga, parıltı, kıyı köpüğü ve `ring` noktasının çevresinde yayılan halkalar
  * (gölde ördek, çeşmede suyun düştüğü yer); hepsi fragment shader'da. `ringR` > 0 ise halkalar
  * noktadan değil o yarıçaptaki çemberden yayılır; `hole` halkanın tam ortasını boş bırakır.
@@ -275,11 +297,27 @@ export function waterMaterial(
     shader.uniforms.uDuck = ring;
     shader.uniforms.uDeep = { value: new THREE.Color("#3a7fba") };
     shader.uniforms.uShallow = { value: new THREE.Color("#5ea8db") };
+    Object.assign(shader.uniforms, waterEnv);
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec2 vWater;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWater = (modelMatrix * vec4(transformed, 1.0)).xz;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nuniform float uTime;\nuniform vec2 uDuck;\nuniform vec3 uDeep;\nuniform vec3 uShallow;\nvarying vec2 vWater;")
+      .replace(
+        "#include <common>",
+        `#include <common>
+        uniform float uTime;
+        uniform vec2 uDuck;
+        uniform vec3 uDeep;
+        uniform vec3 uShallow;
+        uniform vec3 uSkyH;
+        uniform vec3 uSkyT;
+        uniform vec3 uSunDir;
+        uniform float uRain;
+        uniform float uFrozen;
+        uniform vec3 uRipples[${RIPPLES}];
+        varying vec2 vWater;
+        float vWave;`,
+      )
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
@@ -292,7 +330,43 @@ export function waterMaterial(
         float dd = abs(distance(vWater, uDuck) - ${ringR.toFixed(2)});
         diffuseColor.rgb += max(sin(dd * 10.0 - uTime * 5.0), 0.0) * exp(-dd * 1.5) * smoothstep(${hole.toFixed(2)}, ${(hole + 0.2).toFixed(2)}, dd) * 0.16;
         float shore = smoothstep(0.88, 1.0, d + 0.03 * sin(atan(q.y, q.x) * 7.0 + uTime * 1.5));
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.9, 0.95), shore * 0.5);`,
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.9, 0.95), shore * 0.5);
+        vWave = w;
+        // Dalga halkaları: yürüyen, balık, kayık
+        for (int i = 0; i < ${RIPPLES}; i++) {
+          vec3 rp = uRipples[i];
+          float age = uTime - rp.z;
+          if (age < 0.0 || age > 3.0) continue;
+          float ring = abs(distance(vWater, rp.xy) - age * 1.3);
+          diffuseColor.rgb += (1.0 - smoothstep(0.0, 0.1, ring)) * (1.0 - age / 3.0) * 0.28;
+        }
+        // Yağmur damlaları: hücre başına rastgele anda açılan küçük halkalar
+        if (uRain > 0.0) {
+          vec2 g = vWater * 1.6;
+          vec2 id = floor(g);
+          float h = fract(sin(dot(id, vec2(12.9898, 78.233))) * 43758.5453);
+          float t = fract(uTime * 0.9 + h);
+          vec2 c = id + 0.5 + (vec2(h, fract(h * 7.3)) - 0.5) * 0.6;
+          float rr = abs(length(g - c) - t * 0.45);
+          diffuseColor.rgb += (1.0 - smoothstep(0.0, 0.06, rr)) * (1.0 - t) * 0.3 * uRain * step(h, uRain);
+        }
+        // Donmuş göl: buz rengi, dalgasız
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.88, 0.95) + w * 0.015, uFrozen);`,
+      )
+      .replace(
+        "#include <emissivemap_fragment>",
+        `#include <emissivemap_fragment>
+        {
+          // Gökyüzü yansıması (bakış açısı yataylaştıkça artar) ve güneş parıltısı
+          vec3 wpos = vec3(vWater.x, 0.03, vWater.y);
+          vec3 V = normalize(cameraPosition - wpos);
+          vec3 N = normalize(vec3(vWave * 0.05, 1.0, vWave * 0.03));
+          float fres = pow(1.0 - max(dot(V, N), 0.0), 4.0);
+          vec3 R = reflect(-V, N);
+          vec3 sky = mix(uSkyH, uSkyT, pow(max(R.y, 0.0), 0.7));
+          float glint = pow(max(dot(R, normalize(uSunDir)), 0.0), 240.0) * 2.5;
+          totalEmissiveRadiance += (sky * fres * 0.7 + vec3(1.0, 0.95, 0.85) * glint) * (1.0 - uFrozen * 0.7);
+        }`,
       );
   };
   m.customProgramCacheKey = () => `water-${cx}-${cz}-${r}-${ringR}-${hole}`;
@@ -336,6 +410,15 @@ export function pond(b: Builder): { water: THREE.Mesh; ducks: THREE.InstancedMes
   }
   b.colliders.circle(px, pz, r);
   b.clearCircle(px, pz, r + 0.9);
+
+  // Kayık iskelesi: batı kıyısında, suya uzanan tahtalar
+  for (let i = 0; i < 6; i++) {
+    box(b, 0.42, 0.08, 1.5, i % 2 ? "#8f6640" : "#9b7451", DOCK.x - 1.2 + i * 0.45, 0.18, DOCK.z, 0, 0.08);
+  }
+  for (const [ox, oz] of [[-1.3, -0.7], [-1.3, 0.7], [1.2, -0.7], [1.2, 0.7]]) {
+    b.add(part(new THREE.CylinderGeometry(0.07, 0.08, 0.7, 6), WOOD_DARK, mat(DOCK.x + ox, 0.12, DOCK.z + oz)));
+  }
+  b.clearCircle(DOCK.x, DOCK.z, 2.4);
 
   // Göle bakan bank
   const bx = px - 0.2, bz = pz - r - 2;

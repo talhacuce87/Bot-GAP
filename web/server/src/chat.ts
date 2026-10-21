@@ -19,8 +19,8 @@ export const BOT_COMMANDS: Record<string, string> = {
 };
 
 export const HELP_TEXT =
-  "Komutlar: !izle <link> (sinemayı aç) · !paylaş (ekranını perdeye yansıt) · !xp · !seri · !ses · !sıra · !lb · !gardırop · !yardım. " +
-  "Diğer her şey odaya mesaj olarak gider.";
+  "Komutlar: !izle <link> (sinemayı aç) · !kuyruk <link> (şarkı sıraya) · !kuyruk · !geç · !paylaş · !hava · !havaifişek · " +
+  "!ebelemece · !saklambaç · !katıl · !savaş · !xp · !seri · !ses · !sıra · !lb · !gardırop · !yardım. Diğer her şey odaya mesaj olarak gider.";
 
 /** Kontrol karakterlerini atar, boşlukları sadeleştirir, uzunluğu sınırlar. Boşsa null. */
 export function cleanChat(raw: unknown): string | null {
@@ -64,6 +64,20 @@ export interface ChatContext {
   cinema(url: string): Promise<{ url: string; title: string; reused: boolean } | { error: string }>;
   /** Sinema açma sıklığı sınırı (true: izin var). */
   cinemaAllowed(): boolean;
+  /** Dünya odasının oyunları (savaş odasında ve izleme odasında yok). */
+  world?: WorldCommands;
+}
+
+export interface WorldCommands {
+  weather(): string;
+  /** false: bekleme süresi dolmadı. */
+  fireworks(): boolean;
+  /** Ebelemece/saklambaç turu aç; hata metni ya da null. */
+  tag(mode: "ebelemece" | "saklambac"): string | null;
+  tagJoin(): void;
+  enqueue(url: string): Promise<string>;
+  queueText(): string;
+  skip(): void;
 }
 
 /** Komutu çalıştırır. Bilinmeyen komutta yardım önerir. */
@@ -81,6 +95,26 @@ export async function runCommand(ctx: ChatContext, cmd: string, args: string): P
     ctx.announce(`🎬 ${ctx.user.name} ${what}: ${r.title}`, { url: r.url, label: "🍿 Tarayıcıda izle" });
     return;
   }
+
+  const w = ctx.world;
+  if (cmd === "hava" || cmd === "weather") return ctx.reply(w ? w.weather() : "Hava bilgisi burada yok.");
+  if (w && (cmd === "havaifisek" || cmd === "fisek" || cmd === "fireworks")) {
+    if (!w.fireworks()) return ctx.reply("🎆 Biraz bekle, gökyüzü daha yeni aydınlandı.");
+    return ctx.announce(`🎆 ${ctx.user.name} havai fişek attı!`);
+  }
+  if (w && (cmd === "ebelemece" || cmd === "saklambac")) {
+    const err = w.tag(cmd);
+    if (err) return ctx.reply(err);
+    const label = cmd === "ebelemece" ? "🏃 Ebelemece" : "🙈 Saklambaç";
+    return ctx.announce(`${label}: ${ctx.user.name} oyun açtı! 20 sn içinde !katıl yaz (ya da düğmeye bas).`);
+  }
+  if (w && cmd === "katil") return w.tagJoin();
+  if (w && (cmd === "kuyruk" || cmd === "queue" || cmd === "sarki")) {
+    if (!args) return ctx.reply(w.queueText());
+    if (!ctx.cinemaAllowed()) return ctx.reply("🎵 Biraz bekle, az önce eklendi.");
+    return ctx.reply(await w.enqueue(args));
+  }
+  if (w && (cmd === "gec" || cmd === "skip")) return w.skip();
 
   const botCmd = BOT_COMMANDS[cmd];
   if (botCmd) {

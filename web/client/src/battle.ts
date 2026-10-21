@@ -1,9 +1,9 @@
 // Tank savaşı istemcisi: arena, takım seçimi, herkes tankta. Dünyadan "!savaş" ile girilir (sayfa yenilenmeden, mode.ts).
 // Kurallar sunucuda (server/src/battle.ts); burada sürüş, nişan, çizim ve arayüz var.
 import * as THREE from "three";
-import { TANK_HP, TEAMS, type Team } from "../../shared/arena";
+import { MODES, TANK_HP, TEAMS, type Team } from "../../shared/arena";
 import { INTERP_DELAY_MS } from "../../shared/constants";
-import type { BattleState, Fighter } from "../../shared/protocol";
+import { type BattleMode, type BattleState, type Fighter, SKINS } from "../../shared/protocol";
 import { DEFAULT_ELEV, FIRE_COOLDOWN_MS } from "../../shared/tank";
 import { AvatarAtlas } from "./avatars/atlas";
 import { colorFor } from "./avatars/avatars";
@@ -15,16 +15,30 @@ import { Input } from "./input/input";
 import { Net } from "./net";
 import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
-import { onSettings, settings } from "./settings";
+import { onSettings, settings, updateSettings } from "./settings";
 import { Chat } from "./ui/chat";
 import { Hud } from "./ui/hud";
+import { button, Panel } from "./ui/panel";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { buildArena } from "./world/arena";
 import type { World } from "./world/scene";
 import { aimRay, ShellFx, TankView } from "./world/tank";
 
-/** Takım tonu, tankın nötr metaliyle çarpılır. */
+/** Takım tonu, tankın nötr metaliyle çarpılır; herkes tekte nötr. */
 const TINTS = ["#d8705f", "#6f95e6"];
+const FFA_TINT = "#c9c4b8";
+
+/** Bayrak: direk ve dalgalanan bez (takım renginde). */
+function flagMesh(color: string): THREE.Group {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.6, 6), new THREE.MeshLambertMaterial({ color: "#e8e8e8" }));
+  pole.position.y = 1.3;
+  const cloth = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.75, 6, 1), new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide, emissive: color, emissiveIntensity: 0.25 }));
+  cloth.position.set(0.62, 2.2, 0);
+  cloth.name = "cloth";
+  g.add(pole, cloth);
+  return g;
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text = ""): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -123,19 +137,67 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   // ---- Arayüz ----
   const exit = el("button", "battle-exit", hudRoot, "🏠 Dünyaya dön");
   exit.addEventListener("click", () => switchMode(false));
+  const seasonBtn = el("button", "battle-exit battle-season", hudRoot, "🏆 Sezon");
+  const seasonPanel = new Panel(hudRoot, "🏆 TANK SEZONU", "season-panel");
+  seasonBtn.addEventListener("click", () => {
+    seasonPanel.body.replaceChildren(el("div", "pc-loading", document.createElement("div"), "Yükleniyor…"));
+    seasonPanel.open();
+    net.send({ t: "season" });
+  });
+  net.onSeason = (season, top) => {
+    const b = seasonPanel.body;
+    b.replaceChildren();
+    if (!season) {
+      el("div", "pc-loading", b, "Sezon tablosu Discord'dan girenlere açık (bot bağlı olmalı).");
+      return;
+    }
+    const [y, m] = season.split("-");
+    el("div", "settings-note", b, `${new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("tr", { month: "long", year: "numeric" })} · her ay sıfırlanır`);
+    const list = el("ol", "queue-list season-list", b);
+    if (!top.length) el("li", "settings-note", list, "Bu ay henüz kimse tank vurmadı.");
+    top.forEach((e, i) => el("li", "", list, `${["🥇", "🥈", "🥉"][i] ?? ""} ${e.name} · ${e.kills} vuruş · ${e.wins} galibiyet`));
+  };
   const board = el("div", "panel battle-board", hudRoot);
   const banner = el("div", "battle-banner", hudRoot);
   const feed = el("div", "battle-feed", hudRoot);
   const myHp = el("div", "panel battle-hp", hudRoot);
   const crosshair = el("div", "crosshair", hudRoot);
   const picker = el("div", "panel battle-picker", hudRoot);
-  el("h2", "", picker, "⚔️ Tank Savaşı — takımını seç");
+  const pickTitle = el("h2", "", picker, "⚔️ Tank Savaşı — takımını seç");
+  // Mod: takım savaşı, herkes tek, bayrak kapmaca (değiştirmek maçı baştan başlatır)
+  const modeRow = el("div", "settings-seg battle-modes", picker);
+  const modeBtns = MODES.map((m) => {
+    const b = el("button", "", modeRow, m.name);
+    b.addEventListener("click", () => net.send({ t: "bmode", mode: m.id as BattleMode }));
+    return b;
+  });
   const pickBtns = TEAMS.map((t, i) => {
     const b = el("button", "team-btn", picker);
     b.style.background = t.color;
     b.addEventListener("click", () => net.send({ t: "team", team: i as Team }));
     return b;
   });
+  const joinBtn = el("button", "team-btn ffa-btn", picker, "Savaşa katıl");
+  joinBtn.addEventListener("click", () => net.send({ t: "team", team: 0 }));
+  // Kamuflaj
+  const skinRow = el("div", "settings-seg battle-skins", picker);
+  const sendCosm = () => net.send({ t: "cosm", pet: settings.pet || null, skin: settings.skin || null });
+  const renderSkins = () => {
+    skinRow.replaceChildren();
+    for (const sk of SKINS) {
+      button(skinRow, sk.name, () => {
+        updateSettings({ skin: sk.id });
+        sendCosm();
+        renderSkins();
+      }, settings.skin === sk.id ? "active" : "");
+    }
+  };
+  renderSkins();
+  const prevStatus = net.onStatus;
+  net.onStatus = (st) => {
+    prevStatus(st);
+    if (st === "online") sendCosm();
+  };
   el("p", "battle-help", picker, input.touch
     ? "Joystick: sür · sağ yarı: nişan · ⤒: ateş · 3 isabette tank yanar, 5 sn sonra üste doğarsın."
     : "W/S/A/D: sür · fare: nişan · sol tık/Space: ateş · Esc: imleci bırak · 3 isabette tank yanar, 5 sn sonra üste doğarsın.");
@@ -150,17 +212,32 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   const fighter = (sid: number): Fighter | undefined => state.fighters.find((f) => f.sid === sid);
   const teamColor = (sid: number) => {
     const t = fighter(sid)?.team ?? -1;
-    return t >= 0 ? TEAMS[t as Team].color : "#ccc";
+    return t >= 0 && mode() !== "ffa" ? TEAMS[t as Team].color : "#e8e2d0";
   };
+  const tintOf = (team: number) => (mode() === "ffa" ? FFA_TINT : TINTS[team as Team]);
+  // Bayrak kapmaca bayrakları
+  const flags = TEAMS.map((t) => {
+    const f = flagMesh(t.color);
+    f.visible = false;
+    scene.add(f);
+    return f;
+  });
 
+  const mode = () => state.mode ?? "tdm";
   const renderUi = () => {
     const mine = fighter(net.you);
     const counts = [0, 1].map((t) => state.fighters.filter((f) => f.team === t).length);
+    const ffa = mode() === "ffa";
+    pickTitle.textContent = ffa ? "⚔️ Tank Savaşı — herkes tek" : mode() === "ctf" ? "🚩 Bayrak kapmaca — takımını seç" : "⚔️ Tank Savaşı — takımını seç";
+    modeBtns.forEach((b, i) => b.classList.toggle("active", MODES[i].id === mode()));
     pickBtns.forEach((b, i) => {
       const full = counts[i] + (mine?.team === i ? 0 : 1) - counts[1 - i] + (mine?.team === 1 - i ? 1 : 0) > 1;
       b.textContent = `${TEAMS[i].name} (${counts[i]})${mine?.team === i ? " ✓" : ""}`;
       b.disabled = full || mine?.team === i;
+      b.style.display = ffa ? "none" : "";
     });
+    joinBtn.style.display = ffa ? "" : "none";
+    joinBtn.disabled = !!mine && mine.team >= 0;
     if (!mine || mine.team < 0) picker.classList.add("show");
     switchBtn.classList.toggle("show", !!mine && mine.team >= 0);
     myHp.classList.toggle("show", !!mine && mine.team >= 0);
@@ -180,7 +257,8 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
         scene.add(foe.view.group);
         foes.set(f.sid, foe);
       }
-      foe.view.setTint(TINTS[f.team as Team]);
+      foe.view.setTint(tintOf(f.team));
+      foe.view.setSkin(f.skin);
       foe.view.dead = !f.alive;
     }
     for (const [sid, foe] of foes) {
@@ -191,7 +269,8 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
     }
     const mine = fighter(net.you);
     if (mine && mine.team >= 0) {
-      myView.setTint(TINTS[mine.team as Team]);
+      myView.setTint(tintOf(mine.team));
+      myView.setSkin(settings.skin);
       myView.dead = !mine.alive;
       if (!mine.alive && me.driving) me.driving.v = 0; // enkaz yuvarlanmasın
     }
@@ -313,7 +392,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
       foe.label.style.transform = `translate(${((labelPos.x + 1) / 2) * innerWidth}px, ${((1 - labelPos.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
       const text = `${nameOf(sid)} ${f.alive ? "▮".repeat(f.hp) + "▯".repeat(Math.max(0, TANK_HP - f.hp)) : "💥"}`;
       if (foe.label.textContent !== text) foe.label.textContent = text;
-      foe.label.style.color = TEAMS[f.team as Team].color;
+      foe.label.style.color = teamColor(sid);
     }
 
     if (me.driving && alive) {
@@ -325,17 +404,34 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
       crosshair.classList.remove("show");
     }
 
+    // Bayraklar: taşıyanın tankının üstünde ya da yerde
+    flags.forEach((f, i) => {
+      const fs = state.flags?.[i];
+      f.visible = mode() === "ctf" && !!fs;
+      if (!fs) return;
+      const carrier = fs.carrier === net.you ? myView : fs.carrier ? foes.get(fs.carrier)?.view : null;
+      if (carrier) f.position.set(carrier.x, 1.6, carrier.z);
+      else f.position.set(fs.x, 0, fs.z);
+      const cloth = f.getObjectByName("cloth")!;
+      cloth.rotation.y = Math.sin(time * 3 + i) * 0.25;
+    });
+
     // Skor, süre, evre mesajı
     const left = state.endsAt ? mmss(state.endsAt - serverNow) : "";
-    const boardText = `${TEAMS[0].name} ${state.score[0]} — ${state.score[1]} ${TEAMS[1].name}${state.phase === "play" ? ` · ${left}` : ""}`;
+    const leader = [...state.fighters].filter((f) => f.team >= 0).sort((a, c) => c.kills - a.kills)[0];
+    const boardText = mode() === "ffa"
+      ? `Herkes tek · lider: ${leader ? `${nameOf(leader.sid)} (${leader.kills})` : "—"}${state.phase === "play" ? ` · ${left}` : ""}`
+      : `${mode() === "ctf" ? "🚩 " : ""}${TEAMS[0].name} ${state.score[0]} — ${state.score[1]} ${TEAMS[1].name}${state.phase === "play" ? ` · ${left}` : ""}`;
     if (board.textContent !== boardText) board.textContent = boardText;
     let msg = "";
-    if (state.phase === "wait") msg = "Rakip bekleniyor: her takımda en az 1 kişi olmalı (beklerken atış serbest)";
+    if (state.phase === "wait") msg = mode() === "ffa" ? "Rakip bekleniyor: en az 2 kişi olmalı (beklerken atış serbest)" : "Rakip bekleniyor: her takımda en az 1 kişi olmalı (beklerken atış serbest)";
     else if (state.phase === "count") msg = `Maç ${left.replace(/^0:0?/, "")} sn sonra başlıyor`;
     else if (state.phase === "end") {
       const [r, b] = state.score;
       const best = [...state.fighters].filter((f) => f.team >= 0).sort((a, c) => c.kills - a.kills)[0];
-      msg = `${r === b ? "Berabere!" : `${TEAMS[r > b ? 0 : 1].name} kazandı!`} ${r}–${b}${best?.kills ? ` · En iyi: ${nameOf(best.sid)} (${best.kills})` : ""}`;
+      msg = mode() === "ffa"
+        ? `${best?.kills ? `🏆 ${nameOf(best.sid)} kazandı (${best.kills} vuruş)` : "Kimse vuramadı"}`
+        : `${r === b ? "Berabere!" : `${TEAMS[r > b ? 0 : 1].name} kazandı!`} ${r}–${b}${best?.kills ? ` · En iyi: ${nameOf(best.sid)} (${best.kills})` : ""}`;
     }
     if (banner.textContent !== msg) banner.textContent = msg;
     banner.classList.toggle("show", !!msg);

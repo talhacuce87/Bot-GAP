@@ -196,14 +196,20 @@ export class Hud {
     this.status.classList.toggle("bad", s !== "online");
   }
 
-  renderPlayers(remotes: Remotes): void {
-    const names = [this.myName];
-    for (const r of remotes.map.values()) if (!r.leaving) names.push(r.info.name);
+  /** `onPick`: isme tıklanınca (oyuncu kartı); kendin için sid -1. */
+  renderPlayers(remotes: Remotes, onPick?: (sid: number, name: string) => void): void {
+    const people: [number, string][] = [[-1, this.myName]];
+    for (const r of remotes.map.values()) if (!r.leaving) people.push([r.info.sid, r.info.name]);
     this.list.replaceChildren(
-      ...names.map((n, i) => {
+      ...people.map(([sid, n], i) => {
         const li = document.createElement("li");
         li.textContent = i === 0 ? `${n} (sen)` : n;
         if (i === 0) li.className = "me";
+        if (onPick) {
+          li.classList.add("pick");
+          li.title = "Oyuncu kartı";
+          li.addEventListener("click", () => onPick(sid, n));
+        }
         return li;
       }),
     );

@@ -34,6 +34,15 @@ export interface Settings {
   bubbles: boolean;
   /** Köşede FPS göstergesi. */
   showFps: boolean;
+  /** Ses: sinema perdesi, ekran paylaşımı, efektler (0–1). */
+  cinemaVolume: number;
+  shareVolume: number;
+  sfxVolume: number;
+  /** Kamera: üçüncü ya da birinci şahıs (V ile de değişir). */
+  firstPerson: boolean;
+  /** Evcil hayvan (PETS id, "" yok) ve tank kamuflajı (SKINS id). */
+  pet: string;
+  skin: string;
 }
 
 type Graphics = Pick<Settings, "shadows" | "bloom" | "grade" | "grass" | "antialias" | "lamps" | "maxDpr">;
@@ -68,6 +77,12 @@ function defaults(): Settings {
     invertY: false,
     bubbles: true,
     showFps: false,
+    cinemaVolume: 1,
+    shareVolume: 1,
+    sfxVolume: 0.7,
+    firstPerson: false,
+    pet: "",
+    skin: "std",
   };
 }
 

@@ -155,6 +155,14 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
     Achievement("bayram_ziyareti", "Bayram Ziyareti", "Özel Gün", "1f319", "Bayramın ilk günü seste olmak"),
     Achievement("ataturkun_evlatlari", "Atatürk'ün Evlatları", "Özel Gün", "1f1f9-1f1f7", "29 Ekim'de seste olmak"),
     Achievement("gap_dogum_gunu", "Gap'in Doğum Günü", "Özel Gün", "1f382", "Sunucunun kuruluş yıldönümünde seste olmak"),
+    # GAP Dünyası
+    Achievement("balikci", "Balıkçı", "Dünya", "1f3a3", "Gölde {n} balık tutmak", (10, 50, 150)),
+    Achievement("altin_sazan", "Altın Sazan", "Dünya", "1f420", "Efsanevi bir balık tutmak"),
+    Achievement("golcu", "Golcü", "Dünya", "26bd", "Dünyada {n} gol atmak", (5, 25, 100)),
+    Achievement("kahvehane_ustasi", "Kahvehane Ustası", "Dünya", "1f3b2", "Kahvehanede {n} oyun kazanmak", (5, 25, 100)),
+    Achievement("tank_asi", "Tank Ası", "Dünya", "1fa96", "Tank savaşında {n} tank vurmak", (10, 50, 200)),
+    Achievement("gorev_adami", "Görev Adamı", "Dünya", "1f4cb", "{n} günlük dünya görevi tamamlamak", (10, 50, 200)),
+    Achievement("fotografci", "Fotoğrafçı", "Dünya", "1f4f7", "Dünyadan {n} fotoğraf paylaşmak", (5, 25, 100)),
     # Gizli
     Achievement("kimlik_krizi", "Kimlik Krizi", "Gizli", "1f3ad", "Takma adını {n} kez değiştirmek", (10, 30, 100), hidden=True),
     Achievement("firari", "Firari", "Gizli", "1f3c3", "Sürgündeyken {n} mesaj atmak", (50, 200, 500), hidden=True),
@@ -308,6 +316,14 @@ def aggregate(
             inc[gid, uid, "nick"] += 1
         elif event == "ai_chat":
             inc[gid, uid, "ai"] += 1
+        elif event == "fish_catch":
+            inc[gid, uid, "fish"] += 1
+            if _meta(row).get("rarity") == "legendary":
+                inc[gid, uid, "fish_legend"] += 1
+        elif event == "world":
+            kind = _meta(row).get("kind")
+            if kind in ("goal", "game_win", "tank_kill", "quest", "photo"):
+                inc[gid, uid, f"w_{kind}"] += int(row["amount"] or 1)
         elif event == "voice_leave":
             seconds = _meta(row).get("seconds")
             if seconds:
@@ -427,6 +443,13 @@ def metric(key: str, f: MemberFacts) -> float:
         "firari": c.get("exile_msg", 0),
         "robotla_dertlesen": c.get("ai", 0),
         "sabikali": c.get("exiled", 0),
+        "balikci": c.get("fish", 0),
+        "altin_sazan": 1 if c.get("fish_legend", 0) >= 1 else 0,
+        "golcu": c.get("w_goal", 0),
+        "kahvehane_ustasi": c.get("w_game_win", 0),
+        "tank_asi": c.get("w_tank_kill", 0),
+        "gorev_adami": c.get("w_quest", 0),
+        "fotografci": c.get("w_photo", 0),
     }
     if key in simple:
         return simple[key]

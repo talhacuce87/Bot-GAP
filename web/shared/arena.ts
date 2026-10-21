@@ -66,3 +66,28 @@ export function spawnPoint(team: Team, slot: number): { x: number; z: number; h:
   const side = ((slot % 2 ? 1 : -1) * Math.ceil(slot / 2)) * 5.5;
   return { x: b.x, z: b.z + Math.max(-20, Math.min(20, side)), h: b.h };
 }
+
+export const MODES = [
+  { id: "tdm", name: "Takım savaşı" },
+  { id: "ffa", name: "Herkes tek" },
+  { id: "ctf", name: "Bayrak kapmaca" },
+] as const;
+/** Herkes tekte bu kadar vuruşa ilk ulaşan kazanır; bayrak kapmacada bu kadar bayrak. */
+export const FFA_TARGET = 10;
+export const CTF_TARGET = 3;
+/** Bayrağa bu kadar yaklaşan tank alır/geri götürür; üssünün bu kadar yakınında teslim eder. */
+export const FLAG_REACH = 3.2;
+export const CAPTURE_R = 6;
+
+/** Takımın bayrak direği (üssün arkası; sahnedeki direkle aynı yer). */
+export function flagHome(team: Team): { x: number; z: number } {
+  const b = BASES[team];
+  return { x: b.x - Math.sin(b.h) * 6, z: b.z };
+}
+
+/** Herkes tekte doğma yerleri: duvarın içinde bir halka, sırayla. */
+export function ffaSpawn(i: number): { x: number; z: number; h: number } {
+  const a = (i * 2.399963) % (Math.PI * 2); // altın açı: komşular uzak düşer
+  const r = ARENA_RADIUS - 8;
+  return { x: Math.cos(a) * r, z: Math.sin(a) * r, h: Math.atan2(-Math.cos(a), -Math.sin(a)) };
+}

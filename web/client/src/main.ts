@@ -49,9 +49,10 @@ import { WatchPanel } from "./ui/watchPanel";
 import { CinemaSign } from "./world/cinemaSign";
 import { MAX_PUSHERS } from "./world/grassField";
 import { PostFx } from "./world/post";
-import { buildWorld, SCREEN_W, SCREEN_Z } from "./world/scene";
+import { buildWorld, SCREEN_W, SCREEN_Z, type Season } from "./world/scene";
 import { runBattle } from "./battle";
 import { beginMode, setModeStarter, stopMode, switchMode, wantsBattle } from "./mode";
+import { Features } from "./features";
 import { aimRay, ShellFx, TankView } from "./world/tank";
 
 /** Perdenin önü (oturma alanı): F ile sinema açılır. */
@@ -75,6 +76,7 @@ async function start(): Promise<void> {
     hour: hourParam !== null && hourParam !== "" ? Number(hourParam) : undefined,
     grass: settings.grass,
     lamps: settings.lamps,
+    season: (["spring", "summer", "autumn", "winter"] as const).find((x) => x === params.get("season")) as Season | undefined,
   });
 
   let renderer: THREE.WebGLRenderer;
@@ -258,8 +260,15 @@ async function start(): Promise<void> {
   // Perde tek: sinema videosu ve ekran paylaşımı aynı kutuda (paylaşım üstte).
   const screen = new ScreenVideo(world.screen, SCREEN_W);
   life.onStop(() => screen.destroy());
+  /** Sinema sesi ayardan; video bitince sıradaki şarkı istenir. */
+  const wireSync = (sync: WatchSync) => {
+    sync.setVolume(settings.cinemaVolume);
+    life.onStop(onSettings(() => sync.setVolume(settings.cinemaVolume)));
+    sync.onEnded = () => net.send({ t: "wended" });
+    return sync;
+  };
   if (session.mode === "watch") {
-    const sync = new WatchSync(screen, () => net.serverNow());
+    const sync = wireSync(new WatchSync(screen, () => net.serverNow()));
     const panel = new WatchPanel(hudRoot, sync, {
       command: (op, pos) => net.send({ t: "wcmd", op, pos }),
       load: (url) => net.send({ t: "wload", url }),
@@ -365,7 +374,7 @@ async function start(): Promise<void> {
       if (src?.kind === "file" && id) {
         sign.set(null);
         if (!inWorld) {
-          const sync = new WatchSync(screen, () => net.serverNow());
+          const sync = wireSync(new WatchSync(screen, () => net.serverNow()));
           const panel = new WatchPanel(hudRoot, sync, {
             command: (op, pos) => net.send({ t: "wcmd", op, pos }),
             load: (url) => net.send({ t: "wload", url }),
@@ -496,6 +505,10 @@ async function start(): Promise<void> {
   // ---- Etkileşimler: mangalda şiş çevir, zindanda çay ver / domates at ----
   const HEART = 2; // EMOTES içindeki ❤️
   const perform = (a: Act, x: number, z: number, name: string, time: number, self: boolean) => {
+    if (a === "cay") {
+      emoteFx.emit(x, 0, z, FX_CELL.tea, time, undefined, 2);
+      return;
+    }
     if (a === "grill") {
       world.grillBoost(time);
       emoteFx.emit(ACT_SPOTS.grill.x, 1.1, ACT_SPOTS.grill.z, FX_CELL.skewer, time, 0, 3);
@@ -544,9 +557,11 @@ async function start(): Promise<void> {
     const p2 = (n: number) => String(n).padStart(2, "0");
     return `🎣 Sonraki balık: ${h ? `${h}sa ` : ""}${p2(m)}dk ${p2(s)}sn`;
   };
-  const nearActs = (): { key: "f" | "g"; label: string; act: Act | "fish" | "cinema" | "watch" | "tankin" | "tankout" }[] => {
+  const nearActs = (): { key: "f" | "g"; label: string; act: string }[] => {
     if (me.jailed) return [];
     if (me.driving) return [{ key: "f", label: "Tanktan in 🚪", act: "tankout" }];
+    const extra = features.acts();
+    if (extra.length) return extra;
     if (!tank.driver && Math.hypot(me.x - tankView.x, me.z - tankView.z) <= TANK_REACH) {
       return [{ key: "f", label: "Tanka bin 🪖", act: "tankin" }];
     }
@@ -586,6 +601,30 @@ async function start(): Promise<void> {
   const bots = botCount ? new Bots(remotes, botCount, world.seats) : null;
   if (bots) bots.onEmote = (sid, e) => net.onEmote(sid, e);
 
+  // Çizim: son işlem açıksa (ya da fotoğraf filtresi varsa) composer, değilse doğrudan
+  const postOpts = { bloom: false, grade: false, filter: 0 };
+  const renderScene = (dt: number) => {
+    postOpts.bloom = settings.bloom;
+    postOpts.grade = settings.grade;
+    postOpts.filter = features.filter;
+    if ((postOpts.bloom || postOpts.grade || postOpts.filter) && !screen.isActive) {
+      post ??= new PostFx(renderer, world.scene, camera, settings.antialias ? 4 : 0);
+      post.render(dt, world.env, postOpts);
+    } else {
+      renderer.render(world.scene, camera);
+    }
+    screen.render(camera);
+  };
+
+  // ---- Yeni özellikler: hava, futbol, kahvehane, DJ, mini oyunlar, araçlar, görevler, fotoğraf ----
+  const features = new Features({
+    life, world, net, me, remotes, atlas, avatars, hud, hudRoot, input, emoteFx, session, camera, canvas, lowPower,
+    renderNow: () => renderScene(0),
+    say: (text) => net.send({ t: "chat", text }),
+    battle: () => switchMode(true),
+    music: () => (musicOn ? 1 : 0),
+  });
+
   addEventListener("resize", () => {
     if (!life.active) return;
     camera.aspect = innerWidth / innerHeight;
@@ -614,6 +653,7 @@ async function start(): Promise<void> {
       emoteFx.emit(me.x, 0, me.z, emote, time);
       net.send({ t: "emote", e: emote });
     }
+    features.keys();
     me.update(dt, input);
     world.sakura.kick(me.x, me.z, me.flags & FLAG_RUNNING ? 1 : me.flags & FLAG_WALKING ? 0.6 : 0);
     if (!inGarden && world.sakura.inside(me.x, me.z, 0.5)) {
@@ -629,7 +669,9 @@ async function start(): Promise<void> {
     hud.setActs(acts, input.touch, (k) => input.triggerAct(k));
     const actKey = input.consumeAct();
     const act = actKey ? acts.find((a) => a.key === actKey)?.act : undefined;
-    if (act === "tankin") {
+    if (act && features.handleAct(act, now)) {
+      // yeni özelliklerin etkileşimi işlendi
+    } else if (act === "tankin") {
       net.send({ t: "tank", on: true });
     } else if (act === "tankout") {
       // Önce iniş mesajı, sonra yeni konum: sunucu tankı son sürüş konumuna park eder
@@ -646,8 +688,8 @@ async function start(): Promise<void> {
       net.send({ t: "fish" });
     } else if (act && act !== "fish" && now - lastAct >= ACT_COOLDOWN_MS) {
       lastAct = now;
-      perform(act, me.x, me.z, session.user.name, time, true);
-      net.send({ t: "act", a: act });
+      perform(act as Act, me.x, me.z, session.user.name, time, true);
+      net.send({ t: "act", a: act as Act });
     }
     if (me.driving) {
       const d = me.driving;
@@ -679,15 +721,19 @@ async function start(): Promise<void> {
     else if (!tank.driver) tankView.set(tank.x, tank.z, tank.h, tank.tr, tank.el);
     const moving = Math.min(1, Math.hypot(tankView.x - tankPrev.x, tankView.z - tankPrev.z) / Math.max(dt, 1e-3) / 3);
     tankPrev = { x: tankView.x, z: tankView.z };
+    tankView.setSkin(tank.driver === net.you ? settings.skin : tank.driver ? remotes.map.get(tank.driver)?.info.skin : null);
     tankView.update(time, moving);
     shells.update(time, camera.position);
     me.obstacle = me.driving ? null : hullCircles(tankView.x, tankView.z, tankView.h);
 
+    features.decorate();
     avatars.begin(camera.position);
     if (!me.driving) avatars.push(me, time, true);
     for (const r of remotes.map.values()) if (r.hasData && r.info.sid !== tank.driver) avatars.push(r, time);
+    features.pushExtras(time, dt);
     avatars.end();
     me.updateCamera(camera, dt);
+    features.update(time, dt, now);
     if (me.driving) {
       me.aimAt = aimRay(camera, aimPoint);
       crosshair.classList.add("show");
@@ -725,23 +771,17 @@ async function start(): Promise<void> {
     });
 
     hud.setPrompt(me.seated ? "stand" : me.nearSeat ? "sit" : "");
-    if (remotes.consumeChanged()) hud.renderPlayers(remotes);
+    if (remotes.consumeChanged()) hud.renderPlayers(remotes, (sid, name) => features.openCard(sid, name));
 
     // Paylaşımın sesi de sinemadan uzaklaştıkça kısılır
-    viewer?.setVolume(Math.min(1, Math.max(0.06, 1 - (Math.hypot(me.x, me.z - SCREEN_Z) - 18) / 45)));
+    viewer?.setVolume(settings.shareVolume * Math.min(1, Math.max(0.06, 1 - (Math.hypot(me.x, me.z - SCREEN_Z) - 18) / 45)));
     if (watch) {
       watch.sync.update(dt);
       watch.sync.setDistance(Math.hypot(me.x, me.z - SCREEN_Z));
       watch.panel.update(now);
     }
 
-    if ((settings.bloom || settings.grade) && !screen.isActive) {
-      post ??= new PostFx(renderer, world.scene, camera, settings.antialias ? 4 : 0);
-      post.render(dt, world.env, settings);
-    } else {
-      renderer.render(world.scene, camera);
-    }
-    screen.render(camera);
+    renderScene(dt);
     perf.frame(dtMs, performance.now() - t0);
     hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);
   };

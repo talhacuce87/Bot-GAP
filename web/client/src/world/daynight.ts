@@ -1,6 +1,8 @@
 // Gece/gündüz: Türkiye saatine göre gökyüzü, güneşin yeri, sis, ışıklar; gece yıldızlar ve lamba haleleri.
 // Birkaç saniyede bir güncellenir (renk/yoğunluk/yön ataması); kare başına maliyeti yok.
 import * as THREE from "three";
+import type { Weather } from "../../../shared/protocol";
+import { cloudUniform } from "./geo";
 
 /** Türkiye UTC+3 (yaz saati yok). `override` ile (?hour=21) test edilebilir. */
 export function istanbulHour(now = Date.now(), override?: number): number {
@@ -196,9 +198,30 @@ function starField(radius: number): THREE.Points {
   return p;
 }
 
+/** Hava → gökyüzünün kapalılığı (0 açık, 1 tamamen kapalı), sis mesafeleri ve bulut gölgesi kapsamı. */
+function weatherLook(w: Weather): { overcast: number; fog: [number, number]; shadows: number } {
+  switch (w.kind) {
+    case "rain":
+    case "storm":
+      return { overcast: w.kind === "storm" ? 0.92 : 0.8, fog: [22, 95], shadows: 0 };
+    case "snow":
+      return { overcast: 0.75, fog: [18, 80], shadows: 0 };
+    case "fog":
+      return { overcast: 0.6, fog: [6, 55], shadows: 0 };
+    case "cloudy":
+      return { overcast: 0.25 + 0.35 * w.cloud, fog: [45, 130], shadows: 0.55 + 0.2 * w.cloud };
+    default:
+      return { overcast: 0.25 * w.cloud, fog: [55, 140], shadows: 0.25 + 0.3 * w.cloud };
+  }
+}
+
 export class DayNight {
   /** Işığın geldiği yön (gündüz güneş, gece ay); gölge kamerası buna göre kurulur. */
   readonly lightDir = new THREE.Vector3(0, 1, 0);
+  /** Havaya göre hesaplanan ortam ışığı (şimşek bunun üstüne eklenir). */
+  hemiBase = 1.6;
+  private weather: Weather = { kind: "clear", intensity: 0, cloud: 0.2, temp: null };
+  private grey = new THREE.Color();
   private glow: THREE.InstancedMesh;
   private stars: THREE.Points;
   private horizon = new THREE.Color();
@@ -218,6 +241,12 @@ export class DayNight {
     this.apply(Date.now());
   }
 
+  /** İstanbul'un havası değişti: hemen uygula. */
+  setWeather(w: Weather): void {
+    this.weather = w;
+    this.apply(Date.now());
+  }
+
   /** Her karede çağrılabilir; gerçek iş 3 saniyede bir. */
   update(nowMs: number): void {
     if (nowMs - this.lastUpdate < 3000) return;
@@ -231,10 +260,20 @@ export class DayNight {
     const day = daylight(h);
     const dusk = duskAmount(h) * 0.75;
 
-    this.horizon.copy(PAL.nightHorizon).lerp(PAL.dayHorizon, day).lerp(PAL.duskHorizon, dusk);
-    this.top.copy(PAL.nightTop).lerp(PAL.dayTop, day).lerp(PAL.duskTop, dusk * 0.6);
+    const wl = weatherLook(this.weather);
+    const oc = wl.overcast;
+    this.horizon.copy(PAL.nightHorizon).lerp(PAL.dayHorizon, day).lerp(PAL.duskHorizon, dusk * (1 - oc * 0.8));
+    this.top.copy(PAL.nightTop).lerp(PAL.dayTop, day).lerp(PAL.duskTop, dusk * 0.6 * (1 - oc));
+    // Kapalı hava: gök griye döner (gece daha az fark edilir)
+    const lum = (c: THREE.Color) => c.r * 0.3 + c.g * 0.55 + c.b * 0.15;
+    this.horizon.lerp(this.grey.setRGB(1, 1, 1.04).multiplyScalar(lum(this.horizon) * 0.95), oc * 0.75);
+    this.top.lerp(this.grey.setRGB(1, 1, 1.05).multiplyScalar(lum(this.top) * 0.9 + 0.04 * day), oc * 0.8);
     (p.scene.background as THREE.Color).copy(this.horizon);
-    p.scene.fog!.color.copy(this.horizon);
+    const fog = p.scene.fog as THREE.Fog;
+    fog.color.copy(this.horizon);
+    fog.near = wl.fog[0];
+    fog.far = wl.fog[1];
+    cloudUniform.value = wl.shadows * day;
 
     // Gökyüzü: renkler ve güneş
     sunDirection(h, this.sunDir);
@@ -243,8 +282,8 @@ export class DayNight {
     u.uTop.value.copy(this.top);
     u.uSunDir.value.copy(this.sunDir);
     u.uSunColor.value.copy(PAL.sunDiscDay).lerp(PAL.sunDiscDusk, Math.min(1, dusk * 1.4));
-    u.uSun.value = smooth(-0.04, 0.03, this.sunDir.y);
-    u.uDusk.value = dusk;
+    u.uSun.value = smooth(-0.04, 0.03, this.sunDir.y) * (1 - oc);
+    u.uDusk.value = dusk * (1 - oc * 0.8);
 
     // Işık yönü: güneş ufka inerken de zemin aydınlansın diye en az ~25° (gölgeler uzar ama kararmaz); gece ay
     const lit = this.sunDir.clone();
@@ -253,13 +292,14 @@ export class DayNight {
 
     // Gece daha karanlık: lambaların aydınlattığı yerler öne çıksın
     // Gün batımında gök daha çok aydınlatır: güneşe karşı bakınca gölgede kalan yüzler kararmasın
-    p.hemi.intensity = 0.34 + 1.26 * day + 0.5 * dusk;
+    this.hemiBase = (0.34 + 1.26 * day + 0.5 * dusk) * (1 - 0.12 * oc);
+    p.hemi.intensity = this.hemiBase;
     p.hemi.color.copy(PAL.hemiNightSky).lerp(PAL.hemiDaySky, day).lerp(PAL.hemiDuskSky, dusk * 0.5);
     p.hemi.groundColor.copy(PAL.hemiNightGround).lerp(PAL.hemiDayGround, day);
-    p.sun.intensity = 0.32 + 1.38 * day;
+    p.sun.intensity = (0.32 + 1.38 * day) * (1 - 0.72 * oc);
     p.sun.color.copy(PAL.moon).lerp(PAL.sunDay, day).lerp(PAL.sunDusk, dusk);
     // Gölge: gündüz koyu, ay ışığında silik
-    p.sun.shadow.intensity = 0.3 + 0.45 * day;
+    p.sun.shadow.intensity = (0.3 + 0.45 * day) * (1 - oc * 0.8);
 
     // Hava kararınca lambalar yanar
     const lights = 1 - smooth(0.25, 0.7, day);
@@ -270,11 +310,11 @@ export class DayNight {
     (this.glow.material as THREE.ShaderMaterial).uniforms.uOpacity.value = lights * 0.55;
     this.glow.visible = lights > 0.01;
 
-    const starA = (1 - smooth(0.0, 0.35, day)) * 0.9;
+    const starA = (1 - smooth(0.0, 0.35, day)) * 0.9 * (1 - oc);
     (this.stars.material as THREE.PointsMaterial).opacity = starA;
     this.stars.visible = starA > 0.01;
 
-    p.cloudMaterial.color.copy(PAL.cloudNight).lerp(PAL.cloudDay, day);
+    p.cloudMaterial.color.copy(PAL.cloudNight).lerp(PAL.cloudDay, day).multiplyScalar(1 - oc * 0.45);
     p.cloudMaterial.emissive.copy(PAL.cloudGlowNight).lerp(PAL.cloudGlowDay, day).lerp(PAL.cloudGlowDusk, dusk);
     // Dağlar ufuk rengine karışır (hava perspektifi): uzak, puslu, gün batımında pembe-mor
     p.mountainMaterial.emissive.copy(this.horizon).multiplyScalar(0.22 + 0.12 * day);

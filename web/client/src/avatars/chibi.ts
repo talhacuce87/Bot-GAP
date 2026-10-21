@@ -28,6 +28,12 @@ export interface LimbPose {
   wave: number;
   /** Dansta iki kol yukarıda sallanır. */
   dance: number;
+  /** 0..1 sarılma: iki kol öne. */
+  hug: number;
+  /** Bisiklette pedal çevirme (oturur, bacaklar sırayla). */
+  pedal: number;
+  /** 0..1 sağ el ağza (karaoke mikrofonu). */
+  mic: number;
   time: number;
 }
 
@@ -216,6 +222,13 @@ export function setLimbs(a: THREE.Vector2[], p: LimbPose): void {
   if (p.seated) {
     // Bacaklar öne kırılır (x ekseni etrafında eksi açı ayağı +Z'ye çevirir)
     a[4].x = a[5].x = -1.45;
+    if (p.pedal) {
+      const c = Math.sin(p.time * p.pedal);
+      a[4].x = -1.15 + c * 0.45;
+      a[5].x = -1.15 - c * 0.45;
+      // Eller gidona
+      a[2].x = a[3].x = -1.1;
+    }
   } else {
     a[4].x = s;
     a[5].x = -s;
@@ -224,6 +237,15 @@ export function setLimbs(a: THREE.Vector2[], p: LimbPose): void {
     // +X'teki kol yukarı, el sallanır
     a[3].y = 2.3 * p.wave + Math.sin(p.time * 14) * 0.25 * p.wave;
     a[3].x = 0;
+  }
+  if (p.hug > 0) {
+    a[2].x = a[3].x = -1.45 * p.hug;
+    a[2].y = -0.35 * p.hug;
+    a[3].y = 0.35 * p.hug;
+  }
+  if (p.mic > 0) {
+    a[3].x = -2.3 * p.mic;
+    a[3].y = 0.5 * p.mic;
   }
   if (p.dance > 0) {
     const w = Math.sin(p.time * 8);

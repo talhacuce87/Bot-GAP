@@ -12,6 +12,8 @@ export type WatchCommand = { op: "play" | "pause" | "seek"; pos?: number };
 export class Watch {
   readonly state: WatchState;
   lastActive: number;
+  /** Son video yüklendiği an: "bitti" bildirimleri yeni videoyu atlatmasın. */
+  loadedAt: number;
 
   constructor(
     readonly id: string,
@@ -25,6 +27,7 @@ export class Watch {
     readonly roomKey: string | null = null,
   ) {
     this.lastActive = now;
+    this.loadedAt = now;
     this.state = { source, title, playing: true, position: source && (source.kind === "youtube" || source.kind === "twitch-vod") ? source.start : 0, updatedAt: now, by: createdBy, op: "load" };
   }
 
@@ -38,6 +41,7 @@ export class Watch {
     const start = source.kind === "youtube" || source.kind === "twitch-vod" ? source.start : 0;
     Object.assign(this.state, { source, title, playing: true, position: start, updatedAt: now, by, op: "load" });
     this.lastActive = now;
+    this.loadedAt = now;
   }
 
   /** Geçersiz ya da anlamsız komutta false (canlı yayında sarma gibi). */

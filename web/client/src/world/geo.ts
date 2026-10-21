@@ -147,3 +147,54 @@ export function blobTexture(alpha = 0.45): THREE.CanvasTexture {
   g.fillRect(0, 0, 64, 64);
   return new THREE.CanvasTexture(c);
 }
+
+/** Bulut gölgesi kapsamı (0 açık gökyüzü, 1 kapalı); DayNight havaya göre yazar. */
+export const cloudUniform = { value: 0.35 };
+
+const CLOUD_GLSL = /* glsl */ `
+  uniform float uCloud;
+  uniform float uCloudTime;
+  varying vec2 vCloudXZ;
+  float cHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float cNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(cHash(i), cHash(i + vec2(1.0, 0.0)), u.x), mix(cHash(i + vec2(0.0, 1.0)), cHash(i + vec2(1.0, 1.0)), u.x), u.y);
+  }
+  float cloudShade(vec2 w) {
+    vec2 q = w * 0.016 + uCloudTime * vec2(0.012, 0.005);
+    float n = cNoise(q) * 0.6 + cNoise(q * 2.3 + 4.1) * 0.3 + cNoise(q * 5.1 + 9.3) * 0.1;
+    float cover = smoothstep(1.0 - uCloud, 1.15 - uCloud, n);
+    return 1.0 - cover * 0.6;
+  }
+`;
+
+/**
+ * Bulut gölgesi: güneşin doğrudan ışığını, rüzgârla kayan bulut desenine göre kısar (ortam ışığı kalır).
+ * Var olan onBeforeCompile korunur; dünya konumu sis hesabından hemen önce alınır (instancing dahil).
+ */
+export function withCloudShadows<T extends THREE.Material>(m: T): T {
+  const prev = m.onBeforeCompile.bind(m);
+  const prevKey = m.customProgramCacheKey.bind(m);
+  m.onBeforeCompile = (shader, renderer) => {
+    prev(shader, renderer);
+    shader.uniforms.uCloud = cloudUniform;
+    shader.uniforms.uCloudTime = timeUniform;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vCloudXZ;")
+      .replace(
+        "#include <fog_vertex>",
+        `#include <fog_vertex>
+        #ifdef USE_INSTANCING
+          vCloudXZ = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xz;
+        #else
+          vCloudXZ = (modelMatrix * vec4(transformed, 1.0)).xz;
+        #endif`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>\n${CLOUD_GLSL}`)
+      .replace("#include <lights_fragment_end>", "#include <lights_fragment_end>\nreflectedLight.directDiffuse *= cloudShade(vCloudXZ);");
+  };
+  m.customProgramCacheKey = () => `${prevKey()}-cloud`;
+  return m;
+}

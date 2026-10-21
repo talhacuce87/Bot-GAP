@@ -20,6 +20,8 @@ export class Input {
   private jump = false;
   private act: "f" | "g" | null = null;
   private emote = -1;
+  /** Tek seferlik kısayollar (P fotoğraf, V kamera, B araç, H beşlik, J sarıl, Y kabul, Q görevler, K kart, L albüm, M menü). */
+  private hot = new Set<string>();
 
   private joyId = -1;
   private joyOx = 0;
@@ -57,6 +59,7 @@ export class Input {
         e.preventDefault(); // sayfa kaymasın, odaktaki düğme tetiklenmesin
       }
       if (k >= "1" && k <= "6") this.emote = Number(k) - 1;
+      if ("pvbhjqmkly".includes(k) && k.length === 1) this.hot.add(k);
       this.keys.add(k);
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLocaleLowerCase("en")));
@@ -280,5 +283,15 @@ export class Input {
 
   triggerAction(): void {
     this.action = true;
+  }
+
+  /** Kısayol bu kare basıldı mı (bir kez true döner). */
+  consumeKey(k: string): boolean {
+    return this.hot.delete(k);
+  }
+
+  /** F basılı tutuluyor mu (futbolda şut gücü). */
+  held(k: string): boolean {
+    return this.keys.has(k);
   }
 }

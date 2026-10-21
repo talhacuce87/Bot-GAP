@@ -1339,3 +1339,526 @@ body {
     top: calc(max(10px, env(safe-area-inset-top)) + 90px);
   }
 }
+
+/* ---- Ortak açılır panel (menü, kart, görevler, masa, kuyruk) ---- */
+.hub-btn {
+  right: calc(max(10px, env(safe-area-inset-right)) + 100px);
+}
+
+.gpanel {
+  background: rgba(18, 24, 36, 0.94);
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 20px));
+  max-height: calc(100vh - 40px);
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  pointer-events: auto;
+  z-index: 20;
+  font-size: 13px;
+}
+
+.gpanel.show {
+  display: flex;
+}
+
+.gpanel button {
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.gpanel button.primary,
+.photo-bar button.primary {
+  background: var(--accent);
+}
+
+.gpanel button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.gpanel-body {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Menü */
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.gpanel .hub-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+}
+
+.hub-emoji {
+  font-size: 22px;
+}
+
+.hub-label {
+  font-size: 11px;
+  text-align: center;
+}
+
+.hub-key {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.hub-pets {
+  flex-wrap: wrap;
+}
+
+.hub-pets button {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 420px) {
+  .hub-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Oyuncu kartı */
+.pc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pc-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pc-noavatar {
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.pc-name {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.pc-sub,
+.pc-xp,
+.pc-loading {
+  color: var(--muted);
+}
+
+.pc-bar,
+.quest-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.pc-fill,
+.quest-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #5865f2, #3bd1c6);
+}
+
+.pc-album {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+
+.pc-fish {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 2px;
+  border-radius: 8px;
+  border: 2px solid var(--rarity);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pc-fish.locked {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+.pc-fish-emoji {
+  font-size: 24px;
+}
+
+.pc-fish-name {
+  font-size: 10px;
+  text-align: center;
+}
+
+.pc-fish-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--rarity);
+}
+
+.pc-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+}
+
+.pc-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.players li.pick {
+  cursor: pointer;
+}
+
+.players li.pick:hover {
+  text-decoration: underline;
+}
+
+/* Görevler */
+.quest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quest {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quest-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quest.done .quest-text {
+  opacity: 0.6;
+}
+
+.quest-xp {
+  color: #f2c230;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+/* Masa oyunları */
+.board-panel {
+  width: min(680px, calc(100vw - 16px));
+}
+
+.bg-info {
+  white-space: pre-line;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.bg-canvas {
+  display: block;
+  margin: 0 auto;
+  border-radius: 8px;
+  touch-action: none;
+  max-width: 100%;
+}
+
+.bg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.bg-watch {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Şarkı kuyruğu / DJ */
+.queue-form {
+  display: flex;
+  gap: 6px;
+}
+
+.queue-form input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font: inherit;
+}
+
+.queue-list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* Ebelemece / saklambaç bandı ve göz kapama */
+.tag-banner {
+  position: absolute;
+  left: 50%;
+  top: calc(max(10px, env(safe-area-inset-top)) + 88px);
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+  font-weight: 700;
+  max-width: calc(100vw - 32px);
+}
+
+.tag-banner.show {
+  display: flex;
+}
+
+.tag-banner button {
+  font: inherit;
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 12px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.tag-blind {
+  position: fixed;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: #000;
+  color: #fff;
+  font-size: 64px;
+  font-weight: 800;
+  z-index: 15;
+}
+
+.tag-blind.show {
+  display: grid;
+}
+
+/* Futbol skoru ve şut gücü */
+.pitch-score {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 120px);
+  transform: translateX(-50%);
+  display: none;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.pitch-score.show {
+  display: block;
+}
+
+.kick-power {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 160px);
+  transform: translateX(-50%);
+  width: 180px;
+  height: 10px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  display: none;
+}
+
+.kick-power.show {
+  display: block;
+}
+
+.kick-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3bd16f, #f2c230, #e04a3a);
+}
+
+/* Beşlik / sarılma isteği */
+.pair-req {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 200px);
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.pair-req.show {
+  display: flex;
+}
+
+.pair-req button {
+  font: inherit;
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.pair-req button.primary {
+  background: var(--accent);
+}
+
+/* Fotoğraf modu: arayüz gizlenir, yalnızca alt çubuk */
+.photo-mode > *:not(.photo-bar):not(.photo-preview):not(.toast) {
+  display: none !important;
+}
+
+.photo-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 10px);
+  transform: translateX(-50%);
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--panel);
+  pointer-events: auto;
+  max-width: calc(100vw - 20px);
+}
+
+.photo-mode .photo-bar {
+  display: flex;
+}
+
+.photo-bar button {
+  font: inherit;
+  color: var(--text);
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+}
+
+.photo-bar .settings-seg {
+  flex-wrap: wrap;
+}
+
+.photo-bar .settings-seg button.active {
+  background: var(--accent);
+}
+
+.photo-hint {
+  width: 100%;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.photo-preview {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  width: min(560px, calc(100vw - 20px));
+  pointer-events: auto;
+  z-index: 25;
+}
+
+.photo-preview.show {
+  display: flex;
+}
+
+.photo-img {
+  width: 100%;
+  border-radius: 8px;
+}
+
+.photo-preview button,
+.photo-save {
+  font: inherit;
+  color: var(--text);
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.photo-preview button.primary {
+  background: var(--accent);
+}
+
+/* ---- Tank savaşı: mod, kamuflaj, sezon ---- */
+.battle-season {
+  top: calc(max(10px, env(safe-area-inset-top)) + 160px);
+}
+
+.battle-modes,
+.battle-skins {
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.battle-modes button,
+.battle-skins button {
+  flex: 0 0 auto;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.battle-skins button {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.team-btn.ffa-btn {
+  background: var(--accent);
+}
+
+.season-list li {
+  padding: 2px 0;
+}

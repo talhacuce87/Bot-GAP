@@ -28,7 +28,28 @@ export const JUMP_MASK = 0b1100;
 export const FLAG_RUNNING = 16;
 /** Tankı sürüyor: avatarı çizilmez, konumu tankın konumudur. */
 export const FLAG_DRIVING = 32;
-export const FLAG_MASK = FLAG_WALKING | FLAG_SEATED | JUMP_MASK | FLAG_RUNNING | FLAG_DRIVING;
+/** 2 bitlik araç: 0 yaya, 1 bisiklet, 2 kaykay, 3 kayık. */
+export const VEHICLE_SHIFT = 6;
+export const VEHICLE_MASK = 0b11000000;
+export const FLAG_MASK = FLAG_WALKING | FLAG_SEATED | JUMP_MASK | FLAG_RUNNING | FLAG_DRIVING | VEHICLE_MASK;
+
+export const VEHICLES = [
+  { name: "Yürü", emoji: "🚶", speed: 1 },
+  { name: "Bisiklet", emoji: "🚲", speed: 2.3 },
+  { name: "Kaykay", emoji: "🛹", speed: 1.9 },
+  { name: "Kayık", emoji: "🛶", speed: 0.75 },
+] as const;
+export type Vehicle = 0 | 1 | 2 | 3;
+
+export function vehicleOf(flags: number): Vehicle {
+  return ((flags & VEHICLE_MASK) >> VEHICLE_SHIFT) as Vehicle;
+}
+
+/** Araçlıyken koşma yok: hız araç çarpanıyla (sunucu hız sınırı da buna göre). */
+export function maxSpeed(flags: number): number {
+  const v = vehicleOf(flags);
+  return WALK_SPEED * (v ? VEHICLES[v].speed : RUN_MULTIPLIER);
+}
 
 /**
  * Herkesin zıplaması aynı: uzak istemciler yayı yükseklik göndermeden aynen çizer.
@@ -87,7 +108,7 @@ export const ACT_SPOTS = {
   grill: { x: 58.6, z: 5, r: 3 },
   bars: { x: -48.6, z: 5, r: 4.5 },
 } as const;
-export const ACTS = ["grill", "tea", "tomato"] as const;
+export const ACTS = ["grill", "tea", "tomato", "cay"] as const;
 export type Act = (typeof ACTS)[number];
 export const ACT_COOLDOWN_MS = 1200;
 /** Atılan çay/domatesin, sürgünde kimse yoksa düştüğü yer: hücrenin ortası. */
@@ -98,6 +119,9 @@ export const FISH_SPOT = { x: 24, z: 56, r: 9 };
 /** Bot'a sorulmadan önce kişi başı bekleme: yanıt gelene kadar tekrar basılmasın. */
 export const FISH_COOLDOWN_MS = 3000;
 
+/** Kahvehane çay ocağı (shared/zones.ts TEA_COUNTER ile aynı). */
+export const TEA_SPOT = { x: -43.6, z: 27.6, r: 2.4 };
+
 export function actSpot(a: Act): { x: number; z: number; r: number } {
-  return a === "grill" ? ACT_SPOTS.grill : ACT_SPOTS.bars;
+  return a === "grill" ? ACT_SPOTS.grill : a === "cay" ? TEA_SPOT : ACT_SPOTS.bars;
 }
