@@ -1,5 +1,6 @@
 // Kapalı futbol salonu: sahanın çevresinde duvarlar, çatı ve dört kapı. Duvarların alt kuşağı statik
-// (her zaman görünür); üst duvarlar ve çatı ayrı mesh: oyuncu içerideyken gizlenir, kamera sahayı görür.
+// (her zaman görünür). İçerideyken çatı gizlenir; üst duvarlardan yalnızca kameranın tarafındaki
+// (kamerayla oyuncu arasında kalan) yarı saydam olur, diğer üçü salonu çevreler.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { HALL } from "../../../shared/zones";
@@ -15,18 +16,22 @@ const BASE = "#9a9a94";
 const TRIM = "#d8dde4";
 
 export interface Hall {
-  /** Üst duvarlar ve çatı (içerideyken gizlenir). */
-  upper: THREE.Mesh;
+  /** Üst duvarlar (kenar başına bir mesh) ve çatı. */
+  upper: THREE.Group;
   inside(x: number, z: number): boolean;
+  /** Kare başına: oyuncu (`focus`) içerideyse çatıyı gizle, kamera tarafındaki duvarı soldur. */
+  update(focus: { x: number; z: number } | undefined, camera: THREE.Vector3 | undefined, dt: number): void;
   signAt: THREE.Matrix4;
 }
 
 export function hall(b: Builder): Hall {
   const { x: cx, z: cz, hw, hd, h, door } = HALL;
-  const upper: THREE.BufferGeometry[] = [];
+  /** Üst parçalar: 0–3 duvarlar (kuzey, güney, batı, doğu), 4 çatı. */
+  const upper: THREE.BufferGeometry[][] = [[], [], [], [], []];
+  let group = 4;
   const add = (g: THREE.BufferGeometry, color: string, m: THREE.Matrix4, top: boolean) => {
     const p = part(g, color, m, 0.04, b.rand);
-    if (top) upper.push(p);
+    if (top) upper[group].push(p);
     else b.add(p);
   };
   b.clearBox(cx - hw - 1.5, cx + hw + 1.5, cz - hd - 1.5, cz + hd + 1.5);
@@ -60,10 +65,15 @@ export function hall(b: Builder): Hall {
     // Üst kenarda beyaz şerit
     add(new THREE.BoxGeometry(len + T, 0.35, T + 0.06), TRIM, at(0, h - 0.6), true);
   };
+  group = 0;
   wall(cx, cz - hd, hw * 2, "x");
+  group = 1;
   wall(cx, cz + hd, hw * 2, "x");
+  group = 2;
   wall(cx - hw, cz, hd * 2, "z");
+  group = 3;
   wall(cx + hw, cz, hd * 2, "z");
+  group = 4;
 
   // Çatı: hafif taşan düz döşeme, ortada ışıklık sırtı, kenarda koyu saçak
   add(new THREE.BoxGeometry(hw * 2 + 0.8, 0.35, hd * 2 + 0.8), "#3b4350", mat(cx, h + 0.17, cz), true);
@@ -83,12 +93,38 @@ export function hall(b: Builder): Hall {
     b.colliders.circle(lx, lz, 0.15);
   }
 
-  const upperMesh = new THREE.Mesh(mergeGeometries(upper), new THREE.MeshLambertMaterial({ vertexColors: true }));
-  upperMesh.castShadow = upperMesh.receiveShadow = true;
-  upperMesh.matrixAutoUpdate = false;
+  const upperGroup = new THREE.Group();
+  const meshes = upper.map((parts) => {
+    const m = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 1 }));
+    m.castShadow = m.receiveShadow = true;
+    m.matrixAutoUpdate = false;
+    upperGroup.add(m);
+    return m;
+  });
+  const inside = (x: number, z: number) => Math.abs(x - cx) < hw && Math.abs(z - cz) < hd;
+  /** Duvarın iç yüzeyine göre kameranın konumu: bu duvarın tarafına geçmiş (ya da dibinde) mi. */
+  const cameraSide = [
+    (c: THREE.Vector3) => c.z < cz - hd + 2.5,
+    (c: THREE.Vector3) => c.z > cz + hd - 2.5,
+    (c: THREE.Vector3) => c.x < cx - hw + 2.5,
+    (c: THREE.Vector3) => c.x > cx + hw - 2.5,
+  ];
   return {
-    upper: upperMesh,
-    inside: (x, z) => Math.abs(x - cx) < hw && Math.abs(z - cz) < hd,
+    upper: upperGroup,
+    inside,
+    update(focus, camera, dt) {
+      const inHall = !!focus && inside(focus.x, focus.z);
+      meshes[4].visible = !inHall;
+      const k = 1 - Math.exp(-dt * 8);
+      for (let i = 0; i < 4; i++) {
+        const mat = meshes[i].material as THREE.MeshLambertMaterial;
+        const target = inHall && camera && cameraSide[i](camera) ? 0.18 : 1;
+        mat.opacity += (target - mat.opacity) * k;
+        // Tam opakken saydamlık sıralaması gereksiz (gölge ve derinlik doğru kalsın)
+        mat.depthWrite = mat.opacity > 0.95;
+        meshes[i].castShadow = mat.opacity > 0.95;
+      }
+    },
     // Batı cephesinde, kapının üstünde (nehirden gelene bakar)
     signAt: mat(cx - hw - T / 2 - 0.06, DOOR_H + 1.9, cz, -Math.PI / 2),
   };

@@ -39,7 +39,7 @@ export interface World {
   screen: THREE.Mesh;
   spawn: { x: number; z: number; rot: number };
   /** Kare başına: shader saati ve birkaç ucuz animasyon; `focus` oyuncunun konumu (gece ışıkları). */
-  update(time: number, focus?: { x: number; z: number }): void;
+  update(time: number, focus?: { x: number; z: number }, camera?: THREE.Vector3): void;
   /** Biri şiş çevirdi: duman kabarır, köz parlar (`time`: döngü saati, sn). */
   grillBoost(time: number): void;
   sakura: SakuraGarden;
@@ -1089,6 +1089,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     env,
   );
   let boostUntil = 0;
+  let hallTime = 0;
   let lastFlash = 0;
 
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(SCREEN_W, SCREEN_H), new THREE.MeshBasicMaterial({ map: screenTexture(), fog: false }));
@@ -1107,7 +1108,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     fame,
     screen,
     spawn: { ...SPAWN },
-    update(time: number, focus?: { x: number; z: number }) {
+    update(time: number, focus?: { x: number; z: number }, camera?: THREE.Vector3) {
       timeUniform.value = time;
       const dt = Math.min(0.25, Math.max(0, time - lastTime));
       lastTime = time;
@@ -1115,7 +1116,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
       wetUniform.value = wet < wetTarget ? Math.min(wetTarget, wet + dt / 40) : Math.max(wetTarget, wet - dt / 240);
       night.update(time, env.lights, focus?.x ?? SPAWN.x, focus?.z ?? SPAWN.z);
       // İçerideyken salonun çatısı ve mağaranın tavanı gizlenir: kamera içeriyi görsün
-      sports.upper.visible = !(focus && sports.inside(focus.x, focus.z));
+      sports.update(focus, camera, Math.min(0.1, Math.max(0, time - hallTime)));
+      hallTime = time;
       terrain.cap.visible = !(focus && inCave(focus.x, focus.z));
       music += ((musicOn ? 1 : 0) - music) * 0.08;
       speakers.update(time, music);

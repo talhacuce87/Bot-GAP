@@ -707,7 +707,7 @@ async function start(): Promise<void> {
     const time = now / 1000;
     renderer.info.reset();
 
-    world.update(time, me);
+    world.update(time, me, camera.position);
     input.poll();
     // İnşa modunda rakamlar blok seçer (features.keys tüketir)
     const emote = features.building ? -1 : input.consumeEmote();
