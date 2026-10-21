@@ -101,6 +101,7 @@ export class TankView {
     this.gun = new THREE.Mesh(new THREE.BufferGeometry(), material);
     this.gun.position.set(0, MUZZLE_Y, GUN_PIVOT_Z);
     this.turret.add(this.gun);
+    for (const m of [this.hull, this.turret, this.gun]) m.castShadow = m.receiveShadow = true;
     this.group.add(this.hull, this.turret);
     this.group.visible = false;
     void sharedModel()

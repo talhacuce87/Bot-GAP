@@ -13,10 +13,12 @@ import { login } from "./discord";
 import { beginMode, switchMode } from "./mode";
 import { Input } from "./input/input";
 import { Net } from "./net";
-import { PerfGovernor } from "./perf";
+import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
+import { onSettings, settings } from "./settings";
 import { Chat } from "./ui/chat";
 import { Hud } from "./ui/hud";
+import { SettingsPanel } from "./ui/settingsPanel";
 import { buildArena } from "./world/arena";
 import type { World } from "./world/scene";
 import { aimRay, ShellFx, TankView } from "./world/tank";
@@ -52,14 +54,24 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   };
   let renderer: THREE.WebGLRenderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: !lowPower, powerPreference: "high-performance", stencil: false });
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: settings.antialias && !lowPower, powerPreference: "high-performance", stencil: false });
   } catch {
     fail("Bu cihazda WebGL açılamadı.");
     return;
   }
   renderer.setSize(innerWidth, innerHeight, false);
-  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 260);
-  const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, 1.5), true);
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  const camera = new THREE.PerspectiveCamera(settings.fov, innerWidth / innerHeight, 0.1, 260);
+  const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, settings.maxDpr), settings.adaptive);
+  const limiter = new FrameLimiter();
+  const applySettings = () => {
+    perf.adaptive = settings.adaptive;
+    perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap);
+    camera.fov = settings.fov;
+    camera.updateProjectionMatrix();
+  };
+  applySettings();
+  life.onStop(onSettings(applySettings));
   life.onStop(() => {
     renderer.setAnimationLoop(null);
     renderer.dispose();
@@ -103,6 +115,10 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   net.onChat = (line) => chat.add(line, line.kind === "say" && line.sid === net.you);
   net.onChatLog = (lines) => chat.setLog(lines);
   if (input.touch) hud.jumpButton(() => input.triggerJump());
+  new SettingsPanel(hudRoot, () => switchMode(true));
+  const syncFps = () => (settings.showFps ? hud.enableDebug() : hud.disableDebug());
+  syncFps();
+  life.onStop(onSettings(syncFps));
 
   // ---- Arayüz ----
   const exit = el("button", "battle-exit", hudRoot, "🏠 Dünyaya dön");
@@ -226,6 +242,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   let last = performance.now();
 
   const frame = (now: number) => {
+    if (!limiter.ready(now, settings.fpsCap)) return;
     const dt = Math.min(now - last, 100) / 1000;
     const dtMs = now - last;
     last = now;
@@ -326,6 +343,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
     if (remotes.consumeChanged()) hud.renderPlayers(remotes);
     renderer.render(scene, camera);
     perf.frame(dtMs, performance.now() - t0);
+    hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);
   };
   const run = () => {
     last = performance.now();

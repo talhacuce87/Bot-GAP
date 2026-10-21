@@ -1,12 +1,14 @@
 // "GAP Meydanı": tamamen prosedürel, low-poly, vertex renkli sahne.
 // Statik geometri tek mesh'te birleştirilir; tekrar eden objeler InstancedMesh ile çizilir;
-// rüzgâr, alev ve duman vertex shader'da. Toplam ~20 draw call, gerçek zamanlı gölge yok.
+// rüzgâr, alev ve duman vertex shader'da. Toplam ~20 draw call. Güneş gölgesi isteğe bağlı:
+// yalnızca oyuncunun çevresindeki kutuda, uzakta zemin lekeleri devralır.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { WORLD_RADIUS } from "../../../shared/constants";
+import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
-import { DayNight } from "./daynight";
+import { DayNight, skyDome } from "./daynight";
 import { GrassField } from "./grassField";
 import { NightFx } from "./night";
 import { FameBoard, fameStatics } from "./fame";
@@ -32,8 +34,10 @@ export interface World {
   /** Biri şiş çevirdi: duman kabarır, köz parlar (`time`: döngü saati, sn). */
   grillBoost(time: number): void;
   sakura: SakuraGarden;
-  /** Gün ışığı (0 gece, 1 gündüz) ve lambaların yanma oranı; DayNight günceller. */
-  env: { day: number; lights: number };
+  /** Gün ışığı (0 gece, 1 gündüz), lambaların yanma oranı ve gün batımı tonu; DayNight günceller. */
+  env: { day: number; lights: number; dusk: number };
+  /** Güneş gölgesi (renderer.shadowMap ayrıca açılmalı). */
+  setShadows(level: ShadowLevel): void;
   /** Oyuncunun çevresindeki sık çimen (zayıf cihazda yok). */
   grass: GrassField | null;
   /** Sinemada bir şey oynuyor: hoparlörler ritimle titrer. */
@@ -45,9 +49,19 @@ export interface World {
 export interface WorldOptions {
   /** Gece/gündüz testi için saat (?hour=21); verilmezse Türkiye saati. */
   hour?: number;
-  /** "low": sık çimen ve gerçek lamba ışıkları kapalı (dokunmatik, zayıf cihaz). */
-  quality?: "low" | "high";
+  /** Oyuncunun çevresinde sık çimen. */
+  grass?: boolean;
+  /** Gece gerçek ışık alan en yakın lamba sayısı (0: yalnızca ucuz zemin lekeleri). */
+  lamps?: number;
 }
+
+/** Gölge haritası çözünürlüğü ve oyuncu çevresinde kapladığı kutunun yarı genişliği (m). */
+const SHADOW: Record<Exclude<ShadowLevel, "off">, { size: number; half: number }> = {
+  low: { size: 1024, half: 24 },
+  high: { size: 2048, half: 34 },
+};
+/** Ay yönü: gece ışık (ve silik gölgeler) buradan gelir. */
+const MOON_DIR = new THREE.Vector3(20, 30, 12).normalize();
 
 export const SCREEN_Z = -46;
 export const SCREEN_W = 20;
@@ -55,7 +69,6 @@ export const SCREEN_H = SCREEN_W * (9 / 16);
 const AMPHI_CENTER_Z = -46;
 const AMPHI_ROWS = 6;
 const SKY = new THREE.Color("#a9cfee");
-const SKY_TOP = new THREE.Color("#5b8fd6");
 
 const tmp = new THREE.Color();
 
@@ -457,7 +470,9 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matri
     }
   }
   grass.push(...extraGrass);
-  scene.add(instanced(tuft, windMaterial(0.28, { side: THREE.DoubleSide }, [32, 44]), grass));
+  const tufts = instanced(tuft, windMaterial(0.28, { side: THREE.DoubleSide }, [32, 44]), grass);
+  tufts.receiveShadow = true;
+  scene.add(tufts);
 
   const head = part(new THREE.OctahedronGeometry(0.075, 0), "#ffffff", new THREE.Matrix4().makeScale(1, 0.6, 1));
   const fm = instanced(head, windMaterial(0.5, {}, [40, 52]), flowers);
@@ -514,49 +529,92 @@ function propMeshes(b: Builder, scene: THREE.Scene): { bulbMaterial: THREE.MeshB
     flame: flickerMaterial("#ffa12e"),
     log: flat,
   };
+  // Gölge düşürenler: ağaçlar, kayalar, çalılar, direkler, kütükler (düz taşlar ve ışıklar değil)
+  const casters: PropKind[] = ["pine", "oak", "sakura", "rock", "bush", "post", "log"];
   for (const kind of Object.keys(geos) as PropKind[]) {
-    if (b.props[kind].length) scene.add(instanced(geos[kind], materials[kind], b.props[kind]));
+    if (!b.props[kind].length) continue;
+    const m = instanced(geos[kind], materials[kind], b.props[kind]);
+    m.castShadow = casters.includes(kind);
+    m.receiveShadow = kind !== "bulb" && kind !== "flame";
+    scene.add(m);
   }
   return { bulbMaterial: materials.bulb as THREE.MeshBasicMaterial };
 }
 
-function shadowsMesh(b: Builder): THREE.InstancedMesh {
+/**
+ * Ağaç/çalı altı lekeleri. Gerçek gölge açıkken `focus` (x, z, yarıçap) çevresinde silinir:
+ * yakında gerçek gölge, uzakta leke; ikisi üst üste binmez.
+ */
+function shadowsMesh(b: Builder, focus: { value: THREE.Vector3 }): THREE.InstancedMesh {
   const mats: THREE.Matrix4[] = [];
   for (let i = 0; i < b.shadows.length; i += 3) {
     const s = b.shadows[i + 2] * 2;
     mats.push(flatMat(b.shadows[i], 0.036, b.shadows[i + 1], s, s));
   }
-  const m = instanced(
-    new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicMaterial({ map: blobTexture(0.32), transparent: true, depthWrite: false }),
-    mats,
-  );
+  const material = new THREE.MeshBasicMaterial({ map: blobTexture(0.32), transparent: true, depthWrite: false });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uBlobFocus = focus;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nuniform vec3 uBlobFocus;\nvarying float vBlobFade;")
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+        vec4 bw = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vBlobFade = uBlobFocus.z > 0.0 ? smoothstep(uBlobFocus.z * 0.6, uBlobFocus.z * 0.95, distance(bw.xz, uBlobFocus.xy)) : 1.0;`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying float vBlobFade;")
+      .replace("#include <map_fragment>", "#include <map_fragment>\ndiffuseColor.a *= vBlobFade;");
+  };
+  material.customProgramCacheKey = () => "blob-fade";
+  const m = instanced(new THREE.PlaneGeometry(1, 1), material, mats);
   m.renderOrder = 1;
   return m;
 }
 
-/** Ufuktaki dağlar: tek mesh, sisten etkilenmez, renkleri gökyüzüne karışır. */
+/**
+ * Ufuktaki dağlar: sivri, keskin sırtlı tepeler (her biri ana zirve + yan zirveler); tek mesh,
+ * sisten etkilenmez, DayNight ufuk rengiyle puslar.
+ */
 function mountains(b: Builder): THREE.Mesh {
   const parts: THREE.BufferGeometry[] = [];
-  const haze = new THREE.Color("#8fb0bf"), dark = new THREE.Color("#6f8f86"), snow = new THREE.Color("#f2f5f7");
-  for (let i = 0; i < 52; i++) {
-    const a = (i / 52) * Math.PI * 2 + b.rand() * 0.1;
-    const dist = 175 + b.rand() * 35;
-    const h = 24 + b.rand() * 40;
-    const rad = 22 + b.rand() * 22;
-    const g = new THREE.ConeGeometry(rad, h, 5, 2).toNonIndexed();
+  const haze = new THREE.Color("#8fb0bf"), dark = new THREE.Color("#5f7a78"), rock = new THREE.Color("#7d8a8f"), snow = new THREE.Color("#f2f5f7");
+  const peak = (x: number, z: number, h: number, rad: number, base: number) => {
+    const g = new THREE.ConeGeometry(rad, h, 5, 3).toNonIndexed();
     g.deleteAttribute("uv");
-    g.applyMatrix4(mat(Math.sin(a) * dist, h / 2 - 2, Math.cos(a) * dist, b.rand() * 6));
+    // Tepeyi biraz kaydır: simetrik koni yerine yamuk, kayalık zirve
     const pos = g.attributes.position;
-    const cols = new Float32Array(pos.count * 3);
+    const lean = (b.rand() - 0.5) * rad * 0.35;
     for (let v = 0; v < pos.count; v++) {
-      const t = (pos.getY(v) + 2) / h;
-      tmp.copy(dark).lerp(haze, 0.4 + b.rand() * 0.1);
-      if (h > 42 && t > 0.72) tmp.copy(snow);
-      tmp.toArray(cols, v * 3);
+      const t = (pos.getY(v) + h / 2) / h;
+      pos.setX(v, pos.getX(v) + lean * t * t);
+    }
+    g.applyMatrix4(mat(x, h / 2 + base, z, b.rand() * 6));
+    const cols = new Float32Array(pos.count * 3);
+    for (let v = 0; v < pos.count; v += 3) {
+      // Üçgen başına renk: alt yamaç koyu ve yeşilimsi, yukarısı kaya, en tepe kar
+      const t = ((pos.getY(v) + pos.getY(v + 1) + pos.getY(v + 2)) / 3 - base) / h;
+      tmp.copy(dark).lerp(rock, Math.min(1, t * 1.6)).lerp(haze, 0.3 + b.rand() * 0.12);
+      if (h > 46 && t > 0.7) tmp.copy(snow).multiplyScalar(0.92 + b.rand() * 0.08);
+      for (let k = 0; k < 3; k++) tmp.toArray(cols, (v + k) * 3);
     }
     g.setAttribute("color", new THREE.BufferAttribute(cols, 3));
     parts.push(g);
+  };
+  for (let i = 0; i < 52; i++) {
+    const a = (i / 52) * Math.PI * 2 + b.rand() * 0.1;
+    const dist = 178 + b.rand() * 32;
+    const h = 30 + b.rand() * 48;
+    const rad = 16 + b.rand() * 18;
+    const x = Math.sin(a) * dist, z = Math.cos(a) * dist;
+    peak(x, z, h, rad, -2);
+    // Yan zirveler: aynı sırtta, alçak
+    const tx = Math.cos(a), tz = -Math.sin(a);
+    for (const side of [-1, 1]) {
+      if (b.rand() < 0.35) continue;
+      const off = rad * (0.6 + b.rand() * 0.5) * side;
+      peak(x + tx * off, z + tz * off, h * (0.45 + b.rand() * 0.3), rad * (0.6 + b.rand() * 0.25), -2);
+    }
   }
   const m = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, fog: false }));
   m.matrixAutoUpdate = false;
@@ -721,24 +779,27 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const hemi = new THREE.HemisphereLight("#dcefff", "#56683a", 1.6);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight("#fff1d6", 1.7);
-  sun.position.set(20, 30, 12);
-  scene.add(sun);
+  sun.position.copy(MOON_DIR).multiplyScalar(40);
+  scene.add(sun, sun.target);
+  // Gölge kamerası oyuncuyla birlikte kayar (update); düşük poli yüzeylerde lekelenme olmasın diye normal kaydırma
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.05;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 220;
+  /** Gerçek gölge kutusunun merkezi ve yarıçapı (0: kapalı); zemin lekeleri burada silinir. */
+  const blobFocus = { value: new THREE.Vector3(0, 0, 0) };
+  let shadowHalf = 0;
+  const _right = new THREE.Vector3(), _up = new THREE.Vector3(), _snap = new THREE.Vector3();
 
   // Gökyüzü kubbesi (tek draw call, sisten etkilenmez)
-  const skyGeo = new THREE.SphereGeometry(240, 16, 8);
-  const skyCols = new Float32Array(skyGeo.attributes.position.count * 3);
-  for (let i = 0; i < skyGeo.attributes.position.count; i++) {
-    const y = skyGeo.attributes.position.getY(i) / 240;
-    tmp.copy(SKY).lerp(SKY_TOP, Math.max(0, y) ** 0.7).toArray(skyCols, i * 3);
-  }
-  skyGeo.setAttribute("color", new THREE.BufferAttribute(skyCols, 3));
-  const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
-  sky.renderOrder = -1;
-  scene.add(sky);
+  const sky = skyDome(240);
+  scene.add(sky.mesh);
 
   ground(b);
   plaza(b);
-  scene.add(amphitheatre(b));
+  const benches = amphitheatre(b);
+  benches.castShadow = benches.receiveShadow = true;
+  scene.add(benches);
   const speakers = speakerCones();
   scene.add(speakers.mesh);
   const dz = dungeon(b);
@@ -755,12 +816,14 @@ export function buildWorld(opts: WorldOptions = {}): World {
 
   const statics = new THREE.Mesh(mergeGeometries(b.statics), new THREE.MeshLambertMaterial({ vertexColors: true }));
   statics.matrixAutoUpdate = false;
+  statics.castShadow = statics.receiveShadow = true;
   scene.add(statics);
   const { bulbMaterial } = propMeshes(b, scene);
   grassAndFlowers(b, scene, garden.grass);
   scene.add(garden.petals);
-  scene.add(shadowsMesh(b));
-  scene.add(mountains(b));
+  scene.add(shadowsMesh(b, blobFocus));
+  const mountainMesh = mountains(b);
+  scene.add(mountainMesh);
   const cloudMesh = clouds(b);
   scene.add(cloudMesh);
   scene.add(
@@ -772,6 +835,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
   );
   scene.add(gr.coals);
   const fame = new FameBoard();
+  fame.group.traverse((o) => (o.castShadow = o instanceof THREE.InstancedMesh));
   scene.add(fame.group);
   const fnt = fountain();
   scene.add(...fnt.parts);
@@ -783,12 +847,12 @@ export function buildWorld(opts: WorldOptions = {}): World {
     bulbs: b.props.bulb,
     flames: b.props.flame,
     swarms: [...FOREST_CLUSTERS.slice(0, 6), [SAKURA.x, SAKURA.z, SAKURA_CONFIG.radius], [POND.x, POND.z, 11], [GROVE.x, GROVE.z, 10]],
-    lights: opts.quality === "low" ? 0 : 6,
+    lights: opts.lamps ?? 6,
     skyRadius: 240,
-    moonDir: sun.position,
+    moonDir: MOON_DIR,
   });
   scene.add(night.group);
-  const grass = opts.quality === "low"
+  const grass = opts.grass === false
     ? null
     : new GrassField(
         {
@@ -799,19 +863,23 @@ export function buildWorld(opts: WorldOptions = {}): World {
         },
         30000,
       );
-  if (grass) scene.add(grass.mesh);
-  const env = { day: 1, lights: 0 };
+  if (grass) {
+    grass.mesh.receiveShadow = true;
+    scene.add(grass.mesh);
+  }
+  const env = { day: 1, lights: 0, dusk: 0 };
   let music = 0, musicOn = false;
   const dayNight = new DayNight(
     {
       scene,
-      skyGeometry: skyGeo,
-      skyRadius: 240,
+      sky,
       hemi,
       sun,
       bulbMaterial,
       cloudMaterial: cloudMesh.material as THREE.MeshLambertMaterial,
+      mountainMaterial: mountainMesh.material as THREE.MeshLambertMaterial,
       bulbMatrices: b.props.bulb,
+      moonDir: MOON_DIR,
     },
     opts.hour,
     env,
@@ -849,6 +917,40 @@ export function buildWorld(opts: WorldOptions = {}): World {
       dayNight.update(Date.now());
       // Damlalar ışıktan etkilenmez: gece gökyüzüyle birlikte kararsınlar
       fnt.light.value = 0.35 + 0.65 * Math.min(1, hemi.intensity / 1.6);
+      if (sun.castShadow) {
+        // Gölge kutusu oyuncuyu izler; ışık uzayında texel adımlarına oturtulur (kayarken titremesin)
+        const dir = dayNight.lightDir;
+        const texel = (shadowHalf * 2) / sun.shadow.mapSize.x;
+        _right.crossVectors(THREE.Object3D.DEFAULT_UP, dir).normalize();
+        _up.crossVectors(dir, _right);
+        const fx = focus?.x ?? 0, fz = focus?.z ?? 8;
+        const r = Math.round((_right.x * fx + _right.z * fz) / texel) * texel;
+        const u = Math.round((_up.x * fx + _up.z * fz) / texel) * texel;
+        const f = dir.x * fx + dir.z * fz;
+        _snap.copy(_right).multiplyScalar(r).addScaledVector(_up, u).addScaledVector(dir, f);
+        sun.target.position.copy(_snap);
+        sun.position.copy(_snap).addScaledVector(dir, 100);
+        sun.target.updateMatrixWorld();
+        blobFocus.value.set(fx, fz, shadowHalf);
+      } else {
+        sun.position.copy(sun.target.position).addScaledVector(dayNight.lightDir, 40);
+      }
+    },
+    setShadows(level: ShadowLevel) {
+      const cfg = level === "off" ? null : SHADOW[level];
+      sun.castShadow = !!cfg;
+      blobFocus.value.z = 0;
+      if (!cfg) return;
+      shadowHalf = cfg.half;
+      if (sun.shadow.mapSize.x !== cfg.size) {
+        sun.shadow.mapSize.set(cfg.size, cfg.size);
+        sun.shadow.map?.dispose();
+        sun.shadow.map = null;
+      }
+      const cam = sun.shadow.camera;
+      cam.left = cam.bottom = -cfg.half;
+      cam.right = cam.top = cfg.half;
+      cam.updateProjectionMatrix();
     },
     sakura: garden,
     env,
