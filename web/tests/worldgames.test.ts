@@ -31,13 +31,16 @@ function world() {
   return { room, games: room.games, a, b, sa, sb, place, reports };
 }
 
+/** Ortanın 0.6 batısından doğu kalesinin köşesine (kalecinin uzağına) yön. */
+const CORNER = Math.atan2(PITCH.hx + 0.6, PITCH.goalHalf - 0.7);
+
 describe("futbol", () => {
   it("şut kaleye girince gol sayılır, atan raporlanır ve top ortaya döner", () => {
     const { games, a, sa, place, reports } = world();
-    games.football.random = () => 0.999; // kaleci kurtaramasın
-    // Topun hemen batısında, doğudaki kaleye bakarak (yön +x = π/2)
+    games.football.random = () => 0.999; // kaleci şutu okuyamasın
+    // Topun hemen batısında, doğudaki kalenin köşesine (kalecinin içinden top geçmez)
     place(sa, PITCH.x - 0.6, PITCH.z);
-    games.football.kick(sa, Math.PI / 2, 0.2, 1000);
+    games.football.kick(sa, CORNER, 0.5, 1000);
     place(sa, PITCH.x, PITCH.z + 5); // orta noktadan uzakta: ortaya dönen topu almasın
     for (let t = 1000; t < 5000; t += 66) games.football.tick(t);
     const goal = a.last("goal");
@@ -109,7 +112,7 @@ describe("futbol", () => {
     place(sb, PITCH.x, PITCH.z + 6);
     place(sa, PITCH.x - 0.6, PITCH.z);
     for (let t = 1000; t < 3600; t += 66) games.football.tick(t);
-    games.football.kick(sa, Math.PI / 2, 0.2, 3600);
+    games.football.kick(sa, CORNER, 0.5, 3600);
     for (let t = 3600; t < 8000; t += 66) games.football.tick(t);
     expect(a.last("goal")?.score).toEqual([1, 0]);
     games.football.tick(62_000);
@@ -170,6 +173,73 @@ describe("futbol", () => {
     }
     expect(saved).toBe(true);
     expect(a.last("goal")).toBeUndefined();
+  });
+
+  it("kaleci şutu okuyamasa da üstüne gelen top içinden geçmez, takılan karede bile", () => {
+    const { games, a, sa, sb, place } = world();
+    games.football.random = () => 0.999; // hiçbir şutu okuyamaz
+    place(sb, PITCH.x - 10, PITCH.z + 6);
+    place(sa, PITCH.x - 0.6, PITCH.z);
+    games.football.kick(sa, Math.PI / 2, 1, 1000);
+    place(sa, PITCH.x - 6, PITCH.z - 5);
+    // Sunucu takılıyor: 200 ms'lik kareler (top karede metrelerce yol alır)
+    let saved = false;
+    for (let t = 1000; t < 5000; t += 200) {
+      games.football.tick(t);
+      if (a.last("ball")?.ev === "save") saved = true;
+    }
+    expect(saved).toBe(true);
+    expect(a.last("goal")).toBeUndefined();
+  });
+
+  it("kalecinin elindeki top alınamaz; kaleci kendisine şut çekene değil arkadaşına pas verir", () => {
+    const { room, games, a, sa, sb, place } = world();
+    games.football.random = () => 0;
+    const c = room.join(member("c"), new FakeConn(), 0);
+    place(sb, PITCH.x - 10, PITCH.z + 6);
+    place(c, PITCH.x + 10, PITCH.z - 6);
+    place(sa, PITCH.x - 0.6, PITCH.z);
+    games.football.kick(sa, Math.PI / 2, 0.3, 1000);
+    let t = 1000;
+    for (; t < 5000 && games.football.ownerSid >= 0; t += 66) {
+      place(sa, Math.min(PITCH.x + PITCH.hx - 1.2, PITCH.x + (t - 1000) / 200), PITCH.z);
+      games.football.tick(t);
+    }
+    expect(games.football.ownerSid).toBe(-2);
+    // Şutu çeken kalecinin dibinde: ne müdahale ne vuruş ne de üstüne basmak topu alır
+    const held = games.football.state(t);
+    place(sa, held.x - 0.3, held.z);
+    games.football.tackle(sa, t + 10);
+    games.football.kick(sa, -Math.PI / 2, 1, t + 20);
+    for (let i = 0; i < 10; i++) games.football.tick(t + 30 + i * 30);
+    expect(games.football.ownerSid).toBe(-2);
+    // Elinden çıkarınca c'ye (topu ona getiren a'ya değil)
+    let pass;
+    for (t += 330; t < 8000 && !pass; t += 66) {
+      games.football.tick(t);
+      const e = a.last("ball");
+      if (e?.ev === "pass" && e.by === -2) pass = e;
+    }
+    expect(pass).toBeDefined();
+    const toC = Math.atan2(PITCH.x + 10 - pass!.x, PITCH.z - 6 - pass!.z);
+    expect(Math.abs(Math.atan2(pass!.vx, pass!.vz) - toC)).toBeLessThan(0.2);
+  });
+
+  it("kaleciye sürülen top elinde kalır", () => {
+    const { games, sa, sb, place } = world();
+    place(sb, PITCH.x - 10, PITCH.z + 6);
+    place(sa, PITCH.x + 10, PITCH.z);
+    games.football.tick(900);
+    games.football.tick(1000);
+    // Topu al, doğu kalesine doğru sür
+    place(sa, PITCH.x - 0.5, PITCH.z);
+    games.football.tick(1066);
+    expect(games.football.ownerSid).toBe(sa);
+    for (let i = 1; i <= 80 && games.football.ownerSid === sa; i++) {
+      place(sa, PITCH.x - 0.5 + i * 0.4, PITCH.z);
+      games.football.tick(1066 + i * 66);
+    }
+    expect(games.football.ownerSid).toBe(-2);
   });
 
   it("uzaktan şut çekilemez", () => {
