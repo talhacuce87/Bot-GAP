@@ -58,6 +58,8 @@ const AIM_MIN_DIST = 4;
 
 /** Savrulma: kontrol bu kadar süre elden gider, hız yavaşça söner. */
 const KNOCK_TIME = 0.8;
+/** Shift lock'ta kameranın sağa kayması (m). */
+const SHOULDER = 0.7;
 
 /** `p`yi (x, z) merkezli r yarıçaplı dairenin dışına iter. */
 function pushOut(p: { x: number; z: number }, x: number, z: number, r: number): void {
@@ -117,6 +119,9 @@ export class Player implements AvatarView, PlayerState {
   private dist = 6.5;
   private target = new THREE.Vector3();
   private look = { x: 0, y: 0 };
+  /** Shift lock omuz kamerası: 0 = ortada, 1 = sağ omuzda. */
+  private shoulder = 0;
+  private lookAt = new THREE.Vector3();
 
   constructor(
     private world: World,
@@ -142,6 +147,8 @@ export class Player implements AvatarView, PlayerState {
       ? THREE.MathUtils.clamp(this.pitch + lookY, TANK_PITCH_MIN, TANK_PITCH_MAX)
       : THREE.MathUtils.clamp(this.pitch + lookY, 0.05, 1.25);
     this.dist = THREE.MathUtils.clamp(this.dist + input.consumeZoom() * 0.6, 2.5, 12);
+    const lockOn = input.shiftLock && !this.driving && !this.seat;
+    this.shoulder += ((lockOn ? 1 : 0) - this.shoulder) * (1 - Math.exp(-dt * 10));
 
     if (this.driving) {
       this.drive(dt, input);
@@ -195,7 +202,9 @@ export class Player implements AvatarView, PlayerState {
     if (this.jailed) clampToJail(this);
 
     const speed = Math.hypot(this.vx, this.vz);
-    if (speed > 0.3) this.rot = dampAngle(this.rot, Math.atan2(this.vx, this.vz), 1 - Math.exp(-dt * 12));
+    // Shift lock: karakter hep kameranın baktığı yöne döner (yana/geri yürürken de)
+    if (lockOn) this.rot = dampAngle(this.rot, this.yaw + Math.PI, 1 - Math.exp(-dt * 20));
+    else if (speed > 0.3) this.rot = dampAngle(this.rot, Math.atan2(this.vx, this.vz), 1 - Math.exp(-dt * 12));
     this.flags = (speed > 0.6 ? FLAG_WALKING : 0) | (speed > WALK_SPEED * 1.15 ? FLAG_RUNNING : 0) | this.jumpBits();
 
     this.nearSeat = this.findSeat();
@@ -361,11 +370,14 @@ export class Player implements AvatarView, PlayerState {
     const cp = Math.cos(this.pitch);
     // Zindanda kamera duvarların ötesine çıkmasın: parmaklıklardan dışarı bakılır.
     const dist = this.jailed ? Math.min(this.dist, 3.4) : this.driving ? Math.max(this.dist, TANK_CAM_DIST) : this.dist;
+    // Shift lock'ta kamera sağ omza kayar: karakter ekranın ortasını kapatmaz
+    const side = this.shoulder * SHOULDER;
+    this.lookAt.set(this.target.x + Math.cos(this.yaw) * side, this.target.y, this.target.z - Math.sin(this.yaw) * side);
     camera.position.set(
-      this.target.x + Math.sin(this.yaw) * cp * dist,
-      this.target.y + Math.sin(this.pitch) * dist,
-      this.target.z + Math.cos(this.yaw) * cp * dist,
+      this.lookAt.x + Math.sin(this.yaw) * cp * dist,
+      this.lookAt.y + Math.sin(this.pitch) * dist,
+      this.lookAt.z + Math.cos(this.yaw) * cp * dist,
     );
-    camera.lookAt(this.target);
+    camera.lookAt(this.lookAt);
   }
 }

@@ -30,6 +30,7 @@ import { EmoteFx, FX_CELL, ThrowFx } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
 import { login, type Session } from "./discord";
 import { Input } from "./input/input";
+import { onBinds } from "./input/keybinds";
 import { Net } from "./net";
 import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
@@ -177,6 +178,8 @@ async function start(): Promise<void> {
 
   const input = new Input(canvas, hudRoot);
   const hud = new Hud(hudRoot, session.user.name, input.touch, () => input.triggerAction());
+  life.onStop(() => input.dispose());
+  life.onStop(onBinds(() => hud.refreshHint()));
   world.fame.setAvatarUrl((id, hash) => `${session.base}/avatar/${id}/${hash}`);
   if (!life.active) return;
   const net = new Net(session.wsUrl, remotes);
@@ -301,6 +304,7 @@ async function start(): Promise<void> {
     if (!wardrobe.isOpen) me.outfit = look;
   };
   hud.wardrobeButton(input.touch, () => wardrobe.toggle());
+  input.onWardrobe = () => wardrobe.toggle();
 
   // ---- Sohbet ve sinema: "!" komutları, !izle ile izleme odası açılır ----
   // Activity içinde dış bağlantı Discord'un onay penceresiyle açılır; tarayıcıda yeni sekme.
