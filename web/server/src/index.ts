@@ -388,7 +388,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       scope: "identify",
       // Daha önce onaylayan sessizce döner; ilk kez gelen (ya da sessiz giriş reddedildiyse) onay ekranını görür
       prompt: lq.get("consent") === "1" ? "consent" : "none",
-      state: signValue(`${Date.now()}|${safeNext}`, SESSION_SECRET),
+      // Durum: zaman | onay ekranı mı (yeniden deneme bir kez) | dönüş adresi
+      state: signValue(`${Date.now()}|${lq.get("consent") === "1" ? 1 : 0}|${safeNext}`, SESSION_SECRET),
     });
     return redirect(res, `https://discord.com/oauth2/authorize?${q}`);
   }
@@ -396,9 +397,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (path === "/auth/callback" && method === "GET") {
     const q = new URL(req.url || "/", "http://x").searchParams;
     const state = verifyValue(q.get("state") || "", SESSION_SECRET);
-    const [ts, next] = state ? [Number(state.split("|")[0]), state.slice(state.indexOf("|") + 1)] : [0, "/"];
+    const parts = state ? state.split("|") : [];
+    const ts = Number(parts[0] || 0), consented = parts[1] === "1", next = parts.slice(2).join("|") || "/";
     // Sessiz giriş reddedildi (uygulama bu tarayıcıda hiç onaylanmamış): onay ekranıyla bir kez daha
-    if (state && q.get("error") && q.get("error") !== "access_denied") {
+    if (state && !consented && q.get("error") && q.get("error") !== "access_denied") {
       return redirect(res, `/auth/login?consent=1&next=${encodeURIComponent(next)}`);
     }
     if (!state || Date.now() - ts > 10 * 60 * 1000 || !q.get("code")) return redirect(res, "/?login=failed");
