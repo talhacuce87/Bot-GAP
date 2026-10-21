@@ -179,6 +179,8 @@ async function start(): Promise<void> {
   // Debug: `?at=x,z,yön` ile istenen noktada başla (ekran görüntüsü, bölge testi).
   const atParam = params.has("debug") ? params.get("at") : null;
   const birdsEye = params.has("debug") && params.has("harita");
+  // Debug: `?debug&pist=N` oyuncak pistte sunucusuz antrenman (`&botlar=3`, `&oto` arabamı da otomatik pilot sürer)
+  const practiceTrack = params.has("debug") ? params.get("pist") : null;
   const at = atParam ? atParam.split(",").map(Number) : [];
   if (at.length >= 2 && at.every(Number.isFinite)) me.teleport(at[0], at[1], at[2] ?? Math.PI);
 
@@ -691,6 +693,7 @@ async function start(): Promise<void> {
       return cinemaOn && me.x >= c.minX && me.x <= c.maxX && me.z >= c.minZ && me.z <= c.maxZ;
     },
   });
+  if (practiceTrack !== null) features.race.requestPractice(Number(practiceTrack) || 0, Number(params.get("botlar") ?? 3) || 0, params.has("oto"), params.has("lobi"));
 
   addEventListener("resize", () => {
     if (!life.active) return;

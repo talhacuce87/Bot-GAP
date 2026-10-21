@@ -44,6 +44,8 @@ QUESTS: tuple[Quest, ...] = (
     Quest("tag_play", "Ebelemece ya da saklambaç oyna", "tag_play", 1, 8),
     Quest("ride", "Bisiklet ya da kaykayla 300 m git", "ride", 300, 5),
     Quest("stage", "Sahneye çık ya da DJ ol", "stage", 1, 5),
+    Quest("race_play", "Oyuncak pistte bir yarışa katıl", "race_play", 1, 6),
+    Quest("race_win", "Oyuncak pistte bir yarış kazan", "race_win", 1, 12),
 )
 BY_KEY = {q.key: q for q in QUESTS}
 EVENTS = {q.event for q in QUESTS}
@@ -60,6 +62,7 @@ STAT_KEYS = {
     "five": "fives",
     "hug": "hugs",
     "tag_win": "tag_wins",
+    "race_win": "race_wins",
     "ride": "ride_m",
 }
 # Aylık sezona da yazılan sayaçlar

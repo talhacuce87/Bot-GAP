@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { WORLD_BOUNDS } from "../../../shared/constants";
 import type { Weather } from "../../../shared/protocol";
-import { BRIDGE, CAVE, HALL, KAHVEHANE, LAKE, PLAZA, RIVER, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
+import { BRIDGE, CAVE, HALL, KAHVEHANE, LAKE, PLAZA, RACE_HOUSE, RACE_SCALE, RACE_TRACK_Y, RIVER, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
 import { HOOD, HOOD_BOX, HOOD_GAP, PLOT_SIZE } from "../../../shared/build";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
@@ -21,7 +21,7 @@ import { type Pitch, pitch } from "./pitch";
 import { djBooth, type StageLights, stageLights, stageTruss } from "./stageFx";
 import { addRipple, dungeon, GROVE, grove, GROVE_SIGN, GROVE_SIGN_RY, POND, pond, signPost, steppingStones, waterEnv, waterMaterial } from "./zones";
 import { BRIDGE_AXES, buildTerrain, groundY, inCave, mountainHeight, riverMesh, terrainColliders, walkable, WATER_Y, waterfallMesh } from "./terrain";
-import { hall } from "./hall";
+import { hall, raceHouse } from "./hall";
 import { cave } from "./cave";
 import { FAME } from "./fame";
 import { SAKURA, SAKURA_CONFIG, sakuraGarden, type SakuraGarden } from "./sakura";
@@ -166,12 +166,14 @@ function screenTexture(): THREE.CanvasTexture {
 
 /** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
 /** Meydandaki yön tabelası (doğma noktasından kuzeye bakana göre oklar). */
-const DIRECTIONS = ["↑ KAHVEHANE · GÖL", "↑ MAHALLE (İNŞA)", "↗ SİNEMA · DJ", "↗ SAKURA BAHÇESİ", "→ ŞÖHRET KÜRSÜSÜ", "→ KÖPRÜ · KAPALI SAHA", "→ ŞELALE · ZİNDAN", "→ TANK", "↓ MANGAL"];
+const DIRECTIONS = ["↑ KAHVEHANE · GÖL", "↖ OYUNCAK PİST", "↑ MAHALLE (İNŞA)", "↗ SİNEMA · DJ", "↗ SAKURA BAHÇESİ", "→ ŞÖHRET KÜRSÜSÜ", "→ KÖPRÜ · KAPALI SAHA", "→ ŞELALE · ZİNDAN", "→ TANK", "↓ MANGAL"];
 const SIGN_DUNGEON = 0;
 const SIGN_GROVE = 1;
 const SIGN_KAHVE = 2;
 const SIGN_HALL = 3;
 const SIGN_DIR = 4;
+/** Son hücre (yön satırları 4'ten başlar, en çok 11 satır). */
+const SIGN_RACE = 15;
 
 interface SignSpec {
   at: THREE.Matrix4;
@@ -201,6 +203,7 @@ function signsMesh(specs: SignSpec[]): THREE.Mesh {
     board(SIGN_GROVE, "#a8743e", "#5b3f25", "LAGER'İN MANGALI", "#fff3dc", "800 52px system-ui, sans-serif");
     board(SIGN_KAHVE, "#7a2622", "#3d1512", "☕ KAHVEHANE", "#f6e7c8", "900 64px system-ui, sans-serif");
     board(SIGN_HALL, "#1f2a3d", "#e8ecf2", "⚽ KAPALI SAHA", "#ffffff", "900 66px system-ui, sans-serif");
+    board(SIGN_RACE, "#e2463a", "#ffffff", "🏎️ OYUNCAK PİST", "#ffffff", "900 60px system-ui, sans-serif");
     DIRECTIONS.forEach((t, i) => board(SIGN_DIR + i, "#d0a56c", "#6b4a2b", t, "#2b1d10", "800 54px system-ui, sans-serif"));
   });
   const plane = ({ at, w, h, cell }: SignSpec) => {
@@ -492,6 +495,31 @@ function bridges(b: Builder): void {
   }
 }
 
+/**
+ * Oyuncak pistin platformu: binanın ortasında alçak, kenarları yuvarlatılmış halı kaplı kaide; üstüne
+ * çıkılmaz (pist ve arabalar features'taki RaceView'da). Çevresinde seyirci bankları.
+ */
+function toyPlatform(b: Builder): void {
+  const { x, z } = RACE_HOUSE;
+  // Pistin kapladığı alan (pist birimi ±52 × ±38) + kenar
+  const hw = 52 * RACE_SCALE + 0.35, hd = 38 * RACE_SCALE + 0.35, y = RACE_TRACK_Y;
+  b.add(part(new THREE.BoxGeometry(hw * 2, y, hd * 2), "#3d7a4a", mat(x, y / 2, z)));
+  // Beyaz kenar pervazı: platformun üst yüzünün altında kalır (pist üstte görünsün)
+  b.add(part(new THREE.BoxGeometry(hw * 2 + 0.2, 0.08, hd * 2 + 0.2), "#f4f1e8", mat(x, y - 0.06, z)));
+  b.colliders.segment(x - hw, z - hd, x + hw, z - hd, 0.1);
+  b.colliders.segment(x - hw, z + hd, x + hw, z + hd, 0.1);
+  b.colliders.segment(x - hw, z - hd, x - hw, z + hd, 0.1);
+  b.colliders.segment(x + hw, z - hd, x + hw, z + hd, 0.1);
+  // Batı duvarı önünde seyirci bankları
+  for (const oz of [-2.6, 0, 2.6]) {
+    const bx = x - RACE_HOUSE.hw + 0.8, bz = z + oz;
+    b.add(part(new THREE.BoxGeometry(0.45, 0.1, 2.2), "#a0703f", mat(bx, 0.45, bz)));
+    for (const lz of [-0.95, 0.95]) b.add(part(new THREE.BoxGeometry(0.4, 0.45, 0.1), "#5b3f25", mat(bx, 0.22, bz + lz)));
+    b.colliders.segment(bx, bz - 1.1, bx, bz + 1.1, 0.25, 0.5);
+    for (const o of [-0.7, 0, 0.7]) b.seats.push({ x: bx, z: bz + o, rot: Math.PI / 2 });
+  }
+}
+
 /** Tankın park yeri: beton zemin ve sarı-siyah köşe babaları; çevresine ağaç dikilmez. */
 function tankPark(b: Builder): void {
   const { x, z, h } = TANK_PARK;
@@ -539,6 +567,8 @@ function paths(b: Builder): void {
   const hoodTop = HOOD_BOX.maxZ + 0.5;
   // Meydan → kahvehane → (mahallenin doğu sokağından) göl
   route([P.x, P.z - 10.9], [K.x + 1, K.z + K.hd + 1.4]);
+  // Kahvehane yolundan oyuncak pistin kapısına
+  route([P.x - 0.6, RACE_HOUSE.z], [RACE_HOUSE.x + RACE_HOUSE.hw + 1.4, RACE_HOUSE.z]);
   route([K.x - 1, K.z - K.hd - 1.6], [streetX[1], hoodTop], [streetX[1], HOOD_BOX.minZ - 0.5], [LAKE.x - 4, LAKE.z + LAKE.r + 2.6]);
   route([streetX[0], hoodTop], [streetX[0], HOOD_BOX.minZ + 1]);
   route([HOOD_BOX.minX + 1, streetZ], [HOOD_BOX.maxX - 1, streetZ]);
@@ -988,6 +1018,9 @@ export function buildWorld(opts: WorldOptions = {}): World {
   scene.add(field.group);
   const sports = hall(b);
   scene.add(sports.upper);
+  const toys = raceHouse(b);
+  scene.add(toys.upper);
+  toyPlatform(b);
   djBooth(b);
   stageTruss(b);
   const lights = stageLights();
@@ -1015,6 +1048,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       { at: gr.signAt, w: 2.2, h: 0.55, cell: SIGN_GROVE },
       ...kh.signAt.map((at) => ({ at, w: 3.2, h: 0.8, cell: SIGN_KAHVE })),
       { at: sports.signAt, w: 5.6, h: 1.4, cell: SIGN_HALL },
+      { at: toys.signAt, w: 3.2, h: 0.8, cell: SIGN_RACE },
       ...dirSigns,
     ]),
   );
@@ -1117,6 +1151,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       night.update(time, env.lights, focus?.x ?? SPAWN.x, focus?.z ?? SPAWN.z);
       // İçerideyken salonun çatısı ve mağaranın tavanı gizlenir: kamera içeriyi görsün
       sports.update(focus, camera, Math.min(0.1, Math.max(0, time - hallTime)));
+      toys.update(focus, camera, Math.min(0.1, Math.max(0, time - hallTime)));
       hallTime = time;
       terrain.cap.visible = !(focus && inCave(focus.x, focus.z));
       music += ((musicOn ? 1 : 0) - music) * 0.08;

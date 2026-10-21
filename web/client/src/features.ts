@@ -5,7 +5,8 @@ import * as THREE from "three";
 import { FLAG_RUNNING, FLAG_WALKING, vehicleOf, type Vehicle } from "../../shared/constants";
 import type { KickKind, MatchState } from "../../shared/protocol";
 import { assistedShot, attackSide, FINISH_RANGE, goalView } from "../../shared/football";
-import { DJ_BOOTH, DOCK, KICK_REACH, PITCH, POND_AREA, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
+import { DJ_BOOTH, DOCK, KICK_REACH, PITCH, POND_AREA, RACE_HOUSE, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
+import { RaceClient } from "./race";
 import { type AvatarRenderer, type AvatarView, colorFor } from "./avatars/avatars";
 import { Companions } from "./avatars/companions";
 import { type EmoteFx, FX_CELL } from "./avatars/emotes";
@@ -94,6 +95,8 @@ export class Features {
   private screenGlow: ScreenGlow;
   private buildWorld = new BuildWorld();
   private build: BuildMode;
+  /** Oyuncak pist yarışı. */
+  readonly race: RaceClient;
   private mist = new Mist();
   private leaves: SeasonParticles;
   private confetti = new Confetti();
@@ -156,6 +159,17 @@ export class Features {
     world.scene.add(this.rings);
     if (this.leaves.mesh) world.scene.add(this.leaves.mesh);
     c.life.onStop(() => this.fireworks.dispose());
+    this.race = new RaceClient({
+      scene: world.scene,
+      net,
+      input: c.input,
+      camera: c.camera,
+      hudRoot,
+      touch: c.input.touch,
+      nameOf: (sid) => this.nameOf(sid),
+      toast: (t) => hud.toast(t),
+    });
+    c.life.onStop(() => this.race.dispose());
 
     // Ocakçı: çay ocağının arkasında duran sabit karakter
     this.teaMaker = {
@@ -289,6 +303,8 @@ export class Features {
       }
     };
     net.onTag = (s) => this.whud.setTag(s, net.serverNow());
+    net.onRace = (s) => this.race.onState(s);
+    net.onRcars = (cars) => this.race.onCars(cars);
     net.onPairReq = (from, name, kind) => {
       this.whud.pairRequest(from, name, kind);
       sfx.pop();
@@ -435,7 +451,7 @@ export class Features {
 
   acts(): FeatureAct[] {
     const { me, world } = this.c;
-    if (me.jailed || me.driving) return [];
+    if (me.jailed || me.driving || this.race.driving()) return [];
     const near = (p: { x: number; z: number }, r: number) => Math.hypot(me.x - p.x, me.z - p.z) <= r;
     if (me.vehicle === 3) return near(DOCK, 4.5) || Math.hypot(me.x - POND_AREA.x, me.z - POND_AREA.z) > 4.6 ? [{ key: "f", label: "Kayıktan in 🛶", act: "boat-off" }] : [];
     if (me.onStage) return [{ key: "f", label: "Sahneden in 🎤", act: "stage-off" }];
@@ -465,6 +481,9 @@ export class Features {
     }
     if (near(STAGE_STEPS, STAGE_STEPS.r)) return [{ key: "f", label: this.stage.singer ? `Sahnede ${this.nameOf(this.stage.singer)} 🎤` : "Sahneye çık 🎤 (karaoke)", act: this.stage.singer ? "queue" : "stage-on" }];
     if (near(DOCK, DOCK.r + 0.6) && !me.vehicle) return [{ key: "f", label: "Kayığa bin 🛶", act: "boat-on" }];
+    if (Math.abs(me.x - RACE_HOUSE.x) < RACE_HOUSE.hw && Math.abs(me.z - RACE_HOUSE.z) < RACE_HOUSE.hd && !me.seated) {
+      return [this.race.joined() ? { key: "f", label: "Yarış lobisi 🏎️", act: "race-panel" } : { key: "f", label: "Oyuncak pist yarışına katıl 🏎️", act: "race-join" }];
+    }
     return [];
   }
 
@@ -514,6 +533,12 @@ export class Features {
         return true;
       case "boat-on":
         this.setVehicle(3);
+        return true;
+      case "race-join":
+        net.send({ t: "rjoin" });
+        return true;
+      case "race-panel":
+        this.race.openPanel();
         return true;
       case "boat-off":
         this.setVehicle(0);
@@ -601,6 +626,7 @@ export class Features {
 
     this.buildWorld.update(world.env.lights);
     this.build.update();
+    this.race.update(dt, time, 1 - world.env.day);
     this.screenGlow.update(now, dt, this.c.cinemaOn(), document.querySelector<HTMLVideoElement>(".screen-players video"), world.env.day);
     this.ambient(time, dt, world);
 

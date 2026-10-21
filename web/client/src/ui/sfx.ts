@@ -133,6 +133,20 @@ export const sfx = {
     burst(2.6, 0.7, 400, 0.4);
     burst(0.4, 0.4, 1600, 0.3);
   },
+  /** Yarış geri sayımı: kısa bip, başlarken tiz. */
+  beep(go = false): void {
+    tone(go ? 1320 : 660, go ? 0.45 : 0.18, "square", 0.06);
+  },
+  /** Oyuncak arabalar çarpıştı. */
+  bump(gain = 1): void {
+    burst(0.07, 0.3 * gain, 2500);
+    tone(220, 0.08, "triangle", 0.12 * gain, 0, -80);
+  },
+  /** Nitro ateşlendi: yükselen vınlama. */
+  boost(): void {
+    tone(240, 0.5, "sawtooth", 0.035, 0, 520);
+    burst(0.35, 0.18, 3000);
+  },
   shutter(): void {
     burst(0.05, 0.4, 7000);
     burst(0.06, 0.3, 5000, 0.08);
