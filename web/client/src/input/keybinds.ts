@@ -26,10 +26,11 @@ export type Action =
   | "vehicle"
   | "five"
   | "hug"
-  | "accept";
+  | "accept"
+  | "build";
 
 /** Tek seferlik dünya kısayolları (menü, fotoğraf, araç…): Input bunları sıraya alır, oyun tüketir. */
-export const HOTKEYS: readonly Action[] = ["menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept"];
+export const HOTKEYS: readonly Action[] = ["menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build"];
 
 /** Tuş adı: KeyboardEvent.code, "Mouse1" (orta), "Mouse3"/"Mouse4" (yan), "WheelUp"/"WheelDown". */
 export type Bind = string;
@@ -58,6 +59,7 @@ export const ACTION_NAMES: Record<Action, string> = {
   five: "Beşlik çak",
   hug: "Sarıl",
   accept: "İsteği kabul et",
+  build: "İnşa modu",
 };
 
 export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
@@ -84,6 +86,7 @@ export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
   five: ["KeyH", ""],
   hug: ["KeyJ", ""],
   accept: ["KeyY", ""],
+  build: ["KeyN", ""],
 };
 
 /** Atanamaz tuşlar: sohbet, menü kapatma, emote ve sol/sağ tık (seçim ve kamera). */

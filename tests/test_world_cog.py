@@ -395,3 +395,20 @@ async def test_can_control_by_permission_or_configured_role(monkeypatch):
     assert allowed == {1: True, 2: True, 3: True, 4: True, 5: False}
     gone = json.loads((await cog.handle_can_control(_member_req({"guild": "1", "user": "99"}))).text)
     assert gone == {"ok": False, "reason": "not_member"}
+
+
+async def test_builds_one_plot_per_member_and_owner_only(db, monkeypatch):
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    guild = SimpleNamespace(id=1, get_member=lambda uid: object())
+    cog = world_cog.WorldCog(SimpleNamespace(get_guild=lambda gid: guild))
+    save = lambda user, plot, data: cog.handle_build_save(_member_req({"guild": "1", "user": str(user), "plot": plot, "data": data}))
+    assert json.loads((await save(5, 0, "0.0.0.1.0")).text) == {"ok": True}
+    # Başkasının arsası alınamaz, aynı üye ikinci arsa alamaz
+    assert json.loads((await save(6, 0, "")).text)["ok"] is False
+    assert json.loads((await save(5, 1, "")).text)["ok"] is False
+    assert json.loads((await save(5, 0, "0.0.0.2.0")).text) == {"ok": True}
+    plots = json.loads((await cog.handle_builds(_member_req({"guild": "1"}))).text)["plots"]
+    assert plots == [{"plot": 0, "user": "5", "name": "Komşu", "data": "0.0.0.2.0"}]
+    await cog.handle_build_free(_member_req({"guild": "1", "user": "5"}))
+    assert json.loads((await save(6, 0, "")).text) == {"ok": True}
+    assert (await save(6, 500, "")).status == 400

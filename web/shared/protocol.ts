@@ -1,5 +1,6 @@
 // Tel protokolü. Sık mesajlar (konum, snapshot) binary; seyrek olaylar JSON metin.
 import { type Act, POS_SCALE } from "./constants";
+import type { PlotState } from "./build";
 import type { Source } from "./media";
 import type { Phase } from "./arena";
 import type { Shot } from "./tank";
@@ -294,6 +295,10 @@ export type ServerEvent =
   | { t: "gk"; k: number[] }
   /** Futbol hakem kararı (taç, korner, aut…): düdük ve kısa yazı. */
   | { t: "fb"; text: string }
+  /** Mahalle: bütün arsalar (girişte), tek arsa (sahiplenme/boşaltma), tek blok değişimi (b 0: silindi). */
+  | { t: "plots"; plots: PlotState[] }
+  | { t: "plot"; plot: PlotState }
+  | { t: "bset"; plot: number; i: number; j: number; k: number; b: number; r: number }
   | { t: "score"; score: [number, number] }
   | { t: "tag"; state: TagState | null }
   /** İkili etkileşim isteği (yalnızca hedefe) ve gerçekleşen etkileşim (herkese). */
@@ -335,6 +340,10 @@ export type ClientEvent =
   | { t: "kick"; dir: number; power: number; kind?: KickKind; curve?: number }
   /** Rakibin ayağındaki topa müdahale. */
   | { t: "tackle" }
+  /** İnşa: boş arsa sahiplen, kendi arsana blok koy/sil (b 0), arsanı boşalt. */
+  | { t: "bclaim" }
+  | { t: "bset"; i: number; j: number; k: number; b: number; r: number }
+  | { t: "bfree" }
   | { t: "tagjoin" }
   | { t: "pair"; kind: "five" | "hug"; to: number }
   | { t: "pairok"; from: number }

@@ -38,8 +38,8 @@ export const TABLE_WATCH_R = 3.2;
 export const TEA_COUNTER = { x: -43.6, z: 27.6, r: 2.4 };
 export const TEA_MAKER = { x: -43.6, z: 29.75, rot: Math.PI };
 
-// ---- Futbol sahası: güneyde, Şöhret Kürsüsü ile gölün arasında ----
-export const PITCH = { x: -4, z: 38, hx: 13, hz: 8, goalHalf: 2.2, goalH: 1.9 };
+// ---- Futbol sahası: güneyde, mahallenin ötesinde; 40×26 m ----
+export const PITCH = { x: -8, z: 72, hx: 20, hz: 13, goalHalf: 3, goalH: 2.2 };
 export const BALL_R = 0.32;
 /** Topa bu kadar yakın oyuncu topu sürer / şut çekebilir. */
 export const KICK_REACH = 1.6;

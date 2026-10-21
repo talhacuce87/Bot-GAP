@@ -21,8 +21,15 @@ function dist2(d: number[], i: number, px: number, pz: number): number {
   return dx * dx + dz * dz;
 }
 
+/** Sonradan değişen engeller (mahalledeki bloklar): statik listeye ek olarak sorulur. */
+export interface DynamicColliders {
+  resolve(p: Vec2, radius: number, y: number): void;
+  groundAt(x: number, z: number, radius: number, y: number): number;
+}
+
 export class Colliders {
   private data: number[] = []; // ax, az, bx, bz, r, top
+  extra: DynamicColliders | null = null;
 
   get count(): number {
     return this.data.length / 6;
@@ -46,6 +53,7 @@ export class Colliders {
         pushOutOf(d, i, p, d[i + 4] + radius);
       }
     }
+    this.extra?.resolve(p, radius, y);
     const r = Math.hypot(p.x, p.z);
     const limit = WORLD_RADIUS - radius;
     if (r > limit) {
@@ -66,6 +74,7 @@ export class Colliders {
       if (z < Math.min(d[i + 1], d[i + 3]) - reach || z > Math.max(d[i + 1], d[i + 3]) + reach) continue;
       if (dist2(d, i, x, z) <= reach * reach) g = top;
     }
+    if (this.extra) g = Math.max(g, this.extra.groundAt(x, z, radius, y));
     return g;
   }
 }

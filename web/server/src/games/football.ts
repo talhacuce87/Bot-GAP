@@ -46,7 +46,7 @@ const GK_DIVE_REACH = 1.25;
 const GK_SPEED = 4.2;
 const GK_DIVE_SPEED = 7.5;
 const GK_HOLD_MS = 1100;
-const GK_BOX = 3.2;
+const GK_BOX = 4.5;
 
 interface Keeper {
   side: -1 | 1;

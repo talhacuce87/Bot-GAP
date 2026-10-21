@@ -665,7 +665,8 @@ async function start(): Promise<void> {
 
     world.update(time, me);
     input.poll();
-    const emote = input.consumeEmote();
+    // İnşa modunda rakamlar blok seçer (features.keys tüketir)
+    const emote = features.building ? -1 : input.consumeEmote();
     if (emote >= 0 && now - lastEmote >= EMOTE_COOLDOWN_MS) {
       lastEmote = now;
       me.emote = emote;

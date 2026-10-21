@@ -7,6 +7,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { WORLD_RADIUS } from "../../../shared/constants";
 import type { Weather } from "../../../shared/protocol";
 import { KAHVEHANE, PITCH } from "../../../shared/zones";
+import { HOOD_BOX } from "../../../shared/build";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
@@ -159,7 +160,7 @@ function screenTexture(): THREE.CanvasTexture {
 }
 
 /** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
-const DIRECTIONS = ["↑ SİNEMA · DJ", "SAKURA BAHÇESİ ↗", "← ZİNDAN", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "↙ KAHVEHANE", "↓ FUTBOL SAHASI", "GÖLET ↘", "↖ TANK"];
+const DIRECTIONS = ["↑ SİNEMA · DJ", "SAKURA BAHÇESİ ↗", "← ZİNDAN", "↙ MAHALLE (İNŞA)", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "↙ KAHVEHANE", "↓ FUTBOL SAHASI", "GÖLET ↘", "↖ TANK"];
 const SIGN_DUNGEON = 0;
 const SIGN_GROVE = 1;
 const SIGN_KAHVE = 2;
@@ -214,7 +215,7 @@ function directionPost(b: Builder): SignSpec[] {
   b.add(part(new THREE.CylinderGeometry(0.08, 0.1, 3.7, 6), "#5b3f25", mat(x, 1.85, z)));
   b.add(part(new THREE.ConeGeometry(0.16, 0.25, 6), "#5b3f25", mat(x, 3.8, z)));
   b.colliders.circle(x, z, 0.15);
-  return DIRECTIONS.map((_, i) => ({ at: mat(x, 3.5 - i * 0.37, z + 0.09), w: 1.7, h: 0.33, cell: SIGN_DIR + i }));
+  return DIRECTIONS.map((_, i) => ({ at: mat(x, 3.55 - i * 0.33, z + 0.09), w: 1.7, h: 0.3, cell: SIGN_DIR + i }));
 }
 
 // ---------------------------------------------------------------------------
@@ -483,6 +484,7 @@ function paths(b: Builder): void {
     path(ux * 10.9, uz * 10.9, tx - ux * endPad, tz - uz * endPad);
   };
   path(-9.7, 5, -48.6, 5); // zindan
+  path(-26, 5.6, (HOOD_BOX.maxX - 1), HOOD_BOX.minZ + 1); // zindan yolundan mahalleye
   path(9.7, 5, GROVE.x - 7, GROVE.z); // mangal ormanı
   radial(POND.x, POND.z, 9.2);
   radial(FAME.x, FAME.z, 3.6);
@@ -893,6 +895,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const pd = pond(b);
   const garden = sakuraGarden(b);
   tankPark(b);
+  // Mahalle: arsalara ağaç/kaya dikilmez (bloklar ve tabelalar features'ta)
+  b.clearBox(HOOD_BOX.minX, HOOD_BOX.maxX, HOOD_BOX.minZ, HOOD_BOX.maxZ);
   scene.add(pd.water, pd.ducks);
   fameStatics(b);
   const kh = kahvehane(b);

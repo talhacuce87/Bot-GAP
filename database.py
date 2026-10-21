@@ -177,6 +177,16 @@ CREATE TABLE IF NOT EXISTS world_quests (
     PRIMARY KEY (guild_id, user_id, day, key)
 );
 
+-- GAP Dünyası mahallesi: arsa başına sahibi ve blokları (dünya sunucusunun kısa metin biçimi)
+CREATE TABLE IF NOT EXISTS world_builds (
+    guild_id   INTEGER NOT NULL,
+    plot       INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    data       TEXT    NOT NULL DEFAULT '',
+    updated_at REAL    NOT NULL,
+    PRIMARY KEY (guild_id, plot)
+);
+
 -- Chibi karakter kıyafeti (outfit.py): parça kimlikleri ve renkler, JSON
 CREATE TABLE IF NOT EXISTS avatar_outfit (
     guild_id   INTEGER NOT NULL,
@@ -742,6 +752,43 @@ async def world_stat_top(guild_id: int, key: str, limit: int = 10) -> list[tuple
             (guild_id, key, limit),
         ) as cur:
             return [(int(r[0]), int(r[1])) async for r in cur]
+
+
+async def get_world_builds(guild_id: int) -> list[tuple[int, int, str]]:
+    """Mahalledeki dolu arsalar: [(arsa, sahibi, bloklar)]."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT plot, user_id, data FROM world_builds WHERE guild_id = ? ORDER BY plot", (guild_id,)
+        ) as cur:
+            return [(int(r[0]), int(r[1]), str(r[2])) async for r in cur]
+
+
+async def save_world_build(guild_id: int, plot: int, user_id: int, data: str) -> bool:
+    """Arsayı kaydeder. Arsa başkasınınsa ya da üyenin başka arsası varsa False."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT plot, user_id FROM world_builds WHERE guild_id = ? AND (plot = ? OR user_id = ?)",
+            (guild_id, plot, user_id),
+        ) as cur:
+            rows = [(int(r[0]), int(r[1])) async for r in cur]
+        if any(p == plot and u != user_id for p, u in rows) or any(u == user_id and p != plot for p, u in rows):
+            return False
+        await db.execute(
+            """
+            INSERT INTO world_builds (guild_id, plot, user_id, data, updated_at) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (guild_id, plot) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+            """,
+            (guild_id, plot, user_id, data, time.time()),
+        )
+        await db.commit()
+        return True
+
+
+async def free_world_build(guild_id: int, user_id: int) -> None:
+    """Üyenin arsasını boşaltır (bloklarıyla birlikte)."""
+    async with _db() as db:
+        await db.execute("DELETE FROM world_builds WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+        await db.commit()
 
 
 async def get_world_quests(guild_id: int, user_id: int, day: str) -> dict[str, tuple[int, bool]]:

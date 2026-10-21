@@ -18,6 +18,7 @@ import { resolveMedia, type Watch, Watches } from "./watch";
 import { type Share, SHARE_MIME, Shares } from "./share";
 import { WorldGames } from "./games/world";
 import { WeatherWatch } from "./weather";
+import { Builds } from "./games/build";
 
 /** Sinema videosu (dosya/HLS) sunucu üzerinden: Activity'de perdede oynar. */
 const mediaProxy = new MediaProxy();
@@ -118,7 +119,10 @@ function stageHost(room: Room) {
 
 rooms.onCreate = (room) => {
   room.onReport = (sid, event, amount) => reportEvent(room, sid, event, amount);
-  if (!room.battle) room.games = new WorldGames(room, room.onReport, stageHost(room), () => weather.current);
+  if (!room.battle) {
+    room.games = new WorldGames(room, room.onReport, stageHost(room), () => weather.current);
+    room.games.builds = new Builds(room, SHARED_SECRET ? botPost : null);
+  }
 };
 
 function sendBoard(conn: Conn, board: Board | null): void {

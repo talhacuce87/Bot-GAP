@@ -15,6 +15,8 @@ export interface HubActions {
   tag(mode: "ebelemece" | "saklambac"): void;
   /** Futbol maçı başlat (5 dk) ya da süreni bitir. */
   match(): void;
+  /** İnşa modu (mahallede kendi arsan). */
+  build(): void;
   pair(kind: "five" | "hug"): void;
   queue(): void;
   weather(): void;
@@ -67,6 +69,7 @@ export class Hub {
     tile(me, "🪪", "Kartım", this.a.card, actionLabel("card"));
     tile(me, "🐟", "Balık albümü", this.a.album, actionLabel("album"));
     tile(me, "📸", "Fotoğraf", this.a.photo, actionLabel("photo"));
+    tile(me, "🔨", "İnşa et", this.a.build, actionLabel("build"));
 
     const go = grid("Ulaşım");
     tile(go, "🚶", "Yürü", () => this.a.vehicle(0));

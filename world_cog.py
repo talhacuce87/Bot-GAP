@@ -79,6 +79,10 @@ def can_control_world(member) -> bool:
     return any(str(r.id) in WORLD_CONTROL_ROLES or r.name.lower() in WORLD_CONTROL_ROLES for r in member.roles)
 
 
+# Mahalle: arsa sayısı üst sınırı ve arsa verisinin en büyük boyu (dünya sunucusunun kısa biçimi)
+BUILD_MAX_PLOTS = 100
+BUILD_MAX_DATA = 20000
+
 PUSH_SECONDS = 20
 BOARD_MINUTES = 1
 BOARD_SIZE = 10
@@ -184,6 +188,9 @@ class WorldCog(commands.Cog):
         app.router.add_post("/internal/outfit", self.handle_save_outfit)
         app.router.add_post("/internal/command", self.handle_command)
         app.router.add_post("/internal/can_control", self.handle_can_control)
+        app.router.add_post("/internal/builds", self.handle_builds)
+        app.router.add_post("/internal/build_save", self.handle_build_save)
+        app.router.add_post("/internal/build_free", self.handle_build_free)
         app.router.add_post("/internal/world_event", self.handle_world_event)
         app.router.add_post("/internal/profile", self.handle_profile)
         app.router.add_post("/internal/season", self.handle_season)
@@ -332,6 +339,48 @@ class WorldCog(commands.Cog):
             return got
         guild, user_id, _body = got
         return web.json_response({"ok": True, "allowed": can_control_world(guild.get_member(user_id))})
+
+    async def handle_builds(self, request: web.Request) -> web.Response:
+        """Mahalle: {"guild"} → dolu arsalar (sahibi ve blokları)."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            guild_id = int((await request.json())["guild"])
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild required"}, status=400)
+        rows = await db.get_world_builds(guild_id)
+        guild = self.bot.get_guild(guild_id)
+
+        def name(uid: int) -> str:
+            member = guild.get_member(uid) if guild is not None else None
+            return clean_display_name(member.display_name) if member is not None and hasattr(member, "display_name") else "Komşu"
+
+        return web.json_response({"plots": [{"plot": p, "user": str(u), "name": name(u), "data": d} for p, u, d in rows]})
+
+    async def handle_build_save(self, request: web.Request) -> web.Response:
+        """Arsayı kaydet: {"guild", "user", "plot", "data"}; arsa başkasınınsa ya da üyenin başka arsası varsa reddedilir."""
+        got = await self._member_request(request)
+        if isinstance(got, web.Response):
+            return got
+        guild, user_id, body = got
+        try:
+            plot = int(body["plot"])
+            data = str(body.get("data", ""))
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "plot required"}, status=400)
+        if not 0 <= plot < BUILD_MAX_PLOTS or len(data) > BUILD_MAX_DATA:
+            return web.json_response({"error": "bad plot or data"}, status=400)
+        ok = await db.save_world_build(guild.id, plot, user_id, data)
+        return web.json_response({"ok": ok} if ok else {"ok": False, "reason": "taken"})
+
+    async def handle_build_free(self, request: web.Request) -> web.Response:
+        """Üyenin arsasını boşalt: {"guild", "user"}."""
+        got = await self._member_request(request)
+        if isinstance(got, web.Response):
+            return got
+        guild, user_id, _body = got
+        await db.free_world_build(guild.id, user_id)
+        return web.json_response({"ok": True})
 
     async def _member_request(self, request: web.Request) -> tuple[discord.Guild, int, dict] | web.Response:
         """Ortak giriş: secret, {"guild", "user"} ve üyelik. Hata durumunda hazır cevap döner."""

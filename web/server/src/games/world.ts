@@ -3,6 +3,7 @@
 import type { ServerEvent, TagMode, Weather } from "../../../shared/protocol";
 import { SAKURA_SPOT } from "../../../shared/zones";
 import type { Conn, Room } from "../room";
+import type { Builds } from "./build";
 import { Football } from "./football";
 import { Sky } from "./sky";
 import { Stage, type StageHost } from "./stage";
@@ -24,6 +25,8 @@ export class WorldGames {
   readonly tag: Tag;
   readonly stage: Stage;
   readonly sky: Sky;
+  /** Mahalle (bot bağlıysa kalıcı). */
+  builds: Builds | null = null;
   /** Hedef → bekleyen istek. */
   private pairs = new Map<number, { from: number; kind: "five" | "hug"; at: number }>();
   private lastPair = new Map<number, number>();
@@ -54,6 +57,7 @@ export class WorldGames {
     this.tag.sendTo(conn);
     this.stage.sendTo(conn);
     this.sky.sendTo(conn);
+    this.builds?.sendTo(conn);
   }
 
   leave(sid: number): void {
@@ -148,6 +152,15 @@ export class WorldGames {
         return true;
       case "tresign":
         this.tables.resign(sid, num(msg.id));
+        return true;
+      case "bclaim":
+        this.builds?.claim(sid);
+        return true;
+      case "bset":
+        this.builds?.set(sid, num(msg.i), num(msg.j), num(msg.k), num(msg.b), num(msg.r), now);
+        return true;
+      case "bfree":
+        this.builds?.free(sid);
         return true;
       case "tackle":
         this.football.tackle(sid, now);

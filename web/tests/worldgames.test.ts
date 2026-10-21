@@ -83,11 +83,12 @@ describe("futbol", () => {
 
   it("direğe çarpan top seker ve gol olmaz", () => {
     const { games, a, sa, sb, place } = world();
-    games.football.random = () => 0.999;
-    // Ortadan doğu kalesinin direğine (z = +goalHalf) doğru, yerden
+    games.football.random = () => 0.5; // sapma yok, kaleci kurtaramaz
+    // Ortadan doğu kalesinin direğine (z = +goalHalf) doğru sert şut
     place(sa, PITCH.x - 0.6, PITCH.z);
     place(sb, PITCH.x - 20, PITCH.z);
-    games.football.kick(sa, Math.atan2(PITCH.hx, PITCH.goalHalf), 1, 1000, "pass");
+    games.football.kick(sa, Math.atan2(PITCH.hx, PITCH.goalHalf), 1, 1000, "shot");
+    place(sa, PITCH.x - 8, PITCH.z - 6);
     let post = false;
     for (let t = 1000; t < 3000; t += 66) {
       games.football.tick(t);
@@ -335,5 +336,32 @@ describe("saat ve hava (!saat, !hava)", () => {
     expect(games.sky.hour).toBeNull();
     const bad = await sky(games, sa, "!saat yarın");
     expect(bad.replies[0]).toContain("Kullanım");
+  });
+});
+
+describe("mahalle (inşa)", () => {
+  it("arsa sahiplenilir, yalnızca sahibi blok koyar, herkes görür; boşaltınca arsa açılır", async () => {
+    const { Builds } = await import("../server/src/games/build");
+    const { games, room, a, b, sa, sb } = world();
+    games.builds = new Builds(room, null);
+    games.handle(sa, { t: "bclaim" });
+    expect(a.last("plot")?.plot).toMatchObject({ id: 0, owner: "a" });
+    games.handle(sa, { t: "bclaim" });
+    expect(a.last("notice")?.text).toContain("Zaten");
+    games.handle(sa, { t: "bset", i: 1, j: 0, k: 2, b: 1, r: 0 });
+    expect(b.last("bset")).toMatchObject({ plot: 0, i: 1, j: 0, k: 2, b: 1 });
+    // b'nin arsası yok: koyamaz; arsa alınca kendi arsasına (1) koyar
+    const before = b.text.length;
+    games.handle(sb, { t: "bset", i: 0, j: 0, k: 0, b: 2, r: 0 });
+    expect(b.text.length).toBe(before);
+    games.handle(sb, { t: "bclaim" });
+    games.handle(sb, { t: "bset", i: 0, j: 0, k: 0, b: 2, r: 0 });
+    expect(a.last("bset")).toMatchObject({ plot: 1, b: 2 });
+    // Sınır dışı ve geçersiz blok reddedilir
+    games.handle(sa, { t: "bset", i: 99, j: 0, k: 0, b: 1, r: 0 });
+    games.handle(sa, { t: "bset", i: 0, j: 0, k: 0, b: 999, r: 0 });
+    expect(a.last("bset")).toMatchObject({ plot: 1 });
+    games.handle(sa, { t: "bfree" });
+    expect(a.last("plot")?.plot).toMatchObject({ id: 0, owner: null, data: "" });
   });
 });

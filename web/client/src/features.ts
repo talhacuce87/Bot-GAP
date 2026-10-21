@@ -29,6 +29,8 @@ import { wetUniform } from "./world/geo";
 import { Fireworks } from "./world/fireworks";
 import { SCREEN_H, SCREEN_W, type World } from "./world/scene";
 import { ScreenGlow } from "./world/screenGlow";
+import { BuildWorld } from "./world/buildWorld";
+import { BuildMode } from "./ui/buildUi";
 import { WeatherFx } from "./world/weather";
 
 /** Yakındaki etkileşim (F/G düğmesi). */
@@ -89,6 +91,8 @@ export class Features {
   private weatherFx: WeatherFx;
   private fireworks = new Fireworks();
   private screenGlow: ScreenGlow;
+  private buildWorld = new BuildWorld();
+  private build: BuildMode;
   private mist = new Mist();
   private leaves: SeasonParticles;
   private confetti = new Confetti();
@@ -127,6 +131,15 @@ export class Features {
     world.scene.add(this.companions.group, this.fireworks.points);
     this.weatherFx = new WeatherFx(c.lowPower);
     world.scene.add(this.weatherFx.group);
+    // Mahalle: bloklar sahnede, çarpışmaya da katılır
+    world.scene.add(this.buildWorld.group);
+    world.colliders.extra = this.buildWorld;
+    this.build = new BuildMode(hudRoot, this.buildWorld, world.scene, c.canvas, c.camera, {
+      userId: () => c.session.user.id,
+      send: (ev) => net.send(ev),
+      toast: (t) => hud.toast(t),
+    });
+    c.life.onStop(() => (world.colliders.extra = null));
     this.screenGlow = new ScreenGlow(world.screen, SCREEN_W, SCREEN_H);
     world.scene.add(this.screenGlow.group);
     this.leaves = new SeasonParticles(world.season, c.lowPower);
@@ -186,6 +199,7 @@ export class Features {
       fireworks: () => net.send({ t: "fireworks" }),
       tag: (mode) => c.say(`!${mode}`),
       match: () => c.say(this.match ? "!maç bitir" : "!maç 5"),
+      build: () => this.build.toggle(),
       pair: (kind) => this.pair(kind),
       queue: () => this.whud.openQueue(),
       weather: () => c.say("!hava"),
@@ -222,6 +236,13 @@ export class Features {
       else sfx.kick((b.ev === "pass" ? 0.45 : 0.8) * gain);
     };
     net.onGk = (k) => world.pitch.setKeepers(k);
+    net.onPlots = (p) => this.buildWorld.setAll(p);
+    net.onPlot = (p) => {
+      const was = this.buildWorld.plots[p.id]?.owner;
+      this.buildWorld.setPlot(p);
+      if (p.owner === c.session.user.id && was !== p.owner) hud.toast("🏠 Arsa senin! Mahallede tabelada adın yazıyor. N ile inşa et.");
+    };
+    net.onBset = (plot, i, j, k, b, r) => this.buildWorld.set(plot, i, j, k, b, r);
     net.onFb = (text) => {
       if (Math.hypot(me.x - PITCH.x, me.z - PITCH.z) > 40) return;
       sfx.whistle();
@@ -290,7 +311,7 @@ export class Features {
     // 3B'de bir avatara tıklayınca oyuncu kartı (sürükleme değilse)
     c.canvas.addEventListener("pointerdown", (e) => (this.down = { x: e.clientX, y: e.clientY, at: performance.now() }));
     c.canvas.addEventListener("pointerup", (e) => {
-      if (c.input.locked || Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 6 || performance.now() - this.down.at > 400) return;
+      if (this.build.active || c.input.locked || Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 6 || performance.now() - this.down.at > 400) return;
       const sid = this.pickAvatar(e.clientX, e.clientY);
       if (sid) this.profile.open(sid, this.nameOf(sid));
     });
@@ -298,6 +319,11 @@ export class Features {
 
   private nameOf(sid: number): string {
     return sid === this.c.net.you ? this.c.session.user.name : this.c.remotes.map.get(sid)?.info.name ?? "Biri";
+  }
+
+  /** İnşa modunda rakamlar blok seçer (emote değil). */
+  get building(): boolean {
+    return this.build.active;
   }
 
   /** Oyuncu listesinden kart açma. */
@@ -519,6 +545,11 @@ export class Features {
   keys(): void {
     const { input, me } = this.c;
     if (input.consumeKey("menu")) this.hub.toggle();
+    if (input.consumeKey("build")) this.build.toggle();
+    if (this.build.active) {
+      const e = input.consumeEmote();
+      if (e >= 0) this.build.pickSlot(e);
+    }
     if (input.consumeKey("photo")) this.photo.toggle();
     if (input.consumeKey("quests")) this.profile.toggleQuests();
     if (input.consumeKey("card")) this.profile.open(this.c.net.you, this.c.session.user.name);
@@ -541,6 +572,8 @@ export class Features {
     if (settings.clock === "auto" && settings.cinemaDim && this.c.inCinema() && daylight(hour ?? istanbulHour()) > 0.3) hour = CINEMA_HOUR;
     world.setHour(hour);
 
+    this.buildWorld.update(world.env.lights);
+    this.build.update();
     this.screenGlow.update(now, dt, this.c.cinemaOn(), document.querySelector<HTMLVideoElement>(".screen-players video"), world.env.day);
     this.ambient(time, dt, world);
 

@@ -2,6 +2,7 @@
 import { type Act, SEND_HZ } from "../../shared/constants";
 import type { Shot } from "../../shared/tank";
 import type { BattleState } from "../../shared/protocol";
+import type { PlotState } from "../../shared/build";
 import {
   type BallState,
   type MatchState,
@@ -78,6 +79,10 @@ export class Net {
   /** Kaleciler (x, z, eğilme ×2) ve hakem kararı. */
   onGk: (k: number[]) => void = () => {};
   onFb: (text: string) => void = () => {};
+  /** Mahalle: bütün arsalar, tek arsa, tek blok. */
+  onPlots: (plots: PlotState[]) => void = () => {};
+  onPlot: (plot: PlotState) => void = () => {};
+  onBset: (plot: number, i: number, j: number, k: number, b: number, r: number) => void = () => {};
   onScore: (score: [number, number]) => void = () => {};
   onTag: (s: TagState | null) => void = () => {};
   onPairReq: (from: number, name: string, kind: "five" | "hug") => void = () => {};
@@ -281,6 +286,15 @@ export class Net {
         break;
       case "fb":
         this.onFb(ev.text);
+        break;
+      case "plots":
+        this.onPlots(ev.plots);
+        break;
+      case "plot":
+        this.onPlot(ev.plot);
+        break;
+      case "bset":
+        this.onBset(ev.plot, ev.i, ev.j, ev.k, ev.b, ev.r);
         break;
       case "score":
         this.onScore(ev.score);

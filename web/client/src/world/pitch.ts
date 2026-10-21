@@ -198,14 +198,18 @@ export function pitch(b: Builder): Pitch {
   line(b, cx - hx, cz, LINE_W, hz * 2);
   line(b, cx + hx, cz, LINE_W, hz * 2);
   line(b, cx, cz, LINE_W, hz * 2);
-  b.add(part(new THREE.RingGeometry(2.4, 2.4 + LINE_W, 40), LINE, flatMat(cx, 0.034, cz)));
+  b.add(part(new THREE.RingGeometry(3.6, 3.6 + LINE_W, 48), LINE, flatMat(cx, 0.034, cz)));
   b.add(part(new THREE.CircleGeometry(0.15, 12), LINE, flatMat(cx, 0.035, cz)));
   for (const s of [-1, 1]) {
-    const bx = cx + s * (hx - 2.5);
-    line(b, bx, cz, LINE_W, 9);
-    line(b, cx + s * (hx - 1.25), cz - 4.5, 2.5, LINE_W);
-    line(b, cx + s * (hx - 1.25), cz + 4.5, 2.5, LINE_W);
-    b.add(part(new THREE.CircleGeometry(0.12, 10), LINE, flatMat(cx + s * (hx - 1.8), 0.035, cz)));
+    // Ceza sahası (5 m derin, 14 m geniş), kale alanı (2 m, 8 m), penaltı noktası
+    const box = (depth: number, half: number) => {
+      line(b, cx + s * (hx - depth), cz, LINE_W, half * 2);
+      line(b, cx + s * (hx - depth / 2), cz - half, depth, LINE_W);
+      line(b, cx + s * (hx - depth / 2), cz + half, depth, LINE_W);
+    };
+    box(5, 7);
+    box(2, 4);
+    b.add(part(new THREE.CircleGeometry(0.12, 10), LINE, flatMat(cx + s * (hx - 3.6), 0.035, cz)));
   }
   // Köşe bayrakları
   for (const sx of [-1, 1]) {
@@ -224,7 +228,7 @@ export function pitch(b: Builder): Pitch {
   // Uzun kenarlarda alçak reklam panoları (ortada giriş boşluğu)
   const boards = ["#2f6fd0", "#e04a3a", "#f2c230", "#3a9a5a"];
   for (const sz of [-1, 1]) {
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < Math.floor((hx * 2) / 2.6); i++) {
       const x = cx - hx + 1.3 + i * 2.6;
       if (Math.abs(x - cx) < 2) continue;
       b.add(part(new THREE.BoxGeometry(2.4, 0.55, 0.12), boards[i % 4], mat(x, 0.28, cz + sz * (hz + 0.9)), 0.05, b.rand));
@@ -232,8 +236,8 @@ export function pitch(b: Builder): Pitch {
     }
   }
   // Seyirci bankları: kuzey kenarında
-  for (let i = 0; i < 3; i++) {
-    const x = cx - 8 + i * 8, z = cz - hz - 2.2;
+  for (let i = 0; i < 5; i++) {
+    const x = cx - 16 + i * 8, z = cz - hz - 2.2;
     b.add(part(new THREE.BoxGeometry(3, 0.1, 0.45), "#a0703f", mat(x, 0.45, z)));
     for (const lx of [-1.3, 1.3]) b.add(part(new THREE.BoxGeometry(0.08, 0.45, 0.4), "#5b3f25", mat(x + lx, 0.22, z)));
     b.colliders.segment(x - 1.5, z, x + 1.5, z, 0.3);
@@ -378,7 +382,9 @@ export function pitch(b: Builder): Pitch {
   arrowShape.lineTo(-0.12, 0.7);
   arrowShape.closePath();
   const arrowMat = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.75, depthWrite: false });
-  const arrow = new THREE.Mesh(new THREE.ShapeGeometry(arrowShape).rotateX(-Math.PI / 2), arrowMat);
+  // Şekil +y'ye bakar; yatırınca +z'ye (açı 0 = +z, sunucudaki vuruş yönüyle aynı)
+  const arrow = new THREE.Mesh(new THREE.ShapeGeometry(arrowShape).rotateX(Math.PI / 2), arrowMat);
+  arrowMat.side = THREE.DoubleSide;
   arrow.visible = false;
   arrow.renderOrder = 3;
   group.add(arrow);

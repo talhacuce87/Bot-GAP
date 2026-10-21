@@ -1911,3 +1911,74 @@ canvas.shiftlock {
 .season-list li {
   padding: 2px 0;
 }
+
+
+/* İnşa modu: altta blok paleti */
+.build-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 64px);
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(760px, calc(100vw - 32px));
+  pointer-events: auto;
+  z-index: 12;
+}
+
+.build-bar.show {
+  display: flex;
+}
+
+.build-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.build-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.build-slot {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: linear-gradient(180deg, var(--c), color-mix(in srgb, var(--c) 70%, #000));
+  cursor: pointer;
+}
+
+.build-slot.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px #5865f2;
+}
+
+.build-emoji {
+  font-size: 18px;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+}
+
+.build-key {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+
+.build-tools button.active {
+  background: #e04a3a;
+  color: #fff;
+}
