@@ -53,13 +53,14 @@ export function fameStatics(b: Builder): void {
   });
   add(new THREE.CircleGeometry(4.8, 24), "#cfc3a6", local(0, 0.015, -0.6).multiply(new THREE.Matrix4().makeRotationX(-Math.PI / 2)), 0.05);
 
-  const seg = (u0: number, v0: number, u1: number, v1: number, r: number) => {
+  const seg = (u0: number, v0: number, u1: number, v1: number, r: number, top?: number) => {
     const a = new THREE.Vector3(u0, 0, v0).applyMatrix4(root);
     const c = new THREE.Vector3(u1, 0, v1).applyMatrix4(root);
-    b.colliders.segment(a.x, a.z, c.x, c.z, r);
+    b.colliders.segment(a.x, a.z, c.x, c.z, r, top);
   };
   seg(-3.8, BOARD_Z - 0.16, 3.8, BOARD_Z - 0.16, 0.3);
-  seg(-2.3, 0, 2.3, 0, 0.72);
+  // Basamaklara çıkılır: 3.'den 2.'ye, oradan 1.'ye
+  for (const s of STEP) seg(s.u - 0.05, 0, s.u + 0.05, 0, 0.7, s.h);
   b.shadow(FAME.x, FAME.z, 2.8);
   b.clearCircle(FAME.x, FAME.z, 6);
 

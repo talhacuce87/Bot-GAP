@@ -24,8 +24,10 @@ export interface AvatarView {
   /** Son emote (EMOTES indeksi, yoksa -1) ve başladığı an (sn, döngü saati). */
   emote: number;
   emoteAt: number;
-  /** Zıplama yüksekliği (m). */
+  /** Zıplama yüksekliği (m), altındaki yüzeyin üstünden. */
   jumpY: number;
+  /** Altındaki yüzeyin yüksekliği (çeşme, bank, tank üstü); yoksa yer. */
+  baseY?: number;
   /** Chibi kıyafeti; null/undefined ise varsayılan karakter. */
   outfit?: Look | null;
 }
@@ -111,7 +113,14 @@ function shadowTexture(): THREE.CanvasTexture {
 }
 
 const NAME_Y = 1.9;
+/** Otururken gövde kayması: kapsül bacaksız olduğu için iner; chibi kalçası bank yüzeyine (≈0.5 m) çıkar. */
 const SEAT_DROP = 0.32;
+export const CHIBI_SEAT_LIFT = 0.29;
+
+/** Avatarın çizildiği yükseklik (konuşma balonu gibi üstüne konanlar için; chibi duruşu). */
+export function bodyY(v: AvatarView): number {
+  return (v.baseY ?? 0) + v.jumpY + (v.flags & FLAG_SEATED ? CHIBI_SEAT_LIFT : 0);
+}
 /** Gizlenecek kapsül için sıfır ölçek. */
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 
@@ -207,7 +216,8 @@ export class AvatarRenderer {
         }
       }
     }
-    const y = (seated ? -SEAT_DROP : 0) + bob + hop + v.jumpY;
+    const base = (v.baseY ?? 0) + bob + hop + v.jumpY;
+    let y = base + (seated ? CHIBI_SEAT_LIFT : 0);
     // Belirip kaybolurken alfa yerine ölçek: gövde opak kalır, sıralama sorunu olmaz.
     const s = v.alpha < 1 ? 0.3 + 0.7 * v.alpha : 1;
 
@@ -224,6 +234,10 @@ export class AvatarRenderer {
     l.dance = dance;
     l.time = time;
     const asChibi = this.chibi?.place(v.outfit, v.x, v.z, this.m, l, self) ?? false;
+    if (seated && !asChibi) {
+      y = base - SEAT_DROP;
+      this.m.elements[13] = y;
+    }
     this.body.setMatrixAt(i, asChibi ? HIDDEN : this.m);
     this.body.setColorAt(i, v.color);
 
@@ -231,7 +245,7 @@ export class AvatarRenderer {
     this.name.setMatrixAt(i, this.m);
     // Havadayken gölge küçülür: yükseklik hissi.
     const sh = 0.95 * s * Math.max(0.45, 1 - v.jumpY * 0.45);
-    this.m.makeScale(sh, 1, sh).setPosition(v.x, 0.04, v.z);
+    this.m.makeScale(sh, 1, sh).setPosition(v.x, Math.max(0, v.baseY ?? 0) + 0.04, v.z);
     this.shadow.setMatrixAt(i, this.m);
 
     this.nameCell.setX(i, v.cell);
