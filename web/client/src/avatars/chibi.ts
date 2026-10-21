@@ -107,8 +107,15 @@ export class ChibiLayer {
   async load(manifest: ChibiManifest, binUrl: string): Promise<void> {
     const res = await fetch(binUrl);
     if (!res.ok) throw new Error(`chibi paketi: ${res.status}`);
-    this.pack = new ChibiPack(manifest, await res.arrayBuffer());
-    for (let l = 0; l < LIMB_COUNT; l++) this.pivots.push(new THREE.Vector3().fromArray(this.pack.pivots, l * 3));
+    this.usePack(new ChibiPack(manifest, await res.arrayBuffer()));
+  }
+
+  /** İnmiş paketi paylaşır (gardırop önizlemesi aynı paketi yeniden indirmesin). */
+  usePack(pack: ChibiPack): void {
+    this.pack = pack;
+    // Dizi yerinde doldurulur: kurulmuş yuvaların uniform'ları aynı diziyi gösteriyor
+    this.pivots.length = 0;
+    for (let l = 0; l < LIMB_COUNT; l++) this.pivots.push(new THREE.Vector3().fromArray(pack.pivots, l * 3));
   }
 
   private makeSlot(): Slot {
