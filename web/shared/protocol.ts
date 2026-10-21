@@ -100,6 +100,20 @@ export interface BallState {
   vy: number;
   vz: number;
   at: number;
+  /** Falso (rad/sn): top uçarken yönü bu hızla döner (+ sağa). */
+  spin?: number;
+  /** Bu yayına yol açan olay (ses/efekt için) ve yapan. */
+  ev?: BallEvent;
+  by?: number;
+}
+
+export type BallEvent = "shot" | "pass" | "lob" | "head" | "post" | "bar";
+export type KickKind = "shot" | "pass" | "lob";
+
+/** Futbol maçı: süre, takımlar (sid listeleri; 0 kırmızı batıyı savunur, 1 mavi doğuyu). */
+export interface MatchState {
+  endsAt: number;
+  teams: [number[], number[]];
 }
 
 export type TagMode = "ebelemece" | "saklambac";
@@ -272,7 +286,8 @@ export type ServerEvent =
   | { t: "cosm"; sid: number; pet: string | null; skin: string | null }
   | ({ t: "table" } & TableState)
   | ({ t: "ball" } & BallState)
-  | { t: "goal"; side: 0 | 1; sid: number; name: string; score: [number, number] }
+  | { t: "goal"; side: 0 | 1; sid: number; name: string; score: [number, number]; assist?: string; own?: boolean }
+  | { t: "match"; match: MatchState | null }
   | { t: "score"; score: [number, number] }
   | { t: "tag"; state: TagState | null }
   /** İkili etkileşim isteği (yalnızca hedefe) ve gerçekleşen etkileşim (herkese). */
@@ -310,8 +325,8 @@ export type ClientEvent =
   | { t: "tstart"; id: number }
   | { t: "tmove"; id: number; move: TableMove }
   | { t: "tresign"; id: number }
-  /** Topa vur: yön (radyan) ve güç (0–1). */
-  | { t: "kick"; dir: number; power: number }
+  /** Topa vur: yön (radyan), güç (0–1), tür ve falso (-1 sola … 1 sağa). */
+  | { t: "kick"; dir: number; power: number; kind?: KickKind; curve?: number }
   | { t: "tagjoin" }
   | { t: "pair"; kind: "five" | "hug"; to: number }
   | { t: "pairok"; from: number }

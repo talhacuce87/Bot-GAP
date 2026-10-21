@@ -20,6 +20,7 @@ export class WorldHud {
   private score: HTMLDivElement;
   private power: HTMLDivElement;
   private powerFill: HTMLDivElement;
+  private powerLabel: HTMLSpanElement;
   private pairEl: HTMLDivElement;
   private pairTimer = 0;
   private pairFrom = 0;
@@ -33,6 +34,7 @@ export class WorldHud {
     this.score = el("div", "panel pitch-score", root);
     this.power = el("div", "kick-power", root);
     this.powerFill = el("div", "kick-fill", this.power);
+    this.powerLabel = el("span", "kick-label", this.power);
     this.pairEl = el("div", "panel pair-req", root);
   }
 
@@ -143,15 +145,21 @@ export class WorldHud {
 
   // ---- Futbol ----
 
-  setScore(score: [number, number] | null): void {
+  /** Saha skoru; maçta takım renkleri, kalan süre ve oyuncunun takımı. */
+  setScore(score: [number, number] | null, clock: string | null = null, team: 0 | 1 | null = null): void {
     this.score.classList.toggle("show", !!score);
-    if (score) this.score.textContent = `⚽ ${score[0]} – ${score[1]}`;
+    if (!score) return;
+    const text = clock
+      ? `🔴 ${score[0]} – ${score[1]} 🔵 · ⏱ ${clock}${team === null ? "" : team ? " · sen Mavi" : " · sen Kırmızı"}`
+      : `⚽ ${score[0]} – ${score[1]}`;
+    if (this.score.textContent !== text) this.score.textContent = text;
   }
 
   /** Şut gücü (null: gizli). */
-  setPower(p: number | null): void {
+  setPower(p: number | null, label = ""): void {
     this.power.classList.toggle("show", p !== null);
     if (p !== null) this.powerFill.style.width = `${Math.round(p * 100)}%`;
+    if (this.powerLabel.textContent !== label) this.powerLabel.textContent = label;
   }
 
   // ---- Beşlik / sarılma ----

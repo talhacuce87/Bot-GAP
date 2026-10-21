@@ -150,7 +150,7 @@ export class WorldGames {
         this.tables.resign(sid, num(msg.id));
         return true;
       case "kick":
-        this.football.kick(sid, num(msg.dir), num(msg.power), now);
+        this.football.kick(sid, num(msg.dir), num(msg.power), now, (msg.kind ?? "shot") as never, num(msg.curve ?? 0));
         return true;
       case "tagjoin":
         this.tag.join(sid);

@@ -4,6 +4,7 @@ import type { Shot } from "../../shared/tank";
 import type { BattleState } from "../../shared/protocol";
 import {
   type BallState,
+  type MatchState,
   type BoardEntry,
   type ChatLine,
   type ClientEvent,
@@ -71,7 +72,9 @@ export class Net {
   onCosm: (sid: number, pet: string | null, skin: string | null) => void = () => {};
   onTable: (t: TableState) => void = () => {};
   onBall: (b: BallState) => void = () => {};
-  onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number]) => void = () => {};
+  onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number], assist?: string, own?: boolean) => void = () => {};
+  /** Futbol maçı başladı/değişti/bitti. */
+  onMatch: (m: MatchState | null) => void = () => {};
   onScore: (score: [number, number]) => void = () => {};
   onTag: (s: TagState | null) => void = () => {};
   onPairReq: (from: number, name: string, kind: "five" | "hug") => void = () => {};
@@ -265,7 +268,10 @@ export class Net {
         break;
       }
       case "goal":
-        this.onGoal(ev.side, ev.sid, ev.name, ev.score);
+        this.onGoal(ev.side, ev.sid, ev.name, ev.score, ev.assist, ev.own);
+        break;
+      case "match":
+        this.onMatch(ev.match);
         break;
       case "score":
         this.onScore(ev.score);

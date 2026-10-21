@@ -3,6 +3,7 @@
 // main.ts her kare `update` çağırır; yakındaki etkileşimleri `acts` ile ekler.
 import * as THREE from "three";
 import { FLAG_RUNNING, FLAG_WALKING, vehicleOf, type Vehicle } from "../../shared/constants";
+import type { KickKind, MatchState } from "../../shared/protocol";
 import { DJ_BOOTH, DOCK, KICK_REACH, PITCH, POND_AREA, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
 import { type AvatarRenderer, type AvatarView, colorFor } from "./avatars/avatars";
 import { Companions } from "./avatars/companions";
@@ -72,6 +73,15 @@ const CINEMA_HOUR = 21;
 
 const TEA_MAKER_NAME = "Ocakçı Rıza";
 const RIDE_REPORT_MS = 8000;
+/** F'ye bundan kısa basmak pas. */
+const PASS_TAP = 0.18;
+const TEAM_COLORS = [new THREE.Color("#ff3b30"), new THREE.Color("#2f8bff")];
+
+/** Kalan maç süresi "m:ss". */
+function matchClock(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
 
 export class Features {
   readonly photo: PhotoMode;
@@ -97,7 +107,11 @@ export class Features {
   /** Sunucunun sabitlediği saat (!saat), null: gerçek saat. */
   private worldClock: number | null = null;
   private score: [number, number] = [0, 0];
-  private charge = -1;
+  /** Basılı tutulan vuruş: tuş, tür ve geçen süre (sn). */
+  private charge: { key: "actF" | "actG"; kind: "shot" | "lob"; t: number } | null = null;
+  private match: MatchState | null = null;
+  /** Maçta oyuncuların altındaki takım halkaları. */
+  private rings: THREE.InstancedMesh;
   private lastSeat: { id: number; seat: number } | null = null;
   private sitAt = 0;
   private lastRide = 0;
@@ -117,6 +131,15 @@ export class Features {
     world.scene.add(this.screenGlow.group);
     this.leaves = new SeasonParticles(world.season, c.lowPower);
     world.scene.add(this.mist.mesh, this.confetti.mesh, this.splashes.mesh, this.haze.mesh);
+    this.rings = new THREE.InstancedMesh(
+      new THREE.RingGeometry(0.42, 0.56, 24).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.85, depthWrite: false }),
+      32,
+    );
+    this.rings.count = 0;
+    this.rings.frustumCulled = false;
+    this.rings.renderOrder = 2;
+    world.scene.add(this.rings);
     if (this.leaves.mesh) world.scene.add(this.leaves.mesh);
     c.life.onStop(() => this.fireworks.dispose());
 
@@ -162,6 +185,7 @@ export class Features {
       vehicle: (v) => this.setVehicle(v),
       fireworks: () => net.send({ t: "fireworks" }),
       tag: (mode) => c.say(`!${mode}`),
+      match: () => c.say(this.match ? "!maç bitir" : "!maç 5"),
       pair: (kind) => this.pair(kind),
       queue: () => this.whud.openQueue(),
       weather: () => c.say("!hava"),
@@ -184,21 +208,45 @@ export class Features {
       const d = Math.hypot(x - c.camera.position.x, z - c.camera.position.z);
       sfx.firework(delay, 0.4 + 0.6 * falloff(d * 0.5), (x - c.camera.position.x) / 40);
     };
-    net.onBall = (b) => world.pitch.setBall(b, net.serverNow());
+    net.onBall = (b) => {
+      world.pitch.setBall(b, net.serverNow());
+      // Vuruş/direk sesleri (kendi vuruşumuzun sesi basınca çaldı)
+      if (!b.ev || b.by === net.you) return;
+      const gain = falloff(Math.hypot(b.x - me.x, b.z - me.z));
+      if (b.ev === "post" || b.ev === "bar") sfx.post(Math.max(0.15, gain));
+      else if (b.ev === "head") sfx.header(gain);
+      else sfx.kick((b.ev === "pass" ? 0.45 : 0.8) * gain);
+    };
+    net.onMatch = (m) => {
+      const was = this.match;
+      this.match = m;
+      if (m && !was) {
+        sfx.whistle();
+        const team = m.teams[0].includes(net.you) ? "🔴 Kırmızı" : m.teams[1].includes(net.you) ? "🔵 Mavi" : null;
+        hud.toast(team ? `⚽ Maç başladı! Takımın: ${team}` : "⚽ Maç başladı!");
+      } else if (!m && was) {
+        sfx.whistle();
+        sfx.cheer(0.7);
+      }
+    };
     net.onScore = (s) => {
       this.score = s;
       world.pitch.setScore(s);
     };
-    net.onGoal = (side, sid, name, s) => {
+    net.onGoal = (side, sid, name, s, assist, own) => {
       this.score = s;
       world.pitch.setScore(s);
       sfx.whistle();
+      sfx.cheer(Math.max(0.3, falloff(Math.hypot(PITCH.x - me.x, PITCH.z - me.z))));
+      const bp = world.pitch.ball;
+      world.pitch.netHit(bp.x, bp.y, bp.z, performance.now() / 1000);
       const t = performance.now() / 1000;
       const gx = PITCH.x + (side ? 1 : -1) * PITCH.hx;
       c.emoteFx.emit(gx, 1, PITCH.z, FX_CELL.party, t, 0.5, 6);
       this.confetti.burst(gx - (side ? 1 : -1) * 1.5, 1.5, PITCH.z, t);
       c.emoteFx.emit(gx, 1.5, PITCH.z, FX_CELL.ball, t + 0.2, 0.5, 3);
-      hud.toast(`⚽ GOL! ${sid === net.you ? "Sen attın" : name} · ${s[0]}–${s[1]}`);
+      const who = sid === net.you ? "Sen attın" : name;
+      hud.toast(own ? `🙈 Kendi kalesine! ${who} · ${s[0]}–${s[1]}` : `⚽ GOL! ${who}${assist ? ` · asist: ${assist}` : ""} · ${s[0]}–${s[1]}`);
     };
     net.onTable = (t) => {
       this.boards.update(t);
@@ -357,7 +405,11 @@ export class Features {
     // Futbol: top yakınsa şut (basılı tutunca güç)
     const ball = world.pitch.ball;
     if (Math.hypot(ball.x - me.x, ball.z - me.z) <= KICK_REACH && !me.seated) {
-      return [{ key: "f", label: this.charge >= 0 ? "Şut… bırak ⚽" : "Şut çek ⚽ (basılı tut)", act: "kick" }];
+      const ch = this.charge;
+      return [
+        { key: "f", label: ch?.kind === "shot" ? "Şut… bırak ⚽" : "Pas · basılı tut: şut ⚽", act: "kick" },
+        { key: "g", label: ch?.kind === "lob" ? "Aşırtma… bırak 🌙" : "Aşırtma 🌙", act: "lob" },
+      ];
     }
     if (me.seatTable) return [{ key: "f", label: "Masayı aç 🎲", act: `table:${me.seatTable.id}` }];
     if (near(TEA_COUNTER, TEA_COUNTER.r)) return [{ key: "f", label: "Çay söyle 🍵", act: "cay" }];
@@ -378,10 +430,10 @@ export class Features {
   /** Etkileşim gerçekleşti (true: işlendi). */
   handleAct(act: string, now: number): boolean {
     const { me, net, hud, emoteFx } = this.c;
-    if (act === "kick") {
-      // Şarj başlar: F bırakılınca (ya da dokunmatikte hemen orta güçle) şut
-      if (this.c.input.touch) this.kick(0.55);
-      else this.charge = 0;
+    if (act === "kick" || act === "lob") {
+      // Şarj başlar: bırakınca vurulur (F'ye kısa dokunuş pas). Dokunmatikte hemen orta güçle.
+      if (this.c.input.touch) this.kick(0.55, act === "lob" ? "lob" : "shot", 0);
+      else this.charge = { key: act === "lob" ? "actG" : "actF", kind: act === "lob" ? "lob" : "shot", t: 0 };
       return true;
     }
     if (act.startsWith("table:")) {
@@ -425,15 +477,20 @@ export class Features {
     }
   }
 
-  private kick(power: number): void {
-    const { me, net, camera } = this.c;
-    // Yön: kameranın baktığı yatay yön (nişan almak kolay), birinci şahısta da aynı
+  /** Vuruş yönü: kameranın baktığı yatay yön (nişan almak kolay), birinci şahısta da aynı. */
+  private aimAngle(): number {
     const dir = new THREE.Vector3();
-    camera.getWorldDirection(dir);
-    const ang = Math.atan2(dir.x, dir.z);
-    net.send({ t: "kick", dir: ang, power });
+    this.c.camera.getWorldDirection(dir);
+    return Math.atan2(dir.x, dir.z);
+  }
+
+  /** `curve`: vururken yana basılıyorsa falso (-1 sol … 1 sağ). */
+  private kick(power: number, kind: KickKind, curve: number): void {
+    const { me, net } = this.c;
+    const ang = this.aimAngle();
+    net.send({ t: "kick", dir: ang, power, kind, curve });
     me.rot = ang;
-    sfx.kick(0.6 + power * 0.4);
+    sfx.kick(kind === "pass" ? 0.45 : 0.6 + power * 0.4);
   }
 
   // ---------------------------------------------------------------------------
@@ -498,20 +555,38 @@ export class Features {
       }
     }
 
-    // Şut gücü: F basılı tutuldukça dolar (1 sn'de tam), bırakınca şut
-    if (this.charge >= 0) {
-      if (input.heldAction("actF")) {
-        this.charge = Math.min(1, this.charge + dt);
-        this.whud.setPower(this.charge);
+    // Vuruş gücü: basılı tutuldukça dolar (0.9 sn'de tam). F'ye kısa dokunuş pas, uzun şut; G aşırtma.
+    const ch = this.charge;
+    const curve = (input.heldAction("right") ? 1 : 0) - (input.heldAction("left") ? 1 : 0);
+    if (ch) {
+      if (input.heldAction(ch.key)) {
+        ch.t += dt;
+        const p = Math.min(1, ch.t / 0.9);
+        const tap = ch.kind === "shot" && ch.t < PASS_TAP;
+        this.whud.setPower(tap ? null : p, ch.kind === "lob" ? "Aşırtma" : curve ? `Şut · falso ${curve > 0 ? "→" : "←"}` : "Şut");
       } else {
-        this.kick(Math.max(0.15, this.charge));
-        this.charge = -1;
+        const pass = ch.kind === "shot" && ch.t < PASS_TAP;
+        this.kick(pass ? 0.4 : Math.max(0.15, Math.min(1, ch.t / 0.9)), pass ? "pass" : ch.kind, curve);
+        this.charge = null;
         this.whud.setPower(null);
       }
     }
+    // Nişan oku: topun yanındayken vuruş yönü ve gücü
+    const ball = world.pitch.ball;
+    const canKick = Math.hypot(ball.x - me.x, ball.z - me.z) <= KICK_REACH + 0.6 && !me.seated && !me.vehicle;
+    world.pitch.setAim(
+      canKick && !input.touch
+        ? { ang: this.aimAngle(), power: ch ? Math.min(1, ch.t / 0.9) : 0, kind: ch ? (ch.kind === "shot" && ch.t < PASS_TAP ? "pass" : ch.kind) : "pass" }
+        : null,
+    );
     const nearPitch = Math.abs(me.x - PITCH.x) < PITCH.hx + 8 && Math.abs(me.z - PITCH.z) < PITCH.hz + 8;
-    this.whud.setScore(nearPitch ? this.score : null);
-    world.pitch.update(dt, serverNow);
+    const m = this.match;
+    const clock = m ? matchClock(m.endsAt - serverNow) : null;
+    const myTeam = m ? (m.teams[0].includes(net.you) ? 0 : m.teams[1].includes(net.you) ? 1 : null) : null;
+    this.whud.setScore(nearPitch || m ? this.score : null, clock, myTeam);
+    world.pitch.setScore(this.score, clock);
+    world.pitch.update(dt, serverNow, world.env.lights);
+    this.updateRings(m);
 
     // Yolculuk: görev için ara ara bildirilir
     if (me.rideMeters >= 1 && now - this.lastRide > RIDE_REPORT_MS) {
@@ -554,6 +629,30 @@ export class Features {
     // Hava ve havai fişek
     this.weatherFx.update(time, dt, camera.position, 0.35 + 0.65 * world.env.day);
     world.flash(this.weatherFx.flash);
+  }
+
+  /** Maçta herkesin altında takım renginde halka. */
+  private updateRings(m: MatchState | null): void {
+    const { me, remotes, net } = this.c;
+    if (!m) {
+      this.rings.count = 0;
+      return;
+    }
+    const mtx = new THREE.Matrix4();
+    let n = 0;
+    const put = (sid: number, x: number, z: number) => {
+      const team = m.teams[0].includes(sid) ? 0 : m.teams[1].includes(sid) ? 1 : -1;
+      if (team < 0 || n >= 32) return;
+      mtx.makeTranslation(x, 0.06, z);
+      this.rings.setMatrixAt(n, mtx);
+      this.rings.setColorAt(n, TEAM_COLORS[team]);
+      n++;
+    };
+    put(net.you, me.x, me.z);
+    for (const r of remotes.map.values()) if (r.hasData && !r.leaving) put(r.info.sid, r.x, r.z);
+    this.rings.count = n;
+    this.rings.instanceMatrix.needsUpdate = true;
+    if (this.rings.instanceColor) this.rings.instanceColor.needsUpdate = true;
   }
 
   /** Sis, mevsim parçacıkları, sahne dumanı, konfeti ışığı ve ıslak zeminde adım sıçramaları. */

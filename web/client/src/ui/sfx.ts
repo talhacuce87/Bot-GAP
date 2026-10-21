@@ -92,6 +92,23 @@ export const sfx = {
     burst(0.12, 0.35 * gain, 900);
     tone(110, 0.12, "sine", 0.25 * gain, 0, -60);
   },
+  /** Kafa vuruşu: boğuk tok ses. */
+  header(gain = 1): void {
+    burst(0.08, 0.3 * gain, 500);
+    tone(160, 0.1, "sine", 0.2 * gain, 0, -50);
+  },
+  /** Direk: metalik çınlama. */
+  post(gain = 1): void {
+    tone(1180, 0.6, "triangle", 0.09 * gain);
+    tone(1730, 0.45, "sine", 0.06 * gain, 0.005);
+    tone(2950, 0.25, "sine", 0.04 * gain, 0.01);
+    burst(0.05, 0.25 * gain, 6000);
+  },
+  /** Kalabalık tezahüratı: kabaran ve sönen uğultu. */
+  cheer(gain = 1): void {
+    for (let i = 0; i < 6; i++) burst(1.6 - i * 0.12, 0.12 * gain, 1400 + i * 300, i * 0.08);
+    tone(2600, 0.25, "square", 0.04 * gain, 0.05);
+  },
   clap(): void {
     burst(0.08, 0.45, 4000);
     burst(0.1, 0.3, 3000, 0.02);

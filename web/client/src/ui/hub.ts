@@ -13,6 +13,8 @@ export interface HubActions {
   vehicle(v: 0 | 1 | 2): void;
   fireworks(): void;
   tag(mode: "ebelemece" | "saklambac"): void;
+  /** Futbol maçı başlat (5 dk) ya da süreni bitir. */
+  match(): void;
   pair(kind: "five" | "hug"): void;
   queue(): void;
   weather(): void;
@@ -76,6 +78,7 @@ export class Hub {
     tile(fun, "🎆", "Havai fişek", this.a.fireworks);
     tile(fun, "🏃", "Ebelemece", () => this.a.tag("ebelemece"));
     tile(fun, "🙈", "Saklambaç", () => this.a.tag("saklambac"));
+    tile(fun, "⚽", "Futbol maçı", this.a.match);
     tile(fun, "🙌", "Beşlik çak", () => this.a.pair("five"), actionLabel("five"));
     tile(fun, "🤗", "Sarıl", () => this.a.pair("hug"), actionLabel("hug"));
     tile(fun, "🎵", "Şarkı kuyruğu", this.a.queue);

@@ -49,6 +49,70 @@ describe("futbol", () => {
     expect(Math.hypot(ball.x - PITCH.x, ball.z - PITCH.z)).toBeLessThan(0.5);
   });
 
+  it("pas, baktığı yöndeki oyuncuya yerden gider", () => {
+    const { games, a, sa, sb, place } = world();
+    place(sa, PITCH.x - 0.6, PITCH.z);
+    // b sağ çaprazda (yaklaşık 20° sapma): pas ona yönelir
+    place(sb, PITCH.x + 8, PITCH.z + 3);
+    games.football.kick(sa, Math.PI / 2, 0.3, 1000, "pass");
+    const ball = a.last("ball")!;
+    expect(ball.ev).toBe("pass");
+    expect(ball.vy).toBe(0);
+    expect(Math.atan2(ball.vx, ball.vz)).toBeCloseTo(Math.atan2(8.6, 3), 1);
+  });
+
+  it("falsolu şut kavis çizer, aşırtma yükselir", () => {
+    const { games, sa, place } = world();
+    place(sa, PITCH.x - 0.6, PITCH.z);
+    games.football.kick(sa, Math.PI / 2, 0.5, 1000, "shot", 1);
+    for (let t = 1000; t < 1500; t += 66) games.football.tick(t);
+    const s = games.football.state(1500);
+    // +x'e bakarken sağ +z yönü: top +z'ye kıvrılır
+    expect(s.z).toBeGreaterThan(PITCH.z + 0.2);
+    const w2 = world();
+    w2.place(w2.sa, PITCH.x - 0.6, PITCH.z);
+    w2.games.football.kick(w2.sa, Math.PI / 2, 1, 1000, "lob");
+    let peak = 0;
+    for (let t = 1000; t < 2500; t += 66) {
+      w2.games.football.tick(t);
+      peak = Math.max(peak, w2.games.football.state(t).y);
+    }
+    expect(peak).toBeGreaterThan(2.5);
+  });
+
+  it("direğe çarpan top seker ve gol olmaz", () => {
+    const { games, a, sa, sb, place } = world();
+    // Ortadan doğu kalesinin direğine (z = +goalHalf) doğru, yerden
+    place(sa, PITCH.x - 0.6, PITCH.z);
+    place(sb, PITCH.x - 20, PITCH.z);
+    games.football.kick(sa, Math.atan2(PITCH.hx, PITCH.goalHalf), 1, 1000, "pass");
+    let post = false;
+    for (let t = 1000; t < 3000; t += 66) {
+      games.football.tick(t);
+      if (a.last("ball")?.ev === "post") post = true;
+    }
+    expect(post).toBe(true);
+    expect(a.last("goal")).toBeUndefined();
+  });
+
+  it("maç: takımlar yarıya göre kurulur, süre bitince kazanan duyurulur", () => {
+    const { games, room, a, sa, sb, place } = world();
+    place(sa, PITCH.x - 5, PITCH.z);
+    place(sb, PITCH.x + 5, PITCH.z);
+    expect(games.football.startMatch(1, 1000)).toBeNull();
+    expect(a.last("match")?.match?.teams).toEqual([[sa], [sb]]);
+    // Kırmızı (a) doğu kalesine atar: skor [1, 0]
+    place(sb, PITCH.x, PITCH.z + 6);
+    place(sa, PITCH.x - 0.6, PITCH.z);
+    for (let t = 1000; t < 3600; t += 66) games.football.tick(t);
+    games.football.kick(sa, Math.PI / 2, 0.2, 3600);
+    for (let t = 3600; t < 8000; t += 66) games.football.tick(t);
+    expect(a.last("goal")?.score).toEqual([1, 0]);
+    games.football.tick(62_000);
+    expect(a.last("match")?.match).toBeNull();
+    expect(room.chat.at(-1)?.text).toContain("Kırmızı takım kazandı");
+  });
+
   it("uzaktan şut çekilemez", () => {
     const { games, a, sa, place } = world();
     place(sa, PITCH.x + 5, PITCH.z);

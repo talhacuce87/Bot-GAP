@@ -4,7 +4,7 @@ import * as THREE from "three";
 import type { BallState } from "../../../shared/protocol";
 import { BALL_R, PITCH } from "../../../shared/zones";
 import type { Builder } from "./builder";
-import { flatMat, mat, part } from "./geo";
+import { flatMat, mat, part, timeUniform } from "./geo";
 
 const LINE = "#f4f4ee";
 const LINE_W = 0.12;
@@ -65,10 +65,78 @@ function netTexture(): THREE.CanvasTexture {
 export interface Pitch {
   group: THREE.Group;
   setBall(b: BallState, serverNow: number): void;
-  setScore(score: [number, number]): void;
+  /** Skor; maçta kalan süre ("3:12") tabelada da yazar. */
+  setScore(score: [number, number], clock?: string | null): void;
   /** Topun tahmini konumu (şut menzili, ses için). */
   ball: THREE.Vector3;
-  update(dt: number, serverNow: number): void;
+  /** `lights` gece projektörlerin yanma oranı (0–1). */
+  update(dt: number, serverNow: number, lights?: number): void;
+  /** Nişan oku: topun yanında vuruş yönü ve gücü (null gizle). */
+  setAim(aim: { ang: number; power: number; kind: "shot" | "pass" | "lob" } | null): void;
+  /** Gol: top fileye çarptı, file dalgalanır. */
+  netHit(x: number, y: number, z: number, time: number): void;
+}
+
+/** Projektör kuleleri: sahanın dört köşesinin dışında, kafaları ortaya dönük. */
+const TOWER_H = 9;
+function towers(b: Builder): { x: number; z: number; head: THREE.Vector3 }[] {
+  const { x: cx, z: cz, hx, hz } = PITCH;
+  const out: { x: number; z: number; head: THREE.Vector3 }[] = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const x = cx + sx * (hx + 2.4), z = cz + sz * (hz + 2.6);
+      const face = Math.atan2(cx - x, cz - z);
+      b.add(part(new THREE.CylinderGeometry(0.12, 0.2, TOWER_H, 6), "#59606e", mat(x, TOWER_H / 2, z)));
+      // Kafa: lamba ızgarası, ortaya ve hafif aşağı bakar
+      const head = mat(x, TOWER_H + 0.4, z, face).multiply(new THREE.Matrix4().makeRotationX(0.45));
+      b.add(part(new THREE.BoxGeometry(1.9, 1.1, 0.25), "#2f3440", head));
+      for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 2; j++) {
+          const m = head.clone().multiply(new THREE.Matrix4().makeTranslation(-0.6 + i * 0.6, -0.25 + j * 0.5, 0.14)).multiply(new THREE.Matrix4().makeScale(0.9, 0.9, 0.45));
+          b.prop("bulb", m);
+        }
+      }
+      b.colliders.circle(x, z, 0.22);
+      out.push({ x, z, head: new THREE.Vector3(x, TOWER_H + 0.4, z) });
+    }
+  }
+  return out;
+}
+
+/** Projektör ışık konisi: kuleden sahanın içine, uca doğru solan toplamalı koni. */
+function beamMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 0 } },
+    vertexShader: /* glsl */ `
+      varying float vH;
+      varying vec3 vN;
+      varying vec3 vV;
+      void main() {
+        vH = uv.y;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vN = normalize(normalMatrix * normal);
+        vV = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uOpacity;
+      varying float vH;
+      varying vec3 vN;
+      varying vec3 vV;
+      void main() {
+        // Kenara bakan yüzeyler soluk: hacimli ışık görüntüsü
+        float edge = pow(abs(dot(vN, vV)), 1.5);
+        float a = edge * pow(vH, 1.4) * uOpacity;
+        gl_FragColor = vec4(vec3(1.0, 0.97, 0.88) * a, 1.0);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+    fog: false,
+  });
 }
 
 export function pitch(b: Builder): Pitch {
@@ -108,6 +176,7 @@ export function pitch(b: Builder): Pitch {
   const nets: THREE.BufferGeometry[] = [];
   goal(b, -1, nets);
   goal(b, 1, nets);
+  const lampTowers = towers(b);
 
   // Uzun kenarlarda alçak reklam panoları (ortada giriş boşluğu)
   const boards = ["#2f6fd0", "#e04a3a", "#f2c230", "#3a9a5a"];
@@ -129,10 +198,28 @@ export function pitch(b: Builder): Pitch {
   }
 
   const group = new THREE.Group();
-  const netMesh = new THREE.Mesh(
-    mergeNets(nets),
-    new THREE.MeshBasicMaterial({ map: netTexture(), transparent: true, side: THREE.DoubleSide, depthWrite: false, opacity: 0.8 }),
-  );
+  // File: gol olunca çarpma noktasından dışa doğru dalgalanır (vertex shader)
+  const netHit = { value: new THREE.Vector4(0, 0, 0, -100) };
+  const netMat = new THREE.MeshBasicMaterial({ map: netTexture(), transparent: true, side: THREE.DoubleSide, depthWrite: false, opacity: 0.8 });
+  netMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uNetHit = netHit;
+    shader.uniforms.uTime = timeUniform;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nuniform vec4 uNetHit;\nuniform float uTime;")
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+        {
+          float age = uTime - uNetHit.w;
+          float d = distance(transformed, uNetHit.xyz);
+          float k = exp(-d * 1.4) * exp(-age * 2.2) * (age > 0.0 ? 1.0 : 0.0);
+          transformed.x += sign(transformed.x - ${cx.toFixed(2)}) * k * (0.55 + 0.25 * sin(age * 16.0));
+          transformed.y -= k * 0.08;
+        }`,
+      );
+  };
+  netMat.customProgramCacheKey = () => "goal-net";
+  const netMesh = new THREE.Mesh(subdivideNets(mergeNets(nets)), netMat);
   netMesh.matrixAutoUpdate = false;
   group.add(netMesh);
 
@@ -142,14 +229,29 @@ export function pitch(b: Builder): Pitch {
   sc.height = 96;
   const scoreTex = new THREE.CanvasTexture(sc);
   scoreTex.colorSpace = THREE.SRGBColorSpace;
-  const drawScore = (s: [number, number]) => {
+  let lastBoard = "";
+  const drawScore = (s: [number, number], clock: string | null = null) => {
+    const key = `${s[0]}-${s[1]}-${clock}`;
+    if (key === lastBoard) return;
+    lastBoard = key;
     const g = sc.getContext("2d")!;
     g.fillStyle = "#14171c";
     g.fillRect(0, 0, 256, 96);
-    g.fillStyle = "#f2c230";
-    g.font = "700 22px system-ui, sans-serif";
     g.textAlign = "center";
-    g.fillText("GAP FUTBOL", 128, 26);
+    if (clock) {
+      // Maç: takım renkleri ve süre
+      g.fillStyle = "#e04a3a";
+      g.fillRect(8, 40, 10, 46);
+      g.fillStyle = "#2f6fd0";
+      g.fillRect(238, 40, 10, 46);
+      g.fillStyle = "#f2c230";
+      g.font = "700 22px ui-monospace, monospace";
+      g.fillText(`⏱ ${clock}`, 128, 26);
+    } else {
+      g.fillStyle = "#f2c230";
+      g.font = "700 22px system-ui, sans-serif";
+      g.fillText("GAP FUTBOL", 128, 26);
+    }
     g.fillStyle = "#ffffff";
     g.font = "800 50px ui-monospace, monospace";
     g.fillText(`${s[0]} - ${s[1]}`, 128, 82);
@@ -172,11 +274,82 @@ export function pitch(b: Builder): Pitch {
     for (let k = 0; k < 9; k++) cols[i + k] = dark ? 0.12 : 0.95;
   }
   ballGeo.setAttribute("color", new THREE.BufferAttribute(cols, 3));
-  const ballMesh = new THREE.Mesh(ballGeo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
+  // Gece projektör altında: top hafifçe kendi ışığıyla seçilir
+  const ballMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const ballMesh = new THREE.Mesh(ballGeo, ballMat);
   ballMesh.castShadow = true;
   group.add(ballMesh);
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(BALL_R * 1.1, 16).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.3, depthWrite: false }));
   group.add(shadow);
+
+  // Projektör konileri ve sahaya düşen ışık
+  const beamMat = beamMaterial();
+  const beamGeo = new THREE.CylinderGeometry(0.5, 7, 1, 20, 1, true).translate(0, -0.5, 0);
+  // uv.y: kulede 1, yerde 0 (koni kuleye doğru parlak)
+  const down = new THREE.Vector3(0, -1, 0);
+  for (const t of lampTowers) {
+    const target = new THREE.Vector3(cx + (t.x - cx) * 0.25, 0, cz + (t.z - cz) * 0.25);
+    const dir = target.clone().sub(t.head);
+    const beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.position.copy(t.head);
+    beam.quaternion.setFromUnitVectors(down, dir.clone().normalize());
+    beam.scale.set(1, dir.length(), 1);
+    beam.renderOrder = 3;
+    group.add(beam);
+  }
+  const poolMat = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 0 } },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uOpacity;
+      varying vec2 vUv;
+      void main() {
+        vec2 q = abs(vUv - 0.5) * 2.0;
+        float a = (1.0 - smoothstep(0.75, 1.0, q.x)) * (1.0 - smoothstep(0.7, 1.0, q.y)) * uOpacity;
+        gl_FragColor = vec4(vec3(0.75, 1.0, 0.65) * a, 1.0);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const pool = new THREE.Mesh(new THREE.PlaneGeometry(hx * 2 + 4, hz * 2 + 4).rotateX(-Math.PI / 2), poolMat);
+  pool.position.set(cx, 0.045, cz);
+  pool.renderOrder = 2;
+  group.add(pool);
+
+  // Nişan oku: topun altında, vuruş yönünde; güç arttıkça uzar
+  const arrowShape = new THREE.Shape();
+  arrowShape.moveTo(-0.12, 0);
+  arrowShape.lineTo(0.12, 0);
+  arrowShape.lineTo(0.12, 0.7);
+  arrowShape.lineTo(0.3, 0.7);
+  arrowShape.lineTo(0, 1);
+  arrowShape.lineTo(-0.3, 0.7);
+  arrowShape.lineTo(-0.12, 0.7);
+  arrowShape.closePath();
+  const arrowMat = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.75, depthWrite: false });
+  const arrow = new THREE.Mesh(new THREE.ShapeGeometry(arrowShape).rotateX(-Math.PI / 2), arrowMat);
+  arrow.visible = false;
+  arrow.renderOrder = 3;
+  group.add(arrow);
+  const AIM_COLORS = { shot: new THREE.Color("#ffd23f"), pass: new THREE.Color("#7dff9a"), lob: new THREE.Color("#7fc8ff") };
+
+  // Hız izi: hızlı topun arkasında solan küçük toplar
+  const TRAIL = 14;
+  const trailMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(BALL_R * 0.8, 8, 6), new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending }), TRAIL);
+  trailMesh.frustumCulled = false;
+  trailMesh.count = 0;
+  group.add(trailMesh);
+  const trail: THREE.Vector3[] = Array.from({ length: TRAIL }, () => new THREE.Vector3(cx, BALL_R, cz));
+  let trailHead = 0;
+  const tm = new THREE.Matrix4();
 
   let state: BallState = { x: cx, y: 0, z: cz, vx: 0, vy: 0, vz: 0, at: 0 };
   const shown = new THREE.Vector3(cx, BALL_R, cz);
@@ -184,15 +357,21 @@ export function pitch(b: Builder): Pitch {
   const axis = new THREE.Vector3();
   const q = new THREE.Quaternion();
 
-  /** Sunucudaki fiziğin kaba kopyası: son durumdan `t` sn sonrası (sürtünme ve yerçekimi). */
+  /** Sunucudaki fiziğin kaba kopyası: son durumdan `t` sn sonrası (sürtünme, yerçekimi, falso). */
   const predict = (t: number, out: THREE.Vector3) => {
     const s = state;
-    const damp = 0.55;
+    const damp = 0.6;
     const k = (1 - Math.exp(-damp * t)) / damp;
     let y = s.y + s.vy * t - 4.9 * t * t;
     if (y < 0) y = 0;
     const air = s.y > 0.01 || s.vy > 0.5;
-    out.set(s.x + s.vx * (air ? t : k), y + BALL_R, s.z + s.vz * (air ? t : k));
+    let vx = s.vx, vz = s.vz;
+    // Falso: hız vektörünü yolun yarısındaki açıyla döndür (yaklaşık kavis)
+    if (s.spin) {
+      const a = (-s.spin * t) / 2, c = Math.cos(a), sn = Math.sin(a);
+      [vx, vz] = [vx * c + vz * sn, vz * c - vx * sn];
+    }
+    out.set(s.x + vx * (air ? t : k), y + BALL_R, s.z + vz * (air ? t : k));
     out.x = Math.max(cx - hx - 1.1, Math.min(cx + hx + 1.1, out.x));
     out.z = Math.max(cz - hz, Math.min(cz + hz, out.z));
     return out;
@@ -205,7 +384,24 @@ export function pitch(b: Builder): Pitch {
       state = bs;
     },
     setScore: drawScore,
-    update(dt, serverNow) {
+    setAim(aim) {
+      arrow.visible = !!aim;
+      if (!aim) return;
+      arrow.position.set(shown.x, 0.06, shown.z);
+      arrow.rotation.y = aim.ang;
+      const len = 1.2 + aim.power * 2.8;
+      arrow.scale.set(1 + aim.power * 0.4, 1, len);
+      arrowMat.color.copy(AIM_COLORS[aim.kind]);
+      arrowMat.opacity = 0.45 + aim.power * 0.4;
+    },
+    netHit(x, y, z, time) {
+      netHit.value.set(x, y, z, time);
+    },
+    update(dt, serverNow, lights = 0) {
+      beamMat.uniforms.uOpacity.value = lights * 0.1;
+      poolMat.uniforms.uOpacity.value = lights * 0.085;
+      ballMat.emissive.setScalar(lights * 0.35);
+      pool.visible = lights > 0.02;
       const t = Math.min(0.5, Math.max(0, (serverNow - state.at) / 1000));
       predict(t, predicted);
       const prevX = shown.x, prevZ = shown.z;
@@ -220,12 +416,57 @@ export function pitch(b: Builder): Pitch {
         q.setFromAxisAngle(axis, dist / BALL_R);
         ballMesh.quaternion.premultiply(q);
       }
+      // İz: hızlıyken görünür, yavaşlayınca söner
+      trail[trailHead++ % TRAIL].copy(shown);
+      const speed = dist / Math.max(dt, 1e-3);
+      const show = Math.min(1, Math.max(0, (speed - 7) / 8));
+      trailMesh.count = show > 0.02 ? TRAIL : 0;
+      (trailMesh.material as THREE.MeshBasicMaterial).opacity = 0.3 * show;
+      if (show > 0.02) {
+        for (let i = 0; i < TRAIL; i++) {
+          const p = trail[(trailHead - 1 - i + TRAIL * 2) % TRAIL];
+          const sc = 1 - i / TRAIL;
+          tm.makeScale(sc, sc, sc).setPosition(p);
+          trailMesh.setMatrixAt(i, tm);
+        }
+        trailMesh.instanceMatrix.needsUpdate = true;
+      }
       shadow.position.set(shown.x, 0.04, shown.z);
       const lift = shown.y - BALL_R;
       shadow.scale.setScalar(Math.max(0.4, 1 - lift * 0.3));
       (shadow.material as THREE.MeshBasicMaterial).opacity = 0.3 * Math.max(0.3, 1 - lift * 0.3);
     },
   };
+}
+
+/** File dalgalansın diye yüzeyler küçük üçgenlere bölünür (her kenar 4 parçaya). */
+function subdivideNets(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  const pos = g.attributes.position.array as Float32Array, uv = g.attributes.uv.array as Float32Array;
+  const P: number[] = [], U: number[] = [];
+  const N = 4;
+  for (let t = 0; t < pos.length / 9; t++) {
+    const p = (i: number) => new THREE.Vector3(pos[t * 9 + i * 3], pos[t * 9 + i * 3 + 1], pos[t * 9 + i * 3 + 2]);
+    const u = (i: number) => new THREE.Vector2(uv[t * 6 + i * 2], uv[t * 6 + i * 2 + 1]);
+    const [a, b, c] = [p(0), p(1), p(2)], [ua, ub, uc] = [u(0), u(1), u(2)];
+    const at = (i: number, j: number) => {
+      const wa = 1 - (i + j) / N, wb = i / N, wc = j / N;
+      return {
+        v: a.clone().multiplyScalar(wa).addScaledVector(b, wb).addScaledVector(c, wc),
+        t: ua.clone().multiplyScalar(wa).addScaledVector(ub, wb).addScaledVector(uc, wc),
+      };
+    };
+    const push = (...q: { v: THREE.Vector3; t: THREE.Vector2 }[]) => q.forEach((k) => (P.push(k.v.x, k.v.y, k.v.z), U.push(k.t.x, k.t.y)));
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N - i; j++) {
+        push(at(i, j), at(i + 1, j), at(i, j + 1));
+        if (i + j < N - 1) push(at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+      }
+    }
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+  out.setAttribute("uv", new THREE.Float32BufferAttribute(U, 2));
+  return out;
 }
 
 function mergeNets(nets: THREE.BufferGeometry[]): THREE.BufferGeometry {

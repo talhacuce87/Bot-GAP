@@ -1733,7 +1733,7 @@ canvas.shiftlock {
   height: 10px;
   border-radius: 5px;
   background: rgba(0, 0, 0, 0.45);
-  overflow: hidden;
+  overflow: visible;
   display: none;
 }
 
@@ -1744,6 +1744,19 @@ canvas.shiftlock {
 .kick-fill {
   height: 100%;
   background: linear-gradient(90deg, #3bd16f, #f2c230, #e04a3a);
+  border-radius: 5px;
+}
+
+.kick-label {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
 }
 
 /* Beşlik / sarılma isteği */
