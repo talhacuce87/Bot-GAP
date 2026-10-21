@@ -4,7 +4,9 @@
 
 export const RACE = {
   laps: 3,
-  min: 2,
+  /** Tek kişi de sürebilir (antrenman); ödül (görev, galibiyet) en az `rewardMin` kişilik yarışta. */
+  min: 1,
+  rewardMin: 2,
   max: 8,
   /** Pistin yarı genişliği. */
   halfW: 5,
