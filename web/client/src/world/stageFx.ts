@@ -6,7 +6,8 @@ import type { Builder } from "./builder";
 import { mat, part } from "./geo";
 
 const MOVERS = 8;
-const TRUSS_Y = 8.6;
+/** Kiriş perdenin (üst kenarı ~12.9 m) üstünde: önünden geçip videoyu kesmesin. */
+const TRUSS_Y = 13.8;
 const TRUSS_Z = STAGE.z + 0.4;
 
 export function djBooth(b: Builder): void {
