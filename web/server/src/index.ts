@@ -51,6 +51,12 @@ const STATIC_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)), "../cli
  */
 const WORLD_ROOM = "dunya";
 /**
+ * Dünyanın Discord sunucusu: tarayıcıdan Discord hesabıyla girenin XP/balık/ev kayıtları buraya yazılır.
+ * WORLD_GUILD_ID yoksa en son Activity'den gelen sunucu.
+ */
+const DEFAULT_GUILD = /^\d{5,20}$/.test(process.env.WORLD_GUILD_ID || "") ? process.env.WORLD_GUILD_ID! : null;
+let lastGuild: string | null = null;
+/**
  * İstemci sürümü: derlenmiş sayfanın ana betiği (adında içerik özeti var). Bağlanan eski sürümdeyse
  * kendini yeniler; deploy sonrası herkes yeni koda kendiliğinden geçer. Geliştirmede (dist yok) null.
  */
@@ -398,7 +404,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (path === "/api/me" && method === "GET") {
     const user = verifySession(cookies(req)[SESSION_COOKIE] || "", SESSION_SECRET);
-    return user ? json(res, 200, { user, loginRequired: LOGIN_REQUIRED }) : json(res, 401, { loginRequired: LOGIN_REQUIRED });
+    return user ? json(res, 200, { user, loginRequired: LOGIN_REQUIRED }) : json(res, 401, { loginRequired: LOGIN_REQUIRED, guests: ALLOW_GUESTS });
   }
 
   const watchInfo = /^\/api\/watch\/([\w-]{6,16})$/.exec(path);
@@ -564,7 +570,9 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   const guildParam = url.searchParams.get("guild") || "";
-  const guild = watch?.guild ?? (/^\d{5,20}$/.test(guildParam) ? guildParam : null);
+  if (/^\d{5,20}$/.test(guildParam)) lastGuild = guildParam;
+  // Tarayıcıdan Discord hesabıyla gelen (Activity değil): sunucu bilgisi yok, dünyanın sunucusu kullanılır
+  const guild = watch?.guild ?? (/^\d{5,20}$/.test(guildParam) ? guildParam : null) ?? (user.guest ? null : DEFAULT_GUILD || lastGuild);
   // Zindanı denemek için: yalnızca misafirler kendini zindana koyabilir.
   const forceJail = user.guest && url.searchParams.get("jail") === "1";
   const jailed = forceJail || (!user.guest && isExiled(user.id, guild));

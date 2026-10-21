@@ -2656,3 +2656,94 @@ canvas.shiftlock {
   background: #e04a3a;
   color: #fff;
 }
+
+/* Ana adres giriş ekranı (tarayıcı) */
+.landing {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(ellipse at top, #2b3a67 0%, #141a2c 60%, #0b0e18 100%);
+  color: #f2f4f8;
+  font-family: system-ui, sans-serif;
+}
+
+.landing-card {
+  width: min(380px, 100%);
+  padding: 28px 24px;
+  border-radius: 18px;
+  background: rgba(20, 24, 38, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.landing-logo {
+  font-size: 44px;
+}
+
+.landing-card h1 {
+  margin: 6px 0 4px;
+  font-size: 26px;
+}
+
+.landing-sub,
+.landing-note {
+  margin: 0 0 18px;
+  font-size: 14px;
+  color: #b9c0d4;
+}
+
+.landing-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+
+.landing-err {
+  color: #ff8a80;
+  font-size: 13px;
+}
+
+.landing-discord,
+.landing-guest button {
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.landing-discord {
+  background: #5865f2;
+  color: #fff;
+}
+
+.landing-or {
+  margin: 14px 0;
+  font-size: 12px;
+  color: #8790a8;
+}
+
+.landing-guest {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.landing-guest input {
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-size: 15px;
+}
+
+.landing-guest button {
+  background: #2e8b57;
+  color: #fff;
+}
