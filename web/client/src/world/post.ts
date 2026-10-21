@@ -182,7 +182,28 @@ const _sun = new THREE.Vector3();
 const _clear = new THREE.Color();
 const _fwd = new THREE.Vector3();
 
-const TINT_DAY =new THREE.Vector3(1.02, 1.0, 0.97);
+/**
+ * Temizlik: sahne çizildikten hemen sonra, parıltıdan önce. Bazı ekran kartlarında tanımsız matematik (ya da
+ * 16 bitlik ara görüntüde 65504'ü aşan parlaklık) NaN/sonsuz üretir; parıltının bulanıklaştırması bunu büyük
+ * bloklara yayar ve o bölge saydam çıkıp sayfa arka planı görünür (gece parıltı güçlü olduğu için gece).
+ * Burada NaN/sonsuz sıfırlanır, aşırı parlaklık sınırlanır ve saydamlık 1'e sabitlenir: son işlem yalnızca
+ * perdede video deliği yokken çalışır, tuvalin hiçbir yeri saydam olmamalı.
+ */
+const SANITIZE = {
+  uniforms: { tDiffuse: { value: null as THREE.Texture | null } },
+  vertexShader: GRADE.vertexShader,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      vec3 rgb = (any(isnan(c.rgb)) || any(isinf(c.rgb))) ? vec3(0.0) : clamp(c.rgb, 0.0, 64.0);
+      gl_FragColor = vec4(rgb, 1.0);
+    }
+  `,
+};
+
+const TINT_DAY = new THREE.Vector3(1.02, 1.0, 0.97);
 const TINT_DUSK = new THREE.Vector3(1.05, 0.98, 0.94);
 const TINT_NIGHT = new THREE.Vector3(0.94, 0.98, 1.08);
 const LIFT_DUSK = new THREE.Vector3(0.006, 0.002, 0.012);
@@ -220,6 +241,7 @@ export class PostFx {
     const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples });
     this.composer = new EffectComposer(renderer, target);
     this.composer.addPass(new RenderPass(scene, camera));
+    this.composer.addPass(new ShaderPass(SANITIZE));
     this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.8, 0.55, 0.72);
     this.composer.addPass(this.bloom);
     this.rays = new ShaderPass(RAYS);
