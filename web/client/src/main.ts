@@ -11,7 +11,6 @@ import {
   FLAG_SEATED,
   FLAG_WALKING,
   FISH_SPOT,
-  INTERP_DELAY_MS,
   JAIL_CENTER,
   JAIL_SPAWN,
   PLAYER_RADIUS,
@@ -779,7 +778,7 @@ async function start(): Promise<void> {
     bots?.update(dt, serverNow);
     // Başkalarının durduğu yüzey konumlarından bulunur (çeşme, bank, tank üstü)
     const hull = hullCircles(tankView.x, tankView.z, tankView.h);
-    remotes.update(serverNow - INTERP_DELAY_MS, dt, (x, z, seated) =>
+    remotes.update(serverNow - net.interp.update(dt), dt, (x, z, seated) =>
       seated
         ? seatDrop(x, z)
         : Math.max(world.colliders.groundAt(x, z, PLAYER_RADIUS), tankGround(hull, x, z, PLAYER_RADIUS * LEDGE)),

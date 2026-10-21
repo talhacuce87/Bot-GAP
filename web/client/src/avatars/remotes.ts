@@ -1,6 +1,6 @@
-// Uzak oyuncular: snapshot halka tamponu + INTERP_DELAY_MS geriden interpolasyon.
+// Uzak oyuncular: snapshot halka tamponu + uyarlanır gecikmeyle (jitter.ts) geriden interpolasyon.
 import type * as THREE from "three";
-import { FLAG_DRIVING, FLAG_SEATED, JUMP_MASK, JUMP_SHIFT, JUMP_TIME, jumpHeight } from "../../../shared/constants";
+import { FLAG_DRIVING, FLAG_SEATED, FLAG_WALKING, JUMP_MASK, JUMP_SHIFT, JUMP_TIME, jumpHeight } from "../../../shared/constants";
 import type { PlayerInfo } from "../../../shared/protocol";
 import type { AvatarAtlas } from "./atlas";
 import { type AvatarView, colorFor } from "./avatars";
@@ -9,6 +9,10 @@ const BUF = 8;
 /** Bu sid ve üstü yerel sahte oyunculara (bots) ayrılmıştır; ağ yeniden bağlanınca silinmez. */
 export const LOCAL_SID_BASE = 60000;
 const FADE_PER_SEC = 3;
+/** Snapshot gecikince en fazla bu kadar (ms) ileri tahmin edilir. */
+const EXTRAP_MS = 100;
+/** Son iki örnek bundan uzak aralıklıysa (duran oyuncu, seyrek yayın) tahmin yapılmaz. */
+const EXTRAP_SPAN_MS = 250;
 const TAU = Math.PI * 2;
 
 function lerpAngle(a: number, b: number, t: number): number {
@@ -119,6 +123,14 @@ export class Remote implements AvatarView {
       this.z = this.bz[newest];
       this.rot = this.br[newest];
       this.flags = this.bf[newest];
+      // Paket gecikti: yürüyen oyuncu donmasın, son hızıyla kısa bir süre devam etsin
+      const prev = (newest + BUF - 1) % BUF;
+      const span = this.t[newest] - this.t[prev];
+      if (this.n > 1 && this.flags & FLAG_WALKING && span > 0 && span <= EXTRAP_SPAN_MS) {
+        const u = Math.min(renderTime - this.t[newest], EXTRAP_MS) / span;
+        this.x += (this.bx[newest] - this.bx[prev]) * u;
+        this.z += (this.bz[newest] - this.bz[prev]) * u;
+      }
       return;
     }
     // En yeniden geriye doğru, renderTime'ı kapsayan iki örneği bul.

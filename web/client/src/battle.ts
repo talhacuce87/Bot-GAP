@@ -2,7 +2,6 @@
 // Kurallar sunucuda (server/src/battle.ts); burada sürüş, nişan, çizim ve arayüz var.
 import * as THREE from "three";
 import { MODES, TANK_HP, TEAMS, type Team } from "../../shared/arena";
-import { INTERP_DELAY_MS } from "../../shared/constants";
 import { type BattleMode, type BattleState, type Fighter, SKINS } from "../../shared/protocol";
 import { DEFAULT_ELEV, FIRE_COOLDOWN_MS } from "../../shared/tank";
 import { AvatarAtlas } from "./avatars/atlas";
@@ -362,7 +361,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
     }
     net.update(dt, me);
     const serverNow = net.serverNow();
-    remotes.update(serverNow - INTERP_DELAY_MS, dt);
+    remotes.update(serverNow - net.interp.update(dt), dt);
 
     // Tanklar ve isim/can etiketleri
     if (me.driving) myView.set(me.x, me.z, me.driving.h, me.driving.tr, me.driving.el);

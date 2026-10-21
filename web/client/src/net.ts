@@ -26,6 +26,7 @@ import {
   type Weather,
 } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
+import { InterpDelay } from "./jitter";
 import { RttMonitor } from "./rtt";
 
 export type NetStatus = "connecting" | "online" | "offline" | "denied" | "notfound";
@@ -104,6 +105,8 @@ export class Net {
   private retry = 0;
   private rttSamples: { rtt: number; offset: number }[] = [];
   private monitor = new RttMonitor();
+  /** Uzak oyuncuların çizim gecikmesi: hattın dalgalanmasına göre ayarlanır. */
+  readonly interp = new InterpDelay();
   /** close() çağrıldı: yeniden bağlanılmaz (mod değişti). */
   private closed = false;
   private readonly onEntry: (sid: number, x: number, z: number, rot: number, flags: number, time: number) => void;
@@ -143,6 +146,7 @@ export class Net {
     ws.onopen = () => {
       this.retry = 0;
       this.rttSamples = [];
+      this.interp.reset();
       this.monitor.reset(performance.now());
       this.ping();
       this.pingTimer = window.setInterval(() => this.ping(), PING_MS);
@@ -186,7 +190,9 @@ export class Net {
 
   private onMessage(data: ArrayBuffer | string): void {
     if (typeof data !== "string") {
-      readSnapshot(new DataView(data), this.onEntry);
+      const time = readSnapshot(new DataView(data), this.onEntry);
+      // Saat ofseti ilk pong'la belli olur; öncesindeki ölçümler anlamsız
+      if (time >= 0 && this.rttSamples.length) this.interp.arrived(this.serverNow() - time);
       return;
     }
     const ev = JSON.parse(data) as ServerEvent;
