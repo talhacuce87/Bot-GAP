@@ -172,12 +172,29 @@ interface CarView {
   lastSmoke: number;
 }
 
+/**
+ * Gece pist binanın lambasıyla aydınlanmış görünsün: nesnenin kendi rengi kadar ışıma (gri değil; renkler
+ * solmaz). Gerçek ışık eklemek bütün sahnenin shader'larını ağırlaştırırdı.
+ */
+function lampLit<T extends THREE.MeshLambertMaterial>(m: T, lamp: { value: number }): T {
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uLamp = lamp;
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nuniform float uLamp;")
+      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * uLamp;");
+  };
+  m.customProgramCacheKey = () => "race-lamp";
+  return m;
+}
+
 export class RaceView {
   readonly group = new THREE.Group();
   private trackMesh: THREE.Mesh | null = null;
   private trackIndex = -1;
-  private material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-  private carMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+  /** Gece lambası (0 gündüz … 1 gece). */
+  private lamp = { value: 0 };
+  private material = lampLit(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), this.lamp);
+  private carMaterial = lampLit(new THREE.MeshLambertMaterial({ vertexColors: true }), this.lamp);
   private cars = new Map<number, CarView>();
   private smoke: THREE.InstancedMesh;
   private puffs: { x: number; z: number; t: number; s: number }[] = [];
@@ -266,7 +283,7 @@ export class RaceView {
     else this.puffs[this.nextPuff++ % SMOKE] = p;
   }
 
-  /** Kare başı: duman söner; gece pist hafifçe kendi ışığıyla seçilir. */
+  /** Kare başı: duman söner; gece pist binanın lambasıyla aydınlanır. */
   update(time: number, night: number, showMarker: boolean): void {
     if (!showMarker) this.marker.visible = false;
     let n = 0;
@@ -279,9 +296,7 @@ export class RaceView {
     }
     this.smoke.count = n;
     this.smoke.instanceMatrix.needsUpdate = true;
-    const e = night * 0.35;
-    this.material.emissive.setRGB(e, e, e);
-    this.carMaterial.emissive.setRGB(e, e, e);
+    this.lamp.value = night * 0.55;
   }
 
   /** Pistin dünyadaki merkezi ve yarı ölçüleri (tepeden kamera için). */
