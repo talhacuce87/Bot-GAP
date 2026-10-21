@@ -20,6 +20,8 @@ export class Input {
   readonly touch: boolean;
   /** Gardırop tuşu. */
   onWardrobe: (() => void) | null = null;
+  /** Ekranı kaplayan pencere (gardırop) açık: dünya tuşları yok sayılır, yalnızca gardırop tuşu çalışır. */
+  private blocked = false;
 
   /** Basılı tuşlar (keybinds adlarıyla: KeyW, Mouse1 …). */
   private held = new Set<string>();
@@ -66,6 +68,10 @@ export class Input {
     addEventListener("keydown", (e) => {
       if (e.repeat) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (this.blocked) {
+        if (actionsOf(e.code).includes("wardrobe")) this.onWardrobe?.();
+        return;
+      }
       const d = /^Digit([1-6])$/.exec(e.code);
       if (d) this.emote = Number(d[1]) - 1;
       // Atanmış tuş: Space/oklar sayfayı kaydırmasın, odaktaki düğmeyi tetiklemesin
@@ -157,6 +163,16 @@ export class Input {
   /** Fare kilitli mi (imleç gizli, her hareket kamerayı çevirir). */
   get locked(): boolean {
     return document.pointerLockElement === this.el;
+  }
+
+  /** Pencere açılınca: basılı tuşlar bırakılır (karakter yürümeye devam etmesin), fare kilidi açılır. */
+  setBlocked(on: boolean): void {
+    this.blocked = on;
+    if (!on) return;
+    this.reset();
+    this.dragLock = false;
+    if (this.shiftLock) this.toggleShiftLock();
+    if (this.locked) document.exitPointerLock();
   }
 
   /** Tanka binince açılır: imleç ortada kilitlenir, sol tık ateş eder. Dokunmatikte etkisiz. */
