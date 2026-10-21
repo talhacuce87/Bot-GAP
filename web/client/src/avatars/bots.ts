@@ -1,5 +1,5 @@
 // `?bots=N`: performans testi için yerel sahte oyuncular. Gerçek ağ yolunu (Remotes + interpolasyon) kullanır.
-import { EMOTES, FLAG_SEATED, FLAG_WALKING, JUMP_SHIFT, SEND_HZ, WALK_SPEED } from "../../../shared/constants";
+import { EMOTES, FLAG_SEATED, FLAG_WALKING, JUMP_SHIFT, TICK_HZ, WALK_SPEED } from "../../../shared/constants";
 import { PLAZA } from "../../../shared/zones";
 import type { Seat } from "../world/scene";
 import manifest from "../../chibi/chibi.json";
@@ -82,7 +82,7 @@ export class Bots {
     }
     // Gerçek sunucu gibi 15 Hz örnek gönder.
     this.acc += dt;
-    if (this.acc < 1 / SEND_HZ) return;
+    if (this.acc < 1 / TICK_HZ) return;
     this.acc = 0;
     for (const b of this.bots) {
       if (Math.random() < 0.012) this.onEmote(b.sid, Math.floor(Math.random() * EMOTES.length));

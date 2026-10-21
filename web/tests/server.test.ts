@@ -101,6 +101,38 @@ describe("Room", () => {
     expect(watcher.text.some((e) => e.t === "join" && e.player.sid === firstSpectator && !e.player.spectator)).toBe(true);
   });
 
+  it("stamps every snapshot entry with that player's own sample time", () => {
+    const room = new Room("g:test");
+    const a = new FakeConn();
+    const sa = room.join(user("a"), a, 1000);
+    const sb = room.join(user("b"), new FakeConn(), 1000);
+    room.applyState(sa, { x: 0, z: 0, rot: 0, flags: 1 }, 1100, 1060);
+    room.tick(1120);
+    const times = new Map<number, number>();
+    readSnapshot(new DataView(a.binary.at(-1)!.buffer), (sid, _x, _z, _r, _f, time) => times.set(sid, time));
+    expect(times.get(sa)).toBe(1060);
+    // Hiç konum göndermeyen: girdiği an
+    expect(times.get(sb)).toBe(1000);
+  });
+
+  it("never trusts a sample time from the future, the distant past or before the previous one", () => {
+    const room = new Room("g:test");
+    const sid = room.join(user("a"), new FakeConn(), 0);
+    const p = room.players.get(sid)!;
+    const move = (now: number, sentAt: number) => room.applyState(sid, { x: p.state.x, z: p.state.z, rot: 0, flags: 1 }, now, sentAt);
+    move(10_000, 99_999);
+    expect(p.sampledAt).toBe(10_000);
+    move(20_000, 5);
+    expect(p.sampledAt).toBe(19_000);
+    move(20_030, 19_990);
+    expect(p.sampledAt).toBe(19_990);
+    move(20_060, 19_980);
+    expect(p.sampledAt).toBe(19_991);
+    // Zaman damgasız (eski sayfa, saat henüz belli değil): varış anı
+    move(20_200, 0);
+    expect(p.sampledAt).toBe(20_200);
+  });
+
   it("skips snapshots for backed-up connections", () => {
     const room = new Room("g:test");
     const slow = new FakeConn();

@@ -362,9 +362,14 @@ export type ClientEvent =
   | { t: "bmode"; mode: BattleMode }
   | { t: "skin"; skin: string };
 
-export const STATE_BYTES = 8;
+/** Konum mesajı: durum + konumun ait olduğu an (gönderenin sunucu saati tahmini). */
+export const STATE_BYTES = 16;
+/** Zaman damgasız eski konum mesajı (deploy sırasında henüz yenilenmemiş sayfa). */
+const LEGACY_STATE_BYTES = 8;
 export const SNAPSHOT_HEADER_BYTES = 10;
-export const SNAPSHOT_ENTRY_BYTES = 9;
+export const SNAPSHOT_ENTRY_BYTES = 11;
+/** Snapshot'ta örnek yaşı u16 ms: daha eskisi bu kadar sayılır (konumu zaten değişmiyor). */
+const MAX_AGE_MS = 0xffff;
 
 function quantPos(v: number): number {
   return Math.max(-32767, Math.min(32767, Math.round(v * POS_SCALE)));
@@ -379,25 +384,30 @@ function unquantRot(q: number): number {
   return (q / 65535) * TAU;
 }
 
-/** [type u8][x i16][z i16][rot u16][flags u8] */
-export function encodeState(view: DataView, s: PlayerState): void {
+/** [type u8][x i16][z i16][rot u16][flags u8][time f64] — `time`: konumun ait olduğu an (sunucu saati, ms), 0: bilinmiyor. */
+export function encodeState(view: DataView, s: PlayerState, time = 0): void {
   view.setUint8(0, MSG_STATE);
   view.setInt16(1, quantPos(s.x), true);
   view.setInt16(3, quantPos(s.z), true);
   view.setUint16(5, quantRot(s.rot), true);
   view.setUint8(7, s.flags & 0xff);
+  view.setFloat64(8, time, true);
 }
 
-export function decodeState(view: DataView, out: PlayerState): boolean {
-  if (view.byteLength !== STATE_BYTES || view.getUint8(0) !== MSG_STATE) return false;
+/** Geçersiz mesajda -1, aksi halde gönderenin örnek zamanı (yoksa ya da anlamsızsa 0). */
+export function decodeState(view: DataView, out: PlayerState): number {
+  const n = view.byteLength;
+  if ((n !== STATE_BYTES && n !== LEGACY_STATE_BYTES) || view.getUint8(0) !== MSG_STATE) return -1;
   out.x = view.getInt16(1, true) / POS_SCALE;
   out.z = view.getInt16(3, true) / POS_SCALE;
   out.rot = unquantRot(view.getUint16(5, true));
   out.flags = view.getUint8(7);
-  return true;
+  if (n === LEGACY_STATE_BYTES) return 0;
+  const time = view.getFloat64(8, true);
+  return Number.isFinite(time) && time > 0 ? time : 0;
 }
 
-/** Snapshot boyutu: [type u8][time f64][count u8] + count × [sid u16][x i16][z i16][rot u16][flags u8] */
+/** Snapshot boyutu: [type u8][time f64][count u8] + count × [sid u16][x i16][z i16][rot u16][flags u8][age u16] */
 export function snapshotSize(count: number): number {
   return SNAPSHOT_HEADER_BYTES + count * SNAPSHOT_ENTRY_BYTES;
 }
@@ -408,18 +418,20 @@ export function writeSnapshotHeader(view: DataView, time: number, count: number)
   view.setUint8(9, count);
 }
 
-export function writeSnapshotEntry(view: DataView, index: number, sid: number, s: PlayerState): void {
+/** `age`: oyuncunun konumunun snapshot zamanından ne kadar eski olduğu (ms). */
+export function writeSnapshotEntry(view: DataView, index: number, sid: number, s: PlayerState, age = 0): void {
   const o = SNAPSHOT_HEADER_BYTES + index * SNAPSHOT_ENTRY_BYTES;
   view.setUint16(o, sid, true);
   view.setInt16(o + 2, quantPos(s.x), true);
   view.setInt16(o + 4, quantPos(s.z), true);
   view.setUint16(o + 6, quantRot(s.rot), true);
   view.setUint8(o + 8, s.flags & 0xff);
+  view.setUint16(o + 9, Math.max(0, Math.min(MAX_AGE_MS, Math.round(age))), true);
 }
 
 /**
- * Snapshot'ı allocation yapmadan okur: her oyuncu için `fn` çağrılır.
- * Geçersiz mesajda -1, aksi halde sunucu zamanını döndürür.
+ * Snapshot'ı allocation yapmadan okur: her oyuncu için `fn` çağrılır (`time`: o oyuncunun konumunun ait olduğu an).
+ * Geçersiz mesajda -1, aksi halde snapshot'ın sunucu zamanını döndürür.
  */
 export function readSnapshot(
   view: DataView,
@@ -437,7 +449,7 @@ export function readSnapshot(
       view.getInt16(o + 4, true) / POS_SCALE,
       unquantRot(view.getUint16(o + 6, true)),
       view.getUint8(o + 8),
-      time,
+      time - view.getUint16(o + 9, true),
     );
   }
   return time;

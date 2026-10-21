@@ -1,4 +1,4 @@
-// WebSocket istemcisi: 15 Hz konum gönderimi, snapshot alımı, saat senkronu ve yeniden bağlanma.
+// WebSocket istemcisi: zaman damgalı konum gönderimi (SEND_HZ), snapshot alımı, saat senkronu ve yeniden bağlanma.
 import { type Act, SEND_HZ } from "../../shared/constants";
 import type { Shot } from "../../shared/tank";
 import type { BattleState } from "../../shared/protocol";
@@ -26,6 +26,7 @@ import {
   type Weather,
 } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
+import { Pacer, ServerClock } from "./clock";
 import { InterpDelay } from "./jitter";
 import { RttMonitor } from "./rtt";
 
@@ -36,8 +37,6 @@ const PING_MS = 2000;
 
 export class Net {
   status: NetStatus = "connecting";
-  /** Sunucu saati − yerel saat (ms). */
-  offset = 0;
   you = -1;
   onStatus: (s: NetStatus) => void = () => {};
   /** Kendi sürgün durumumuz değişti (girişte ya da canlı). */
@@ -98,17 +97,20 @@ export class Net {
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
   private sendView = new DataView(this.sendBuf);
-  private sendAcc = 0;
+  private pacer = new Pacer(SEND_HZ);
   private lastSent = { x: NaN, z: NaN, rot: NaN, flags: -1 };
   private lastSentAt = 0;
   private pingTimer = 0;
   private retry = 0;
-  private rttSamples: { rtt: number; offset: number }[] = [];
+  private clock = new ServerClock();
   private monitor = new RttMonitor();
   /** Uzak oyuncuların çizim gecikmesi: hattın dalgalanmasına göre ayarlanır. */
   readonly interp = new InterpDelay();
   /** close() çağrıldı: yeniden bağlanılmaz (mod değişti). */
   private closed = false;
+  /** Okunan snapshot'ın varış anı: sunucu saatiyle (saat belli değilse NaN) ve yerel saatle. */
+  private arrival = NaN;
+  private arrivedAt = 0;
   private readonly onEntry: (sid: number, x: number, z: number, rot: number, flags: number, time: number) => void;
 
   constructor(
@@ -118,7 +120,8 @@ export class Net {
     // Snapshot okuyucusu için sabit fonksiyon: mesaj başına closure oluşturulmaz.
     this.onEntry = (sid, x, z, rot, flags, time) => {
       if (sid === this.you) return;
-      this.remotes.map.get(sid)?.push(time, x, z, rot, flags);
+      const r = this.remotes.map.get(sid);
+      if (r) this.interp.feed(r, this.arrival, this.arrivedAt, time, x, z, rot, flags);
     };
     this.connect();
   }
@@ -128,9 +131,14 @@ export class Net {
     return this.monitor.rtt;
   }
 
-  /** Yerel saate göre tahmini sunucu zamanı. */
+  /** Yerel saate göre tahmini sunucu zamanı (ölçüm düzeltmeleri sıçramadan, yavaşça uygulanır). */
   serverNow(): number {
-    return performance.timeOrigin + performance.now() + this.offset;
+    return this.clock.now(performance.timeOrigin + performance.now());
+  }
+
+  /** Sunucu saati − yerel saat (ms). */
+  get offset(): number {
+    return this.clock.offsetAt(performance.timeOrigin + performance.now());
   }
 
   private setStatus(s: NetStatus): void {
@@ -145,7 +153,7 @@ export class Net {
     this.ws = ws;
     ws.onopen = () => {
       this.retry = 0;
-      this.rttSamples = [];
+      this.clock.reset();
       this.interp.reset();
       this.monitor.reset(performance.now());
       this.ping();
@@ -190,9 +198,10 @@ export class Net {
 
   private onMessage(data: ArrayBuffer | string): void {
     if (typeof data !== "string") {
-      const time = readSnapshot(new DataView(data), this.onEntry);
-      // Saat ofseti ilk pong'la belli olur; öncesindeki ölçümler anlamsız
-      if (time >= 0 && this.rttSamples.length) this.interp.arrived(this.serverNow() - time);
+      // Saat ofseti ilk pong'la belli olur; öncesinde gecikme ölçülmez
+      this.arrival = this.clock.synced ? this.serverNow() : NaN;
+      this.arrivedAt = performance.now();
+      readSnapshot(new DataView(data), this.onEntry);
       return;
     }
     const ev = JSON.parse(data) as ServerEvent;
@@ -358,14 +367,7 @@ export class Net {
         this.onSeason(ev.season, ev.top);
         break;
       case "pong": {
-        // NTP benzeri: en düşük RTT'li örneğin ofseti en güvenilirdir.
-        const now = performance.timeOrigin + performance.now();
-        const rtt = now - ev.c;
-        this.rttSamples.push({ rtt, offset: ev.s - (ev.c + rtt / 2) });
-        if (this.rttSamples.length > 6) this.rttSamples.shift();
-        let best = this.rttSamples[0];
-        for (const s of this.rttSamples) if (s.rtt < best.rtt) best = s;
-        this.offset = best.offset;
+        const rtt = this.clock.sample(ev.c, ev.s, performance.timeOrigin + performance.now());
         if (this.monitor.sample(rtt, performance.now()) && !document.hidden) this.reconnect();
         break;
       }
@@ -383,18 +385,19 @@ export class Net {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(ev));
   }
 
-  /** Her kare çağrılır; durum değiştiyse SEND_HZ'de, değişmediyse saniyede bir gönderir. */
+  /**
+   * Her kare çağrılır; durum değiştiyse SEND_HZ'de, değişmediyse saniyede bir gönderir.
+   * Konum alındığı anla (sunucu saati) gider: uzak oyuncular yayın anına göre değil, bu ana göre çizilir.
+   */
   update(dt: number, s: PlayerState): void {
-    this.sendAcc += dt;
-    if (this.sendAcc < 1 / SEND_HZ) return;
-    this.sendAcc = 0;
+    if (!this.pacer.due(dt)) return;
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN || this.you < 0) return;
     const l = this.lastSent;
     const now = performance.now();
     const same = Math.abs(l.x - s.x) < 0.005 && Math.abs(l.z - s.z) < 0.005 && Math.abs(l.rot - s.rot) < 0.005 && l.flags === s.flags;
     if (same && now - this.lastSentAt < KEEPALIVE_MS) return;
-    encodeState(this.sendView, s);
+    encodeState(this.sendView, s, this.clock.synced ? this.serverNow() : 0);
     ws.send(this.sendBuf);
     l.x = s.x;
     l.z = s.z;

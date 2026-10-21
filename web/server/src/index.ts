@@ -892,7 +892,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
     if (isBinary) {
       const buf = data as Buffer;
       const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-      if (decodeState(view, incoming)) room.applyState(sid, incoming);
+      const sentAt = decodeState(view, incoming);
+      if (sentAt >= 0) room.applyState(sid, incoming, Date.now(), sentAt);
       return;
     }
     try {

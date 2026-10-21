@@ -58,6 +58,9 @@ interface Player {
   /** Test için zorla zindana konmuş misafir (`?jail=1`). */
   forceJail: boolean;
   state: PlayerState;
+  /** `state`'in ait olduğu an (sunucu saati): istemcinin bildirdiği örnek zamanı, doğrulanmış. */
+  sampledAt: number;
+  /** Son konum mesajının geldiği an (hız kontrolü buna göre). */
   lastUpdate: number;
   joinedAt: number;
   conn: Conn;
@@ -65,6 +68,17 @@ interface Player {
 
 const MAX_BUFFERED = 64 * 1024;
 const SPAWN_RADIUS = 3;
+/** İstemcinin örnek zamanı varış anından bundan daha eski olamaz (takılmış hat, bozuk saat). */
+const MAX_SAMPLE_AGE_MS = 1000;
+
+/**
+ * Konumun ait olduğu an: istemci kendi saatini sunucu saatine çevirip yollar (`sentAt`, 0: bilinmiyor).
+ * Gelecekte olamaz, çok eski olamaz ve oyuncunun bir önceki örneğinden geriye gidemez.
+ */
+function sampleTime(sentAt: number, prev: number, now: number): number {
+  const t = sentAt > 0 ? Math.min(now, Math.max(now - MAX_SAMPLE_AGE_MS, sentAt)) : now;
+  return Math.max(t, prev + 1);
+}
 
 export class Room {
   readonly players = new Map<number, Player>();
@@ -124,6 +138,7 @@ export class Room {
       guild: opts.guild ?? null,
       forceJail: !!opts.forceJail,
       state,
+      sampledAt: now,
       lastUpdate: now,
       joinedAt: now,
       conn,
@@ -158,8 +173,11 @@ export class Room {
     this.dirty = true;
   }
 
-  /** İstemcinin bildirdiği konumu sınırlar ve hız kontrolünden geçirerek uygular. */
-  applyState(sid: number, s: PlayerState, now = Date.now()): void {
+  /**
+   * İstemcinin bildirdiği konumu sınırlar ve hız kontrolünden geçirerek uygular.
+   * `sentAt`: konumun istemcide alındığı an (sunucu saati); snapshot'ta her oyuncu kendi zamanıyla gider.
+   */
+  applyState(sid: number, s: PlayerState, now = Date.now(), sentAt = 0): void {
     const p = this.players.get(sid);
     if (!p || p.info.spectator) return;
     if (this.battle && !this.battle.canMove(sid)) return;
@@ -185,6 +203,7 @@ export class Room {
     p.state.rot = s.rot;
     // Sürücü bayrağını yalnızca gerçekten süren taşır
     p.state.flags = s.flags & FLAG_MASK & (this.tank.driver === sid ? FLAG_MASK : ~FLAG_DRIVING);
+    p.sampledAt = sampleTime(sentAt, p.sampledAt, now);
     p.lastUpdate = now;
     this.dirty = true;
   }
@@ -226,6 +245,7 @@ export class Room {
       p.info.jailed = jailed;
       Object.assign(p.state, jailed ? JAIL_SPAWN : RELEASE_SPAWN);
       p.state.flags = 0;
+      p.sampledAt = sampleTime(0, p.sampledAt, now);
       p.lastUpdate = now;
       const { x, z, rot } = p.state;
       this.broadcast({ t: "jail", sid, jailed, x, z, rot });
@@ -238,6 +258,7 @@ export class Room {
     const p = this.players.get(sid);
     if (!p) return;
     Object.assign(p.state, { x, z, rot });
+    p.sampledAt = sampleTime(0, p.sampledAt, now);
     p.lastUpdate = now;
     this.dirty = true;
   }
@@ -325,7 +346,7 @@ export class Room {
     writeSnapshotHeader(view, now, count);
     let i = 0;
     for (const [sid, p] of this.players) {
-      if (!p.info.spectator) writeSnapshotEntry(view, i++, sid, p.state);
+      if (!p.info.spectator) writeSnapshotEntry(view, i++, sid, p.state, now - p.sampledAt);
     }
     for (const p of this.players.values()) {
       if (p.conn.bufferedAmount < MAX_BUFFERED) p.conn.send(buf);

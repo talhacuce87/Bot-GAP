@@ -3,9 +3,12 @@ import { GROVE, KAHVEHANE, LAKE } from "./zones";
 
 /** Sunucunun anlık görüntü (snapshot) yayın hızı. */
 export const TICK_HZ = 15;
-/** İstemcinin konum gönderme hızı. */
-export const SEND_HZ = 15;
-/** Uzak oyuncular bu kadar geriden (ms) interpolasyonla çizilir. */
+/**
+ * İstemcinin konum gönderme hızı: yayının iki katı, böylece her snapshot'ta herkesin en fazla
+ * yarım yayın aralığı eski konumu olur. Her örnek kendi zamanını taşır (bkz. encodeState).
+ */
+export const SEND_HZ = 30;
+/** Uzak oyuncuların çizim gecikmesinin başlangıç değeri (ms); sonra ölçüme göre ayarlanır (client/src/jitter.ts). */
 export const INTERP_DELAY_MS = 100;
 
 /** Yürünebilir alan (dikdörtgen, metre); kenarında ağaçlar, güneyinde dağlar. */

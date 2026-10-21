@@ -9,10 +9,19 @@ const BUF = 8;
 /** Bu sid ve üstü yerel sahte oyunculara (bots) ayrılmıştır; ağ yeniden bağlanınca silinmez. */
 export const LOCAL_SID_BASE = 60000;
 const FADE_PER_SEC = 3;
-/** Snapshot gecikince en fazla bu kadar (ms) ileri tahmin edilir. */
-const EXTRAP_MS = 100;
+/**
+ * Örnek gecikince (TCP takılması) en fazla bu kadar (ms) ileri tahmin edilir. Normal hatta çizim gecikmesi
+ * zaten yeter; bu yalnızca takılmada devreye girer. Duran oyuncunun fazla gidişi yumuşakça geri alınır.
+ */
+const EXTRAP_MS = 200;
 /** Son iki örnek bundan uzak aralıklıysa (duran oyuncu, seyrek yayın) tahmin yapılmaz. */
 const EXTRAP_SPAN_MS = 250;
+/** Bu bayraklardan biri varken yer değiştiren oyuncu hareket ediyor sayılır. */
+const MOVE_FLAGS = FLAG_WALKING | FLAG_DRIVING;
+/** İleri tahmin yeni örnekle düzeltilince kalan fark saniyede bu hızla (üstel) kapanır. */
+const CORRECT_PER_SEC = 10;
+/** Bundan büyük fark yumuşatılmaz (ışınlanma, sunucunun düzeltmesi); bisikletle 200 ms ~2 m. */
+const SNAP_M = 3;
 const TAU = Math.PI * 2;
 
 function lerpAngle(a: number, b: number, t: number): number {
@@ -55,10 +64,30 @@ export class Remote implements AvatarView {
   private bf = new Uint8Array(BUF);
   private head = 0; // bir sonraki yazılacak yer
   private n = 0;
+  /** Son karede ileri tahminin dayandığı örneğin zamanı (tahmin yoksa NaN). */
+  private basis = NaN;
+  /** Düzeltilen ileri tahminden kalan, yavaşça kapanan fark. */
+  private ex = 0;
+  private ez = 0;
+  private ox = 0;
+  private oz = 0;
 
   /** Henüz hiç konum gelmediyse çizilmez (yoksa dünya merkezinde belirir). */
   get hasData(): boolean {
     return this.n > 0;
+  }
+
+  /** En yeni örneğin zamanı (sunucu saati); örnek yoksa NaN. */
+  get newestTime(): number {
+    return this.n ? this.t[(this.head + BUF - 1) % BUF] : NaN;
+  }
+
+  /** En yeni iki örneğe göre hareket ediyor (yürüyor/sürüyor ve yer değiştirmiş). */
+  get moving(): boolean {
+    if (this.n < 2) return false;
+    const i = (this.head + BUF - 1) % BUF;
+    const j = (i + BUF - 1) % BUF;
+    return (this.bf[i] & MOVE_FLAGS) !== 0 && (this.bx[i] !== this.bx[j] || this.bz[i] !== this.bz[j]);
   }
 
   constructor(
@@ -69,9 +98,10 @@ export class Remote implements AvatarView {
     this.phase = (info.sid * 1.37) % TAU;
   }
 
-  push(time: number, x: number, z: number, rot: number, flags: number): void {
+  /** Yeni örnek; sıra dışı ya da yinelenen (konumu değişmemiş oyuncu her snapshot'ta aynı zamanla gelir) ise false. */
+  push(time: number, x: number, z: number, rot: number, flags: number): boolean {
     const last = (this.head + BUF - 1) % BUF;
-    if (this.n > 0 && time <= this.t[last]) return; // sıra dışı/yinelenen
+    if (this.n > 0 && time <= this.t[last]) return false;
     const i = this.head;
     this.t[i] = time;
     this.bx[i] = x;
@@ -86,6 +116,7 @@ export class Remote implements AvatarView {
       this.rot = rot;
       this.flags = flags;
     }
+    return true;
   }
 
   /** Tamponu sıfırlayıp tek örnekle başlatır: aradaki yol boyunca kaymasın. */
@@ -93,6 +124,8 @@ export class Remote implements AvatarView {
     // Zaman 0: sonraki her snapshot daha yeni sayılır, interpolasyon hemen yeni konuma oturur.
     this.n = 0;
     this.head = 0;
+    this.basis = NaN;
+    this.ex = this.ez = 0;
     this.push(0, x, z, rot, 0);
   }
 
@@ -117,21 +150,33 @@ export class Remote implements AvatarView {
   private interp(renderTime: number, dt: number): void {
     this.alpha = this.leaving ? Math.max(0, this.alpha - dt * FADE_PER_SEC) : Math.min(1, this.alpha + dt * FADE_PER_SEC);
     if (this.n === 0) return;
+    const basis = this.locate(renderTime);
+    // İleri tahmin yeni örnekle düzeldi: eski tahminin şimdi göstereceği yerle yenisi arasındaki fark tek karede değil, yavaşça kapanır
+    if (!Number.isNaN(this.basis) && basis !== this.basis) this.correct(this.basis, renderTime);
+    this.basis = basis;
+    const k = Math.exp(-dt * CORRECT_PER_SEC);
+    this.ex *= k;
+    this.ez *= k;
+    if (this.ex * this.ex + this.ez * this.ez > SNAP_M * SNAP_M) this.ex = this.ez = 0;
+    this.x += this.ex;
+    this.z += this.ez;
+  }
+
+  /** Konumu `renderTime`'a göre örneklerden bulur; ileri tahmin yapıldıysa dayandığı örneğin zamanını, yoksa NaN döndürür. */
+  private locate(renderTime: number): number {
     const newest = (this.head + BUF - 1) % BUF;
     if (renderTime >= this.t[newest] || this.n === 1) {
       this.x = this.bx[newest];
       this.z = this.bz[newest];
       this.rot = this.br[newest];
       this.flags = this.bf[newest];
-      // Paket gecikti: yürüyen oyuncu donmasın, son hızıyla kısa bir süre devam etsin
-      const prev = (newest + BUF - 1) % BUF;
-      const span = this.t[newest] - this.t[prev];
-      if (this.n > 1 && this.flags & FLAG_WALKING && span > 0 && span <= EXTRAP_SPAN_MS) {
-        const u = Math.min(renderTime - this.t[newest], EXTRAP_MS) / span;
-        this.x += (this.bx[newest] - this.bx[prev]) * u;
-        this.z += (this.bz[newest] - this.bz[prev]) * u;
+      // Örnek gecikti: hareket eden oyuncu donmasın, son hızıyla kısa bir süre devam etsin
+      if (this.n > 1 && this.lead(newest, renderTime)) {
+        this.x += this.ox;
+        this.z += this.oz;
+        return this.t[newest];
       }
-      return;
+      return NaN;
     }
     // En yeniden geriye doğru, renderTime'ı kapsayan iki örneği bul.
     for (let k = 1; k < this.n; k++) {
@@ -144,7 +189,7 @@ export class Remote implements AvatarView {
         this.z = this.bz[a] + (this.bz[b] - this.bz[a]) * u;
         this.rot = lerpAngle(this.br[a], this.br[b], u);
         this.flags = u < 0.5 ? this.bf[a] : this.bf[b];
-        return;
+        return NaN;
       }
     }
     const oldest = (newest - this.n + 1 + BUF) % BUF;
@@ -152,6 +197,31 @@ export class Remote implements AvatarView {
     this.z = this.bz[oldest];
     this.rot = this.br[oldest];
     this.flags = this.bf[oldest];
+    return NaN;
+  }
+
+  /** `i` örneğinden (ve bir öncekinden) son hızla en fazla EXTRAP_MS ileri gidiş ox/oz'ye; tahmin yapılamıyorsa false. */
+  private lead(i: number, renderTime: number): boolean {
+    const j = (i + BUF - 1) % BUF;
+    const span = this.t[i] - this.t[j];
+    if (!(this.bf[i] & MOVE_FLAGS) || span <= 0 || span > EXTRAP_SPAN_MS) return false;
+    const u = Math.max(0, Math.min(renderTime - this.t[i], EXTRAP_MS)) / span;
+    this.ox = (this.bx[i] - this.bx[j]) * u;
+    this.oz = (this.bz[i] - this.bz[j]) * u;
+    return true;
+  }
+
+  /** `basis` zamanlı örneğe dayanan tahminin şimdi göstereceği yerle bulunan yer arasındaki farkı ex/ez'ye ekler. */
+  private correct(basis: number, renderTime: number): void {
+    for (let k = 0; k < this.n - 1; k++) {
+      const i = (this.head + 2 * BUF - 1 - k) % BUF;
+      if (this.t[i] !== basis) continue;
+      if (this.lead(i, renderTime)) {
+        this.ex += this.bx[i] + this.ox - this.x;
+        this.ez += this.bz[i] + this.oz - this.z;
+      }
+      return;
+    }
   }
 }
 
