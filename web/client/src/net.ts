@@ -64,6 +64,8 @@ export class Net {
   /** Odadaki ekran paylaşımı değişti (`sid` 0: yok). */
   onShare: (sid: number, name: string) => void = () => {};
   onWeather: (w: Weather) => void = () => {};
+  /** Dünyanın sabitlenmiş saati (!saat), null: gerçek saat. */
+  onClock: (hour: number | null) => void = () => {};
   onFireworks: (seed: number, at: number, count: number) => void = () => {};
   /** Kendi evcil hayvanımız/kamuflajımız sunucudan döndü (diğerlerininki Remotes'a yazılır). */
   onCosm: (sid: number, pet: string | null, skin: string | null) => void = () => {};
@@ -241,6 +243,9 @@ export class Net {
         break;
       case "weather":
         this.onWeather(ev.weather);
+        break;
+      case "clock":
+        this.onClock(ev.hour);
         break;
       case "fireworks":
         this.onFireworks(ev.seed, ev.at, ev.count);

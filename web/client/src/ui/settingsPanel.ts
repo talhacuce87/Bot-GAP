@@ -144,6 +144,16 @@ export class SettingsPanel {
 
     if (!matchMedia("(pointer: coarse)").matches) this.keys();
 
+    this.section("Gökyüzü");
+    this.choice<Settings["clock"]>("Saat (yalnızca sende)", s.clock, [
+      { value: "auto", label: "Dünya" },
+      { value: "day", label: "Gündüz" },
+      { value: "sunset", label: "Akşam" },
+      { value: "night", label: "Gece" },
+    ], (v) => this.set({ clock: v }));
+    this.toggleRow("Sinemada video açıkken karart", s.cinemaDim, (v) => this.set({ cinemaDim: v }));
+    el("div", "settings-note", b, "Herkes için: sohbette !saat gece / !hava yağmur (yetkin yoksa oylama açılır)");
+
     this.section("Arayüz");
     this.toggleRow("Konuşma balonları", s.bubbles, (v) => this.set({ bubbles: v }));
     this.toggleRow("FPS göstergesi", s.showFps, (v) => this.set({ showFps: v }));

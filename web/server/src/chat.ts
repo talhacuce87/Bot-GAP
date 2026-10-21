@@ -1,7 +1,8 @@
 // Oyun içi sohbet: oda içi mesajlar ve "!" komutları. Mesajlar yalnızca bellekte (oda geçmişi) tutulur.
 // Komut cevapları yalnızca sorana gider; !izle sinemayı açar ve odaya "Katıl" düğmeli duyuru atar.
-import type { ChatLine } from "../../shared/protocol";
+import type { ChatLine, WeatherKind } from "../../shared/protocol";
 import type { SessionUser } from "./auth";
+import { hourLabel, parseHour, parseWeather, SKY_HOLD_MS, type Sky, WEATHER_LABELS } from "./games/sky";
 import type { BotPost } from "./looks";
 
 export const CHAT_MAX_LEN = 200;
@@ -19,7 +20,7 @@ export const BOT_COMMANDS: Record<string, string> = {
 };
 
 export const HELP_TEXT =
-  "Komutlar: !izle <link> (sinemayı aç) · !kuyruk <link> (şarkı sıraya) · !kuyruk · !geç · !paylaş · !hava · !havaifişek · " +
+  "Komutlar: !izle <link> (sinemayı aç) · !kuyruk <link> (şarkı sıraya) · !kuyruk · !geç · !paylaş · !hava [yağmur…] · !saat [gece…] · !havaifişek · " +
   "!ebelemece · !saklambaç · !katıl · !savaş · !xp · !seri · !ses · !sıra · !lb · !gardırop · !yardım. Diğer her şey odaya mesaj olarak gider.";
 
 /** Kontrol karakterlerini atar, boşlukları sadeleştirir, uzunluğu sınırlar. Boşsa null. */
@@ -64,6 +65,8 @@ export interface ChatContext {
   cinema(url: string): Promise<{ url: string; title: string; reused: boolean } | { error: string }>;
   /** Sinema açma sıklığı sınırı (true: izin var). */
   cinemaAllowed(): boolean;
+  /** Saati/havayı oylamasız değiştirebilir mi (botta rol/yetki). */
+  canControl(): Promise<boolean>;
   /** Dünya odasının oyunları (savaş odasında ve izleme odasında yok). */
   world?: WorldCommands;
 }
@@ -78,6 +81,46 @@ export interface WorldCommands {
   enqueue(url: string): Promise<string>;
   queueText(): string;
   skip(): void;
+  /** Dünyanın saati ve havası (!saat, !hava <tür>). */
+  sky?: Sky;
+}
+
+const HOLD_TEXT = `${SKY_HOLD_MS / 3_600_000} saat`;
+
+/** !saat / !hava <değer>: yetkili hemen değiştirir, diğerleri oylama açar (aynı komutu yazan oy verir). */
+async function skyCommand(ctx: ChatContext, sky: Sky, what: "saat" | "hava", args: string): Promise<void> {
+  const arg = foldName(args);
+  if (what === "saat" && !arg) {
+    return ctx.reply(
+      sky.hour === null
+        ? "🕐 Dünya gerçek saatte (Türkiye). Değiştirmek için: !saat sabah / gündüz / akşam / gece / 21 / normal"
+        : `🕐 Dünyanın saati ${hourLabel(sky.hour)} olarak sabit. !saat normal ile gerçek saate dönülür.`,
+    );
+  }
+  const value = what === "saat" ? parseHour(arg) : parseWeather(arg);
+  if (value === undefined) {
+    return ctx.reply(
+      what === "saat"
+        ? "Kullanım: !saat sabah / gündüz / akşam / gece / 21 / 21:30 / normal"
+        : "Kullanım: !hava açık / bulutlu / sis / yağmur / fırtına / kar / normal",
+    );
+  }
+  const target =
+    what === "saat"
+      ? `saat → ${value === null ? "gerçek saat" : hourLabel(value as number)}`
+      : `hava → ${value === null ? "İstanbul'un havası" : WEATHER_LABELS[value as WeatherKind]}`;
+  const until = value === null ? "" : ` · ${HOLD_TEXT} sonra kendiliğinden gerçeğe döner`;
+  const apply = () => (what === "saat" ? sky.setHour(value as number | null) : sky.setWeather(value as WeatherKind | null));
+  if (await ctx.canControl()) {
+    apply();
+    return ctx.announce(`${what === "saat" ? "🕐" : "🌦️"} ${ctx.user.name}: ${target}${until}`);
+  }
+  const { count, needed } = sky.vote(`${what}:${value}`, ctx.sid);
+  if (count >= needed) {
+    apply();
+    return ctx.announce(`🗳️ Oylama geçti (${count}/${needed}): ${target}${until}`);
+  }
+  ctx.announce(`🗳️ ${ctx.user.name} oylama açtı: ${target} (${count}/${needed}). Katılmak için 1 dk içinde !${what} ${args} yaz.`);
 }
 
 /** Komutu çalıştırır. Bilinmeyen komutta yardım önerir. */
@@ -97,6 +140,8 @@ export async function runCommand(ctx: ChatContext, cmd: string, args: string): P
   }
 
   const w = ctx.world;
+  if (w?.sky && (cmd === "saat" || cmd === "zaman" || cmd === "time")) return skyCommand(ctx, w.sky, "saat", args);
+  if (w?.sky && (cmd === "hava" || cmd === "weather") && args) return skyCommand(ctx, w.sky, "hava", args);
   if (cmd === "hava" || cmd === "weather") return ctx.reply(w ? w.weather() : "Hava bilgisi burada yok.");
   if (w && (cmd === "havaifisek" || cmd === "fisek" || cmd === "fireworks")) {
     if (!w.fireworks()) return ctx.reply("🎆 Biraz bekle, gökyüzü daha yeni aydınlandı.");

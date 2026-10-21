@@ -54,7 +54,10 @@ const boards = new Boards();
 /** İstanbul'un havası: değişince bütün dünya odalarına. */
 const weather = new WeatherWatch();
 weather.onChange = (w) => {
-  for (const room of rooms.all()) if (!room.battle) room.broadcast({ t: "weather", weather: w });
+  for (const room of rooms.all()) {
+    if (room.games) room.games.sky.liveChanged();
+    else if (!room.battle) room.broadcast({ t: "weather", weather: w });
+  }
 };
 weather.start();
 
@@ -115,7 +118,7 @@ function stageHost(room: Room) {
 
 rooms.onCreate = (room) => {
   room.onReport = (sid, event, amount) => reportEvent(room, sid, event, amount);
-  if (!room.battle) room.games = new WorldGames(room, room.onReport, stageHost(room));
+  if (!room.battle) room.games = new WorldGames(room, room.onReport, stageHost(room), () => weather.current);
 };
 
 function sendBoard(conn: Conn, board: Board | null): void {
@@ -669,6 +672,15 @@ async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser,
         cinemaGate.last = now;
         return true;
       },
+      canControl: async () => {
+        if (user.guest || !guild || !SHARED_SECRET) return false;
+        try {
+          const r = await botPost("/internal/can_control", { guild, user: user.id });
+          return r.ok && r.body.allowed === true;
+        } catch {
+          return false;
+        }
+      },
       world: room.games
         ? {
             weather: () => weather.describe(),
@@ -678,6 +690,7 @@ async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser,
             enqueue: (url) => room.games!.stage.enqueue(url, user.name),
             queueText: () => room.games!.stage.listText(),
             skip: () => room.games!.stage.djCommand(sid, "skip"),
+            sky: room.games.sky,
           }
         : undefined,
     },
@@ -807,7 +820,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   const current = roomWatch();
   if (current) sendWatch(ws, current);
   if (room.chat.length) ws.send(JSON.stringify({ t: "chatlog", lines: room.chat }));
-  if (!room.battle) ws.send(JSON.stringify({ t: "weather", weather: weather.current }));
+  if (!room.battle) ws.send(JSON.stringify({ t: "weather", weather: room.games?.sky.weather() ?? weather.current }));
   const share = shares.get(room.key);
   if (share) ws.send(JSON.stringify({ t: "share", sid: share.sid, name: share.name }));
   const limiter = { last: 0 };

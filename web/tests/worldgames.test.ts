@@ -152,3 +152,70 @@ describe("bayrak kapmaca", () => {
     expect(battle.phase).toBe("count");
   });
 });
+
+describe("saat ve hava (!saat, !hava)", () => {
+  const sky = async (games: WorldGames, sid: number, text: string, canControl = false) => {
+    const { runCommand, parseCommand } = await import("../server/src/chat");
+    const out = { replies: [] as string[], announced: [] as string[] };
+    const p = parseCommand(text)!;
+    await runCommand(
+      {
+        user: member(`u${sid}`),
+        sid,
+        guild: "1",
+        bot: null,
+        inWatch: false,
+        reply: (t) => out.replies.push(t),
+        announce: (t) => out.announced.push(t),
+        open: () => {},
+        cinema: async () => ({ error: "x" }),
+        cinemaAllowed: () => true,
+        canControl: async () => canControl,
+        world: {
+          weather: () => "",
+          fireworks: () => true,
+          tag: () => null,
+          tagJoin: () => {},
+          enqueue: async () => "",
+          queueText: () => "",
+          skip: () => {},
+          sky: games.sky,
+        },
+      },
+      p.cmd,
+      p.args,
+    );
+    return out;
+  };
+
+  it("yetkili hemen değiştirir; herkese saat gider ve süre dolunca gerçeğe döner", async () => {
+    const { games, a, b, sa } = world();
+    const out = await sky(games, sa, "!saat gece", true);
+    expect(out.announced[0]).toContain("gece");
+    expect(a.last("clock")?.hour).toBe(22);
+    expect(b.last("clock")?.hour).toBe(22);
+    games.sky.tick(Date.now() + 3 * 3600_000);
+    expect(b.last("clock")?.hour).toBeNull();
+  });
+
+  it("yetkisiz oylama açar; ikinci oy geçirir", async () => {
+    const { games, b, sa, sb } = world();
+    const first = await sky(games, sa, "!hava yağmur");
+    expect(first.announced[0]).toContain("1/2");
+    expect(games.sky.weather().kind).toBe("clear");
+    const second = await sky(games, sb, "!hava yağmur");
+    expect(second.announced[0]).toContain("Oylama geçti");
+    expect(games.sky.weather().kind).toBe("rain");
+    expect(b.last("weather")?.weather.kind).toBe("rain");
+  });
+
+  it("aynı kişi iki kez oy veremez, saat biçimleri anlaşılır", async () => {
+    const { games, sa } = world();
+    await sky(games, sa, "!saat 21:30");
+    const again = await sky(games, sa, "!saat 21:30");
+    expect(again.announced[0]).toContain("1/2");
+    expect(games.sky.hour).toBeNull();
+    const bad = await sky(games, sa, "!saat yarın");
+    expect(bad.replies[0]).toContain("Kullanım");
+  });
+});

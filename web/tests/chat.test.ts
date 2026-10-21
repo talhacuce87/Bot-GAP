@@ -27,6 +27,7 @@ function ctx(over: Partial<ChatContext> = {}) {
       allowed = false;
       return a;
     },
+    canControl: async () => false,
     ...over,
   };
   return { c, out };

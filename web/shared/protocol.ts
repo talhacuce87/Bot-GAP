@@ -265,6 +265,8 @@ export type ServerEvent =
   | { t: "baim"; sid: number; h: number; tr: number; el: number }
   | { t: "kill"; killer: number; victim: number }
   | { t: "weather"; weather: Weather }
+  /** Dünyanın sabitlenmiş saati (Türkiye saati, ondalıklı), null: gerçek saat. */
+  | { t: "clock"; hour: number | null }
   /** Havai fişek gösterisi: `seed` herkes aynı patlamaları görsün, `at` başlangıç (sunucu ms). */
   | { t: "fireworks"; seed: number; at: number; count: number }
   | { t: "cosm"; sid: number; pet: string | null; skin: string | null }

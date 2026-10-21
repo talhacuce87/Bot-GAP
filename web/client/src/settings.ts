@@ -43,6 +43,10 @@ export interface Settings {
   /** Evcil hayvan (PETS id, "" yok) ve tank kamuflajı (SKINS id). */
   pet: string;
   skin: string;
+  /** Kendi ekranında saat: "auto" dünyanın saati (gerçek ya da !saat), diğerleri yalnızca sende sabit. */
+  clock: "auto" | "day" | "sunset" | "night";
+  /** Sinemada video açıkken perdenin önü akşama döner. */
+  cinemaDim: boolean;
 }
 
 type Graphics = Pick<Settings, "shadows" | "bloom" | "grade" | "grass" | "antialias" | "lamps" | "maxDpr">;
@@ -83,6 +87,8 @@ function defaults(): Settings {
     firstPerson: false,
     pet: "",
     skin: "std",
+    clock: "auto",
+    cinemaDim: true,
   };
 }
 

@@ -67,6 +67,18 @@ PHOTO_MAX_BYTES = 3 * 1024 * 1024
 # Sayaçları başarımlara da işlenen dünya olayları
 ACHIEVEMENT_EVENTS = {"goal", "game_win", "tank_kill", "photo"}
 
+# Dünyada saati/havayı oylamasız değiştirebilen roller (virgüllü rol ID'leri ya da adları);
+# yöneticiler ve "Sunucuyu yönet" yetkisi olanlar her zaman değiştirebilir, diğerleri oylama açar.
+WORLD_CONTROL_ROLES = {r.strip().lower() for r in os.getenv("WORLD_CONTROL_ROLES", "").split(",") if r.strip()}
+
+
+def can_control_world(member) -> bool:
+    perms = member.guild_permissions
+    if perms.administrator or perms.manage_guild:
+        return True
+    return any(str(r.id) in WORLD_CONTROL_ROLES or r.name.lower() in WORLD_CONTROL_ROLES for r in member.roles)
+
+
 PUSH_SECONDS = 20
 BOARD_MINUTES = 1
 BOARD_SIZE = 10
@@ -171,6 +183,7 @@ class WorldCog(commands.Cog):
         app.router.add_post("/internal/wardrobe", self.handle_wardrobe)
         app.router.add_post("/internal/outfit", self.handle_save_outfit)
         app.router.add_post("/internal/command", self.handle_command)
+        app.router.add_post("/internal/can_control", self.handle_can_control)
         app.router.add_post("/internal/world_event", self.handle_world_event)
         app.router.add_post("/internal/profile", self.handle_profile)
         app.router.add_post("/internal/season", self.handle_season)
@@ -311,6 +324,14 @@ class WorldCog(commands.Cog):
             return web.json_response({"error": "unknown command"}, status=400)
         activitylog.record("command", guild_id, user_id, name=command, source="world")
         return web.json_response({"text": text})
+
+    async def handle_can_control(self, request: web.Request) -> web.Response:
+        """Dünyanın saatini/havasını oylamasız değiştirebilir mi: {"guild", "user"} → {"allowed"}."""
+        got = await self._member_request(request)
+        if isinstance(got, web.Response):
+            return got
+        guild, user_id, _body = got
+        return web.json_response({"ok": True, "allowed": can_control_world(guild.get_member(user_id))})
 
     async def _member_request(self, request: web.Request) -> tuple[discord.Guild, int, dict] | web.Response:
         """Ortak giriş: secret, {"guild", "user"} ve üyelik. Hata durumunda hazır cevap döner."""

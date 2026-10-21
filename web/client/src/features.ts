@@ -22,6 +22,7 @@ import { canvasToJpeg, PhotoMode } from "./ui/photo";
 import { ProfileUi } from "./ui/profile";
 import { falloff, sfx } from "./ui/sfx";
 import { WorldHud } from "./ui/worldHud";
+import { daylight, istanbulHour } from "./world/daynight";
 import { Fireworks } from "./world/fireworks";
 import type { World } from "./world/scene";
 import { WeatherFx } from "./world/weather";
@@ -56,7 +57,13 @@ export interface FeatureContext {
   battle(): void;
   /** Müzik seviyesi (0–1, hoparlör titreşimiyle aynı). */
   music(): number;
+  /** Sinemada video açık ve oyuncu perdenin önünde. */
+  inCinema(): boolean;
 }
+
+/** Kişisel saat ayarı → saat; sinema modu en az bu kadar karanlık. */
+const CLOCK_HOURS = { day: 13, sunset: 19.5, night: 22 } as const;
+const CINEMA_HOUR = 21;
 
 const TEA_MAKER_NAME = "Ocakçı Rıza";
 const RIDE_REPORT_MS = 8000;
@@ -73,6 +80,8 @@ export class Features {
   private stage = { dj: 0, show: 0, singer: 0 };
   /** Önceki karede sahnede miydik: inişi (F, öne yürüme, araç, ışınlanma) sunucuya bildirmek için. */
   private wasOnStage = false;
+  /** Sunucunun sabitlediği saat (!saat), null: gerçek saat. */
+  private worldClock: number | null = null;
   private score: [number, number] = [0, 0];
   private charge = -1;
   private lastSeat: { id: number; seat: number } | null = null;
@@ -142,6 +151,7 @@ export class Features {
     });
 
     // ---- Ağ olayları ----
+    net.onClock = (h) => (this.worldClock = h);
     net.onWeather = (w) => {
       world.setWeather(w);
       this.weatherFx.set(w);
@@ -429,6 +439,12 @@ export class Features {
   update(time: number, dt: number, now: number): void {
     const { me, net, world, remotes, input, emoteFx, camera } = this.c;
     const serverNow = net.serverNow();
+
+    // Saat: kişisel ayar > sinema modu (gündüzse) > dünyanın saati (!saat) > gerçek saat
+    let hour: number | null = settings.clock === "auto" ? this.worldClock : CLOCK_HOURS[settings.clock];
+    // Karartma, karartılmış gökten değil asıl saatten karar verir (yoksa kararınca kapanıp gidip gelir)
+    if (settings.clock === "auto" && settings.cinemaDim && this.c.inCinema() && daylight(hour ?? istanbulHour()) > 0.3) hour = CINEMA_HOUR;
+    world.setHour(hour);
 
     // Sahne: nasıl inilirse inilsin sunucuya bildir (sunucu sahneyi aldıysa bu mesaj yok sayılır)
     if (this.wasOnStage && !me.onStage) net.send({ t: "stage", on: false });

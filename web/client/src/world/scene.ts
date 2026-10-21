@@ -45,6 +45,8 @@ export interface World {
   setShadows(level: ShadowLevel): void;
   /** İstanbul'un havası (gök, sis, bulut gölgesi, göle yağmur). */
   setWeather(w: Weather): void;
+  /** Saati sabitle (Türkiye saati), null: gerçek saat; gök yumuşakça geçer. */
+  setHour(h: number | null): void;
   /** Şimşek parlaması (0–1), her kare. */
   flash(v: number): void;
   /** Futbol sahası ve top. */
@@ -1026,6 +1028,9 @@ export function buildWorld(opts: WorldOptions = {}): World {
       } else {
         sun.position.copy(sun.target.position).addScaledVector(dayNight.lightDir, 40);
       }
+    },
+    setHour(h: number | null) {
+      dayNight.setHour(h);
     },
     setWeather(w: Weather) {
       dayNight.setWeather(w);

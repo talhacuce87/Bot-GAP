@@ -27,6 +27,9 @@ function duskAmount(h: number): number {
   return Math.max(bell(6.7, 1.1), bell(19.4, 1.1));
 }
 
+/** Saat sabitlenince/bırakılınca geçiş süresi. */
+const HOUR_FADE_MS = 4000;
+
 const SUNRISE = 6.4;
 const SUNSET = 19.6;
 /** Doğuş yönü (yatay); batış tam karşısı: meydandan sinemaya bakınca güneş perdenin solunda batar. */
@@ -228,6 +231,10 @@ export class DayNight {
   private top = new THREE.Color();
   private sunDir = new THREE.Vector3();
   private lastUpdate = -Infinity;
+  /** Sabit saat (!saat, sinema, ayar), null: gerçek saat. Değişince eski saatten yumuşakça geçilir. */
+  private forced: number | null = null;
+  private fadeFrom = 0;
+  private fadeStart = -Infinity;
 
   constructor(
     private p: DayNightParts,
@@ -247,16 +254,34 @@ export class DayNight {
     this.apply(Date.now());
   }
 
-  /** Her karede çağrılabilir; gerçek iş 3 saniyede bir. */
+  /** Saati sabitle (null: gerçek saat); gök birkaç saniyede kayarak oraya varır. */
+  setHour(h: number | null, nowMs = Date.now()): void {
+    if (h === this.forced) return;
+    this.fadeFrom = this.hourAt(nowMs);
+    this.forced = h;
+    this.fadeStart = nowMs;
+  }
+
+  /** O an gösterilen saat: geçiş sürüyorsa eski saatten yenisine kısa yoldan kayar. */
+  private hourAt(nowMs: number): number {
+    const to = this.forced ?? istanbulHour(nowMs, this.override);
+    const k = (nowMs - this.fadeStart) / HOUR_FADE_MS;
+    if (k >= 1) return to;
+    const d = ((to - this.fadeFrom + 36) % 24) - 12;
+    return (this.fadeFrom + d * k * k * (3 - 2 * k) + 24) % 24;
+  }
+
+  /** Her karede çağrılabilir; gerçek iş 3 saniyede bir (saat geçişi sürerken sık). */
   update(nowMs: number): void {
-    if (nowMs - this.lastUpdate < 3000) return;
+    const fading = nowMs - this.fadeStart < HOUR_FADE_MS + 100;
+    if (nowMs - this.lastUpdate < (fading ? 50 : 3000)) return;
     this.apply(nowMs);
   }
 
   private apply(nowMs: number): void {
     this.lastUpdate = nowMs;
     const p = this.p;
-    const h = istanbulHour(nowMs, this.override);
+    const h = this.hourAt(nowMs);
     const day = daylight(h);
     const dusk = duskAmount(h) * 0.75;
 

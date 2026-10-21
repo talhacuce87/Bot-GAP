@@ -635,6 +635,10 @@ async function start(): Promise<void> {
     say: (text) => net.send({ t: "chat", text }),
     battle: () => switchMode(true),
     music: () => (musicOn ? 1 : 0),
+    inCinema: () => {
+      const c = CINEMA_FRONT;
+      return cinemaOn && me.x >= c.minX && me.x <= c.maxX && me.z >= c.minZ && me.z <= c.maxZ;
+    },
   });
 
   addEventListener("resize", () => {

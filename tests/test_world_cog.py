@@ -369,3 +369,29 @@ async def test_photo_requires_jpeg_and_channel(db, monkeypatch):
     assert bad.status == 400
     ok = json.loads((await cog.handle_photo(_member_req({"guild": "1", "user": "5", "image": base64.b64encode(b"\xff\xd8\xff\xe0jpeg").decode()}))).text)
     assert ok["ok"] and len(sent) == 1
+
+
+async def test_can_control_by_permission_or_configured_role(monkeypatch):
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    monkeypatch.setattr(world_cog, "WORLD_CONTROL_ROLES", {"sinemacı", "77"})
+
+    def member(admin=False, manage=False, roles=()):
+        perms = SimpleNamespace(administrator=admin, manage_guild=manage)
+        return SimpleNamespace(guild_permissions=perms, roles=[SimpleNamespace(id=i, name=n) for i, n in roles])
+
+    members = {
+        1: member(admin=True),
+        2: member(manage=True),
+        3: member(roles=[(5, "Sinemacı")]),
+        4: member(roles=[(77, "Başka")]),
+        5: member(roles=[(9, "Üye")]),
+    }
+    guild = SimpleNamespace(id=1, get_member=members.get)
+    cog = world_cog.WorldCog(SimpleNamespace(get_guild=lambda gid: guild))
+    allowed = {}
+    for uid in members:
+        r = json.loads((await cog.handle_can_control(_member_req({"guild": "1", "user": str(uid)}))).text)
+        allowed[uid] = r["allowed"]
+    assert allowed == {1: True, 2: True, 3: True, 4: True, 5: False}
+    gone = json.loads((await cog.handle_can_control(_member_req({"guild": "1", "user": "99"}))).text)
+    assert gone == {"ok": False, "reason": "not_member"}

@@ -1,9 +1,10 @@
 // Dünya odasının oyunları ve sosyal etkileşimleri tek yerde: kahvehane masaları, futbol, ebelemece/saklambaç,
 // sahne/DJ, ikili etkileşimler (beşlik, sarılma), havai fişek, görev olayları.
-import type { ServerEvent, TagMode } from "../../../shared/protocol";
+import type { ServerEvent, TagMode, Weather } from "../../../shared/protocol";
 import { SAKURA_SPOT } from "../../../shared/zones";
 import type { Conn, Room } from "../room";
 import { Football } from "./football";
+import { Sky } from "./sky";
 import { Stage, type StageHost } from "./stage";
 import { Tables } from "./tables";
 import { Tag } from "./tag";
@@ -22,6 +23,7 @@ export class WorldGames {
   readonly football: Football;
   readonly tag: Tag;
   readonly stage: Stage;
+  readonly sky: Sky;
   /** Hedef → bekleyen istek. */
   private pairs = new Map<number, { from: number; kind: "five" | "hug"; at: number }>();
   private lastPair = new Map<number, number>();
@@ -35,12 +37,15 @@ export class WorldGames {
     private room: Room,
     private report: Report,
     host: StageHost,
+    /** İstanbul'un anlık havası (sabit hava yokken geçerli olan). */
+    liveWeather: () => Weather = () => ({ kind: "clear", intensity: 0, cloud: 0.15, temp: null }),
   ) {
     const r = (sid: number, event: string) => report(sid, event);
     this.tables = new Tables(room, r);
     this.football = new Football(room, r);
     this.tag = new Tag(room, r);
     this.stage = new Stage(room, host, r);
+    this.sky = new Sky(room, liveWeather);
   }
 
   join(sid: number, conn: Conn): void {
@@ -48,6 +53,7 @@ export class WorldGames {
     this.football.sendTo(conn);
     this.tag.sendTo(conn);
     this.stage.sendTo(conn);
+    this.sky.sendTo(conn);
   }
 
   leave(sid: number): void {
@@ -55,6 +61,7 @@ export class WorldGames {
     this.football.leave(sid);
     this.tag.leave(sid);
     this.stage.leave(sid);
+    this.sky.leave(sid);
     this.pairs.delete(sid);
     for (const [to, req] of this.pairs) if (req.from === sid) this.pairs.delete(to);
     this.sakura.delete(sid);
@@ -66,6 +73,7 @@ export class WorldGames {
     this.tables.tick(now);
     this.football.tick(now);
     this.tag.tick(now);
+    this.sky.tick(now);
     if (now - this.lastScan > 1000) {
       this.lastScan = now;
       for (const [sid, p] of this.room.players) {
