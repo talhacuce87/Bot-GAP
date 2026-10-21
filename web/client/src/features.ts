@@ -71,6 +71,8 @@ export class Features {
   private hub: Hub;
   private whud: WorldHud;
   private stage = { dj: 0, show: 0, singer: 0 };
+  /** Önceki karede sahnede miydik: inişi (F, öne yürüme, araç, ışınlanma) sunucuya bildirmek için. */
+  private wasOnStage = false;
   private score: [number, number] = [0, 0];
   private charge = -1;
   private lastSeat: { id: number; seat: number } | null = null;
@@ -381,7 +383,6 @@ export class Features {
         return true;
       case "stage-off":
         me.setStage(false);
-        net.send({ t: "stage", on: false });
         return true;
       case "boat-on":
         this.setVehicle(3);
@@ -428,6 +429,10 @@ export class Features {
   update(time: number, dt: number, now: number): void {
     const { me, net, world, remotes, input, emoteFx, camera } = this.c;
     const serverNow = net.serverNow();
+
+    // Sahne: nasıl inilirse inilsin sunucuya bildir (sunucu sahneyi aldıysa bu mesaj yok sayılır)
+    if (this.wasOnStage && !me.onStage) net.send({ t: "stage", on: false });
+    this.wasOnStage = me.onStage;
 
     // Masa: tabureye oturunca masaya katıl, kalkınca ayrıl
     const seat = me.seatTable;

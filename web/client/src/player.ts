@@ -242,9 +242,10 @@ export class Player implements AvatarView, PlayerState {
         this.z = POND_AREA.z + (dz / d) * BOAT_R;
       }
     } else if (this.onStage) {
-      // Sahnede: sahne alanında kalır (sahnenin çarpışma duvarı uygulanmaz)
+      // Sahnede: sahne alanında kalır (sahnenin çarpışma duvarı uygulanmaz); öne yürüyen sahneden iner
       this.x = THREE.MathUtils.clamp(this.x, STAGE_AREA.minX, STAGE_AREA.maxX);
-      this.z = THREE.MathUtils.clamp(this.z, STAGE_AREA.minZ, STAGE_AREA.maxZ);
+      if (this.z > STAGE_AREA.maxZ + 0.3) this.setStage(false);
+      else this.z = Math.max(this.z, STAGE_AREA.minZ);
     } else this.world.colliders.resolve(this, PLAYER_RADIUS, this.elev);
     const o = this.obstacle;
     if (o && this.elev + STEP_UP < HULL_TOP) {
@@ -291,7 +292,7 @@ export class Player implements AvatarView, PlayerState {
     }
     this.vehicle = v;
     this.vx = this.vz = 0;
-    if (v) this.onStage = false;
+    if (v && this.onStage) this.setStage(false);
     this.flags = (this.flags & ~(3 << VEHICLE_SHIFT)) | (v << VEHICLE_SHIFT);
   }
 
