@@ -200,7 +200,32 @@ async function start(): Promise<void> {
     r.emoteAt = t;
     emoteFx.emit(r.x, 0, r.z, e, t);
   };
-  net.onStatus = (s) => hud.setStatus(s);
+  /** Sayfayı yeniler; aynı sebeple bir dakika içinde ikinci kez yenilemez (döngüye girmesin). */
+  const reloadOnce = (why: string) => {
+    try {
+      const last = JSON.parse(sessionStorage.getItem("gap-reload") || "{}") as { why?: string; at?: number };
+      if (last.why === why && Date.now() - (last.at ?? 0) < 60_000) return;
+      sessionStorage.setItem("gap-reload", JSON.stringify({ why, at: Date.now() }));
+    } catch {
+      // depolama kapalı: yine de yenile
+    }
+    window.setTimeout(() => location.reload(), 1200);
+  };
+  // Bağlıyken oturum reddedilirse (sunucunun anahtarı değişti, oturum eskidi): yenile, giriş yeniden yapılır
+  let wasOnline = false;
+  net.onStatus = (s) => {
+    hud.setStatus(s);
+    if (s === "online") wasOnline = true;
+    else if (s === "denied" && wasOnline) reloadOnce("denied");
+  };
+  // Deploy sonrası: sunucu yeni sürümü sunuyorsa sayfa kendini yeniler (Discord girişi sessiz, onay sorulmaz).
+  // Aynı sürüm için bir kez dener: önbellek eskiyi verirse döngüye girmesin.
+  net.onVersion = (v) => {
+    const mine = new URL(import.meta.url).pathname.split("/").pop() ?? "";
+    if (!mine.endsWith(".js") || mine === v) return;
+    hud.toast("🔄 Yeni sürüm geldi, yenileniyor…");
+    reloadOnce(v);
+  };
   net.onNotice = (text) => hud.toast(text);
   net.onJail = (jailed, x, z, rot) => {
     const was = me.jailed;

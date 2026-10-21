@@ -78,6 +78,8 @@ export class Net {
   onMatch: (m: MatchState | null) => void = () => {};
   /** Kaleciler (x, z, eğilme ×2) ve hakem kararı. */
   onGk: (k: number[]) => void = () => {};
+  /** Sunucudaki istemci sürümü (deploy sonrası farklıysa yenilenir). */
+  onVersion: (v: string) => void = () => {};
   onFb: (text: string) => void = () => {};
   /** Mahalle: bütün arsalar, tek arsa, tek blok. */
   onPlots: (plots: PlotState[]) => void = () => {};
@@ -283,6 +285,9 @@ export class Net {
         break;
       case "gk":
         this.onGk(ev.k);
+        break;
+      case "version":
+        this.onVersion(ev.v);
         break;
       case "fb":
         this.onFb(ev.text);

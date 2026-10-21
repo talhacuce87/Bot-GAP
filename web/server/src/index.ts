@@ -1,5 +1,6 @@
 // GAP Dünyası sunucusu: statik istemci, Discord giriş API'si, avatar proxy'si ve WebSocket odaları.
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
@@ -44,6 +45,22 @@ const SESSION_COOKIE = "gw_session";
 const BOT_URL = (process.env.BOT_INTERNAL_URL || "http://bot-gap:8081").replace(/\/+$/, "");
 
 const STATIC_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)), "../client");
+/**
+ * Tek dünya: kim nereden girerse girsin (hangi ses kanalı, Activity örneği, tarayıcı) aynı odaya düşer.
+ * Tank savaşı da tek: "b:" + bu anahtar.
+ */
+const WORLD_ROOM = "dunya";
+/**
+ * İstemci sürümü: derlenmiş sayfanın ana betiği (adında içerik özeti var). Bağlanan eski sürümdeyse
+ * kendini yeniler; deploy sonrası herkes yeni koda kendiliğinden geçer. Geliştirmede (dist yok) null.
+ */
+const CLIENT_VERSION = (() => {
+  try {
+    return /\/assets\/(index-[\w-]+\.js)"/.exec(readFileSync(join(STATIC_DIR, "index.html"), "utf8"))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+})();
 
 const rooms = new Rooms();
 const watches = new Watches();
@@ -528,8 +545,6 @@ server.on("upgrade", (req, socket, head) => {
   // Activity sorgu parametresiyle, tarayıcı çerezle gelir.
   const token = url.searchParams.get("session") || cookies(req)[SESSION_COOKIE] || "";
   const user = verifySession(token, SESSION_SECRET);
-  const instance = url.searchParams.get("instance") || "";
-  const roomName = url.searchParams.get("room") || "lobi";
   const watch = watches.get(url.searchParams.get("watch") || "");
   const close = (code: number, reason: string) => wss.handleUpgrade(req, socket, head, (ws) => ws.close(code, reason));
   let key: string | null = null;
@@ -537,8 +552,7 @@ server.on("upgrade", (req, socket, head) => {
     if (!watch) return close(4004, "watch not found");
     // Activity'den açılan sinemanın linkiyle gelen, o Activity'nin odasına (aynı dünyaya) girer.
     if (user && (!user.guest || !LOGIN_REQUIRED)) key = Watches.roomKeyOf(watch);
-  } else if (user && !user.guest && /^[\w-]{1,100}$/.test(instance)) key = `d:${instance}`;
-  else if (user?.guest && /^[\w-]{1,32}$/.test(roomName)) key = `g:${roomName}`;
+  } else if (user) key = WORLD_ROOM;
   if (!user || !key) {
     // HTTP 401 tarayıcıda 1006 olarak görünür; 4001 ile kapatırsak istemci yeniden denemeyi bırakır.
     return close(4001, "unauthorized");
@@ -814,6 +828,7 @@ async function sendSeason(ws: WebSocket, guild: string | null): Promise<void> {
 function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinOptions, watch?: Watch): void {
   const room = rooms.get(key);
   const sid = room.join(user, ws, Date.now(), opts);
+  if (CLIENT_VERSION) ws.send(JSON.stringify({ t: "version", v: CLIENT_VERSION }));
   // Kayıtlı kıyafet arka planda gelir; o zamana kadar varsayılan karakter çizilir.
   if (!user.guest && opts.guild && SHARED_SECRET) {
     void fetchLook(botPost, opts.guild, user.id).then((look) => look && room.setLook(sid, look));

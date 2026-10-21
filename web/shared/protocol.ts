@@ -248,6 +248,8 @@ export interface BattleState {
 /** Sunucunun gönderdiği JSON olaylar. */
 export type ServerEvent =
   | { t: "welcome"; you: number; room: string; players: PlayerInfo[] }
+  /** Sunucunun sunduğu istemci sürümü (ana betiğin adı): farklıysa istemci kendini yeniler. */
+  | { t: "version"; v: string }
   | { t: "join"; player: PlayerInfo }
   | { t: "leave"; sid: number }
   | { t: "jail"; sid: number; jailed: boolean; x: number; z: number; rot: number }
