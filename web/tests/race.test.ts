@@ -115,12 +115,31 @@ function room() {
 }
 
 describe("oyuncak pist: sunucu", () => {
-  it("binada katılınır, lobiyi açan pisti seçip en az 2 kişiyle başlatır", () => {
+  it("tek kişi sürebilir ama ödül almaz", () => {
+    const { race, sa, reports } = room();
+    race.join(sa);
+    race.start(sa, 0);
+    expect(race.state?.phase).toBe("countdown");
+    race.tick(RACE.countdownMs);
+    const t = trackOf(0);
+    let now = RACE.countdownMs;
+    for (let lap = 0; lap <= RACE.laps && !race.state?.players[0].place; lap++) {
+      for (let i = lap === 0 ? t.n - 2 : 0; i < t.n; i += 3) {
+        now += 100;
+        race.car(sa, t.px[i % t.n], t.pz[i % t.n], 0, 0, now);
+      }
+      now += 100;
+      race.car(sa, t.px[1], t.pz[1], 0, 0, now);
+    }
+    expect(race.state?.phase).toBe("end");
+    expect(race.state?.players[0].place).toBe(1);
+    expect(reports).toHaveLength(0);
+  });
+
+  it("binada katılınır, lobiyi açan pisti seçip başlatır", () => {
     const { r, race, sa, sb } = room();
     race.join(sa);
     expect(race.state?.host).toBe(sa);
-    race.start(sa, 1000);
-    expect(race.state?.phase).toBe("lobby"); // tek kişi
     race.join(sb);
     race.setTrack(sb, 2); // lobi sahibi değil
     expect(race.state?.track).toBe(0);

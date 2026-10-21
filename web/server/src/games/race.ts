@@ -1,4 +1,5 @@
-// Oyuncak pist yarışı. Binada katılınır (en çok 8); lobiyi ilk açan pisti seçer ve en az 2 kişiyle başlatır.
+// Oyuncak pist yarışı. Binada katılınır (en çok 8); lobiyi ilk açan pisti seçer ve başlatır. Tek kişi de
+// sürebilir ama ödül (görev, galibiyet) yalnızca en az 2 kişilik yarışta.
 // Arabaları istemciler sürer, konumlarını ~15 Hz gönderir; sunucu hızı doğrular, sektörleri sırayla sayar
 // (kestirme yok), sırayı belirler ve konumları herkese yayınlar.
 import type { RacePlayer, RaceState } from "../../../shared/protocol";
@@ -94,12 +95,13 @@ export class Race {
     s.players = s.players.filter((r) => this.room.players.has(r.sid));
     if (s.players.length < RACE.min) return this.notice(sid, `🏎️ Başlatmak için en az ${RACE.min} kişi gerekli.`);
     const t = trackOf(s.track);
+    const rewarded = s.players.length >= RACE.rewardMin;
     this.racers.clear();
     s.players.forEach((r, slot) => {
       Object.assign(r, this.entry(r.sid));
       const g = gridSpot(t, slot);
       this.racers.set(r.sid, { prog: newProgress(), x: g.x, z: g.z, a: g.a, f: 0, hint: project(t, g.x, g.z).i, at: now });
-      this.report(r.sid, "race_play");
+      if (rewarded) this.report(r.sid, "race_play");
     });
     s.phase = "countdown";
     s.startAt = now + RACE.countdownMs;
@@ -128,7 +130,10 @@ export class Race {
       me.lap = RACE.laps;
       me.time = now - s.startAt;
       me.place = s.players.filter((q) => q.place).length + 1;
-      this.room.broadcast({ t: "notice", text: `🏁 ${this.room.players.get(sid)?.info.name ?? "Biri"} ${me.place}. bitirdi (${(me.time / 1000).toFixed(2)} sn)` });
+      const secs = (me.time / 1000).toFixed(2);
+      // Yarışta herkese duyurulur; tek başına sürüşte yalnızca sürene
+      if (s.players.length >= RACE.rewardMin) this.room.broadcast({ t: "notice", text: `🏁 ${this.room.players.get(sid)?.info.name ?? "Biri"} ${me.place}. bitirdi (${secs} sn)` });
+      else this.notice(sid, `🏁 Antrenman bitti: ${secs} sn`);
       if (me.place === 1) s.endsAt = Math.min(s.endsAt, now + RACE.finishWaitMs);
       if (s.players.every((q) => q.place)) return this.finish(now);
     } else me.lap = r.prog.lap;
@@ -143,7 +148,7 @@ export class Race {
     let place = s.players.filter((r) => r.place).length;
     for (const r of rest) r.place = ++place;
     const winner = s.players.find((r) => r.place === 1 && r.time);
-    if (winner && s.players.length >= RACE.min) this.report(winner.sid, "race_win");
+    if (winner && s.players.length >= RACE.rewardMin) this.report(winner.sid, "race_win");
     s.phase = "end";
     s.endsAt = now + RACE.resultMs;
     this.publish();

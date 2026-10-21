@@ -152,7 +152,12 @@ export class RaceUi {
         dot.style.background = colorOf(p.sid);
         el("span", "", li).textContent = `${nameOf(p.sid)}${p.sid === s.host ? " 👑" : ""}${p.sid === you ? " (sen)" : ""}`;
       }
-      el("div", "race-sub", this.panel).textContent = host ? "Pisti seç ve başlat (en az 2 kişi)" : `Pisti ${nameOf(s.host)} seçiyor ve başlatacak`;
+      const solo = s.players.length < RACE.rewardMin;
+      el("div", "race-sub", this.panel).textContent = host
+        ? solo
+          ? "Pisti seç ve başlat · tek başına antrenman (ödül yok)"
+          : "Pisti seç ve başlat"
+        : `Pisti ${nameOf(s.host)} seçiyor ve başlatacak`;
       const grid = el("div", "race-tracks", this.panel);
       TRACKS.forEach((t, i) => {
         const b = el("button", `race-track${i === s.track ? " on" : ""}`, grid);
@@ -168,7 +173,8 @@ export class RaceUi {
     leave.addEventListener("click", () => this.hooks.leave());
     if (host) {
       const start = el("button", "primary", foot);
-      start.textContent = s.phase === "end" ? "Tekrar yarış 🏁" : "Başlat 🏁";
+      const solo = s.players.length < RACE.rewardMin;
+      start.textContent = s.phase === "end" ? (solo ? "Tekrar sür 🏁" : "Tekrar yarış 🏁") : solo ? "Tek başına sür 🏁" : "Başlat 🏁";
       start.disabled = s.players.length < RACE.min;
       start.addEventListener("click", () => this.hooks.start());
     }
