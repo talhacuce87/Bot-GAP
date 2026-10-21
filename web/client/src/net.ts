@@ -26,6 +26,8 @@ import {
   type Weather,
 } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
+import { InterpDelay } from "./jitter";
+import { RttMonitor } from "./rtt";
 
 export type NetStatus = "connecting" | "online" | "offline" | "denied" | "notfound";
 
@@ -36,7 +38,6 @@ export class Net {
   status: NetStatus = "connecting";
   /** Sunucu saati − yerel saat (ms). */
   offset = 0;
-  rtt = 0;
   you = -1;
   onStatus: (s: NetStatus) => void = () => {};
   /** Kendi sürgün durumumuz değişti (girişte ya da canlı). */
@@ -103,6 +104,9 @@ export class Net {
   private pingTimer = 0;
   private retry = 0;
   private rttSamples: { rtt: number; offset: number }[] = [];
+  private monitor = new RttMonitor();
+  /** Uzak oyuncuların çizim gecikmesi: hattın dalgalanmasına göre ayarlanır. */
+  readonly interp = new InterpDelay();
   /** close() çağrıldı: yeniden bağlanılmaz (mod değişti). */
   private closed = false;
   private readonly onEntry: (sid: number, x: number, z: number, rot: number, flags: number, time: number) => void;
@@ -117,6 +121,11 @@ export class Net {
       this.remotes.map.get(sid)?.push(time, x, z, rot, flags);
     };
     this.connect();
+  }
+
+  /** Ekrandaki ping (ms): son ölçümlerin ortancası. */
+  get rtt(): number {
+    return this.monitor.rtt;
   }
 
   /** Yerel saate göre tahmini sunucu zamanı. */
@@ -136,33 +145,54 @@ export class Net {
     this.ws = ws;
     ws.onopen = () => {
       this.retry = 0;
+      this.rttSamples = [];
+      this.interp.reset();
+      this.monitor.reset(performance.now());
       this.ping();
       this.pingTimer = window.setInterval(() => this.ping(), PING_MS);
     };
     ws.onmessage = (e) => this.onMessage(e.data);
-    ws.onclose = (e) => {
-      window.clearInterval(this.pingTimer);
-      this.ws = null;
-      this.you = -1;
-      if (this.closed) return;
-      // Upgrade reddi tarayıcıda 1006 olarak görünür; hiç açılmadan kapanırsa yine dene ama yavaşla.
-      if (e.code === 4001 || e.code === 4004) {
-        this.setStatus(e.code === 4001 ? "denied" : "notfound");
-        return;
-      }
-      this.setStatus("offline");
-      const delay = Math.min(10_000, 500 * 2 ** this.retry++);
-      window.setTimeout(() => this.connect(), delay);
-    };
+    ws.onclose = (e) => this.dropped(e.code);
+  }
+
+  private dropped(code: number): void {
+    window.clearInterval(this.pingTimer);
+    this.ws = null;
+    this.you = -1;
+    if (this.closed) return;
+    // Upgrade reddi tarayıcıda 1006 olarak görünür; hiç açılmadan kapanırsa yine dene ama yavaşla.
+    if (code === 4001 || code === 4004) {
+      this.setStatus(code === 4001 ? "denied" : "notfound");
+      return;
+    }
+    this.setStatus("offline");
+    const delay = Math.min(10_000, 500 * 2 ** this.retry++);
+    window.setTimeout(() => this.connect(), delay);
+  }
+
+  /**
+   * Bağlantı takıldı (pong'lar kuyrukta birikiyor ya da hiç gelmiyor): yenisini aç.
+   * Takılmış soketin kapanış el sıkışması beklenmez; olayları koparılıp hemen yeniden bağlanılır.
+   */
+  private reconnect(): void {
+    const ws = this.ws;
+    if (!ws) return;
+    ws.onopen = ws.onmessage = ws.onclose = null;
+    ws.close(4000, "slow");
+    this.dropped(4000);
   }
 
   private ping(): void {
+    // Arka plandaki sekmede zamanlayıcılar kısılır; o sırada "pong gelmedi" yanılgısına düşme.
+    if (!document.hidden && this.monitor.stalled(performance.now())) return this.reconnect();
     this.ws?.send(JSON.stringify({ t: "ping", c: performance.timeOrigin + performance.now() }));
   }
 
   private onMessage(data: ArrayBuffer | string): void {
     if (typeof data !== "string") {
-      readSnapshot(new DataView(data), this.onEntry);
+      const time = readSnapshot(new DataView(data), this.onEntry);
+      // Saat ofseti ilk pong'la belli olur; öncesindeki ölçümler anlamsız
+      if (time >= 0 && this.rttSamples.length) this.interp.arrived(this.serverNow() - time);
       return;
     }
     const ev = JSON.parse(data) as ServerEvent;
@@ -336,7 +366,7 @@ export class Net {
         let best = this.rttSamples[0];
         for (const s of this.rttSamples) if (s.rtt < best.rtt) best = s;
         this.offset = best.offset;
-        this.rtt = rtt;
+        if (this.monitor.sample(rtt, performance.now()) && !document.hidden) this.reconnect();
         break;
       }
     }
