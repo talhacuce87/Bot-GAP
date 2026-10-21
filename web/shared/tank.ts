@@ -2,6 +2,8 @@
 // Mermiyi sunucu hesaplar (nereye düştüğü, kimi ittiği); istemciler aynı yayı aynı formülle çizer.
 // Can/ölüm yok: isabet ve patlama yakındakileri savurur.
 
+import { STEP_UP } from "./constants";
+
 /** Tankın park yeri (sahnede beton zemin ve tabela var). Sürücüsüz uzun süre kalırsa buraya döner. */
 export const TANK_PARK = { x: -32, z: -16, h: Math.PI / 2 };
 /** Sürücüsüz tank bu kadar süre sonra park yerine döner. */
@@ -38,6 +40,23 @@ export const HIT_HEIGHT = 2.0;
 /** Patlamanın savurduğu alan ve merkezdeki savrulma hızı (m/sn). */
 export const BLAST_RADIUS = 3.6;
 export const BLAST_PUSH = 12;
+
+/** Tankın üstüne çıkılır: gövde güvertesi ve kule tepesi (M26 modelinden ölçüldü). */
+export const HULL_TOP = 1.0;
+export const TURRET_TOP = 1.9;
+export const TURRET_R = 0.8;
+
+/**
+ * `c` (hullCircles) tankının, ayakları `y`de olan oyuncunun altındaki yüzeyi (yoksa 0).
+ * Kule gövde dairelerinin ortasında. `reach`: kenardan taşma payı.
+ */
+export function tankGround(c: readonly number[], x: number, z: number, reach: number, y = Infinity): number {
+  const mx = (c[0] + c[2]) / 2, mz = (c[1] + c[3]) / 2;
+  if (TURRET_TOP <= y + STEP_UP && Math.hypot(x - mx, z - mz) <= TURRET_R + reach) return TURRET_TOP;
+  if (HULL_TOP > y + STEP_UP) return 0;
+  const r = TANK_HULL_R + reach;
+  return Math.hypot(x - c[0], z - c[1]) <= r || Math.hypot(x - c[2], z - c[3]) <= r ? HULL_TOP : 0;
+}
 
 /** Tankın iki çarpışma dairesinin merkezleri. */
 export function hullCircles(x: number, z: number, h: number): [number, number, number, number] {
