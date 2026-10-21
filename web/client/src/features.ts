@@ -412,16 +412,16 @@ export class Features {
   /** Kısayollar (oyuncu güncellemesinden önce). */
   keys(): void {
     const { input, me } = this.c;
-    if (input.consumeKey("m")) this.hub.toggle();
-    if (input.consumeKey("p")) this.photo.toggle();
-    if (input.consumeKey("q")) this.profile.toggleQuests();
-    if (input.consumeKey("k")) this.profile.open(this.c.net.you, this.c.session.user.name);
-    if (input.consumeKey("l")) this.profile.openAlbum(this.c.session.user.name);
-    if (input.consumeKey("h")) this.pair("five");
-    if (input.consumeKey("j")) this.pair("hug");
-    if (input.consumeKey("y")) this.whud.acceptPair();
-    if (input.consumeKey("v")) updateSettings({ firstPerson: !settings.firstPerson });
-    if (input.consumeKey("b") && me.vehicle !== 3) this.setVehicle(((me.vehicle + 1) % 3) as Vehicle);
+    if (input.consumeKey("menu")) this.hub.toggle();
+    if (input.consumeKey("photo")) this.photo.toggle();
+    if (input.consumeKey("quests")) this.profile.toggleQuests();
+    if (input.consumeKey("card")) this.profile.open(this.c.net.you, this.c.session.user.name);
+    if (input.consumeKey("album")) this.profile.openAlbum(this.c.session.user.name);
+    if (input.consumeKey("five")) this.pair("five");
+    if (input.consumeKey("hug")) this.pair("hug");
+    if (input.consumeKey("accept")) this.whud.acceptPair();
+    if (input.consumeKey("camera")) updateSettings({ firstPerson: !settings.firstPerson });
+    if (input.consumeKey("vehicle") && me.vehicle !== 3) this.setVehicle(((me.vehicle + 1) % 3) as Vehicle);
     me.photo = this.photo.active;
   }
 
@@ -456,7 +456,7 @@ export class Features {
 
     // Şut gücü: F basılı tutuldukça dolar (1 sn'de tam), bırakınca şut
     if (this.charge >= 0) {
-      if (input.held("f")) {
+      if (input.heldAction("actF")) {
         this.charge = Math.min(1, this.charge + dt);
         this.whud.setPower(this.charge);
       } else {

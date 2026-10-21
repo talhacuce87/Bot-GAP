@@ -15,6 +15,8 @@ export const WALK_SPEED = 4.2;
 export const RUN_MULTIPLIER = 1.9;
 /** Avatar gövdesinin çarpışma yarıçapı. */
 export const PLAYER_RADIUS = 0.4;
+/** Bu kadar alçak bir basamağa zıplamadan çıkılır (kütük, alçak taş). */
+export const STEP_UP = 0.2;
 
 /** Bir odada konumu yayınlanan en fazla oyuncu; fazlası izleyici olarak girer. */
 export const ROOM_MAX_PLAYERS = 100;

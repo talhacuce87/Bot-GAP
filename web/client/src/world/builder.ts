@@ -10,7 +10,12 @@ export interface Seat {
   rot: number;
   /** Kahvehane masası sandalyesi: oturunca masaya katılır. */
   table?: { id: number; seat: number };
+  /** Oturulan yüzeyin yüksekliği; verilmezse bank (SEAT_H). */
+  h?: number;
 }
+
+/** Bankların oturma yüksekliği: avatarların oturma duruşu buna göre ayarlı. */
+export const SEAT_H = 0.5;
 
 /** Tekrarlanan objeler: her biri tek InstancedMesh olarak çizilir. */
 export type PropKind = "pine" | "oak" | "sakura" | "rock" | "bush" | "stone" | "post" | "bulb" | "flame" | "log";

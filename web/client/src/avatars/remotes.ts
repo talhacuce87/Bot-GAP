@@ -1,6 +1,6 @@
 // Uzak oyuncular: snapshot halka tamponu + INTERP_DELAY_MS geriden interpolasyon.
 import type * as THREE from "three";
-import { JUMP_MASK, JUMP_SHIFT, JUMP_TIME, jumpHeight } from "../../../shared/constants";
+import { FLAG_DRIVING, FLAG_SEATED, JUMP_MASK, JUMP_SHIFT, JUMP_TIME, jumpHeight } from "../../../shared/constants";
 import type { PlayerInfo } from "../../../shared/protocol";
 import type { AvatarAtlas } from "./atlas";
 import { type AvatarView, colorFor } from "./avatars";
@@ -18,6 +18,8 @@ function lerpAngle(a: number, b: number, t: number): number {
   return a + d * t;
 }
 
+export type Ground = (x: number, z: number, seated: boolean) => number;
+
 export class Remote implements AvatarView {
   x = 0;
   z = 0;
@@ -31,6 +33,8 @@ export class Remote implements AvatarView {
   mic = false;
   hideName = false;
   pair: AvatarView["pair"] = null;
+  /** Altındaki yüzey: konumdan bulunur (yükseklik gönderilmez; engelin içine yerden girilemez). */
+  baseY = 0;
   private lastJumpSeq = -1;
   private jumpT = JUMP_TIME;
   leaving = false;
@@ -88,9 +92,16 @@ export class Remote implements AvatarView {
     this.push(0, x, z, rot, 0);
   }
 
-  /** `renderTime` anına (sunucu saati) göre konumu ve zıplamayı hesaplar. */
-  sample(renderTime: number, dt: number): void {
+  /**
+   * `renderTime` anına (sunucu saati) göre konumu ve zıplamayı hesaplar. `ground`: konumdaki en üst yüzey;
+   * otururken koltuğun bank yüksekliğine göre farkı (Player.baseY ile aynı).
+   */
+  sample(renderTime: number, dt: number, ground?: Ground): void {
     this.interp(renderTime, dt);
+    // Tank sürerken konum tankın içinde: yüzeye çıkmaz
+    const g = ground && !(this.flags & FLAG_DRIVING) ? ground(this.x, this.z, (this.flags & FLAG_SEATED) !== 0) : 0;
+    // Çıkarken anında, düşerken yumuşak (kenardan inen havada süzülür gibi)
+    this.baseY = g >= this.baseY ? g : this.baseY + (g - this.baseY) * (1 - Math.exp(-dt * 9));
     // Sayaç değiştiyse yeni zıplama: yay herkes için aynı olduğu için yerelde çizilir.
     const seq = (this.flags & JUMP_MASK) >> JUMP_SHIFT;
     if (this.lastJumpSeq >= 0 && seq !== this.lastJumpSeq) this.jumpT = 0;
@@ -200,9 +211,9 @@ export class Remotes {
     this.map.delete(sid);
   }
 
-  update(renderTime: number, dt: number): void {
+  update(renderTime: number, dt: number, ground?: Ground): void {
     for (const r of this.map.values()) {
-      r.sample(renderTime, dt);
+      r.sample(renderTime, dt, ground);
       if (r.leaving && r.alpha <= 0) this.drop(r.info.sid);
     }
   }

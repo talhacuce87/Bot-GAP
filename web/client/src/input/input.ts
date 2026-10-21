@@ -1,18 +1,28 @@
 // Tek giriş soyutlaması: klavye + fare (masaüstü), sanal joystick + kaydırma (dokunmatik).
-// Oyun mantığı yalnızca moveX/moveY ve consume*() değerlerini okur.
+// Oyun mantığı yalnızca moveX/moveY ve consume*() değerlerini okur. Tuşlar keybinds.ts'ten (ayarlanabilir).
+import { type Action, actionsOf, binds, HOTKEYS, RESERVED } from "./keybinds";
 
 const JOY_RADIUS = 50;
+/** Dokunuştan sonra tarayıcının ürettiği sahte fare olayları bu süre yok sayılır. */
+const TOUCH_MOUSE_MS = 800;
+/** Kilit açılırken bazı tarayıcıların verdiği tek seferlik dev sıçrama. */
+const MAX_LOCK_STEP = 300;
 
 export class Input {
   /** -1..1, sağ pozitif */
   moveX = 0;
   /** -1..1, ileri pozitif */
   moveY = 0;
-  /** Shift basılı ya da joystick sonuna kadar itilmiş. */
+  /** Koşma tuşu basılı ya da joystick sonuna kadar itilmiş. */
   run = false;
+  /** Shift lock: imleç gizli, kamera fareyi izler, karakter kameranın baktığı yöne döner. */
+  shiftLock = false;
   readonly touch: boolean;
+  /** Gardırop tuşu. */
+  onWardrobe: (() => void) | null = null;
 
-  private keys = new Set<string>();
+  /** Basılı tuşlar (keybinds adlarıyla: KeyW, Mouse1 …). */
+  private held = new Set<string>();
   private lookX = 0;
   private lookY = 0;
   private zoom = 0;
@@ -20,8 +30,8 @@ export class Input {
   private jump = false;
   private act: "f" | "g" | null = null;
   private emote = -1;
-  /** Tek seferlik kısayollar (P fotoğraf, V kamera, B araç, H beşlik, J sarıl, Y kabul, Q görevler, K kart, L albüm, M menü). */
-  private hot = new Set<string>();
+  /** Tek seferlik dünya kısayolları (keybinds HOTKEYS): menü, fotoğraf, araç, beşlik… */
+  private hot = new Set<Action>();
 
   private joyId = -1;
   private joyOx = 0;
@@ -32,10 +42,14 @@ export class Input {
   private lastX = 0;
   private lastY = 0;
   private mouseDown = false;
+  private lastTouch = -Infinity;
   private pinch = new Map<number, { x: number; y: number }>();
   /** Tankta: fare kilitlenmek isteniyor (kilit Esc ile bırakılırsa tıklayınca yeniden). */
   private wantLock = false;
+  /** Sağ tık basılıyken: imleç tıklanan yerde kalır, fare kamerayı çevirir. */
+  private dragLock = false;
   private pinchDist = 0;
+  private abort = new AbortController();
 
   private joyBase: HTMLDivElement;
   private joyKnob: HTMLDivElement;
@@ -48,41 +62,96 @@ export class Input {
     this.joyKnob.className = "joy-knob";
     hud.append(this.joyBase, this.joyKnob);
 
-    window.addEventListener("keydown", (e) => {
+    const signal = this.abort.signal;
+    addEventListener("keydown", (e) => {
       if (e.repeat) return;
-      if (e.target instanceof HTMLInputElement) return;
-      const k = e.key.toLocaleLowerCase("en");
-      if (k === "e") this.action = true;
-      if (k === "f" || k === "g") this.act = k;
-      if (k === " ") {
-        this.jump = true;
-        e.preventDefault(); // sayfa kaymasın, odaktaki düğme tetiklenmesin
-      }
-      if (k >= "1" && k <= "6") this.emote = Number(k) - 1;
-      if ("pvbhjqmkly".includes(k) && k.length === 1) this.hot.add(k);
-      this.keys.add(k);
-    });
-    window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLocaleLowerCase("en")));
-    window.addEventListener("blur", () => this.reset());
-    el.addEventListener("contextmenu", (e) => e.preventDefault());
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const d = /^Digit([1-6])$/.exec(e.code);
+      if (d) this.emote = Number(d[1]) - 1;
+      // Atanmış tuş: Space/oklar sayfayı kaydırmasın, odaktaki düğmeyi tetiklemesin
+      if (this.press(e.code)) e.preventDefault();
+    }, { signal });
+    addEventListener("keyup", (e) => this.held.delete(e.code), { signal });
+    addEventListener("blur", () => this.reset(), { signal });
+    el.addEventListener("contextmenu", (e) => e.preventDefault(), { signal });
     el.addEventListener("wheel", (e) => {
       e.preventDefault();
-      this.zoom += Math.sign(e.deltaY);
-    }, { passive: false });
+      if (e.deltaY) this.press(e.deltaY < 0 ? "WheelUp" : "WheelDown", false);
+    }, { passive: false, signal });
 
-    el.addEventListener("pointerdown", (e) => this.onDown(e));
-    el.addEventListener("pointermove", (e) => this.onMove(e));
-    el.addEventListener("pointerup", (e) => this.onUp(e));
-    el.addEventListener("pointercancel", (e) => this.onUp(e));
+    el.addEventListener("mousedown", (e) => this.onMouseDown(e), { signal });
+    addEventListener("mousemove", (e) => this.onMouseMove(e), { signal });
+    addEventListener("mouseup", (e) => this.onMouseUp(e), { signal });
+    // Yan tuşlar tarayıcıda geri/ileri gitmesin
+    el.addEventListener("auxclick", (e) => e.preventDefault(), { signal });
+    document.addEventListener("pointerlockchange", () => this.onLockChange(), { signal });
+    document.addEventListener("pointerlockerror", () => this.onLockChange(), { signal });
+
+    el.addEventListener("pointerdown", (e) => this.onDown(e), { signal });
+    el.addEventListener("pointermove", (e) => this.onMove(e), { signal });
+    el.addEventListener("pointerup", (e) => this.onUp(e), { signal });
+    el.addEventListener("pointercancel", (e) => this.onUp(e), { signal });
+  }
+
+  /** Mod değişince: dinleyiciler ve fare kilidi bırakılır. */
+  dispose(): void {
+    this.abort.abort();
+    this.wantLock = this.dragLock = this.shiftLock = false;
+    if (this.locked) document.exitPointerLock();
   }
 
   private reset(): void {
-    this.keys.clear();
+    this.held.clear();
     this.joyId = this.lookId = -1;
     this.joyX = this.joyY = 0;
     this.mouseDown = false;
     this.pinch.clear();
     this.showJoy(false);
+  }
+
+  /** Tuşa basıldı: atanmış eylemleri tetikler. Tuş bir eyleme atanmışsa true. */
+  private press(bind: string, hold = true): boolean {
+    const acts = actionsOf(bind);
+    if (!acts.length) return false;
+    if (hold) this.held.add(bind);
+    for (const a of acts) this.trigger(a);
+    return true;
+  }
+
+  private trigger(a: Action): void {
+    switch (a) {
+      case "jump":
+        this.jump = true;
+        break;
+      case "sit":
+        this.action = true;
+        break;
+      case "actF":
+        this.act = "f";
+        break;
+      case "actG":
+        this.act = "g";
+        break;
+      case "wardrobe":
+        this.onWardrobe?.();
+        break;
+      case "shiftlock":
+        this.toggleShiftLock();
+        break;
+      case "zoomIn":
+        this.zoom -= 1;
+        break;
+      case "zoomOut":
+        this.zoom += 1;
+        break;
+      default:
+        if (HOTKEYS.includes(a)) this.hot.add(a);
+    }
+  }
+
+  private isHeld(a: Action): boolean {
+    const [p, s] = binds[a];
+    return (!!p && this.held.has(p)) || (!!s && this.held.has(s));
   }
 
   /** Fare kilitli mi (imleç gizli, her hareket kamerayı çevirir). */
@@ -93,8 +162,21 @@ export class Input {
   /** Tanka binince açılır: imleç ortada kilitlenir, sol tık ateş eder. Dokunmatikte etkisiz. */
   setPointerLock(on: boolean): void {
     this.wantLock = on && !this.touch;
-    if (this.wantLock) this.requestLock();
-    else if (this.locked) document.exitPointerLock();
+    this.syncLock();
+  }
+
+  toggleShiftLock(): void {
+    if (this.touch) return;
+    this.shiftLock = !this.shiftLock;
+    this.el.classList.toggle("shiftlock", this.shiftLock);
+    this.syncLock();
+  }
+
+  /** Kilit isteyen biri (tank, shift lock, sağ tık) varsa kilitler, kalmadıysa bırakır. */
+  private syncLock(): void {
+    const want = this.wantLock || this.shiftLock || this.dragLock;
+    if (want && !this.locked) this.requestLock();
+    else if (!want && this.locked) document.exitPointerLock();
   }
 
   private requestLock(): void {
@@ -107,19 +189,69 @@ export class Input {
     }
   }
 
-  private onDown(e: PointerEvent): void {
-    if (e.pointerType === "mouse" && this.wantLock) {
+  private onLockChange(): void {
+    if (this.locked) return;
+    // Kilit Esc ile (ya da ayarlar açılınca) bırakıldı: shift lock da kapanır
+    this.dragLock = false;
+    if (this.shiftLock) {
+      this.shiftLock = false;
+      this.el.classList.remove("shiftlock");
+    }
+  }
+
+  private onMouseDown(e: MouseEvent): void {
+    if (performance.now() - this.lastTouch < TOUCH_MOUSE_MS) return;
+    const bind = `Mouse${e.button}`;
+    if (!RESERVED.has(bind)) {
+      e.preventDefault(); // orta tık otomatik kaydırma açmasın
+      this.press(bind);
+      return;
+    }
+    if (this.wantLock) {
       if (!this.locked) this.requestLock();
       else if (e.button === 0) this.jump = true; // sol tık: ateş
       if (this.locked) return;
     }
-    this.el.setPointerCapture(e.pointerId);
-    if (e.pointerType === "mouse") {
-      this.mouseDown = true;
-      this.lastX = e.clientX;
-      this.lastY = e.clientY;
+    if (this.locked) return;
+    this.mouseDown = true;
+    this.lastX = e.clientX;
+    this.lastY = e.clientY;
+    if (e.button === 2) {
+      this.dragLock = true;
+      this.syncLock();
+    }
+  }
+
+  private onMouseMove(e: MouseEvent): void {
+    if (this.locked) {
+      if (Math.abs(e.movementX) > MAX_LOCK_STEP || Math.abs(e.movementY) > MAX_LOCK_STEP) return;
+      this.lookX += e.movementX;
+      this.lookY += e.movementY;
       return;
     }
+    // Kilit alınamadıysa (çerçeve izin vermiyor): sürükleyerek, shift lock'ta da düz hareketle bakılır
+    if (this.mouseDown || (this.shiftLock && e.target === this.el)) {
+      this.lookX += e.clientX - this.lastX;
+      this.lookY += e.clientY - this.lastY;
+    }
+    this.lastX = e.clientX;
+    this.lastY = e.clientY;
+  }
+
+  private onMouseUp(e: MouseEvent): void {
+    this.held.delete(`Mouse${e.button}`);
+    if (e.button === 3 || e.button === 4) e.preventDefault();
+    if ((e.buttons & 3) === 0) this.mouseDown = false;
+    if (e.button === 2 && this.dragLock) {
+      this.dragLock = false;
+      this.syncLock();
+    }
+  }
+
+  private onDown(e: PointerEvent): void {
+    if (e.pointerType === "mouse") return; // fare: mousedown
+    this.lastTouch = performance.now();
+    this.el.setPointerCapture(e.pointerId);
     this.pinch.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (e.clientX < window.innerWidth * 0.45 && this.joyId < 0) {
       this.joyId = e.pointerId;
@@ -136,19 +268,8 @@ export class Input {
   }
 
   private onMove(e: PointerEvent): void {
-    if (e.pointerType === "mouse") {
-      if (this.locked) {
-        this.lookX += e.movementX;
-        this.lookY += e.movementY;
-        return;
-      }
-      if (!this.mouseDown) return;
-      this.lookX += e.clientX - this.lastX;
-      this.lookY += e.clientY - this.lastY;
-      this.lastX = e.clientX;
-      this.lastY = e.clientY;
-      return;
-    }
+    if (e.pointerType === "mouse") return;
+    this.lastTouch = performance.now();
     const p = this.pinch.get(e.pointerId);
     if (p) {
       p.x = e.clientX;
@@ -182,10 +303,8 @@ export class Input {
   }
 
   private onUp(e: PointerEvent): void {
-    if (e.pointerType === "mouse") {
-      this.mouseDown = false;
-      return;
-    }
+    if (e.pointerType === "mouse") return;
+    this.lastTouch = performance.now();
     this.pinch.delete(e.pointerId);
     this.pinchDist = 0;
     if (e.pointerId === this.joyId) {
@@ -212,9 +331,8 @@ export class Input {
 
   /** Kare başında çağrılır: klavye ve joystick'i tek vektöre indirger. */
   poll(): void {
-    const k = this.keys;
-    let x = (k.has("d") || k.has("arrowright") ? 1 : 0) - (k.has("a") || k.has("arrowleft") ? 1 : 0);
-    let y = (k.has("w") || k.has("arrowup") ? 1 : 0) - (k.has("s") || k.has("arrowdown") ? 1 : 0);
+    let x = (this.isHeld("right") ? 1 : 0) - (this.isHeld("left") ? 1 : 0);
+    let y = (this.isHeld("forward") ? 1 : 0) - (this.isHeld("back") ? 1 : 0);
     if (this.joyId >= 0) {
       x = this.joyX;
       y = this.joyY;
@@ -226,7 +344,7 @@ export class Input {
     }
     this.moveX = x;
     this.moveY = y;
-    this.run = this.joyId >= 0 ? len > 0.92 : k.has("shift");
+    this.run = this.joyId >= 0 ? len > 0.92 : this.isHeld("run");
   }
 
   /** Bu kare biriken kamera bakış hareketi (piksel). */
@@ -286,12 +404,12 @@ export class Input {
   }
 
   /** Kısayol bu kare basıldı mı (bir kez true döner). */
-  consumeKey(k: string): boolean {
+  consumeKey(k: Action): boolean {
     return this.hot.delete(k);
   }
 
-  /** F basılı tutuluyor mu (futbolda şut gücü). */
-  held(k: string): boolean {
-    return this.keys.has(k);
+  /** Eylemin tuşu basılı tutuluyor mu (futbolda şut gücü: actF). */
+  heldAction(a: Action): boolean {
+    return this.isHeld(a);
   }
 }

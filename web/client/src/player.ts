@@ -15,6 +15,7 @@ import {
   type Vehicle,
   VEHICLE_SHIFT,
   VEHICLES,
+  STEP_UP,
   WALK_SPEED,
 } from "../../shared/constants";
 import { BOAT_R, POND_AREA, STAGE, STAGE_AREA } from "../../shared/zones";
@@ -25,6 +26,7 @@ import {
   ELEV_TURN,
   GUN_LEN,
   GUN_PIVOT_Z,
+  HULL_TOP,
   hullCircles,
   MUZZLE_Y,
   solveElev,
@@ -32,10 +34,15 @@ import {
   TANK_REVERSE,
   TANK_SPEED,
   TANK_TURN,
+  tankGround,
+  TURRET_R,
+  TURRET_TOP,
   TURRET_TURN,
 } from "../../shared/tank";
 import type { AvatarView } from "./avatars/avatars";
 import type { Input } from "./input/input";
+import { LEDGE } from "./world/colliders";
+import { SEAT_H } from "./world/builder";
 import type { Seat, World } from "./world/scene";
 
 const SEAT_REACH = 1.3;
@@ -62,6 +69,10 @@ const AIM_MIN_DIST = 4;
 
 /** Savrulma: kontrol bu kadar süre elden gider, hız yavaşça söner. */
 const KNOCK_TIME = 0.8;
+/** Shift lock'ta kameranın sağa kayması (m). */
+const SHOULDER = 0.7;
+/** Kenardan düşerken yerçekimi (zıplama eğrisinin inişi kadar yumuşak). */
+const FALL_G = 12;
 
 /** `p`yi (x, z) merkezli r yarıçaplı dairenin dışına iter. */
 function pushOut(p: { x: number; z: number }, x: number, z: number, r: number): void {
@@ -84,7 +95,9 @@ export class Player implements AvatarView, PlayerState {
   phase = 0;
   emote = -1;
   emoteAt = 0;
-  /** Zemin üstü yükseklik (zıplarken). */
+  /** Altındaki yüzeyin yüksekliği (yer 0; çeşme, bank, tank…). */
+  baseY = 0;
+  /** Bu yüzeyin üstündeki yükseklik (zıplarken, düşerken). */
   jumpY = 0;
   pair: AvatarView["pair"] = null;
   mic = false;
@@ -93,6 +106,13 @@ export class Player implements AvatarView, PlayerState {
   /** Zıplamanın başından geçen süre; yerdeyken JUMP_TIME. */
   private jumpT = JUMP_TIME;
   private jumpSeq = 0;
+  /** Ayakların yüksekliği; zıplama eğrisi `launchY`den başlar, eğri bitince serbest düşüş `vy` ile. */
+  private elev = 0;
+  private launchY = 0;
+  private vy = 0;
+  /** Tankın üstünde duruyor: tank kayınca birlikte kayar. */
+  private onTank = false;
+  private lastTank: [number, number] | null = null;
   color: THREE.Color;
   /** Oturma menzilindeki koltuk (UI ipucu için), yoksa null. */
   nearSeat: Seat | null = null;
@@ -136,12 +156,16 @@ export class Player implements AvatarView, PlayerState {
   private seat: Seat | null = null;
   private standX = 0;
   private standZ = 0;
+  private standY = 0;
 
   private yaw = 0;
   private pitch = 0.42;
   private dist = 6.5;
   private target = new THREE.Vector3();
   private look = { x: 0, y: 0 };
+  /** Shift lock omuz kamerası: 0 = ortada, 1 = sağ omuzda. */
+  private shoulder = 0;
+  private lookAt = new THREE.Vector3();
 
   constructor(
     private world: World,
@@ -168,6 +192,8 @@ export class Player implements AvatarView, PlayerState {
       ? THREE.MathUtils.clamp(this.pitch + lookY, TANK_PITCH_MIN, TANK_PITCH_MAX)
       : THREE.MathUtils.clamp(this.pitch + lookY, fp ? -1.2 : this.photo ? -0.3 : 0.05, fp ? 1.2 : 1.35);
     this.dist = THREE.MathUtils.clamp(this.dist + input.consumeZoom() * 0.6, 2.5, this.photo ? 30 : 12);
+    const lockOn = input.shiftLock && !this.driving && !this.seat && !this.vehicle;
+    this.shoulder += ((lockOn ? 1 : 0) - this.shoulder) * (1 - Math.exp(-dt * 10));
 
     if (this.driving) {
       this.drive(dt, input);
@@ -184,15 +210,9 @@ export class Player implements AvatarView, PlayerState {
       jump = false; // kalkarken zıplama
     }
 
-    // Zıplama: ortak eğri (jumpHeight); uzak istemciler aynı yayı sayaçtan çizer. Kayıkta zıplanmaz.
-    if (jump && this.jumpT >= JUMP_TIME && this.vehicle !== 3) {
-      this.jumpT = 0;
-      this.jumpSeq = (this.jumpSeq + 1) & 3;
-    }
-    if (this.jumpT < JUMP_TIME) {
-      this.jumpT = Math.min(JUMP_TIME, this.jumpT + dt);
-      this.jumpY = jumpHeight(this.jumpT);
-    }
+    // Zıplama: ortak eğri (jumpHeight) bulunduğu yüzeyden; uzak istemciler aynı yayı sayaçtan çizer. Kayıkta zıplanmaz.
+    if (jump && this.jumpT >= JUMP_TIME && this.vy === 0 && this.vehicle !== 3) this.startJump();
+    this.rideTank();
 
     // Kameraya göre hareket yönü: ileri = kameranın baktığı yatay yön.
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
@@ -213,6 +233,7 @@ export class Player implements AvatarView, PlayerState {
     }
     this.x += this.vx * dt;
     this.z += this.vz * dt;
+    this.fly(dt);
     if (this.vehicle === 3) {
       // Kayık yalnızca gölde: kıyıya değince durur
       const dx = this.x - POND_AREA.x, dz = this.z - POND_AREA.z, d = Math.hypot(dx, dz);
@@ -220,20 +241,25 @@ export class Player implements AvatarView, PlayerState {
         this.x = POND_AREA.x + (dx / d) * BOAT_R;
         this.z = POND_AREA.z + (dz / d) * BOAT_R;
       }
-    } else this.world.colliders.resolve(this, PLAYER_RADIUS);
-    if (this.onStage) {
+    } else if (this.onStage) {
+      // Sahnede: sahne alanında kalır (sahnenin çarpışma duvarı uygulanmaz)
       this.x = THREE.MathUtils.clamp(this.x, STAGE_AREA.minX, STAGE_AREA.maxX);
       this.z = THREE.MathUtils.clamp(this.z, STAGE_AREA.minZ, STAGE_AREA.maxZ);
-    }
+    } else this.world.colliders.resolve(this, PLAYER_RADIUS, this.elev);
     const o = this.obstacle;
-    if (o) {
+    if (o && this.elev + STEP_UP < HULL_TOP) {
       pushOut(this, o[0], o[1], TANK_HULL_R + PLAYER_RADIUS);
       pushOut(this, o[2], o[3], TANK_HULL_R + PLAYER_RADIUS);
+    } else if (o && this.elev + STEP_UP < TURRET_TOP) {
+      pushOut(this, (o[0] + o[2]) / 2, (o[1] + o[3]) / 2, TURRET_R + PLAYER_RADIUS);
     }
     if (this.jailed) clampToJail(this);
+    this.land();
 
     const speed = Math.hypot(this.vx, this.vz);
-    if (speed > 0.3) this.rot = dampAngle(this.rot, Math.atan2(this.vx, this.vz), 1 - Math.exp(-dt * (this.vehicle ? 5 : 12)));
+    // Shift lock: karakter hep kameranın baktığı yöne döner (yana/geri yürürken de)
+    if (lockOn) this.rot = dampAngle(this.rot, this.yaw + Math.PI, 1 - Math.exp(-dt * 20));
+    else if (speed > 0.3) this.rot = dampAngle(this.rot, Math.atan2(this.vx, this.vz), 1 - Math.exp(-dt * (this.vehicle ? 5 : 12)));
     if (this.vehicle === 1 || this.vehicle === 2) this.rideMeters += speed * dt;
     this.flags =
       (speed > 0.6 ? FLAG_WALKING : 0) |
@@ -283,14 +309,64 @@ export class Player implements AvatarView, PlayerState {
     }
   }
 
+  /** Ayaklar altındaki yüzeyin (yer, engel üstü, tank) yüksekliği; `y`: ayak yüksekliği. */
+  private groundAt(y: number): number {
+    const g = this.world.colliders.groundAt(this.x, this.z, PLAYER_RADIUS, y);
+    const o = this.obstacle;
+    return o ? Math.max(g, tankGround(o, this.x, this.z, PLAYER_RADIUS * LEDGE, y)) : g;
+  }
+
+  private startJump(): void {
+    this.jumpT = 0;
+    this.jumpSeq = (this.jumpSeq + 1) & 3;
+    this.launchY = this.elev;
+  }
+
+  /** Havadaysa: önce zıplama eğrisi, bittiyse (ya da kenardan yürüyüp çıktıysa) serbest düşüş. */
+  private fly(dt: number): void {
+    if (this.jumpT < JUMP_TIME) {
+      const prev = this.elev;
+      this.jumpT = Math.min(JUMP_TIME, this.jumpT + dt);
+      this.elev = this.launchY + jumpHeight(this.jumpT);
+      this.vy = this.jumpT < JUMP_TIME ? (this.elev - prev) / Math.max(dt, 1e-4) : Math.min(this.vy, 0);
+    } else if (this.elev > this.baseY || this.vy !== 0) {
+      this.vy -= FALL_G * dt;
+      this.elev += this.vy * dt;
+    }
+  }
+
+  /** İnerken bir yüzeye değdiyse oraya konar; basamak kadar yüksek bir yüzeye yürüyerek çıkar. */
+  private land(): void {
+    const g = this.groundAt(this.elev);
+    const falling = this.jumpT >= JUMP_TIME || this.vy <= 0;
+    if (this.elev <= g && falling) {
+      this.elev = g;
+      this.vy = 0;
+      this.jumpT = JUMP_TIME;
+    }
+    this.baseY = g;
+    this.jumpY = Math.max(0, this.elev - g);
+    this.onTank = !!this.obstacle && this.jumpY === 0 && g > 0 && g === tankGround(this.obstacle, this.x, this.z, PLAYER_RADIUS * LEDGE, this.elev);
+  }
+
+  /** Üstünde durduğu tank kaydıysa birlikte kayar (main.ts `obstacle`ı her kare tanktan günceller). */
+  private rideTank(): void {
+    const o = this.obstacle;
+    const mid: [number, number] | null = o ? [(o[0] + o[2]) / 2, (o[1] + o[3]) / 2] : null;
+    if (this.onTank && mid && this.lastTank) {
+      this.x += mid[0] - this.lastTank[0];
+      this.z += mid[1] - this.lastTank[1];
+    }
+    this.lastTank = mid;
+  }
+
   /** Tankı sür: gövde (x, z, h), kule tr. Kamera tankın arkasına geçer. */
   enterTank(x: number, z: number, h: number, tr: number, el = DEFAULT_ELEV): void {
     this.seat = null;
     this.vehicle = 0;
     this.onStage = false;
     this.knockT = 0;
-    this.jumpY = 0;
-    this.jumpT = JUMP_TIME;
+    this.resetHeight();
     this.vx = this.vz = 0;
     this.driving = { h, tr, el, v: 0 };
     this.pitch = 0.2; // ufka yakın: nişan tankın 15–20 m önüne düşer
@@ -310,6 +386,7 @@ export class Player implements AvatarView, PlayerState {
     this.x += Math.cos(d.h) * 2.4;
     this.z -= Math.sin(d.h) * 2.4;
     this.world.colliders.resolve(this, PLAYER_RADIUS);
+    this.resetHeight();
     this.rot = d.h;
     this.flags = this.jumpBits();
   }
@@ -321,10 +398,7 @@ export class Player implements AvatarView, PlayerState {
     this.vx = vx;
     this.vz = vz;
     this.knockT = KNOCK_TIME;
-    if (this.jumpT >= JUMP_TIME) {
-      this.jumpT = 0;
-      this.jumpSeq = (this.jumpSeq + 1) & 3;
-    }
+    if (this.jumpT >= JUMP_TIME) this.startJump();
   }
 
   /** Sürüş: W/S gaz-geri, A/D gövdeyi döndürür; kule kameranın baktığı yöne döner. */
@@ -376,8 +450,7 @@ export class Player implements AvatarView, PlayerState {
     this.onStage = false;
     this.knockT = 0;
     this.seat = null;
-    this.jumpY = 0;
-    this.jumpT = JUMP_TIME;
+    this.resetHeight();
     this.x = x;
     this.z = z;
     this.rot = rot;
@@ -406,9 +479,17 @@ export class Player implements AvatarView, PlayerState {
     return (this.jumpSeq << JUMP_SHIFT) & JUMP_MASK;
   }
 
-  private sitOn(s: Seat): void {
-    this.jumpY = 0;
+  private resetHeight(): void {
+    this.elev = this.baseY = this.jumpY = this.vy = 0;
     this.jumpT = JUMP_TIME;
+    this.onTank = false;
+  }
+
+  private sitOn(s: Seat): void {
+    this.standY = this.elev;
+    this.resetHeight();
+    // Oturma duruşu bank yüksekliğine göre: alçak koltukta (kütük) o kadar aşağı
+    this.baseY = (s.h ?? SEAT_H) - SEAT_H;
     this.seat = s;
     this.standX = this.x;
     this.standZ = this.z;
@@ -426,6 +507,7 @@ export class Player implements AvatarView, PlayerState {
     this.seat = null;
     this.x = this.standX;
     this.z = this.standZ;
+    this.elev = this.baseY = this.standY;
     this.flags = this.jumpBits();
   }
 
@@ -440,7 +522,7 @@ export class Player implements AvatarView, PlayerState {
     const k = 1 - Math.exp(-dt * 14);
     if (settings.firstPerson && !this.driving && !this.photo) {
       // Birinci şahıs: göz hizasından, bakış yönü kameranın açısı
-      const eye = (this.seat ? 1.0 : 1.32) + this.jumpY + this.lift + (this.vehicle === 1 ? 0.3 : this.vehicle === 2 ? 0.14 : 0);
+      const eye = (this.seat ? 1.0 : 1.32) + this.baseY + this.jumpY + this.lift + (this.vehicle === 1 ? 0.3 : this.vehicle === 2 ? 0.14 : 0);
       this.target.set(this.x, eye, this.z);
       camera.position.copy(this.target);
       const cp = Math.cos(this.pitch);
@@ -448,19 +530,22 @@ export class Player implements AvatarView, PlayerState {
       return;
     }
     // Zıplarken kamera yarısı kadar yükselir: sarsmadan takip eder.
-    const ty = this.driving ? TANK_CAM_Y : (this.seat ? 1.15 : 1.45) + this.jumpY * 0.5 + this.lift;
+    const ty = this.driving ? TANK_CAM_Y : (this.seat ? 1.15 : 1.45) + this.baseY + this.jumpY * 0.5 + this.lift;
     this.target.x += (this.x - this.target.x) * k;
     this.target.y += (ty - this.target.y) * k;
     this.target.z += (this.z - this.target.z) * k;
     const cp = Math.cos(this.pitch);
     // Zindanda kamera duvarların ötesine çıkmasın: parmaklıklardan dışarı bakılır.
     const dist = this.jailed ? Math.min(this.dist, 3.4) : this.driving ? Math.max(this.dist, TANK_CAM_DIST) : this.dist;
+    // Shift lock'ta kamera sağ omza kayar: karakter ekranın ortasını kapatmaz
+    const side = this.shoulder * SHOULDER;
+    this.lookAt.set(this.target.x + Math.cos(this.yaw) * side, this.target.y, this.target.z - Math.sin(this.yaw) * side);
     camera.position.set(
-      this.target.x + Math.sin(this.yaw) * cp * dist,
+      this.lookAt.x + Math.sin(this.yaw) * cp * dist,
       // Aşağıdan bakarken (fotoğraf modu) kamera zeminin altına inmesin
-      Math.max(0.3, this.target.y + Math.sin(this.pitch) * dist),
-      this.target.z + Math.cos(this.yaw) * cp * dist,
+      Math.max(0.3, this.lookAt.y + Math.sin(this.pitch) * dist),
+      this.lookAt.z + Math.cos(this.yaw) * cp * dist,
     );
-    camera.lookAt(this.target);
+    camera.lookAt(this.lookAt);
   }
 }

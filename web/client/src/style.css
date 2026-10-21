@@ -1311,6 +1311,42 @@ body {
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* Tuş atamaları: eylem başına iki kutu */
+.settings-keys {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+
+.settings-key {
+  width: 78px;
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-key.empty {
+  color: var(--muted) !important;
+}
+
+.settings-key.waiting {
+  background: var(--accent);
+}
+
+.settings-warn {
+  color: #ffd27a;
+}
+
+/* Shift lock: kilit alınamazsa da imleç görünmesin */
+canvas.shiftlock {
+  cursor: none;
+}
+
 .settings-apply {
   display: none;
   align-items: center;

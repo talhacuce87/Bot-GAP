@@ -272,7 +272,9 @@ function plaza(b: Builder): void {
   b.add(part(new THREE.CylinderGeometry(0.35, 0.5, 1.6, 8), "#9aa3ad", mat(0, 0.8, 0)));
   b.add(part(new THREE.CylinderGeometry(0.9, 0.6, 0.2, 10), "#a9b2bc", mat(0, 1.6, 0)));
   b.add(part(new THREE.CylinderGeometry(0.12, 0.16, 0.22, 6), "#8a939d", mat(0, 1.8, 0))); // fıskiye ağzı
-  b.colliders.circle(0, 0, 2.4);
+  // Üstüne çıkılır: önce havuz kenarı, oradan tepedeki çanak
+  b.colliders.circle(0, 0, 2.4, 0.6);
+  b.colliders.circle(0, 0, 0.9, 1.7);
 
   // Saksılar: meydan kenarında çiçekli
   for (let i = 0; i < 8; i++) {
@@ -281,7 +283,7 @@ function plaza(b: Builder): void {
     if (z < -8 || Math.abs(z - 5) < 1.5 || (Math.abs(x) < 2 && z > 0) || x > 8) continue; // yolları, doğma noktasını kapatma
     b.add(part(new THREE.CylinderGeometry(0.45, 0.35, 0.5, 8), "#b5643c", mat(x, 0.25, z)));
     b.prop("bush", mat(x, 0.62, z, a, 0.5, 0.45, 0.5));
-    b.colliders.circle(x, z, 0.45);
+    b.colliders.circle(x, z, 0.45, 0.9);
   }
 
   // Lambalar
@@ -303,7 +305,10 @@ function amphitheatre(b: Builder): THREE.Mesh {
     // Hoparlör kabini (koniler ayrı mesh: müzikle titrer)
     b.add(part(new THREE.BoxGeometry(1.4, 2.4, 1), "#23262d", mat(sx * 12.8, 1.8, SCREEN_Z - 0.9)));
   }
-  b.colliders.segment(-14, SCREEN_Z - 0.5, 14, SCREEN_Z - 0.5, 2.5);
+  // Sahneye çıkılır; perde (direkleriyle) ve hoparlör kabinleri duvar
+  b.colliders.segment(-14, SCREEN_Z - 0.5, 14, SCREEN_Z - 0.5, 2.5, 0.6);
+  b.colliders.segment(-(SCREEN_W / 2 + 0.7), SCREEN_Z - 1.6, SCREEN_W / 2 + 0.7, SCREEN_Z - 1.6, 0.3);
+  for (const sx of [-1, 1]) b.colliders.segment(sx * 12.8, SCREEN_Z - 1.2, sx * 12.8, SCREEN_Z - 0.6, 0.7);
   b.clearBox(-22, 22, -52, -17);
 
   const bench = mergeGeometries([
@@ -327,7 +332,7 @@ function amphitheatre(b: Builder): THREE.Mesh {
       const facing = theta + Math.PI; // perdeye bak
       mats.push(mat(x, 0, z, facing));
       const tx = Math.cos(theta), tz = -Math.sin(theta); // yay teğeti
-      b.colliders.segment(x - tx * 1.05, z - tz * 1.05, x + tx * 1.05, z + tz * 1.05, 0.3);
+      b.colliders.segment(x - tx * 1.05, z - tz * 1.05, x + tx * 1.05, z + tz * 1.05, 0.3, 0.51);
       for (const o of [-0.7, 0, 0.7]) b.seats.push({ x: x + tx * o, z: z + tz * o, rot: facing });
     }
   }
@@ -416,7 +421,7 @@ function nature(b: Builder): void {
     if (!b.isClear(x, z)) continue;
     const s = 0.5 + b.rand() * 1.2;
     b.prop("rock", mat(x, 0.15 * s, z, b.rand() * 6, s, s * 0.7, s));
-    if (r < WORLD_RADIUS) b.colliders.circle(x, z, 0.5 * s);
+    if (r < WORLD_RADIUS) b.colliders.circle(x, z, 0.5 * s, 0.55 * s);
     n++;
   }
   for (let i = 0, n = 0; n < 160 && i < 2500; i++) {
@@ -426,7 +431,7 @@ function nature(b: Builder): void {
     if (!b.isClear(x, z)) continue;
     const s = 0.5 + b.rand() * 0.6;
     b.prop("bush", mat(x, 0.25 * s, z, b.rand() * 6, s, s * 0.75, s));
-    if (r < WORLD_RADIUS) b.colliders.circle(x, z, 0.45 * s);
+    if (r < WORLD_RADIUS) b.colliders.circle(x, z, 0.45 * s, 0.75 * s);
     b.shadow(x, z, 0.9 * s);
     n++;
   }
@@ -447,7 +452,7 @@ function tankPark(b: Builder): void {
   for (const [ox, oz] of [[-3.2, -4.2], [3.2, -4.2], [-3.2, 4.2], [3.2, 4.2]]) {
     const bx = x + ox * c + oz * s, bz = z - ox * s + oz * c;
     for (let k = 0; k < 4; k++) b.add(part(new THREE.CylinderGeometry(0.13, 0.13, 0.2, 8), k % 2 ? "#1d1d1d" : "#f2c230", mat(bx, 0.1 + k * 0.2, bz)));
-    b.colliders.circle(bx, bz, 0.15);
+    b.colliders.circle(bx, bz, 0.15, 0.8);
   }
   b.clearCircle(x, z, 6.5);
 }

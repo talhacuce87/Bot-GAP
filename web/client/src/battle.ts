@@ -12,6 +12,7 @@ import { Remotes } from "./avatars/remotes";
 import { login } from "./discord";
 import { beginMode, switchMode } from "./mode";
 import { Input } from "./input/input";
+import { onBinds } from "./input/keybinds";
 import { Net } from "./net";
 import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
@@ -120,6 +121,8 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   const me = new Player(arena as unknown as World, colorFor(session.user.id));
   const input = new Input(canvas, hudRoot);
   const hud = new Hud(hudRoot, session.user.name, input.touch, () => input.triggerAction());
+  life.onStop(() => input.dispose());
+  life.onStop(onBinds(() => hud.refreshHint()));
   const net = new Net(`${session.wsUrl}&battle=1`, remotes);
   life.onStop(() => net.close());
   net.onStatus = (s) => hud.setStatus(s);

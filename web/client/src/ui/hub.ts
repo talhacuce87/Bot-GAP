@@ -1,6 +1,7 @@
 // 🎒 Menü: dünyadaki yeni şeylere tek yerden erişim (görevler, kart/albüm, fotoğraf, araç, evcil hayvan,
 // havai fişek, mini oyunlar, beşlik/sarılma, şarkı kuyruğu, hava). Kısayol: M.
 import { PETS, SKINS } from "../../../shared/protocol";
+import { actionLabel } from "../input/keybinds";
 import { settings, updateSettings } from "../settings";
 import { button, el, Panel } from "./panel";
 
@@ -25,7 +26,7 @@ export class Hub {
 
   constructor(root: HTMLElement, touch: boolean, private a: HubActions) {
     const b = el("button", "wardrobe-btn hub-btn", root, "🎒");
-    b.title = touch ? "Menü" : "Menü (M)";
+    b.title = touch ? "Menü" : `Menü (${actionLabel("menu")})`;
     b.addEventListener("click", () => this.toggle());
     this.panel = new Panel(root, "MENÜ", "hub-panel");
   }
@@ -60,14 +61,14 @@ export class Hub {
     };
 
     const me = grid("Ben");
-    tile(me, "📋", "Görevler", this.a.quests, "Q");
-    tile(me, "🪪", "Kartım", this.a.card, "K");
-    tile(me, "🐟", "Balık albümü", this.a.album, "L");
-    tile(me, "📸", "Fotoğraf", this.a.photo, "P");
+    tile(me, "📋", "Görevler", this.a.quests, actionLabel("quests"));
+    tile(me, "🪪", "Kartım", this.a.card, actionLabel("card"));
+    tile(me, "🐟", "Balık albümü", this.a.album, actionLabel("album"));
+    tile(me, "📸", "Fotoğraf", this.a.photo, actionLabel("photo"));
 
     const go = grid("Ulaşım");
     tile(go, "🚶", "Yürü", () => this.a.vehicle(0));
-    tile(go, "🚲", "Bisiklet", () => this.a.vehicle(1), "B");
+    tile(go, "🚲", "Bisiklet", () => this.a.vehicle(1), actionLabel("vehicle"));
     tile(go, "🛹", "Kaykay", () => this.a.vehicle(2));
     el("div", "settings-note hub-note", body, "🛶 Kayık: gölün batısındaki iskelede F.");
 
@@ -75,8 +76,8 @@ export class Hub {
     tile(fun, "🎆", "Havai fişek", this.a.fireworks);
     tile(fun, "🏃", "Ebelemece", () => this.a.tag("ebelemece"));
     tile(fun, "🙈", "Saklambaç", () => this.a.tag("saklambac"));
-    tile(fun, "🙌", "Beşlik çak", () => this.a.pair("five"), "H");
-    tile(fun, "🤗", "Sarıl", () => this.a.pair("hug"), "J");
+    tile(fun, "🙌", "Beşlik çak", () => this.a.pair("five"), actionLabel("five"));
+    tile(fun, "🤗", "Sarıl", () => this.a.pair("hug"), actionLabel("hug"));
     tile(fun, "🎵", "Şarkı kuyruğu", this.a.queue);
     tile(fun, "🌦️", "Hava", this.a.weather);
     tile(fun, "⚔️", "Tank savaşı", this.a.battle);

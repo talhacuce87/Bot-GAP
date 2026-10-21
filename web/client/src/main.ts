@@ -14,14 +14,15 @@ import {
   INTERP_DELAY_MS,
   JAIL_CENTER,
   JAIL_SPAWN,
+  PLAYER_RADIUS,
   RELEASE_SPAWN,
 } from "../../shared/constants";
 import type { Look } from "../../shared/protocol";
-import { DEFAULT_ELEV, FIRE_COOLDOWN_MS, hullCircles, TANK_PARK, TANK_REACH } from "../../shared/tank";
+import { DEFAULT_ELEV, FIRE_COOLDOWN_MS, hullCircles, TANK_PARK, TANK_REACH, tankGround } from "../../shared/tank";
 import chibiBinUrl from "../chibi/chibi.bin?url";
 import chibiManifest from "../chibi/chibi.json";
 import { AvatarAtlas } from "./avatars/atlas";
-import { AvatarRenderer, colorFor, MAX_AVATARS } from "./avatars/avatars";
+import { AvatarRenderer, bodyY, colorFor, MAX_AVATARS } from "./avatars/avatars";
 import { ChibiLayer } from "./avatars/chibi";
 import type { ChibiManifest } from "./avatars/chibiPack";
 import { Bots } from "./avatars/bots";
@@ -30,6 +31,7 @@ import { EmoteFx, FX_CELL, ThrowFx } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
 import { login, type Session } from "./discord";
 import { Input } from "./input/input";
+import { onBinds } from "./input/keybinds";
 import { Net } from "./net";
 import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
@@ -47,6 +49,8 @@ import { ScreenVideo } from "./watch/screen";
 import { WatchSync } from "./watch/sync";
 import { WatchPanel } from "./ui/watchPanel";
 import { CinemaSign } from "./world/cinemaSign";
+import { SEAT_H } from "./world/builder";
+import { LEDGE } from "./world/colliders";
 import { MAX_PUSHERS } from "./world/grassField";
 import { PostFx } from "./world/post";
 import { buildWorld, SCREEN_W, SCREEN_Z, type Season } from "./world/scene";
@@ -179,6 +183,8 @@ async function start(): Promise<void> {
 
   const input = new Input(canvas, hudRoot);
   const hud = new Hud(hudRoot, session.user.name, input.touch, () => input.triggerAction());
+  life.onStop(() => input.dispose());
+  life.onStop(onBinds(() => hud.refreshHint()));
   world.fame.setAvatarUrl((id, hash) => `${session.base}/avatar/${id}/${hash}`);
   if (!life.active) return;
   const net = new Net(session.wsUrl, remotes);
@@ -310,6 +316,7 @@ async function start(): Promise<void> {
     if (!wardrobe.isOpen) me.outfit = look;
   };
   hud.wardrobeButton(input.touch, () => wardrobe.toggle());
+  input.onWardrobe = () => wardrobe.toggle();
 
   // ---- Sohbet ve sinema: "!" komutları, !izle ile izleme odası açılır ----
   // Activity içinde dış bağlantı Discord'un onay penceresiyle açılır; tarayıcıda yeni sekme.
@@ -590,6 +597,11 @@ async function start(): Promise<void> {
     return [];
   };
   let lastAct = -Infinity;
+  /** Oturanın koltuğu bankdan ne kadar alçak (kütük); Player.sitOn ile aynı. */
+  const seatDrop = (x: number, z: number): number => {
+    for (const s of world.seats) if (Math.abs(s.x - x) < 0.05 && Math.abs(s.z - z) < 0.05) return (s.h ?? SEAT_H) - SEAT_H;
+    return 0;
+  };
   // Sakura Bahçesi: içeri girince karşılama (kenarda gidip gelirken tekrar tekrar patlamasın)
   const SAKURA_FX_COOLDOWN_MS = 30_000;
   let inGarden = world.sakura.inside(me.x, me.z);
@@ -712,7 +724,13 @@ async function start(): Promise<void> {
     net.update(dt, me);
     const serverNow = net.serverNow();
     bots?.update(dt, serverNow);
-    remotes.update(serverNow - INTERP_DELAY_MS, dt);
+    // Başkalarının durduğu yüzey konumlarından bulunur (çeşme, bank, tank üstü)
+    const hull = hullCircles(tankView.x, tankView.z, tankView.h);
+    remotes.update(serverNow - INTERP_DELAY_MS, dt, (x, z, seated) =>
+      seated
+        ? seatDrop(x, z)
+        : Math.max(world.colliders.groundAt(x, z, PLAYER_RADIUS), tankGround(hull, x, z, PLAYER_RADIUS * LEDGE)),
+    );
 
     // Tank: kendi sürüşü yerel; uzak sürücüde konum onun snapshot'ı, açılar "taim"; yoksa park yeri
     const driver = tank.driver && tank.driver !== net.you ? remotes.map.get(tank.driver) : undefined;
@@ -765,9 +783,9 @@ async function start(): Promise<void> {
     }
 
     bubbles.update(now, camera, (sid) => {
-      if (sid === net.you) return { x: me.x, z: me.z, y: me.jumpY - (me.seated ? 0.32 : 0) };
+      if (sid === net.you) return { x: me.x, z: me.z, y: bodyY(me) };
       const r = remotes.map.get(sid);
-      return r?.hasData && !r.leaving ? { x: r.x, z: r.z, y: r.jumpY - (r.flags & FLAG_SEATED ? 0.32 : 0) } : null;
+      return r?.hasData && !r.leaving ? { x: r.x, z: r.z, y: bodyY(r) } : null;
     });
 
     hud.setPrompt(me.seated ? "stand" : me.nearSeat ? "sit" : "");

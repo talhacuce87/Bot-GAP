@@ -88,9 +88,8 @@ export class Wardrobe {
 
     addEventListener("keydown", (e) => {
       if (e.repeat || e.target instanceof HTMLInputElement) return;
-      const k = e.key.toLocaleLowerCase("en");
-      if (k === "c") this.toggle();
-      else if (k === "escape" && this.isOpen) this.close();
+      // Açma tuşu Input'ta (ayarlanabilir); burada yalnızca Esc
+      if (e.key === "Escape" && this.isOpen) this.close();
     });
   }
 

@@ -81,7 +81,7 @@ export function dungeon(b: Builder): { signAt: THREE.Matrix4 } {
 
   // Hücre içi: taş sedir (oturulabilir), saman, kova, duvara asılı zincirler
   box(b, 0.6, 0.45, 3, STONE_DARK, x0 + 1.2, 0.22, cz, 0, 0.1);
-  for (const o of [-0.8, 0.8]) b.seats.push({ x: x0 + 1.35, z: cz + o, rot: Math.PI / 2 });
+  for (const o of [-0.8, 0.8]) b.seats.push({ x: x0 + 1.35, z: cz + o, rot: Math.PI / 2, h: 0.45 });
   b.add(part(new THREE.IcosahedronGeometry(0.7, 0), "#c9a94f", mat(-23.2 + DX, 0.15, z0 + 1.8, 0.4, 1.2, 0.35, 1), 0.25, b.rand));
   b.add(part(new THREE.CylinderGeometry(0.22, 0.18, 0.35, 8), "#6b5a3e", mat(-22.6 + DX, 0.3, z1 - 1.5)));
   for (const cz2 of [cz - 1.6, cz + 1.6]) {
@@ -120,7 +120,7 @@ export function dungeon(b: Builder): { signAt: THREE.Matrix4 } {
   b.add(part(new THREE.IcosahedronGeometry(0.16, 0), "#efe9d8", mat(-28.1 + DX, 0.32, 7.9, 0, 1, 0.9, 1.1)));
   for (const [rx, rz, s] of [[-19.5 + DX, -0.5, 0.8], [-20 + DX, 11, 1.1], [-32.5 + DX, 3, 1.3], [-31.8 + DX, -1.5, 0.9]]) {
     b.prop("rock", mat(rx, 0.15 * s, rz, b.rand() * 6, s, s * 0.7, s));
-    b.colliders.circle(rx, rz, 0.5 * s);
+    b.colliders.circle(rx, rz, 0.5 * s, 0.55 * s);
   }
 
   // Tabela: parmaklığın üstünde, meydana bakar; arkasında pano
@@ -162,7 +162,7 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
     b.add(part(new THREE.CylinderGeometry(0.008, 0.008, 1.5, 3), "#c8c8c8", mat(grillX, 1.12, sz).multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2))));
     for (let i = 0; i < 5; i++) box(b, 0.11, 0.09, 0.09, foods[(i + s) % foods.length], grillX - 0.44 + i * 0.22, 1.12, sz, b.rand(), 0.15);
   }
-  b.colliders.circle(grillX, grillZ, 0.85);
+  b.colliders.circle(grillX, grillZ, 0.85, 1.06);
   b.shadow(grillX, grillZ, 1.2);
 
   const coals = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.04, 0.48), new THREE.MeshBasicMaterial({ color: "#ff7a2a" }));
@@ -175,11 +175,13 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
     const a = THREE.MathUtils.degToRad(deg);
     const lx = grillX + Math.cos(a) * 2.7, lz = grillZ + Math.sin(a) * 2.7;
     const tx = -Math.sin(a), tz = Math.cos(a); // teğet
-    const ry = Math.atan2(tx, tz);
+    // Kütük modeli X ekseni boyunca: teğete yatırmak için çeyrek tur eksik döndürülür
+    const ry = Math.atan2(tx, tz) - Math.PI / 2;
     b.prop("log", mat(lx, 0.22, lz, ry));
-    b.colliders.segment(lx - tx * 0.7, lz - tz * 0.7, lx + tx * 0.7, lz + tz * 0.7, 0.28);
+    b.colliders.segment(lx - tx * 0.7, lz - tz * 0.7, lx + tx * 0.7, lz + tz * 0.7, 0.28, 0.46);
     const face = Math.atan2(grillX - lx, grillZ - lz);
-    for (const o of [-0.4, 0.4]) b.seats.push({ x: lx + tx * o, z: lz + tz * o, rot: face });
+    // Kütük yuvarlak: tepesinden biraz alçakta oturulur (yoksa havada durur gibi)
+    for (const o of [-0.4, 0.4]) b.seats.push({ x: lx + tx * o, z: lz + tz * o, rot: face, h: 0.4 });
   }
 
   // Piknik masası
@@ -191,13 +193,14 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
     for (const lx of [-0.75, 0.75]) box(b, 0.06, 0.42, 0.2, WOOD_DARK, tx0 + lx, 0.21, tz0 + oz);
     for (const sx of [-0.5, 0.5]) b.seats.push({ x: tx0 + sx, z: tz0 + oz * 1.25, rot: oz < 0 ? 0 : Math.PI });
   }
-  b.colliders.segment(tx0 - 0.9, tz0, tx0 + 0.9, tz0, 0.75);
+  b.colliders.segment(tx0 - 0.9, tz0, tx0 + 0.9, tz0, 0.75, 0.48);
+  b.colliders.segment(tx0 - 0.9, tz0, tx0 + 0.9, tz0, 0.42, 0.8); // masanın üstü
   b.shadow(tx0, tz0, 1.4);
 
   // Buzluk
   box(b, 0.62, 0.38, 0.42, "#2f6fd0", gx + 3.2, 0.2, gz + 2.6, 0.3);
   box(b, 0.66, 0.08, 0.46, "#f2f2f2", gx + 3.2, 0.43, gz + 2.6, 0.3);
-  b.colliders.circle(gx + 3.2, gz + 2.6, 0.4);
+  b.colliders.circle(gx + 3.2, gz + 2.6, 0.4, 0.47);
 
   // Ağaçlar arası ışık zinciri: oturma alanını çevreleyen 4 direk, sarkan küçük ampuller (kapalı halka)
   const posts: [number, number][] = [[gx - 2.5, gz - 4.6], [gx + 3.8, gz - 3.6], [gx + 4.6, gz + 4.2], [gx - 4.8, gz + 1.4]];
@@ -425,7 +428,7 @@ export function pond(b: Builder): { water: THREE.Mesh; ducks: THREE.InstancedMes
   box(b, 1.8, 0.1, 0.45, "#a0703f", bx, 0.45, bz, 0);
   box(b, 1.8, 0.45, 0.07, WOOD, bx, 0.72, bz - 0.22, 0);
   for (const lx of [-0.75, 0.75]) box(b, 0.08, 0.45, 0.4, WOOD_DARK, bx + lx, 0.22, bz);
-  b.colliders.segment(bx - 0.85, bz, bx + 0.85, bz, 0.3);
+  b.colliders.segment(bx - 0.85, bz, bx + 0.85, bz, 0.3, 0.5);
   for (const o of [-0.45, 0.45]) b.seats.push({ x: bx + o, z: bz, rot: 0 });
   b.shadow(bx, bz, 1.2);
 

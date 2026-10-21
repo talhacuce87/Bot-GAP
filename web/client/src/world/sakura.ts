@@ -49,7 +49,7 @@ function lantern(b: Builder, x: number, z: number, ry: number): void {
   add(new THREE.ConeGeometry(0.5, 0.32, 4), STONE_DARK, mat(x, 1.41, z, ry + Math.PI / 4));
   add(new THREE.SphereGeometry(0.08, 6, 4), STONE_DARK, mat(x, 1.6, z));
   b.prop("bulb", mat(x, 1.09, z, 0, 0.55));
-  b.colliders.circle(x, z, 0.38);
+  b.colliders.circle(x, z, 0.38, 1.6); // yandaki banktan zıplayıp çatısına çıkılır
   b.shadow(x, z, 0.6);
 }
 
@@ -73,7 +73,7 @@ function bench(b: Builder, x: number, z: number, face: number): void {
   const side = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), face);
   b.add(part(new THREE.BoxGeometry(1.8, 0.1, 0.5), "#9a6a44", mat(x, 0.45, z, face), 0.1, b.rand));
   for (const s of [-0.7, 0.7]) b.add(part(new THREE.BoxGeometry(0.12, 0.42, 0.42), wood, mat(x + side.x * s, 0.21, z + side.z * s, face)));
-  b.colliders.segment(x - side.x * 0.85, z - side.z * 0.85, x + side.x * 0.85, z + side.z * 0.85, 0.3);
+  b.colliders.segment(x - side.x * 0.85, z - side.z * 0.85, x + side.x * 0.85, z + side.z * 0.85, 0.3, 0.5);
   for (const s of [-0.45, 0.45]) b.seats.push({ x: x + side.x * s - fwd.x * 0.05, z: z + side.z * s - fwd.z * 0.05, rot: face });
   b.shadow(x, z, 1.1);
 }
