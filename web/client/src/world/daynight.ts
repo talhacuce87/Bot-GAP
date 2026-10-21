@@ -317,6 +317,7 @@ export class DayNight {
     this.stars = starField(p.sky.radius * 0.95);
     this.meteors = meteors(p.sky.radius * 0.93);
     p.scene.add(this.glow, this.stars, this.meteors);
+    this.stars.userData.sky = this.meteors.userData.sky = true;
     this.apply(Date.now());
   }
 

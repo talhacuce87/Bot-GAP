@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { JAIL, JAIL_SPAWN, RELEASE_SPAWN, ROOM_MAX_PLAYERS, WORLD_RADIUS } from "../shared/constants";
+import { JAIL, JAIL_SPAWN, RELEASE_SPAWN, ROOM_MAX_PLAYERS, WORLD_BOUNDS } from "../shared/constants";
 import { readSnapshot, type ServerEvent } from "../shared/protocol";
 import { SESSION_TTL_MS, type SessionUser, signSession, verifySession } from "../server/src/auth";
 import { type Conn, Room } from "../server/src/room";
@@ -57,8 +57,12 @@ describe("Room", () => {
     room.applyState(sid, { x: 1000, z: 0, rot: 0, flags: 1 }, 100);
     const p = room.players.get(sid)!.state;
     expect(Math.hypot(p.x - start.x, p.z - start.z)).toBeLessThan(2);
-    for (let t = 200; t < 20000; t += 100) room.applyState(sid, { x: 1000, z: 0, rot: 0, flags: 1 }, t);
-    expect(Math.hypot(p.x, p.z)).toBeLessThanOrEqual(WORLD_RADIUS + 1.001);
+    for (let t = 200; t < 60000; t += 100) room.applyState(sid, { x: 1000, z: 0, rot: 0, flags: 1 }, t);
+    expect(p.x).toBeGreaterThan(WORLD_BOUNDS.maxX - 1);
+    expect(p.x).toBeLessThanOrEqual(WORLD_BOUNDS.maxX + 1.001);
+    expect(p.x).toBeGreaterThanOrEqual(WORLD_BOUNDS.minX - 1.001);
+    expect(p.z).toBeLessThanOrEqual(WORLD_BOUNDS.maxZ + 1.001);
+    expect(p.z).toBeGreaterThanOrEqual(WORLD_BOUNDS.minZ - 1.001);
   });
 
   it("broadcasts snapshots only when dirty, excluding spectators", () => {

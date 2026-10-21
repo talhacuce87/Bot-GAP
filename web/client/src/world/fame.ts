@@ -5,11 +5,12 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import type { BoardEntry } from "../../../shared/protocol";
 import { colorFor } from "../avatars/avatars";
 import type { Builder } from "./builder";
+import { FAME as FAME_AT, PLAZA } from "../../../shared/zones";
 import { mat, part } from "./geo";
 
-/** Kürsünün yeri: meydanın güneybatısı, yüzü meydana dönük. */
-export const FAME = { x: -34, z: 42 };
-const RY = Math.atan2(-FAME.x, -FAME.z);
+/** Kürsünün yeri: meydanın doğusu, yüzü meydana dönük. */
+export const FAME = FAME_AT;
+const RY = Math.atan2(PLAZA.x - FAME.x, PLAZA.z - FAME.z);
 
 const TEX = 1024;
 const BOARD_H = 768; // dokunun üst kısmı pano, altı heykel portreleri

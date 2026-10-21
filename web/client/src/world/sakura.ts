@@ -5,9 +5,10 @@
 import * as THREE from "three";
 import type { Builder } from "./builder";
 import { mat, part, timeUniform } from "./geo";
+import { SAKURA_FROM, SAKURA_SPOT } from "../../../shared/zones";
 import { steppingStones } from "./zones";
 
-export const SAKURA = { x: 40, z: -24 };
+export const SAKURA = { x: SAKURA_SPOT.x, z: SAKURA_SPOT.z };
 
 /** Bahçenin ayarları: yoğunluk ve boyutlar buradan değişir. */
 export const SAKURA_CONFIG = {
@@ -143,8 +144,8 @@ function petalMesh(ground: [number, number][], falling: [number, number][], rand
 export function sakuraGarden(b: Builder): SakuraGarden {
   const { x: cx, z: cz } = SAKURA;
   const { radius: R } = SAKURA_CONFIG;
-  // Meydandan gelen yolun yönü: torii bahçenin meydana bakan kenarında
-  const dl = Math.hypot(cx, cz), ux = cx / dl, uz = cz / dl;
+  // Sinemadan gelen yolun yönü: torii bahçenin o yola bakan kenarında
+  const dl = Math.hypot(cx - SAKURA_FROM.x, cz - SAKURA_FROM.z), ux = (cx - SAKURA_FROM.x) / dl, uz = (cz - SAKURA_FROM.z) / dl;
   const gateX = cx - ux * (R - 0.4), gateZ = cz - uz * (R - 0.4);
   const face = Math.atan2(ux, uz);
   const spots: Spot[] = [];

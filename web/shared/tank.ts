@@ -5,7 +5,7 @@
 import { STEP_UP } from "./constants";
 
 /** Tankın park yeri (sahnede beton zemin ve tabela var). Sürücüsüz uzun süre kalırsa buraya döner. */
-export const TANK_PARK = { x: -32, z: -16, h: Math.PI / 2 };
+export const TANK_PARK = { x: 84, z: 14, h: Math.PI / 2 };
 /** Sürücüsüz tank bu kadar süre sonra park yerine döner. */
 export const TANK_RETURN_MS = 10 * 60 * 1000;
 /** Binmek için tanka en fazla bu kadar yakın olmalı. */

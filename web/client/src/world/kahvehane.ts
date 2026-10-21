@@ -78,7 +78,7 @@ function stool(b: Builder, x: number, z: number): void {
   for (const [lx, lz] of [[-0.14, -0.14], [0.14, -0.14], [-0.14, 0.14], [0.14, 0.14]]) box(b, 0.04, 0.42, 0.04, WOOD_DARK, x + lx, 0.21, z + lz, 0, 0);
 }
 
-export function kahvehane(b: Builder): { signAt: THREE.Matrix4 } {
+export function kahvehane(b: Builder): { signAt: THREE.Matrix4[] } {
   const { x: cx, z: cz, hw, hd } = KAHVEHANE;
   b.clearBox(cx - hw - 1, cx + hw + 1, cz - hd - 1, cz + hd + 1);
 
@@ -151,6 +151,6 @@ export function kahvehane(b: Builder): { signAt: THREE.Matrix4 } {
     b.colliders.circle(cx + sx * 2.2, cz - hd - 0.7, 0.4);
   }
 
-  // Tabela: girişin üstünde, meydana (güneydoğuya) bakar
-  return { signAt: mat(cx, 3.55, cz - hd - 0.05, Math.PI) };
+  // Tabelalar: kuzeydeki girişin üstünde göle, güney kirişinde meydana bakar
+  return { signAt: [mat(cx, 3.55, cz - hd - 0.05, Math.PI), mat(cx, 3.55, cz + hd + 0.05, 0)] };
 }

@@ -1,13 +1,13 @@
 // Oda başına oyuncu durumu ve 15 Hz snapshot yayını.
 import {
   clampToJail,
+  clampToWorld,
   FLAG_DRIVING,
   FLAG_MASK,
   JAIL_SPAWN,
   maxSpeed,
   RELEASE_SPAWN,
   ROOM_MAX_PLAYERS,
-  WORLD_RADIUS,
 } from "../../shared/constants";
 import {
   type ChatLine,
@@ -21,6 +21,7 @@ import {
   writeSnapshotEntry,
   writeSnapshotHeader,
 } from "../../shared/protocol";
+import { SPAWN } from "../../shared/zones";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
@@ -64,7 +65,6 @@ interface Player {
 
 const MAX_BUFFERED = 64 * 1024;
 const SPAWN_RADIUS = 3;
-const SPAWN_Z = 8;
 
 export class Room {
   readonly players = new Map<number, Player>();
@@ -111,9 +111,9 @@ export class Room {
     };
     const a = Math.random() * Math.PI * 2;
     const state: PlayerState = {
-      x: Math.cos(a) * SPAWN_RADIUS * Math.random(),
-      z: SPAWN_Z + Math.sin(a) * SPAWN_RADIUS * Math.random(),
-      rot: Math.PI,
+      x: SPAWN.x + Math.cos(a) * SPAWN_RADIUS * Math.random(),
+      z: SPAWN.z + Math.sin(a) * SPAWN_RADIUS * Math.random(),
+      rot: SPAWN.rot,
       flags: 0,
     };
     if (info.jailed) Object.assign(state, JAIL_SPAWN);
@@ -177,16 +177,9 @@ export class Room {
       dx *= maxStep / d;
       dz *= maxStep / d;
     }
-    let x = p.state.x + dx;
-    let z = p.state.z + dz;
-    const r = Math.hypot(x, z);
-    const limit = WORLD_RADIUS + 1;
-    if (r > limit) {
-      x *= limit / r;
-      z *= limit / r;
-    }
-    p.state.x = x;
-    p.state.z = z;
+    p.state.x += dx;
+    p.state.z += dz;
+    clampToWorld(p.state, -1);
     if (p.info.jailed) clampToJail(p.state);
     this.battle?.clamp(p.state);
     p.state.rot = s.rot;

@@ -1,5 +1,6 @@
 // `?bots=N`: performans testi için yerel sahte oyuncular. Gerçek ağ yolunu (Remotes + interpolasyon) kullanır.
-import { EMOTES, FLAG_SEATED, FLAG_WALKING, JUMP_SHIFT, SEND_HZ, WALK_SPEED, WORLD_RADIUS } from "../../../shared/constants";
+import { EMOTES, FLAG_SEATED, FLAG_WALKING, JUMP_SHIFT, SEND_HZ, WALK_SPEED } from "../../../shared/constants";
+import { PLAZA } from "../../../shared/zones";
 import type { Seat } from "../world/scene";
 import manifest from "../../chibi/chibi.json";
 import { type ChibiManifest, randomLook } from "./chibiPack";
@@ -47,10 +48,11 @@ export class Bots {
       b.tz = s.z;
       return;
     }
+    // Meydanın çevresinde dolaşır (nehir ve dağlar engel; botlar çarpışma bilmez)
     const a = Math.random() * Math.PI * 2;
-    const r = Math.random() * (WORLD_RADIUS - 3);
-    b.tx = Math.sin(a) * r;
-    b.tz = Math.cos(a) * r;
+    const r = Math.random() * 30;
+    b.tx = PLAZA.x + Math.sin(a) * r;
+    b.tz = PLAZA.z + Math.cos(a) * r;
   }
 
   /** `serverNow`: Remotes'un beklediği saat ekseni. */

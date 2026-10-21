@@ -6,7 +6,7 @@ export const PLOT_SIZE = 9;
 export const PLOT_H = 10;
 export const PLOT_MAX_BLOCKS = 700;
 const GAP = 2.5;
-/** Mahallenin kuzeydoğu köşesi (dünya, en küçük x/z): zindanın kuzeyi. */
+/** Mahallenin köşesi (dünya, en küçük x/z): meydanın kuzeydoğusu, nehrin batısı. */
 export const HOOD = { x0: -80, z0: 18, cols: 3, rows: 3 };
 
 export interface Plot {

@@ -1,8 +1,9 @@
-// Meydan dışındaki bölgeler: zindan (batı), LAGER'in mangalı (doğu, orman içi), gölet (güney).
-// Hepsi Builder'a parça ekler; kendi draw call'ları yalnızca animasyonlu kısımlar (köz, duman, su, ördekler).
+// Meydan dışındaki bölgeler: zindan (dağdaki mağaranın içinde), LAGER'in mangalı (güneybatı, orman içi),
+// göl (kuzeybatı, nehrin döküldüğü yer). Hepsi Builder'a parça ekler; kendi draw call'ları yalnızca
+// animasyonlu kısımlar (köz, duman, su, ördekler).
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { DOCK } from "../../../shared/zones";
+import { DOCK, GROVE as GROVE_AT, LAKE, PLAZA } from "../../../shared/zones";
 import type { Builder } from "./builder";
 import { flatMat, mat, part, timeUniform } from "./geo";
 
@@ -26,6 +27,7 @@ export function steppingStones(b: Builder, ax: number, az: number, bx: number, b
     const side = (b.rand() - 0.5) * 0.5;
     const x = ax + (bx - ax) * t + px * side;
     const z = az + (bz - az) * t + pz * side;
+    if (b.blocked?.(x, z)) continue; // suya taş dizilmez
     const s = 0.35 + b.rand() * 0.2;
     b.prop("stone", mat(x, 0.03, z, b.rand() * 6, s, 1, s * (0.8 + b.rand() * 0.4)));
   }
@@ -33,16 +35,17 @@ export function steppingStones(b: Builder, ax: number, az: number, bx: number, b
   b.clearSegment(ax, az, bx, bz, 2.2);
 }
 
-/** Zindanın eski (küçük harita) konumuna göre kayması; hücre sınırları shared/constants JAIL ile aynı. */
-const DX = -29.5;
+/** Zindanın ilk (küçük harita) konumuna göre kayması; hücre sınırları shared/constants JAIL ile aynı. */
+const DX = 70.5;
+const DZ = 123;
 
 // ---------------------------------------------------------------------------
-// Zindan: üç tarafı taş duvar, meydana bakan yüzü demir parmaklık. Üstü açık (kamera görsün).
+// Zindan: mağaranın batısında; üç tarafı taş duvar, mağaraya bakan yüzü demir parmaklık. Üstü açık.
 // ---------------------------------------------------------------------------
 
 export function dungeon(b: Builder): { signAt: THREE.Matrix4 } {
   const x0 = -30 + DX, x1 = -21 + DX; // dış kenarlar
-  const z0 = 0.8, z1 = 9.2;
+  const z0 = 0.8 + DZ, z1 = 9.2 + DZ;
   const barsX = -21.4 + DX;
   const H = 3.2;
   const cz = (z0 + z1) / 2;
@@ -106,35 +109,34 @@ export function dungeon(b: Builder): { signAt: THREE.Matrix4 } {
   b.colliders.circle(x1 - 0.35, z0 + 0.4, 0.6);
   b.colliders.circle(x1 - 0.35, z1 - 0.4, 0.6);
 
-  // Çevre: kuru ağaç, kayalar, kemik yığını
+  // Çevre: kayalar, hücrede kemik yığını
   b.clearBox(x0 - 0.5, x1 + 5, z0 - 2, z1 + 2); // önünde ziyaretçi alanı
-  const dead = new THREE.CylinderGeometry(0.12, 0.2, 2.6, 5);
-  b.add(part(dead, "#4b3b2c", mat(-31.5 + DX, 1.3, 11, 0, 1)));
-  b.add(part(new THREE.CylinderGeometry(0.05, 0.08, 1.2, 4), "#4b3b2c", mat(-31.2 + DX, 2.1, 11, 0.6).multiply(new THREE.Matrix4().makeRotationZ(-0.9))));
-  b.add(part(new THREE.CylinderGeometry(0.04, 0.07, 1, 4), "#4b3b2c", mat(-31.8 + DX, 1.7, 11.2, 2.1).multiply(new THREE.Matrix4().makeRotationZ(0.8))));
-  b.colliders.circle(-31.5 + DX, 11, 0.25);
   for (let i = 0; i < 6; i++) {
     const a = b.rand() * 0.6;
-    b.add(part(new THREE.IcosahedronGeometry(0.09, 0), "#e8e2cf", mat(-28.4 + a + DX, 0.15 + (i % 3) * 0.05, 8.1 - a, 0, 1)));
+    b.add(part(new THREE.IcosahedronGeometry(0.09, 0), "#e8e2cf", mat(-28.4 + a + DX, 0.15 + (i % 3) * 0.05, 8.1 - a + DZ, 0, 1)));
   }
-  b.add(part(new THREE.IcosahedronGeometry(0.16, 0), "#efe9d8", mat(-28.1 + DX, 0.32, 7.9, 0, 1, 0.9, 1.1)));
-  for (const [rx, rz, s] of [[-19.5 + DX, -0.5, 0.8], [-20 + DX, 11, 1.1], [-32.5 + DX, 3, 1.3], [-31.8 + DX, -1.5, 0.9]]) {
+  b.add(part(new THREE.IcosahedronGeometry(0.16, 0), "#efe9d8", mat(-28.1 + DX, 0.32, 7.9 + DZ, 0, 1, 0.9, 1.1)));
+  for (const [rx, rz, s] of [[-19.5 + DX, -0.5 + DZ, 0.8], [-20 + DX, 11 + DZ, 1.1]]) {
     b.prop("rock", mat(rx, 0.15 * s, rz, b.rand() * 6, s, s * 0.7, s));
     b.colliders.circle(rx, rz, 0.5 * s, 0.55 * s);
   }
 
-  // Tabela: parmaklığın üstünde, meydana bakar; arkasında pano
+  // Tabela: parmaklığın üstünde, mağaraya bakar; arkasında pano
   box(b, 0.1, 0.85, 3.0, "#1c1d21", x1 - 0.06, H + 0.55, cz);
   return { signAt: mat(x1 + 0.02, H + 0.55, cz, Math.PI / 2) };
 }
 
 // ---------------------------------------------------------------------------
-// LAGER'in mangalı: doğuda, sık ağaçların arasında bir açıklık.
+// LAGER'in mangalı: güneybatıda, sık ağaçların arasında bir açıklık; giriş meydana bakar.
 // ---------------------------------------------------------------------------
 
-export const GROVE = { x: 58, z: 5 };
+export const GROVE = GROVE_AT;
+/** Ormanın girişi: mangaldan meydana doğru. */
+const ENTRY = Math.atan2(PLAZA.z - GROVE.z, PLAZA.x - GROVE.x);
 /** Mangal tabelası: orman girişinde, yolun kenarında. Çevresine ağaç dikilmez. */
-export const GROVE_SIGN = { x: GROVE.x - 6.4, z: GROVE.z - 1.9 };
+export const GROVE_SIGN = { x: GROVE.x + Math.cos(ENTRY) * 6.6 + Math.sin(ENTRY) * 1.9, z: GROVE.z + Math.sin(ENTRY) * 6.6 - Math.cos(ENTRY) * 1.9 };
+/** Tabela yüzü: girişe gelene (dışarı) bakar. */
+export const GROVE_SIGN_RY = Math.atan2(Math.cos(ENTRY), Math.sin(ENTRY));
 const SIGN_CLEAR = 3.2;
 
 export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; smokeAt: THREE.Vector3 } {
@@ -221,8 +223,7 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
   // Sık orman halkası, meydana bakan tarafta giriş boşluğu
   for (let i = 0; i < 46; i++) {
     const a = (i / 46) * Math.PI * 2 + b.rand() * 0.1;
-    const dirToPlaza = Math.PI; // -x
-    const da = Math.abs(((a - dirToPlaza + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+    const da = Math.abs(((a - ENTRY + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
     if (da < 0.45) continue;
     const r = 7.2 + b.rand() * 4.5;
     const x = gx + Math.cos(a) * r, z = gz + Math.sin(a) * r;
@@ -242,24 +243,27 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
   }
 
   return {
-    signAt: mat(GROVE_SIGN.x, 1.75, GROVE_SIGN.z, -Math.PI / 2),
+    signAt: mat(GROVE_SIGN.x, 1.75, GROVE_SIGN.z, GROVE_SIGN_RY),
     coals,
     smokeAt: new THREE.Vector3(grillX, 1.15, grillZ),
   };
 }
 
-/** Tabela direği (tabela yüzü ayrı, yazılı dokuyla çizilir). */
-export function signPost(b: Builder, x: number, z: number, h: number): void {
-  b.add(part(new THREE.BoxGeometry(0.14, h, 0.14), WOOD_DARK, mat(x, h / 2, z)));
-  b.add(part(new THREE.BoxGeometry(0.06, 0.65, 2.35), WOOD_DARK, mat(x - 0.05, h - 0.35, z)));
+/** Tabela direği (tabela yüzü ayrı, yazılı dokuyla çizilir); `ry` tabelanın baktığı yön. */
+export function signPost(b: Builder, x: number, z: number, h: number, ry: number): void {
+  const fx = Math.sin(ry), fz = Math.cos(ry);
+  b.add(part(new THREE.BoxGeometry(0.14, h, 0.14), WOOD_DARK, mat(x, h / 2, z, ry)));
+  b.add(part(new THREE.BoxGeometry(2.35, 0.65, 0.06), WOOD_DARK, mat(x + fx * 0.05, h - 0.35, z + fz * 0.05, ry)));
   b.colliders.circle(x, z, 0.12);
 }
 
 // ---------------------------------------------------------------------------
-// Gölet: güneyde, kenarında bir bank.
+// Göl: kuzeybatıda, nehir buraya dökülür; kenarında bir bank ve kayık iskelesi.
 // ---------------------------------------------------------------------------
 
-export const POND = { x: 24, z: 56 };
+export const POND = LAKE;
+/** Su yüzeyi (terrain.ts WATER_Y ile aynı; döngüsel içe aktarma olmasın diye burada da). */
+const WATER = -0.42;
 
 /**
  * Suyun çevresi: gökyüzü yansıması (DayNight renkleri), yağmur damlaları, donma ve dalga halkaları
@@ -409,31 +413,31 @@ function duckMesh(): THREE.InstancedMesh {
 }
 
 export function pond(b: Builder): { water: THREE.Mesh; ducks: THREE.InstancedMesh; update(time: number): void } {
-  const { x: px, z: pz } = POND;
-  const r = 6.5;
-  b.add(part(new THREE.CircleGeometry(r + 0.8, 24), "#d6c48e", flatMat(px, 0.012, pz), 0.08, b.rand));
+  const { x: px, z: pz, r } = POND;
   const duckAt = { value: new THREE.Vector2(px, pz) };
-  const water = new THREE.Mesh(new THREE.CircleGeometry(r, 32).applyMatrix4(flatMat(px, 0.03, pz)), waterMaterial(px, pz, r, duckAt));
+  // Su, kıyının eğimli toprağının altına kadar uzanır (arazi çanağı terrain.ts'te)
+  const water = new THREE.Mesh(new THREE.CircleGeometry(r + 0.6, 48).applyMatrix4(flatMat(px, WATER + 0.01, pz)), waterMaterial(px, pz, r, duckAt));
   water.matrixAutoUpdate = false;
   const ducks = duckMesh();
-  for (let i = 0; i < 6; i++) {
-    const a = b.rand() * Math.PI * 2, d = b.rand() * r * 0.75;
-    b.add(part(new THREE.CircleGeometry(0.22 + b.rand() * 0.12, 7, 0.5, Math.PI * 1.8), "#4f9a45", flatMat(px + Math.cos(a) * d, 0.045, pz + Math.sin(a) * d, 1, 1, b.rand() * 6)));
+  for (let i = 0; i < 16; i++) {
+    const a = b.rand() * Math.PI * 2, d = b.rand() * r * 0.8;
+    b.add(part(new THREE.CircleGeometry(0.22 + b.rand() * 0.12, 7, 0.5, Math.PI * 1.8), "#4f9a45", flatMat(px + Math.cos(a) * d, WATER + 0.025, pz + Math.sin(a) * d, 1, 1, b.rand() * 6)));
   }
-  for (let i = 0; i < 9; i++) {
-    const a = (i / 9) * Math.PI * 2 + b.rand() * 0.3;
+  for (let i = 0; i < 22; i++) {
+    const a = (i / 22) * Math.PI * 2 + b.rand() * 0.2;
+    if (Math.abs(Math.atan2(Math.sin(a - Math.PI), Math.cos(a - Math.PI))) < 0.25) continue; // iskele
     const s = 0.4 + b.rand() * 0.5;
-    b.prop("rock", mat(px + Math.cos(a) * (r + 0.6), 0.1 * s, pz + Math.sin(a) * (r + 0.6), b.rand() * 6, s, s * 0.6, s));
+    b.prop("rock", mat(px + Math.cos(a) * (r + 1.1), 0.1 * s, pz + Math.sin(a) * (r + 1.1), b.rand() * 6, s, s * 0.6, s));
   }
   b.colliders.circle(px, pz, r);
-  b.clearCircle(px, pz, r + 0.9);
+  b.clearCircle(px, pz, r + 1.6);
 
   // Kayık iskelesi: batı kıyısında, suya uzanan tahtalar
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 11; i++) {
     box(b, 0.42, 0.08, 1.5, i % 2 ? "#8f6640" : "#9b7451", DOCK.x - 1.2 + i * 0.45, 0.18, DOCK.z, 0, 0.08);
   }
-  for (const [ox, oz] of [[-1.3, -0.7], [-1.3, 0.7], [1.2, -0.7], [1.2, 0.7]]) {
-    b.add(part(new THREE.CylinderGeometry(0.07, 0.08, 0.7, 6), WOOD_DARK, mat(DOCK.x + ox, 0.12, DOCK.z + oz)));
+  for (const [ox, oz] of [[-1.3, -0.7], [-1.3, 0.7], [1.2, -0.7], [1.2, 0.7], [3.4, -0.7], [3.4, 0.7]]) {
+    b.add(part(new THREE.CylinderGeometry(0.07, 0.08, 1.2, 6), WOOD_DARK, mat(DOCK.x + ox, -0.1, DOCK.z + oz)));
   }
   b.clearCircle(DOCK.x, DOCK.z, 2.4);
 

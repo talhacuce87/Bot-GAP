@@ -101,7 +101,8 @@ async function start(): Promise<void> {
   renderer.setSize(innerWidth, innerHeight, false);
   // Ton eşleme: düşük poli renkler aynı kalır, yalnızca parlak uçlar (güneş, lambalar) yumuşar
   renderer.toneMapping = THREE.NeutralToneMapping;
-  const camera = new THREE.PerspectiveCamera(settings.fov, innerWidth / innerHeight, 0.1, 260);
+  // Uzak: büyük haritanın bir ucundan ufuktaki dağlar görünsün
+  const camera = new THREE.PerspectiveCamera(settings.fov, innerWidth / innerHeight, 0.1, 460);
   life.onStop(() => {
     renderer.setAnimationLoop(null);
     post?.dispose();
@@ -178,6 +179,7 @@ async function start(): Promise<void> {
 
   // Debug: `?at=x,z,yön` ile istenen noktada başla (ekran görüntüsü, bölge testi).
   const atParam = params.has("debug") ? params.get("at") : null;
+  const birdsEye = params.has("debug") && params.has("harita");
   const at = atParam ? atParam.split(",").map(Number) : [];
   if (at.length >= 2 && at.every(Number.isFinite)) me.teleport(at[0], at[1], at[2] ?? Math.PI);
 
@@ -777,6 +779,13 @@ async function start(): Promise<void> {
     features.pushExtras(time, dt);
     avatars.end();
     me.updateCamera(camera, dt);
+    // Debug: `?debug&harita` bütün haritayı yukarıdan gösterir (yerleşim kontrolü)
+    if (birdsEye) {
+      camera.position.set(-5, 300, 150);
+      camera.lookAt(-5, 0, 30);
+      const fog = world.scene.fog as THREE.Fog | null;
+      if (fog) [fog.near, fog.far] = [600, 1200];
+    }
     features.update(time, dt, now);
     if (me.driving) {
       me.aimAt = aimRay(camera, aimPoint);

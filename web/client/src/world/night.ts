@@ -207,6 +207,7 @@ export class NightFx {
     }
     this.flies = fireflies(o.swarms, this.flyOpacity);
     this.moon = moonMesh(o.moonDir, o.skyRadius, this.moonOpacity);
+    this.moon.userData.sky = true;
     this.group.add(this.pools.mesh, this.flies, this.moon);
     this.order = this.lamps.map((_, i) => i);
   }

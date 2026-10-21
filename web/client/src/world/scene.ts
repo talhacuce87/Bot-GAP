@@ -4,9 +4,9 @@
 // yalnızca oyuncunun çevresindeki kutuda, uzakta zemin lekeleri devralır.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { WORLD_RADIUS } from "../../../shared/constants";
+import { WORLD_BOUNDS } from "../../../shared/constants";
 import type { Weather } from "../../../shared/protocol";
-import { KAHVEHANE, PITCH } from "../../../shared/zones";
+import { BRIDGE, CAVE, HALL, KAHVEHANE, LAKE, PLAZA, RIVER, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
 import { HOOD_BOX } from "../../../shared/build";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
@@ -19,7 +19,10 @@ import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUnifor
 import { kahvehane } from "./kahvehane";
 import { type Pitch, pitch } from "./pitch";
 import { djBooth, type StageLights, stageLights, stageTruss } from "./stageFx";
-import { addRipple, dungeon, GROVE, grove, GROVE_SIGN, POND, pond, signPost, steppingStones, waterEnv, waterMaterial } from "./zones";
+import { addRipple, dungeon, GROVE, grove, GROVE_SIGN, GROVE_SIGN_RY, POND, pond, signPost, steppingStones, waterEnv, waterMaterial } from "./zones";
+import { BRIDGE_AXES, buildTerrain, groundY, inCave, mountainHeight, riverMesh, terrainColliders, walkable, WATER_Y, waterfallMesh } from "./terrain";
+import { hall } from "./hall";
+import { cave } from "./cave";
 import { FAME } from "./fame";
 import { SAKURA, SAKURA_CONFIG, sakuraGarden, type SakuraGarden } from "./sakura";
 import { TANK_PARK } from "../../../shared/tank";
@@ -82,17 +85,17 @@ const SEASON_LOOK: Record<Season, { ground: [string, number]; oak: string[]; pin
   spring: {
     ground: ["#64a84a", 0.3], oak: ["#6ab24a", "#7cc257", "#5c9e40"], pine: ["#3f7a3a", "#4c8c42"],
     sakura: ["#f7a3bd", "#fbbcd0", "#f08aac", "#ffd3e1"], bush: ["#5a9a40", "#6fb04e"],
-    flowers: ["#f4f1e6", "#f7d64a", "#e85a6f", "#b48ae8", "#f59a3c", "#ff9ec4"], flowerClusters: 140, tufts: 6500,
+    flowers: ["#f4f1e6", "#f7d64a", "#e85a6f", "#b48ae8", "#f59a3c", "#ff9ec4"], flowerClusters: 210, tufts: 9500,
   },
   summer: {
     ground: ["#6f9a4a", 0], oak: ["#5c9a3f", "#6aa847", "#4f8a37"], pine: ["#3f7a3a", "#4c8c42"],
     sakura: ["#f7a3bd", "#fbbcd0", "#f08aac", "#ffd3e1"], bush: ["#4f8a3a", "#5f9c45"],
-    flowers: ["#f4f1e6", "#f7d64a", "#e85a6f", "#b48ae8", "#f59a3c"], flowerClusters: 80, tufts: 6500,
+    flowers: ["#f4f1e6", "#f7d64a", "#e85a6f", "#b48ae8", "#f59a3c"], flowerClusters: 120, tufts: 9500,
   },
   autumn: {
     ground: ["#8c9147", 0.35], oak: ["#d9822b", "#e0a93a", "#c4561f"], pine: ["#3d7039", "#4a8040"],
     sakura: ["#d97a4a", "#e8955a", "#c9603c", "#f0b070"], bush: ["#9a7a32", "#b8862f"],
-    flowers: ["#d9822b", "#c4561f", "#e0a93a", "#a8442a", "#b8862f"], flowerClusters: 150, tufts: 5000,
+    flowers: ["#d9822b", "#c4561f", "#e0a93a", "#a8442a", "#b8862f"], flowerClusters: 220, tufts: 7500,
   },
   winter: {
     ground: ["#e4eaef", 0.82], oak: ["#e6ecef", "#d7dfe3", "#f1f4f6"], pine: ["#3c6a3a", "#e2e9ec"],
@@ -127,6 +130,8 @@ export const SCREEN_H = SCREEN_W * (9 / 16);
 const AMPHI_CENTER_Z = -46;
 const AMPHI_ROWS = 6;
 const SKY = new THREE.Color("#a9cfee");
+/** Oyun alanının ortası: ufuktaki dağlar ve bulutlar bunun çevresinde. */
+const CENTER = { x: (WORLD_BOUNDS.minX + WORLD_BOUNDS.maxX) / 2, z: (WORLD_BOUNDS.minZ + WORLD_BOUNDS.maxZ) / 2 };
 
 const tmp = new THREE.Color();
 
@@ -160,11 +165,13 @@ function screenTexture(): THREE.CanvasTexture {
 }
 
 /** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
-const DIRECTIONS = ["↑ SİNEMA · DJ", "SAKURA BAHÇESİ ↗", "← ZİNDAN", "↙ MAHALLE (İNŞA)", "MANGAL →", "↙ ŞÖHRET KÜRSÜSÜ", "↙ KAHVEHANE", "↓ FUTBOL SAHASI", "GÖLET ↘", "↖ TANK"];
+/** Meydandaki yön tabelası (doğma noktasından kuzeye bakana göre oklar). */
+const DIRECTIONS = ["↑ KAHVEHANE · GÖL", "↗ MAHALLE (İNŞA)", "↗ SİNEMA · DJ", "↗ SAKURA BAHÇESİ", "→ ŞÖHRET KÜRSÜSÜ", "→ KÖPRÜ · KAPALI SAHA", "→ ŞELALE · ZİNDAN", "→ TANK", "↓ MANGAL"];
 const SIGN_DUNGEON = 0;
 const SIGN_GROVE = 1;
 const SIGN_KAHVE = 2;
-const SIGN_DIR = 3;
+const SIGN_HALL = 3;
+const SIGN_DIR = 4;
 
 interface SignSpec {
   at: THREE.Matrix4;
@@ -193,6 +200,7 @@ function signsMesh(specs: SignSpec[]): THREE.Mesh {
     board(SIGN_DUNGEON, "#2a2c31", "#141518", "ZİNDAN", "#e8d9b0", "900 78px system-ui, sans-serif");
     board(SIGN_GROVE, "#a8743e", "#5b3f25", "LAGER'İN MANGALI", "#fff3dc", "800 52px system-ui, sans-serif");
     board(SIGN_KAHVE, "#7a2622", "#3d1512", "☕ KAHVEHANE", "#f6e7c8", "900 64px system-ui, sans-serif");
+    board(SIGN_HALL, "#1f2a3d", "#e8ecf2", "⚽ KAPALI SAHA", "#ffffff", "900 66px system-ui, sans-serif");
     DIRECTIONS.forEach((t, i) => board(SIGN_DIR + i, "#d0a56c", "#6b4a2b", t, "#2b1d10", "800 54px system-ui, sans-serif"));
   });
   const plane = ({ at, w, h, cell }: SignSpec) => {
@@ -211,7 +219,7 @@ function signsMesh(specs: SignSpec[]): THREE.Mesh {
 
 /** Meydandaki yön tabelası: doğma noktasına bakan, üst üste oklu levhalar. */
 function directionPost(b: Builder): SignSpec[] {
-  const x = 3.6, z = 5.2;
+  const x = PLAZA.x + 3.6, z = PLAZA.z + 5.2;
   b.add(part(new THREE.CylinderGeometry(0.08, 0.1, 3.7, 6), "#5b3f25", mat(x, 1.85, z)));
   b.add(part(new THREE.ConeGeometry(0.16, 0.25, 6), "#5b3f25", mat(x, 3.8, z)));
   b.colliders.circle(x, z, 0.15);
@@ -232,72 +240,56 @@ function groundColor(x: number, z: number, out: THREE.Color): THREE.Color {
   // Sakura bahçesi: daha gür, canlı yeşil
   const ds = Math.hypot(x - SAKURA.x, z - SAKURA.z);
   if (ds < SAKURA_CONFIG.radius + 2) out.lerp(tmp.set("#5e9a3e"), Math.min(1, (SAKURA_CONFIG.radius + 2 - ds) / 3) * 0.75);
-  const dd = Math.hypot(x + 55, z - 5);
-  if (dd < 11) out.lerp(tmp.set("#6b6f55"), (1 - dd / 11) * 0.6);
   // Mevsim: sonbaharda sararır, kışın kar (lekeli), baharda canlanır
   const [tint, k] = SEASON_LOOK[SEASON].ground;
   if (k) out.lerp(tmp.set(tint), SEASON === "winter" ? Math.min(1, k + n * 0.08) : k);
   return out;
 }
 
-/** Sınırın ötesinde zemin hafifçe yükselir: ufuk düz bir çizgi olmasın. */
-function heightAt(x: number, z: number): number {
-  const r = Math.hypot(x, z);
-  if (r <= WORLD_RADIUS + 4) return 0;
-  return Math.min(6, (r - WORLD_RADIUS - 4) * 0.18) + Math.sin(x * 0.3) * Math.cos(z * 0.25) * 0.6 * Math.min(1, (r - WORLD_RADIUS - 4) / 4);
-}
+/** Zeminin (mesh'in) yüksekliği: dağlar, su çanakları, sınırın ötesindeki tepeler (terrain.ts). */
+const heightAt = groundY;
 
-function ground(b: Builder): void {
-  const geo = new THREE.RingGeometry(0.01, 210, 80, 28);
-  geo.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
-  const pos = geo.attributes.position;
-  const colors = new Float32Array(pos.count * 3);
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i);
-    pos.setY(i, heightAt(x, z));
-    groundColor(x, z, tmp).toArray(colors, i * 3);
-  }
-  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geo.deleteAttribute("uv");
-  geo.computeVertexNormals();
-  b.add(geo.toNonIndexed());
+/** Kenarda: sınırın içinde mi (dışında ağaçlar çarpışmasız, zemin lekesiz). */
+function inBounds(x: number, z: number, pad = 0): boolean {
+  const w = WORLD_BOUNDS;
+  return x > w.minX + pad && x < w.maxX - pad && z > w.minZ + pad && z < w.maxZ - pad;
 }
 
 function plaza(b: Builder): void {
-  b.add(part(new THREE.CircleGeometry(10, 32), "#c9b99a", flatMat(0, 0.02, 0), 0.06, b.rand));
-  b.add(part(new THREE.RingGeometry(10, 10.6, 32, 1), "#a8977a", flatMat(0, 0.03, 0)));
+  const { x: px, z: pz } = PLAZA;
+  b.add(part(new THREE.CircleGeometry(10, 32), "#c9b99a", flatMat(px, 0.02, pz), 0.06, b.rand));
+  b.add(part(new THREE.RingGeometry(10, 10.6, 32, 1), "#a8977a", flatMat(px, 0.03, pz)));
   // Merkez desen: iç içe halkalar
-  b.add(part(new THREE.RingGeometry(3.2, 3.6, 24, 1), "#b3a383", flatMat(0, 0.025, 0)));
-  b.add(part(new THREE.RingGeometry(6.4, 6.7, 28, 1), "#b3a383", flatMat(0, 0.025, 0)));
-  // Sinemaya giden taş döşeli yol (amfinin orta koridoruna kadar)
+  b.add(part(new THREE.RingGeometry(3.2, 3.6, 24, 1), "#b3a383", flatMat(px, 0.025, pz)));
+  b.add(part(new THREE.RingGeometry(6.4, 6.7, 28, 1), "#b3a383", flatMat(px, 0.025, pz)));
+  b.clearCircle(px, pz, 11.2);
+  // Sinemanın önündeki taş döşeli yol (amfinin orta koridoruna kadar)
   b.add(part(new THREE.PlaneGeometry(3, 23), "#c9b99a", flatMat(0, 0.02, -22), 0.06, b.rand));
-  b.clearCircle(0, 0, 11.2);
   b.clearBox(-2.2, 2.2, -34, -9);
 
   // Çeşme
-  b.add(part(new THREE.CylinderGeometry(2.2, 2.4, 0.6, 14), "#9aa3ad", mat(0, 0.3, 0)));
-  b.add(part(new THREE.CylinderGeometry(0.35, 0.5, 1.6, 8), "#9aa3ad", mat(0, 0.8, 0)));
-  b.add(part(new THREE.CylinderGeometry(0.9, 0.6, 0.2, 10), "#a9b2bc", mat(0, 1.6, 0)));
-  b.add(part(new THREE.CylinderGeometry(0.12, 0.16, 0.22, 6), "#8a939d", mat(0, 1.8, 0))); // fıskiye ağzı
+  b.add(part(new THREE.CylinderGeometry(2.2, 2.4, 0.6, 14), "#9aa3ad", mat(px, 0.3, pz)));
+  b.add(part(new THREE.CylinderGeometry(0.35, 0.5, 1.6, 8), "#9aa3ad", mat(px, 0.8, pz)));
+  b.add(part(new THREE.CylinderGeometry(0.9, 0.6, 0.2, 10), "#a9b2bc", mat(px, 1.6, pz)));
+  b.add(part(new THREE.CylinderGeometry(0.12, 0.16, 0.22, 6), "#8a939d", mat(px, 1.8, pz))); // fıskiye ağzı
   // Üstüne çıkılır: önce havuz kenarı, oradan tepedeki çanak
-  b.colliders.circle(0, 0, 2.4, 0.6);
-  b.colliders.circle(0, 0, 0.9, 1.7);
+  b.colliders.circle(px, pz, 2.4, 0.6);
+  b.colliders.circle(px, pz, 0.9, 1.7);
 
   // Saksılar: meydan kenarında çiçekli
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
     const x = Math.sin(a) * 9.2, z = Math.cos(a) * 9.2;
     if (z < -8 || Math.abs(z - 5) < 1.5 || (Math.abs(x) < 2 && z > 0) || x > 8) continue; // yolları, doğma noktasını kapatma
-    b.add(part(new THREE.CylinderGeometry(0.45, 0.35, 0.5, 8), "#b5643c", mat(x, 0.25, z)));
-    b.prop("bush", mat(x, 0.62, z, a, 0.5, 0.45, 0.5));
-    b.colliders.circle(x, z, 0.45, 0.9);
+    b.add(part(new THREE.CylinderGeometry(0.45, 0.35, 0.5, 8), "#b5643c", mat(px + x, 0.25, pz + z)));
+    b.prop("bush", mat(px + x, 0.62, pz + z, a, 0.5, 0.45, 0.5));
+    b.colliders.circle(px + x, pz + z, 0.45, 0.9);
   }
 
   // Lambalar
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-    const x = Math.sin(a) * 11, z = Math.cos(a) * 11;
-    if (z < -9) continue;
+    const x = px + Math.sin(a) * 11, z = pz + Math.cos(a) * 11;
     b.prop("post", mat(x, 0, z));
     b.prop("bulb", mat(x, 2.7, z));
     b.colliders.circle(x, z, 0.15);
@@ -384,24 +376,48 @@ const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _s = new THREE.Vector3();
 
-/** Orman kümeleri: harita büyüyünce boş çayır yerine yer yer sık ağaçlık. [x, z, yarıçap] */
+/** Orman kümeleri: boş çayır yerine yer yer sık ağaçlık. [x, z, yarıçap] */
 const FOREST_CLUSTERS: [number, number, number][] = [
-  [48, -48, 13], [-50, -42, 12], [-62, 60, 13], [62, 46, 11], [0, -84, 14], [-84, -8, 10], [84, -18, 10], [-16, 82, 11],
+  [-124, -18, 11], [-62, -2, 7], [30, -72, 13], [96, -62, 12], [104, 46, 10], [-126, 76, 8], [-38, 80, 8], [20, 16, 9], [-30, -70, 10],
 ];
 
-/** Ağaç, kaya ve çalıları serper: dış sınır halkası, orman kümeleri, açık alanlara dağınık ağaçlar. */
+/** Ağaç, kaya ve çalıları serper: sınırın dışında iki sıra, dağ yamaçlarında çam, orman kümeleri, dağınık ağaçlar. */
 function nature(b: Builder): void {
-  const tree = (x: number, z: number, s: number, collide: boolean) => {
-    b.prop(b.rand() > 0.45 ? "pine" : "oak", mat(x, heightAt(x, z) - 0.1, z, b.rand() * 6, s));
+  const W = WORLD_BOUNDS;
+  const tree = (x: number, z: number, s: number, collide: boolean, kind?: PropKind) => {
+    b.prop(kind ?? (b.rand() > 0.45 ? "pine" : "oak"), mat(x, heightAt(x, z) - 0.1, z, b.rand() * 6, s));
     if (collide) b.colliders.circle(x, z, 0.35 * s);
-    if (Math.hypot(x, z) < WORLD_RADIUS + 4) b.shadow(x, z, 1.4 * s);
+    if (inBounds(x, z, -4) && heightAt(x, z) < 0.3) b.shadow(x, z, 1.4 * s);
     b.clearCircle(x, z, 0.6);
   };
-  // Dış sınır: iki sıra, arkadaki daha seyrek
-  for (let i = 0; i < 170; i++) {
-    const a = (i / 170) * Math.PI * 2 + b.rand() * 0.03;
-    const r = WORLD_RADIUS + 2 + b.rand() * (i % 3 ? 8 : 18);
-    tree(Math.sin(a) * r, Math.cos(a) * r, 0.9 + b.rand() * 1.0, false);
+  const rand = (a: number, c: number) => a + b.rand() * (c - a);
+  // Sınırın dışı: kuzey, batı ve doğu kenarında iki sıra (güneyde dağ var; dağın batısındaki ormanlık hariç)
+  const edge = (n: number, at: (t: number, out: number) => [number, number]) => {
+    for (let i = 0; i < n; i++) {
+      const out = 2 + b.rand() * (i % 3 ? 8 : 18);
+      const [x, z] = at((i + b.rand() * 0.5) / n, out);
+      if (mountainHeight(x, z) > 1) continue;
+      tree(x, z, 0.9 + b.rand() * 1.0, false);
+    }
+  };
+  edge(70, (t, o) => [W.minX + (W.maxX - W.minX) * t, W.minZ - o]);
+  edge(70, (t, o) => [W.minX - o, W.minZ + (W.maxZ - W.minZ) * t]);
+  edge(70, (t, o) => [W.maxX + o, W.minZ + (W.maxZ - W.minZ) * t]);
+  edge(18, (t, o) => [W.minX + 50 * t, W.maxZ + o]);
+  // Dağ yamaçlarında çamlar (mağara tavanının üstü boş kalır: içeriden bakınca havada durmasın)
+  for (let i = 0, n = 0; n < 230 && i < 4000; i++) {
+    const x = rand(-92, W.maxX + 30), z = rand(88, W.maxZ + 40);
+    const h = mountainHeight(x, z);
+    if (h < 0.8 || h > 26) continue;
+    if (Math.hypot((x - CAVE.x) / (CAVE.rx + 6), (z - CAVE.z) / (CAVE.rz + 6)) < 1) continue;
+    const tdx = x - TUNNEL[1][0], tdz = z - TUNNEL[1][1];
+    if (Math.hypot(tdx, tdz) < 22) continue;
+    if (Math.abs(x - WATERFALL.x) < 6 && z < WATERFALL.z + 12) continue;
+    // Dik yamaçta değil
+    const slope = Math.abs(mountainHeight(x + 1.5, z) - mountainHeight(x - 1.5, z)) + Math.abs(mountainHeight(x, z + 1.5) - mountainHeight(x, z - 1.5));
+    if (slope > 5) continue;
+    tree(x, z, 0.8 + b.rand() * 0.8, false, "pine");
+    n++;
   }
   for (const [cx, cz, cr] of FOREST_CLUSTERS) {
     const n = Math.round(cr * 2.1);
@@ -413,32 +429,36 @@ function nature(b: Builder): void {
       placed++;
     }
   }
-  for (let placed = 0, tries = 0; placed < 90 && tries < 2000; tries++) {
-    const a = b.rand() * Math.PI * 2;
-    const r = 14 + b.rand() * (WORLD_RADIUS - 16);
-    const x = Math.sin(a) * r, z = Math.cos(a) * r;
-    if (!b.isClear(x, z) || Math.hypot(x, z - 8) < 6) continue;
+  const anywhere = (pad: number): [number, number] => [rand(W.minX + pad, W.maxX - pad), rand(W.minZ + pad, W.maxZ - pad)];
+  for (let placed = 0, tries = 0; placed < 150 && tries < 4000; tries++) {
+    const [x, z] = anywhere(4);
+    if (!b.isClear(x, z) || Math.hypot(x - SPAWN.x, z - SPAWN.z) < 8) continue;
     tree(x, z, 0.8 + b.rand() * 0.5, true);
     placed++;
   }
-  for (let i = 0, n = 0; n < 90 && i < 1500; i++) {
-    const a = b.rand() * Math.PI * 2;
-    const r = 12 + b.rand() * (WORLD_RADIUS - 8);
-    const x = Math.sin(a) * r, z = Math.cos(a) * r;
+  for (let i = 0, n = 0; n < 150 && i < 3000; i++) {
+    const [x, z] = anywhere(2);
     if (!b.isClear(x, z)) continue;
     const s = 0.5 + b.rand() * 1.2;
     b.prop("rock", mat(x, 0.15 * s, z, b.rand() * 6, s, s * 0.7, s));
-    if (r < WORLD_RADIUS) b.colliders.circle(x, z, 0.5 * s, 0.55 * s);
+    b.colliders.circle(x, z, 0.5 * s, 0.55 * s);
     n++;
   }
-  for (let i = 0, n = 0; n < 160 && i < 2500; i++) {
-    const a = b.rand() * Math.PI * 2;
-    const r = 12 + b.rand() * (WORLD_RADIUS - 8);
-    const x = Math.sin(a) * r, z = Math.cos(a) * r;
+  // Dağ eteğinde kaya döküntüsü
+  for (let i = 0, n = 0; n < 70 && i < 3000; i++) {
+    const x = rand(-90, W.maxX), z = rand(86, 104);
+    const h = mountainHeight(x, z);
+    if (h < 0.2 || h > 3 || Math.abs(x - WATERFALL.x) < 8) continue;
+    const s = 0.6 + b.rand() * 1.4;
+    b.prop("rock", mat(x, groundY(x, z) + 0.1 * s, z, b.rand() * 6, s, s * 0.7, s));
+    n++;
+  }
+  for (let i = 0, n = 0; n < 260 && i < 5000; i++) {
+    const [x, z] = anywhere(2);
     if (!b.isClear(x, z)) continue;
     const s = 0.5 + b.rand() * 0.6;
     b.prop("bush", mat(x, 0.25 * s, z, b.rand() * 6, s, s * 0.75, s));
-    if (r < WORLD_RADIUS) b.colliders.circle(x, z, 0.45 * s, 0.75 * s);
+    b.colliders.circle(x, z, 0.45 * s, 0.75 * s);
     b.shadow(x, z, 0.9 * s);
     n++;
   }
@@ -448,6 +468,27 @@ function nature(b: Builder): void {
       const s = 0.6 + b.rand() * 0.3;
       b.prop("bush", mat(sx * (23 + b.rand()), 0.25 * s, -20 - i * 3.2, b.rand() * 6, s, s * 0.75, s));
     }
+  }
+}
+
+/** Nehrin üstündeki ahşap köprüler: kalaslar, iki yanda korkuluk, uçlarda taş ayak (yürünürlük terrain.ts'te). */
+function bridges(b: Builder): void {
+  const { half, w } = BRIDGE;
+  for (const a of BRIDGE_AXES) {
+    const ry = Math.atan2(a.ux, a.uz);
+    const px = a.uz, pz = -a.ux; // köprüye dik (yan)
+    const at = (t: number, side: number, y: number) => mat(a.x + a.ux * t + px * side, y, a.z + a.uz * t + pz * side, ry);
+    for (let t = -half; t <= half + 0.01; t += 0.55) b.add(part(new THREE.BoxGeometry(w, 0.1, 0.5), b.rand() > 0.5 ? "#9b7451" : "#8f6640", at(t, 0, 0.03), 0.08, b.rand));
+    for (const side of [-1, 1]) {
+      const sw = side * (w / 2 - 0.12);
+      b.add(part(new THREE.BoxGeometry(0.26, 0.4, half * 2 + 0.6), "#5b3f25", at(0, sw, -0.17)));
+      for (let t = -half; t <= half + 0.01; t += 1.7) b.add(part(new THREE.BoxGeometry(0.14, 1.05, 0.14), "#6b4a2b", at(t, sw, 0.55)));
+      b.add(part(new THREE.BoxGeometry(0.12, 0.12, half * 2), "#7b5533", at(0, sw, 1.05)));
+      b.add(part(new THREE.BoxGeometry(0.08, 0.08, half * 2), "#7b5533", at(0, sw, 0.6)));
+    }
+    // Uçlarda taş ayak
+    for (const e of [-1, 1]) b.add(part(new THREE.BoxGeometry(w + 0.8, 0.5, 1.2), "#8e9196", at(e * (half - 0.2), 0, -0.2), 0.1, b.rand));
+    b.clearCircle(a.x, a.z, half + 2);
   }
 }
 
@@ -464,7 +505,7 @@ function tankPark(b: Builder): void {
   b.clearCircle(x, z, 6.5);
 }
 
-/** Meydandan her bölgeye taş yol; kenarında aralıklı lambalar. */
+/** Bölgeler arası taş yollar (köprülerden geçer); kenarında aralıklı lambalar. */
 function paths(b: Builder): void {
   const lampEvery = 13;
   const path = (ax: number, az: number, bx: number, bz: number) => {
@@ -474,24 +515,45 @@ function paths(b: Builder): void {
     for (let d = lampEvery * 0.6, k = 0; d < len - 3; d += lampEvery, k++) {
       const side = k % 2 ? 1.7 : -1.7; // zikzak: iki yanı da aydınlansın
       const x = ax + ux * d - uz * side, z = az + uz * d + ux * side;
+      if (!walkable(x, z)) continue;
       b.prop("post", mat(x, 0, z));
       b.prop("bulb", mat(x, 2.7, z));
       b.colliders.circle(x, z, 0.15);
     }
   };
-  const radial = (tx: number, tz: number, endPad: number) => {
-    const d = Math.hypot(tx, tz), ux = tx / d, uz = tz / d;
-    path(ux * 10.9, uz * 10.9, tx - ux * endPad, tz - uz * endPad);
+  /** Kırık çizgi boyunca yol. */
+  const route = (...pts: [number, number][]) => {
+    for (let i = 0; i < pts.length - 1; i++) path(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
   };
-  path(-9.7, 5, -48.6, 5); // zindan
-  path(-26, 5.6, (HOOD_BOX.maxX - 1), HOOD_BOX.minZ + 1); // zindan yolundan mahalleye
-  path(9.7, 5, GROVE.x - 7, GROVE.z); // mangal ormanı
-  radial(POND.x, POND.z, 9.2);
-  radial(FAME.x, FAME.z, 3.6);
-  radial(SAKURA.x, SAKURA.z, SAKURA_CONFIG.radius + 0.6);
-  radial(TANK_PARK.x, TANK_PARK.z, 5);
-  radial(KAHVEHANE.x, KAHVEHANE.z, 8.4);
-  radial(PITCH.x, PITCH.z - PITCH.hz, 2.5);
+  /** Köprünün iki ucu (meydan tarafı önce: batı yakası). */
+  const ends = (i: number): [[number, number], [number, number]] => {
+    const a = BRIDGE_AXES[i], e = BRIDGE.half + 0.6;
+    const p: [number, number] = [a.x - a.ux * e, a.z - a.uz * e], q: [number, number] = [a.x + a.ux * e, a.z + a.uz * e];
+    return p[0] < q[0] ? [p, q] : [q, p];
+  };
+  const [b1w, b1e] = ends(0), [b2w, b2e] = ends(1);
+  const P = PLAZA, K = KAHVEHANE, H = HALL;
+  // Meydan → kahvehane → göl
+  route([P.x, P.z - 10.9], [K.x + 1, K.z + K.hd + 1.4]);
+  route([K.x - 1, K.z - K.hd - 1.6], [LAKE.x - 4, LAKE.z + LAKE.r + 2.6]);
+  // Meydan → mahalle (arsaların güneybatı köşesi)
+  route([P.x + 7.7, P.z - 7.7], [HOOD_BOX.minX + 2, HOOD_BOX.maxZ + 1.5]);
+  // Kahvehane → 1. köprü → sinema
+  route([K.x + K.hw + 1.2, K.z - 2], [b1w[0], b1w[1]]);
+  route([b1e[0], b1e[1]], [-6, -6], [0, -9]);
+  // Meydan → 2. köprü → kapalı saha; köprüden şelaleye ve mağaraya
+  route([P.x + 10.9, P.z], [b2w[0], b2w[1]]);
+  route([b2e[0], b2e[1]], [H.x - H.hw - 1.5, H.z]);
+  route([b2e[0], b2e[1]], [WATERFALL.x + 10, RIVER[0][1] - 6]);
+  route([H.x - H.hw + 2, H.z - H.hd - 1.5], [TUNNEL[0][0], TUNNEL[0][1] - 2]);
+  route([H.x - H.hw - 1.5, H.z + 4], [TUNNEL[0][0] - 1, TUNNEL[0][1] - 1]);
+  // Meydan → kürsü, meydan → mangal
+  route([P.x + 7.9, P.z + 7.6], [FAME.x - 3.4, FAME.z - 0.6]);
+  route([P.x - 2, P.z + 10.9], [GROVE_SIGN.x, GROVE_SIGN.z - 1.5]);
+  // Sinema → sakura; sinema → tank → saha
+  route([12, -12], [SAKURA.x - 8.4, SAKURA.z + 6.6]);
+  route([22, -14], [TANK_PARK.x - 5, TANK_PARK.z]);
+  route([TANK_PARK.x, TANK_PARK.z + 5], [H.x + 4, H.z - H.hd - 1.5]);
 }
 
 function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matrix4[]): void {
@@ -520,19 +582,16 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matri
   const look = SEASON_LOOK[SEASON];
   const palette = look.flowers.map((c) => new THREE.Color(c));
   // Büyük haritada yoğunluk aynı; uzaktakiler shader'da gömüldüğü için maliyet sınırlı.
-  for (let i = 0; i < 14000 && grass.length < look.tufts; i++) {
-    const a = b.rand() * Math.PI * 2;
-    const r = Math.sqrt(b.rand()) * (WORLD_RADIUS + 3);
-    const x = Math.sin(a) * r, z = Math.cos(a) * r;
+  const W = WORLD_BOUNDS;
+  for (let i = 0; i < 24000 && grass.length < look.tufts; i++) {
+    const x = W.minX + b.rand() * (W.maxX - W.minX), z = W.minZ + b.rand() * (W.maxZ - W.minZ);
     if (!b.isClear(x, z)) continue;
     const s = 0.7 + b.rand() * 0.8;
     grass.push(mat(x, 0, z, b.rand() * 6, s));
   }
   // Çiçekler küme küme
   for (let c = 0; c < look.flowerClusters; c++) {
-    const a = b.rand() * Math.PI * 2;
-    const r = 11 + b.rand() * (WORLD_RADIUS - 10);
-    const cx = Math.sin(a) * r, cz = Math.cos(a) * r;
+    const cx = W.minX + 4 + b.rand() * (W.maxX - W.minX - 8), cz = W.minZ + 4 + b.rand() * (W.maxZ - W.minZ - 8);
     const color = palette[Math.floor(b.rand() * palette.length)];
     for (let k = 0; k < 12; k++) {
       const x = cx + (b.rand() - 0.5) * 2.4, z = cz + (b.rand() - 0.5) * 2.4;
@@ -677,12 +736,12 @@ function mountains(b: Builder): THREE.Mesh {
     g.setAttribute("color", new THREE.BufferAttribute(cols, 3));
     parts.push(g);
   };
-  for (let i = 0; i < 52; i++) {
-    const a = (i / 52) * Math.PI * 2 + b.rand() * 0.1;
-    const dist = 178 + b.rand() * 32;
+  for (let i = 0; i < 64; i++) {
+    const a = (i / 64) * Math.PI * 2 + b.rand() * 0.1;
+    const dist = 215 + b.rand() * 35;
     const h = 30 + b.rand() * 48;
     const rad = 16 + b.rand() * 18;
-    const x = Math.sin(a) * dist, z = Math.cos(a) * dist;
+    const x = CENTER.x + Math.sin(a) * dist, z = CENTER.z + Math.cos(a) * dist;
     peak(x, z, h, rad, -2);
     // Yan zirveler: aynı sırtta, alçak
     const tx = Math.cos(a), tz = -Math.sin(a);
@@ -704,10 +763,10 @@ function clouds(b: Builder): THREE.InstancedMesh {
     part(new THREE.IcosahedronGeometry(2.2, 0), "#f4f7fb", mat(-3, -0.5, -0.4, 0, 1.2, 0.6, 1)),
   ]);
   const mats: THREE.Matrix4[] = [];
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0; i < 40; i++) {
     const a = b.rand() * Math.PI * 2;
-    const r = 30 + b.rand() * 140;
-    mats.push(mat(Math.sin(a) * r, 55 + b.rand() * 25, Math.cos(a) * r, b.rand() * 6, 1 + b.rand() * 1.2));
+    const r = 30 + b.rand() * 190;
+    mats.push(mat(CENTER.x + Math.sin(a) * r, 55 + b.rand() * 25, CENTER.z + Math.cos(a) * r, b.rand() * 6, 1 + b.rand() * 1.2));
   }
   const m = instanced(puff, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, fog: false, emissive: "#9aa9bd" }), mats);
   m.matrixAutoUpdate = true;
@@ -726,10 +785,10 @@ const SPILL_TIME = Math.sqrt((2 * (RIM_Y - BASIN_Y)) / GRAVITY);
 /** Taşan suyun havuza değdiği çember: halkalar buradan yayılır. */
 const SPILL_LAND_R = RIM_R + SPILL_V * SPILL_TIME;
 
-function fountain(): { parts: THREE.Object3D[]; light: { value: number } } {
-  const center = { value: new THREE.Vector2(0, 0) };
+function fountain(px: number, pz: number): { parts: THREE.Object3D[]; light: { value: number } } {
+  const center = { value: new THREE.Vector2(px, pz) };
   const disc = (y: number, r: number, ringR: number, hole: number) => {
-    const m = new THREE.Mesh(new THREE.CircleGeometry(r, 28).applyMatrix4(flatMat(0, y, 0)), waterMaterial(0, 0, r, center, ringR, hole));
+    const m = new THREE.Mesh(new THREE.CircleGeometry(r, 28).applyMatrix4(flatMat(px, y, pz)), waterMaterial(px, pz, r, center, ringR, hole));
     m.matrixAutoUpdate = false;
     return m;
   };
@@ -794,6 +853,8 @@ function fountain(): { parts: THREE.Object3D[]; light: { value: number } } {
     depthWrite: false,
   });
   const drops = instanced(geo, material, Array.from({ length: n }, () => new THREE.Matrix4()));
+  drops.position.set(px, 0, pz);
+  drops.updateMatrix();
   drops.frustumCulled = false;
   drops.renderOrder = 2;
 
@@ -849,6 +910,8 @@ function smoke(at: THREE.Vector3): THREE.InstancedMesh {
 export function buildWorld(opts: WorldOptions = {}): World {
   SEASON = opts.season ?? seasonOf();
   const b = new Builder();
+  // Su, dağ, uçurum ve mağara: ağaç/çimen serpilmez
+  b.blocked = (x, z) => !walkable(x, z) || inCave(x, z);
   const scene = new THREE.Scene();
   scene.background = SKY.clone();
   scene.fog = new THREE.Fog(SKY, 55, 140);
@@ -871,6 +934,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
   // Gökyüzü kubbesi (tek draw call, sisten etkilenmez); su aynı renkleri yansıtır
   const sky = skyDome(240);
   scene.add(sky.mesh);
+  sky.mesh.userData.sky = true;
   waterEnv.uSkyH.value = sky.uniforms.uHorizon.value;
   waterEnv.uSkyT.value = sky.uniforms.uTop.value;
   waterEnv.uSunDir.value = sky.uniforms.uSunDir.value;
@@ -882,7 +946,20 @@ export function buildWorld(opts: WorldOptions = {}): World {
   /** Yağmurda zemin ıslanır (~40 sn), bitince yavaşça kurur (~4 dk). */
   let wetTarget = 0, lastTime = 0, weatherKnown = false;
 
-  ground(b);
+  const terrain = buildTerrain(groundColor);
+  b.add(terrain.ground);
+  terrainColliders(b.colliders);
+  scene.add(terrain.cap);
+  const river = riverMesh();
+  const falls = waterfallMesh();
+  const [poolX, poolZ] = RIVER[0];
+  const pool = new THREE.Mesh(
+    new THREE.CircleGeometry(WATERFALL.poolR + 0.6, 32).applyMatrix4(flatMat(poolX, WATER_Y + 0.012, poolZ)),
+    waterMaterial(poolX, poolZ, WATERFALL.poolR, { value: new THREE.Vector2(WATERFALL.x, WATERFALL.z - 1.2) }),
+  );
+  pool.matrixAutoUpdate = false;
+  scene.add(river, falls, pool);
+  bridges(b);
   plaza(b);
   const benches = amphitheatre(b);
   benches.castShadow = benches.receiveShadow = true;
@@ -890,8 +967,9 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const speakers = speakerCones();
   scene.add(speakers.mesh);
   const dz = dungeon(b);
+  const cv = cave(b);
   const gr = grove(b);
-  signPost(b, GROVE_SIGN.x + 0.1, GROVE_SIGN.z, 2.1);
+  signPost(b, GROVE_SIGN.x - Math.sin(GROVE_SIGN_RY) * 0.1, GROVE_SIGN.z - Math.cos(GROVE_SIGN_RY) * 0.1, 2.1, GROVE_SIGN_RY);
   const pd = pond(b);
   const garden = sakuraGarden(b);
   tankPark(b);
@@ -902,6 +980,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const kh = kahvehane(b);
   const field = pitch(b);
   scene.add(field.group);
+  const sports = hall(b);
+  scene.add(sports.upper);
   djBooth(b);
   stageTruss(b);
   const lights = stageLights();
@@ -925,8 +1005,10 @@ export function buildWorld(opts: WorldOptions = {}): World {
   scene.add(
     signsMesh([
       { at: dz.signAt, w: 2.8, h: 0.7, cell: SIGN_DUNGEON },
+      { at: cv.signAt, w: 3.4, h: 0.85, cell: SIGN_DUNGEON },
       { at: gr.signAt, w: 2.2, h: 0.55, cell: SIGN_GROVE },
-      { at: kh.signAt, w: 3.2, h: 0.8, cell: SIGN_KAHVE },
+      ...kh.signAt.map((at) => ({ at, w: 3.2, h: 0.8, cell: SIGN_KAHVE })),
+      { at: sports.signAt, w: 5.6, h: 1.4, cell: SIGN_HALL },
       ...dirSigns,
     ]),
   );
@@ -934,7 +1016,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const fame = new FameBoard();
   fame.group.traverse((o) => (o.castShadow = o instanceof THREE.InstancedMesh));
   scene.add(fame.group);
-  const fnt = fountain();
+  const fnt = fountain(PLAZA.x, PLAZA.z);
   scene.add(...fnt.parts);
   const smokeMesh = smoke(gr.smokeAt);
   scene.add(smokeMesh);
@@ -943,20 +1025,30 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const night = new NightFx({
     bulbs: b.props.bulb,
     flames: b.props.flame,
-    swarms: [...FOREST_CLUSTERS.slice(0, 6), [SAKURA.x, SAKURA.z, SAKURA_CONFIG.radius], [POND.x, POND.z, 11], [GROVE.x, GROVE.z, 10]],
+    swarms: [...FOREST_CLUSTERS.slice(0, 6), [SAKURA.x, SAKURA.z, SAKURA_CONFIG.radius], [POND.x, POND.z, POND.r + 4], [GROVE.x, GROVE.z, 10], [poolX, poolZ - 6, 8]],
     lights: opts.lamps ?? 6,
     skyRadius: 240,
     moonDir: MOON_DIR,
   });
   scene.add(night.group);
+  // Gök kubbesi, yıldızlar, kayan yıldızlar ve ay kamerayla taşınır: büyük haritanın kenarında da
+  // ufuk ve güneş/ay yönü doğru görünür (yönleri ışıkla aynı kalır).
+  scene.traverse((o) => {
+    if (!o.userData.sky) return;
+    o.frustumCulled = false;
+    o.onBeforeRender = (_r, _s, cam) => {
+      o.matrixWorld.setPosition(cam.position);
+    };
+  });
   // Kışın çimen karın altında
   const grass = opts.grass === false || SEASON === "winter"
     ? null
     : new GrassField(
         {
-          min: -(WORLD_RADIUS + 4),
-          size: (WORLD_RADIUS + 4) * 2,
-          allowed: (x, z) => (Math.hypot(x, z) < WORLD_RADIUS + 2 && b.isClear(x, z) ? 1 : 0),
+          // Kare maske: dikdörtgen alanı kaplar
+          min: WORLD_BOUNDS.minX - 4,
+          size: Math.max(WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX, WORLD_BOUNDS.maxZ - WORLD_BOUNDS.minZ) + 8,
+          allowed: (x, z) => (inBounds(x, z, -2) && b.isClear(x, z) ? 1 : 0),
           color: groundColor,
         },
         30000,
@@ -1008,14 +1100,17 @@ export function buildWorld(opts: WorldOptions = {}): World {
     seats: b.seats,
     fame,
     screen,
-    spawn: { x: 0, z: 8, rot: Math.PI },
+    spawn: { ...SPAWN },
     update(time: number, focus?: { x: number; z: number }) {
       timeUniform.value = time;
       const dt = Math.min(0.25, Math.max(0, time - lastTime));
       lastTime = time;
       const wet = wetUniform.value;
       wetUniform.value = wet < wetTarget ? Math.min(wetTarget, wet + dt / 40) : Math.max(wetTarget, wet - dt / 240);
-      night.update(time, env.lights, focus?.x ?? 0, focus?.z ?? 8);
+      night.update(time, env.lights, focus?.x ?? SPAWN.x, focus?.z ?? SPAWN.z);
+      // İçerideyken salonun çatısı ve mağaranın tavanı gizlenir: kamera içeriyi görsün
+      sports.upper.visible = !(focus && sports.inside(focus.x, focus.z));
+      terrain.cap.visible = !(focus && inCave(focus.x, focus.z));
       music += ((musicOn ? 1 : 0) - music) * 0.08;
       speakers.update(time, music);
       cloudMesh.rotation.y = time * 0.004;
@@ -1036,7 +1131,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
         const texel = (shadowHalf * 2) / sun.shadow.mapSize.x;
         _right.crossVectors(THREE.Object3D.DEFAULT_UP, dir).normalize();
         _up.crossVectors(dir, _right);
-        const fx = focus?.x ?? 0, fz = focus?.z ?? 8;
+        const fx = focus?.x ?? SPAWN.x, fz = focus?.z ?? SPAWN.z;
         const r = Math.round((_right.x * fx + _right.z * fz) / texel) * texel;
         const u = Math.round((_up.x * fx + _up.z * fz) / texel) * texel;
         const f = dir.x * fx + dir.z * fz;

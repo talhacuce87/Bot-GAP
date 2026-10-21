@@ -35,6 +35,8 @@ export class Builder {
   private keepOut: { x: number; z: number; r: number }[] = [];
   private keepOutBoxes: { minX: number; maxX: number; minZ: number; maxZ: number }[] = [];
   private keepOutSegs: number[] = []; // ax, az, bx, bz, r
+  /** Ağaç/çimen serpilmeyecek arazi (su, dağ); scene.ts terrain.ts'ten bağlar. */
+  blocked: ((x: number, z: number) => boolean) | null = null;
 
   add(geo: THREE.BufferGeometry): void {
     this.statics.push(geo);
@@ -62,6 +64,7 @@ export class Builder {
   }
 
   isClear(x: number, z: number): boolean {
+    if (this.blocked?.(x, z)) return false;
     for (const c of this.keepOut) if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return false;
     for (const b of this.keepOutBoxes) if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ) return false;
     const s = this.keepOutSegs;
