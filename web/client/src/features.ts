@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import { FLAG_RUNNING, FLAG_WALKING, vehicleOf, type Vehicle } from "../../shared/constants";
 import type { KickKind, MatchState } from "../../shared/protocol";
+import { assistedShot, attackSide, FINISH_RANGE, goalView } from "../../shared/football";
 import { DJ_BOOTH, DOCK, KICK_REACH, PITCH, POND_AREA, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
 import { type AvatarRenderer, type AvatarView, colorFor } from "./avatars/avatars";
 import { Companions } from "./avatars/companions";
@@ -445,8 +446,9 @@ export class Features {
     if (owner > 0 && owner !== this.c.net.you && ballD <= 1.7 && !me.seated) return [{ key: "f", label: "Müdahale 🦵", act: "tackle" }];
     if ((owner === this.c.net.you || (owner === 0 && ballD <= KICK_REACH)) && !me.seated) {
       const ch = this.charge;
+      const fin = this.finishing();
       return [
-        { key: "f", label: ch?.kind === "shot" ? "Şut… bırak ⚽" : "Pas · basılı tut: şut ⚽", act: "kick" },
+        { key: "f", label: ch?.kind === "shot" ? "Şut… bırak ⚽" : fin ? "Şut ⚽ (basılı: sert)" : "Pas · basılı tut: şut ⚽", act: "kick" },
         { key: "g", label: ch?.kind === "lob" ? "Aşırtma… bırak 🌙" : "Aşırtma 🌙", act: "lob" },
       ];
     }
@@ -476,7 +478,7 @@ export class Features {
     }
     if (act === "kick" || act === "lob") {
       // Şarj başlar: bırakınca vurulur (F'ye kısa dokunuş pas). Dokunmatikte hemen orta güçle.
-      if (this.c.input.touch) this.kick(0.55, act === "lob" ? "lob" : "shot", 0);
+      if (this.c.input.touch) this.kick(0.55, act === "lob" ? "lob" : this.finishing() ? "shot" : "pass");
       else this.charge = { key: act === "lob" ? "actG" : "actF", kind: act === "lob" ? "lob" : "shot", t: 0 };
       return true;
     }
@@ -521,18 +523,43 @@ export class Features {
     }
   }
 
-  /** Vuruş yönü: kameranın baktığı yatay yön (nişan almak kolay), birinci şahısta da aynı. */
-  private aimAngle(): number {
-    const dir = new THREE.Vector3();
-    this.c.camera.getWorldDirection(dir);
-    return Math.atan2(dir.x, dir.z);
+  /** Maçtaki takımım (yoksa null). */
+  private myTeam(): 0 | 1 | null {
+    const m = this.match, you = this.c.net.you;
+    return m ? (m.teams[0].includes(you) ? 0 : m.teams[1].includes(you) ? 1 : null) : null;
   }
 
-  /** `curve`: vururken yana basılıyorsa falso (-1 sol … 1 sağ). */
-  private kick(power: number, kind: KickKind, curve: number): void {
+  /** Hücum ettiğim kale ve ona göre durumum (top nerede, kaleye ne kadar dönüğüm). */
+  private attack(): { side: -1 | 1; dist: number; off: number } {
+    const { me, world } = this.c;
+    const b = world.pitch.ball;
+    const side = attackSide(this.myTeam(), b.x, b.z, me.rot);
+    return { side, ...goalView(side, b.x, b.z, me.rot) };
+  }
+
+  /** Kaleye yakın ve dönük: kısa dokunuş pas değil plase şut. */
+  private finishing(): boolean {
+    const a = this.attack();
+    return a.dist < FINISH_RANGE && a.off < 0.9;
+  }
+
+  /**
+   * Vuruş yönü (FIFA/PES gibi kameradan değil, oyuncunun baktığı/koştuğu yönden): şut kaleye dönükse
+   * kalecinin uzak köşesine kendiliğinden nişan alır; aşırtma kaleye yakınken kalecinin üstünden kaleye.
+   */
+  private kickDir(kind: KickKind): number {
+    const { me, world } = this.c;
+    const b = world.pitch.ball;
+    const a = this.attack();
+    if (kind === "shot") return assistedShot(a.side, b.x, b.z, me.rot, world.pitch.keeper(a.side).z);
+    if (kind === "lob" && a.dist < 20 && a.off < 0.9) return assistedShot(a.side, b.x, b.z, me.rot, null);
+    return me.rot;
+  }
+
+  private kick(power: number, kind: KickKind): void {
     const { me, net } = this.c;
-    const ang = this.aimAngle();
-    net.send({ t: "kick", dir: ang, power, kind, curve });
+    const ang = this.kickDir(kind);
+    net.send({ t: "kick", dir: ang, power, kind, curve: 0 });
     me.rot = ang;
     sfx.kick(kind === "pass" ? 0.45 : 0.6 + power * 0.4);
   }
@@ -606,18 +633,19 @@ export class Features {
       }
     }
 
-    // Vuruş gücü: basılı tutuldukça dolar (0.9 sn'de tam). F'ye kısa dokunuş pas, uzun şut; G aşırtma.
+    // Vuruş gücü: basılı tutuldukça dolar (0.9 sn'de tam). F'ye kısa dokunuş pas (kaleye yakınsa plase şut),
+    // uzun basış şut; G aşırtma. Yön oyuncunun baktığı/koştuğu yön, şut kaleye kendiliğinden nişan alır.
     const ch = this.charge;
-    const curve = (input.heldAction("right") ? 1 : 0) - (input.heldAction("left") ? 1 : 0);
     if (ch) {
       if (input.heldAction(ch.key)) {
         ch.t += dt;
         const p = Math.min(1, ch.t / 0.9);
         const tap = ch.kind === "shot" && ch.t < PASS_TAP;
-        this.whud.setPower(tap ? null : p, ch.kind === "lob" ? "Aşırtma" : curve ? `Şut · falso ${curve > 0 ? "→" : "←"}` : "Şut");
+        this.whud.setPower(tap ? null : p, ch.kind === "lob" ? "Aşırtma" : "Şut");
       } else {
-        const pass = ch.kind === "shot" && ch.t < PASS_TAP;
-        this.kick(pass ? 0.4 : Math.max(0.15, Math.min(1, ch.t / 0.9)), pass ? "pass" : ch.kind, curve);
+        const tap = ch.kind === "shot" && ch.t < PASS_TAP;
+        if (tap) this.kick(this.finishing() ? 0.5 : 0.4, this.finishing() ? "shot" : "pass");
+        else this.kick(Math.max(0.15, Math.min(1, ch.t / 0.9)), ch.kind);
         this.charge = null;
         this.whud.setPower(null);
       }
@@ -625,10 +653,16 @@ export class Features {
     // Nişan oku: topun yanındayken vuruş yönü ve gücü
     const ball = world.pitch.ball;
     const owner = world.pitch.owner;
+    // Topla koşan biraz yavaş (FIFA/PES gibi): savunma yetişebilsin
+    me.speedMul = owner === net.you ? 0.88 : 1;
     const canKick = (owner === net.you || (owner === 0 && Math.hypot(ball.x - me.x, ball.z - me.z) <= KICK_REACH + 0.6)) && !me.seated && !me.vehicle;
     world.pitch.setAim(
       canKick && !input.touch
-        ? { ang: this.aimAngle(), power: ch ? Math.min(1, ch.t / 0.9) : 0, kind: ch ? (ch.kind === "shot" && ch.t < PASS_TAP ? "pass" : ch.kind) : "pass" }
+        ? (() => {
+            // Ok, gidecek yönü gösterir: şutta kaleye kilitlenen yön, pasta baktığın yön
+            const kind: KickKind = ch ? (ch.kind === "shot" && ch.t < PASS_TAP && !this.finishing() ? "pass" : ch.kind) : this.finishing() ? "shot" : "pass";
+            return { ang: this.kickDir(kind), power: ch ? Math.min(1, ch.t / 0.9) : 0, kind };
+          })()
         : null,
     );
     const nearPitch = Math.abs(me.x - PITCH.x) < PITCH.hx + 8 && Math.abs(me.z - PITCH.z) < PITCH.hz + 8;
@@ -638,9 +672,10 @@ export class Features {
     this.whud.setScore(nearPitch || m ? this.score : null, clock, myTeam);
     world.pitch.setScore(this.score, clock);
     world.pitch.update(dt, serverNow, world.env.lights, (sid) => {
-      if (sid === net.you) return { x: me.x, z: me.z, rot: me.rot };
+      const run = (f: number) => (f & FLAG_RUNNING ? 2 : f & FLAG_WALKING ? 1 : 0);
+      if (sid === net.you) return { x: me.x, z: me.z, rot: me.rot, run: run(me.flags) };
       const r = remotes.map.get(sid);
-      return r?.hasData ? { x: r.x, z: r.z, rot: r.rot } : null;
+      return r?.hasData ? { x: r.x, z: r.z, rot: r.rot, run: run(r.flags) } : null;
     });
     this.updateRings(m);
 

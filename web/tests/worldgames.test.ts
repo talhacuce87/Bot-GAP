@@ -138,18 +138,22 @@ describe("futbol", () => {
     expect(a.last("ball")?.ev).toBe("tackle");
   });
 
-  it("yan çizgiden çıkan top taç olur ve çizgiye konur", () => {
+  it("halı saha: yan duvara giden top seker, oyun durmaz (taç yok)", () => {
     const { games, a, sa, sb, place } = world();
     place(sb, PITCH.x - 10, PITCH.z - 6);
     place(sa, PITCH.x - 0.6, PITCH.z);
-    // Güneye (+z) sert pas: yan çizgiyi geçer
+    // Güneye (+z) sert pas: yan duvara çarpar
     games.football.kick(sa, 0, 1, 1000, "pass");
     place(sa, PITCH.x - 8, PITCH.z - 5);
-    for (let t = 1000; t < 4500; t += 66) games.football.tick(t);
-    expect(a.last("fb")?.text).toContain("Taç");
-    const s = games.football.state(4500);
-    expect(Math.abs(s.z - PITCH.z)).toBeLessThan(PITCH.hz);
-    expect(Math.abs(s.z - PITCH.z)).toBeGreaterThan(PITCH.hz - 1);
+    let back = false;
+    for (let t = 1000; t < 4500; t += 66) {
+      games.football.tick(t);
+      const s = games.football.state(t);
+      expect(Math.abs(s.z - PITCH.z)).toBeLessThanOrEqual(PITCH.hz);
+      if (s.vz < 0) back = true;
+    }
+    expect(back).toBe(true);
+    expect(a.last("fb")).toBeUndefined();
   });
 
   it("kaleci kaleye gelen şutu kurtarır", () => {
@@ -363,5 +367,23 @@ describe("mahalle (inşa)", () => {
     expect(a.last("bset")).toMatchObject({ plot: 1 });
     games.handle(sa, { t: "bfree" });
     expect(a.last("plot")?.plot).toMatchObject({ id: 0, owner: null, data: "" });
+  });
+});
+
+
+describe("yardımlı şut", () => {
+  it("kaleye dönükken kalecinin uzak köşesine, arkası dönükken baktığı yöne", async () => {
+    const { assistedShot, attackSide, FINISH_RANGE, goalView } = await import("../shared/football");
+    const bx = PITCH.x + PITCH.hx - 10, bz = PITCH.z;
+    // Doğu kalesine bakıyor (π/2), kaleci üst köşede (+z): şut alt köşeye (-z)
+    const dir = assistedShot(1, bx, bz, Math.PI / 2, PITCH.z + 1);
+    expect(Math.cos(dir)).toBeLessThan(0);
+    expect(Math.sin(dir)).toBeGreaterThan(0.9);
+    // Arkası dönük: yardım yok
+    expect(assistedShot(1, bx, bz, -Math.PI / 2, null)).toBe(-Math.PI / 2);
+    // Maçta takıma göre hücum kalesi; maçsız baktığı yöne yakın olan
+    expect(attackSide(0, bx, bz, -Math.PI / 2)).toBe(1);
+    expect(attackSide(null, bx, bz, -Math.PI / 2)).toBe(-1);
+    expect(goalView(1, bx, bz, Math.PI / 2).dist).toBeLessThan(FINISH_RANGE);
   });
 });

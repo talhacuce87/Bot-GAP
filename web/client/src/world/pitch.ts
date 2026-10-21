@@ -75,11 +75,13 @@ export interface Pitch {
    * `lights` gece projektörlerin yanma oranı (0–1). `pose`: oyuncunun çizildiği yer ve yönü (top ayaktayken
    * sunucuyu beklemeden ayağın önünde çizilir).
    */
-  update(dt: number, serverNow: number, lights?: number, pose?: (sid: number) => { x: number; z: number; rot: number } | null): void;
+  update(dt: number, serverNow: number, lights?: number, pose?: (sid: number) => { x: number; z: number; rot: number; run: number } | null): void;
   /** Kaleciler: [batı x, z, eğilme, doğu x, z, eğilme]. */
   setKeepers(k: number[]): void;
   /** Topun sahibi (sid; kaleciler negatif; 0 serbest). */
   readonly owner: number;
+  /** Kalecinin çizildiği yer: -1 batı, 1 doğu (şut nişanı uzak köşeyi seçer). */
+  keeper(side: -1 | 1): { x: number; z: number };
   /** Nişan oku: topun yanında vuruş yönü ve gücü (null gizle). */
   setAim(aim: { ang: number; power: number; kind: "shot" | "pass" | "lob" } | null): void;
   /** Gol: top fileye çarptı, file dalgalanır. */
@@ -409,6 +411,8 @@ export function pitch(b: Builder): Pitch {
   });
 
   let state: BallState = { x: cx, y: 0, z: cz, vx: 0, vy: 0, vz: 0, at: 0 };
+  /** Sürme adımı: koşarken top her adımda öne itilir, oyuncu yetişir (top ayağa yapışık durmaz). */
+  let touchPhase = 0;
   const shown = new THREE.Vector3(cx, BALL_R, cz);
   const predicted = new THREE.Vector3();
   const axis = new THREE.Vector3();
@@ -442,6 +446,10 @@ export function pitch(b: Builder): Pitch {
     },
     get owner() {
       return state.owner ?? 0;
+    },
+    keeper(side) {
+      const p = keepers[side === -1 ? 0 : 1].root.position;
+      return { x: p.x, z: p.z };
     },
     setKeepers(k) {
       keepers.forEach((kp, i) => {
@@ -487,10 +495,14 @@ export function pitch(b: Builder): Pitch {
       const prevX = shown.x, prevZ = shown.z;
       const p = owner > 0 && pose ? pose(owner) : null;
       if (p) {
-        // Top ayakta: oyuncunun çizildiği yerin önünde (gecikmesiz)
-        predicted.set(p.x + Math.sin(p.rot) * DRIBBLE_AHEAD, BALL_R, p.z + Math.cos(p.rot) * DRIBBLE_AHEAD);
+        // Top ayakta: oyuncunun çizildiği yerin önünde (gecikmesiz); koşarken adım adım öne itilir
+        touchPhase += dt * (p.run === 2 ? 8.5 : 6.5) * (p.run ? 1 : 0);
+        const push = p.run ? (0.16 + 0.2 * p.run) * (0.5 - 0.5 * Math.cos(touchPhase)) : 0;
+        const ahead = DRIBBLE_AHEAD + push;
+        predicted.set(p.x + Math.sin(p.rot) * ahead, BALL_R, p.z + Math.cos(p.rot) * ahead);
+        // İlk dokunuş: gelen top birden ayağa yapışmaz, kısa sürede kontrole girer
         if (shown.distanceTo(predicted) > 3) shown.copy(predicted);
-        else shown.lerp(predicted, 1 - Math.exp(-dt * 30));
+        else shown.lerp(predicted, 1 - Math.exp(-dt * 14));
       } else if (owner < 0) {
         // Kalecinin elinde
         const k = keepers[owner === -1 ? 0 : 1];

@@ -1,6 +1,7 @@
 // Futbol: top sunucuda (tek otorite). Topa yaklaşan oyuncu topu alır ve önünde sürer (top ayağa bağlı);
 // F'ye dokunmak pas, basılı tutmak şut, G aşırtma, yana basarak vurmak falso. Rakibin topuna F ile müdahale
-// edilir. Top çizgiden çıkınca taç/korner/aut; iki yapay zekâ kaleci kaleyi korur. "!maç" süreli takımlı maç.
+// edilir. Kapalı halı saha: duvarlar oyunun içinde (taç/aut yok, top seker); iki yapay zekâ kaleci kaleyi
+// korur. "!maç" süreli takımlı maç.
 import type { BallEvent, BallState, KickKind, MatchState } from "../../../shared/protocol";
 import { BALL_R, KICK_REACH, PITCH } from "../../../shared/zones";
 import { CHAT_HISTORY } from "../chat";
@@ -16,8 +17,8 @@ const POST_R = 0.06;
 const KICK_COOLDOWN_MS = 350;
 const HEAD_COOLDOWN_MS = 400;
 const GOAL_RESET_MS = 2500;
-/** Top dışarı çıkınca oyunun yeniden başlamasına kadar. */
-const OUT_RESET_MS = 1300;
+/** Duvardan sekmede kalan hız (halı saha panoları). */
+const WALL_BOUNCE = 0.62;
 /** Uzun süre kimse dokunmazsa skor sıfırlanır. */
 const IDLE_RESET_MS = 10 * 60 * 1000;
 const SUBSTEPS = 4;
@@ -74,8 +75,6 @@ export class Football {
   private prevToucher = { sid: 0, at: 0 };
   private lastTouch = 0;
   private resetAt = 0;
-  /** Top dışarıda: bu anda verilen yere konur (kaleci: aut, kaleci atar). */
-  private out: { at: number; x: number; z: number; keeper: number } | null = null;
   private lastSent = 0;
   private wasMoving = false;
   private last = Date.now();
@@ -133,7 +132,7 @@ export class Football {
    */
   kick(sid: number, dir: number, power: number, now = Date.now(), kind: KickKind = "shot", curve = 0): void {
     const p = this.room.players.get(sid);
-    if (!p || p.info.spectator || !Number.isFinite(dir) || !Number.isFinite(power) || this.resetAt || this.out) return;
+    if (!p || p.info.spectator || !Number.isFinite(dir) || !Number.isFinite(power) || this.resetAt) return;
     if (kind !== "shot" && kind !== "pass" && kind !== "lob") return;
     if (now - (this.lastKick.get(sid) ?? 0) < KICK_COOLDOWN_MS) return;
     const b = this.b;
@@ -258,19 +257,6 @@ export class Football {
       this.resetKeepers();
       this.broadcast(now);
     }
-    if (this.out && now >= this.out.at) {
-      const o = this.out;
-      this.out = null;
-      this.place(o.x, o.z);
-      if (o.keeper) {
-        const k = this.keepers[o.keeper === -1 ? 0 : 1];
-        k.x = o.x;
-        k.z = o.z;
-        this.owner = o.keeper;
-        k.holdUntil = now + GK_HOLD_MS;
-      }
-      this.broadcast(now);
-    }
     const touched = this.players(dt, now);
     if (this.owner > 0) this.carry(now);
     else if (this.owner < 0) this.keeperCarry();
@@ -304,7 +290,7 @@ export class Football {
       // Hız tik aralığında gürültülü: yumuşat
       const sx = prev ? prev.vx * 0.5 + vx * 0.5 : 0, sz = prev ? prev.vz * 0.5 + vz * 0.5 : 0;
       this.prev.set(sid, { x: p.state.x, z: p.state.z, vx: sx, vz: sz });
-      if (p.info.spectator || this.resetAt || this.out) continue;
+      if (p.info.spectator || this.resetAt) continue;
       const d = Math.hypot(b.x - p.state.x, b.z - p.state.z);
       if (this.owner) {
         // Gövdeyle kesme: rakip topun üstünde duruyorsa top bir süre sonra serbest kalır
@@ -364,7 +350,8 @@ export class Football {
     b.vz = v?.vz ?? 0;
     b.vy = 0;
     b.spin = 0;
-    this.outCheck(now);
+    // Duvara sürülen top duvarda kalır; kale ağzından sürülürse gol
+    this.lines(now);
   }
 
   private keeperCarry(): void {
@@ -413,23 +400,21 @@ export class Football {
       b.vy = b.vy < -1 ? -b.vy * BOUNCE : 0;
     }
     if (b.y === 0) {
-      // Dışarıdaki top çabuk durur (panolara kadar)
-      const f = Math.exp(-dt * (this.out ? ROLL_DAMP * 4 : ROLL_DAMP));
+      const f = Math.exp(-dt * ROLL_DAMP);
       b.vx *= f;
       b.vz *= f;
       if (Math.hypot(b.vx, b.vz) < 0.05) b.vx = b.vz = 0;
     }
     this.posts();
-    if (!this.out && !this.resetAt) this.saves(now);
+    if (!this.resetAt) this.saves(now);
     this.lines(now);
   }
 
-  /** Çizgiler: kale ağzından geçen gol; yan çizgi taç; kale çizgisi korner ya da aut. Dışarıdaki top panoda durur. */
+  /** Çizgiler: kale ağzından geçen gol; geri kalan her yerde duvar (halı saha: top seker, oyun durmaz). */
   private lines(now: number): void {
     const b = this.b;
     const lx = b.x - PITCH.x, lz = b.z - PITCH.z;
-    const inNet = this.resetAt && Math.abs(lx) > PITCH.hx;
-    if (inNet) {
+    if (this.resetAt && Math.abs(lx) > PITCH.hx) {
       // Ağın içi: top ağın arkasında ve yanlarında kalır
       if (Math.abs(lx) > PITCH.hx + 1.1) {
         b.x = PITCH.x + Math.sign(lx) * (PITCH.hx + 1.1);
@@ -446,51 +431,22 @@ export class Football {
       b.spin = 0;
       return;
     }
-    if (!this.out && !this.resetAt && Math.abs(lx) > PITCH.hx + BALL_R && Math.abs(lz) < PITCH.goalHalf - BALL_R * 0.5 && b.y < PITCH.goalH - BALL_R) {
-      this.goal(lx < 0 ? 0 : 1, now);
+    // Yan duvarlar
+    if (Math.abs(lz) > PITCH.hz - BALL_R) {
+      b.z = PITCH.z + Math.sign(lz) * (PITCH.hz - BALL_R);
+      b.vz = -b.vz * WALL_BOUNCE;
+      b.spin *= -0.5;
+    }
+    if (Math.abs(lx) <= PITCH.hx - BALL_R) return;
+    const inMouth = Math.abs(lz) < PITCH.goalHalf - BALL_R * 0.5 && b.y < PITCH.goalH - BALL_R;
+    if (inMouth) {
+      if (!this.resetAt && Math.abs(lx) > PITCH.hx + BALL_R) this.goal(lx < 0 ? 0 : 1, now);
       return;
     }
-    this.outCheck(now);
-    // Panolar ve kale arkası: top sahadan uzaklaşmasın
-    const maxZ = PITCH.hz + 0.75, maxX = PITCH.hx + 1.6;
-    if (Math.abs(lz) > maxZ) {
-      b.z = PITCH.z + Math.sign(lz) * maxZ;
-      b.vz = -b.vz * 0.3;
-    }
-    if (Math.abs(lx) > maxX) {
-      b.x = PITCH.x + Math.sign(lx) * maxX;
-      b.vx = -b.vx * 0.3;
-    }
-  }
-
-  /** Top çizgiyi geçti mi: taç, korner ya da aut kararı ve yeniden başlama yeri. */
-  private outCheck(now: number): void {
-    if (this.out || this.resetAt) return;
-    const b = this.b;
-    const lx = b.x - PITCH.x, lz = b.z - PITCH.z;
-    if (Math.abs(lz) > PITCH.hz + BALL_R) {
-      const x = Math.max(PITCH.x - PITCH.hx + 0.5, Math.min(PITCH.x + PITCH.hx - 0.5, b.x));
-      this.callOut("🟨 Taç", x, PITCH.z + Math.sign(lz) * (PITCH.hz - 0.35), 0, now);
-    } else if (Math.abs(lx) > PITCH.hx + BALL_R) {
-      const side = lx < 0 ? -1 : 1;
-      // Topa son savunan taraf dokunduysa korner; maç yoksa kaleci son dokunduysa korner, yoksa aut
-      const defending = side === -1 ? 0 : 1;
-      const last = this.toucher;
-      const lastTeam = last === -1 ? 0 : last === -2 ? 1 : this.teamOf(last);
-      const corner = this.match ? lastTeam === defending : last < 0;
-      if (corner) {
-        this.callOut("🚩 Korner", PITCH.x + side * (PITCH.hx - 0.4), PITCH.z + Math.sign(lz || 1) * (PITCH.hz - 0.4), 0, now);
-      } else {
-        this.callOut("🧤 Aut", PITCH.x + side * (PITCH.hx - 1.6), PITCH.z, side === -1 ? -1 : -2, now);
-      }
-    }
-  }
-
-  private callOut(text: string, x: number, z: number, keeper: number, now: number): void {
-    this.out = { at: now + OUT_RESET_MS, x, z, keeper };
-    if (this.owner > 0) this.release(this.owner, now);
-    this.owner = 0;
-    this.room.broadcast({ t: "fb", text });
+    // Kale çizgisinin geri kalanı: duvar
+    b.x = PITCH.x + Math.sign(lx) * (PITCH.hx - BALL_R);
+    b.vx = -b.vx * WALL_BOUNCE;
+    b.spin *= -0.5;
   }
 
   /** Direkler ve üst direk: top çarparsa seker ("tak" sesi). */
@@ -701,7 +657,6 @@ export class Football {
     this.match = { endsAt: now + m * 60_000, teams };
     this.score = [0, 0];
     this.place(PITCH.x, PITCH.z);
-    this.out = null;
     this.resetKeepers();
     this.resetAt = now + GOAL_RESET_MS;
     this.room.broadcast({ t: "score", score: this.score });

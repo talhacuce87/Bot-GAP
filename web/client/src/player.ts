@@ -137,6 +137,8 @@ export class Player implements AvatarView, PlayerState {
   vehicle: Vehicle = 0;
   /** Bisiklet/kaykayla gidilen yol (m): görev için ara ara sunucuya bildirilir. */
   rideMeters = 0;
+  /** Hız çarpanı (topla koşarken biraz yavaş: top sürmek bedava değil). */
+  speedMul = 1;
   /** Sahnede (karaoke): sahne alanında kalır, sahne yüksekliğinde çizilir. */
   onStage = false;
   /** Fotoğraf modunda kamera daha uzağa açılır. */
@@ -227,7 +229,7 @@ export class Player implements AvatarView, PlayerState {
     } else {
       // Araçta koşma yok: hız aracın; bisiklet ve kaykay yavaş hızlanır, kayık ağır
       const accel = 1 - Math.exp(-dt * (this.vehicle ? (this.vehicle === 3 ? 1.5 : 3.5) : 12));
-      const speedMax = WALK_SPEED * (this.vehicle ? VEHICLES[this.vehicle].speed : input.run ? RUN_MULTIPLIER : 1);
+      const speedMax = WALK_SPEED * (this.vehicle ? VEHICLES[this.vehicle].speed : input.run ? RUN_MULTIPLIER : 1) * this.speedMul;
       this.vx += (mx * speedMax - this.vx) * accel;
       this.vz += (mz * speedMax - this.vz) * accel;
     }
