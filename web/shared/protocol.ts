@@ -105,9 +105,11 @@ export interface BallState {
   /** Bu yayına yol açan olay (ses/efekt için) ve yapan. */
   ev?: BallEvent;
   by?: number;
+  /** Top kimin ayağında: oyuncu sid'i; -1 batı, -2 doğu kalecisi; yoksa serbest. */
+  owner?: number;
 }
 
-export type BallEvent = "shot" | "pass" | "lob" | "head" | "post" | "bar";
+export type BallEvent = "shot" | "pass" | "lob" | "head" | "post" | "bar" | "save" | "tackle";
 export type KickKind = "shot" | "pass" | "lob";
 
 /** Futbol maçı: süre, takımlar (sid listeleri; 0 kırmızı batıyı savunur, 1 mavi doğuyu). */
@@ -288,6 +290,10 @@ export type ServerEvent =
   | ({ t: "ball" } & BallState)
   | { t: "goal"; side: 0 | 1; sid: number; name: string; score: [number, number]; assist?: string; own?: boolean }
   | { t: "match"; match: MatchState | null }
+  /** Kaleciler: [batı x, z, eğilme, doğu x, z, eğilme] (eğilme: plonjon, -1…1). */
+  | { t: "gk"; k: number[] }
+  /** Futbol hakem kararı (taç, korner, aut…): düdük ve kısa yazı. */
+  | { t: "fb"; text: string }
   | { t: "score"; score: [number, number] }
   | { t: "tag"; state: TagState | null }
   /** İkili etkileşim isteği (yalnızca hedefe) ve gerçekleşen etkileşim (herkese). */
@@ -327,6 +333,8 @@ export type ClientEvent =
   | { t: "tresign"; id: number }
   /** Topa vur: yön (radyan), güç (0–1), tür ve falso (-1 sola … 1 sağa). */
   | { t: "kick"; dir: number; power: number; kind?: KickKind; curve?: number }
+  /** Rakibin ayağındaki topa müdahale. */
+  | { t: "tackle" }
   | { t: "tagjoin" }
   | { t: "pair"; kind: "five" | "hug"; to: number }
   | { t: "pairok"; from: number }

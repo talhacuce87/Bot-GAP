@@ -75,6 +75,9 @@ export class Net {
   onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number], assist?: string, own?: boolean) => void = () => {};
   /** Futbol maçı başladı/değişti/bitti. */
   onMatch: (m: MatchState | null) => void = () => {};
+  /** Kaleciler (x, z, eğilme ×2) ve hakem kararı. */
+  onGk: (k: number[]) => void = () => {};
+  onFb: (text: string) => void = () => {};
   onScore: (score: [number, number]) => void = () => {};
   onTag: (s: TagState | null) => void = () => {};
   onPairReq: (from: number, name: string, kind: "five" | "hug") => void = () => {};
@@ -272,6 +275,12 @@ export class Net {
         break;
       case "match":
         this.onMatch(ev.match);
+        break;
+      case "gk":
+        this.onGk(ev.k);
+        break;
+      case "fb":
+        this.onFb(ev.text);
         break;
       case "score":
         this.onScore(ev.score);

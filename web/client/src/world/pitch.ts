@@ -3,6 +3,8 @@
 import * as THREE from "three";
 import type { BallState } from "../../../shared/protocol";
 import { BALL_R, PITCH } from "../../../shared/zones";
+/** Sunucuyla aynı: top ayaktayken oyuncunun bu kadar önünde. */
+const DRIBBLE_AHEAD = 0.62;
 import type { Builder } from "./builder";
 import { flatMat, mat, part, timeUniform } from "./geo";
 
@@ -69,12 +71,53 @@ export interface Pitch {
   setScore(score: [number, number], clock?: string | null): void;
   /** Topun tahmini konumu (şut menzili, ses için). */
   ball: THREE.Vector3;
-  /** `lights` gece projektörlerin yanma oranı (0–1). */
-  update(dt: number, serverNow: number, lights?: number): void;
+  /**
+   * `lights` gece projektörlerin yanma oranı (0–1). `pose`: oyuncunun çizildiği yer ve yönü (top ayaktayken
+   * sunucuyu beklemeden ayağın önünde çizilir).
+   */
+  update(dt: number, serverNow: number, lights?: number, pose?: (sid: number) => { x: number; z: number; rot: number } | null): void;
+  /** Kaleciler: [batı x, z, eğilme, doğu x, z, eğilme]. */
+  setKeepers(k: number[]): void;
+  /** Topun sahibi (sid; kaleciler negatif; 0 serbest). */
+  readonly owner: number;
   /** Nişan oku: topun yanında vuruş yönü ve gücü (null gizle). */
   setAim(aim: { ang: number; power: number; kind: "shot" | "pass" | "lob" } | null): void;
   /** Gol: top fileye çarptı, file dalgalanır. */
   netHit(x: number, y: number, z: number, time: number): void;
+}
+
+/** Kaleci: alçak poli gövde; batı yeşil, doğu turuncu forma, beyaz eldiven. Bacaklar yürürken sallanır. */
+function keeperMesh(kit: string): { root: THREE.Group; body: THREE.Group; legs: THREE.Mesh[] } {
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+  const m = (c: string) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
+  const box = (w: number, h: number, d: number, c: string, x: number, y: number, z: number, parent: THREE.Object3D = body) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m(c));
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    parent.add(mesh);
+    return mesh;
+  };
+  const legs = [-0.12, 0.12].map((x) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, 0.72, 0);
+    body.add(pivot);
+    box(0.17, 0.7, 0.2, "#1d1f26", 0, -0.35, 0, pivot);
+    box(0.19, 0.1, 0.28, "#f2f2f2", 0, -0.68, 0.04, pivot);
+    return pivot as unknown as THREE.Mesh;
+  });
+  box(0.48, 0.62, 0.3, kit, 0, 1.03, 0);
+  box(0.5, 0.06, 0.32, "#14161c", 0, 0.74, 0);
+  for (const x of [-0.33, 0.33]) {
+    box(0.13, 0.5, 0.15, kit, x, 1.02, 0.04);
+    box(0.17, 0.17, 0.17, "#f7f7f2", x, 0.72, 0.08);
+  }
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), m("#e0b48a"));
+  head.position.set(0, 1.55, 0);
+  body.add(head);
+  box(0.42, 0.1, 0.42, kit, 0, 1.72, 0).scale.set(1, 1, 1);
+  return { root, body, legs };
 }
 
 /** Projektör kuleleri: sahanın dört köşesinin dışında, kafaları ortaya dönük. */
@@ -351,6 +394,14 @@ export function pitch(b: Builder): Pitch {
   let trailHead = 0;
   const tm = new THREE.Matrix4();
 
+  // Kaleciler (sunucu konumlarına yumuşak geçiş, topa bakar, plonjonda yatar)
+  const keepers = [keeperMesh("#2fa35a"), keeperMesh("#f08a24")].map((k, i) => {
+    group.add(k.root);
+    const side = i === 0 ? -1 : 1;
+    k.root.position.set(cx + side * (hx - 0.6), 0, cz);
+    return { ...k, side, target: new THREE.Vector3(cx + side * (hx - 0.6), 0, cz), lean: 0, walk: 0 };
+  });
+
   let state: BallState = { x: cx, y: 0, z: cz, vx: 0, vy: 0, vz: 0, at: 0 };
   const shown = new THREE.Vector3(cx, BALL_R, cz);
   const predicted = new THREE.Vector3();
@@ -372,8 +423,8 @@ export function pitch(b: Builder): Pitch {
       [vx, vz] = [vx * c + vz * sn, vz * c - vx * sn];
     }
     out.set(s.x + vx * (air ? t : k), y + BALL_R, s.z + vz * (air ? t : k));
-    out.x = Math.max(cx - hx - 1.1, Math.min(cx + hx + 1.1, out.x));
-    out.z = Math.max(cz - hz, Math.min(cz + hz, out.z));
+    out.x = Math.max(cx - hx - 1.6, Math.min(cx + hx + 1.6, out.x));
+    out.z = Math.max(cz - hz - 0.75, Math.min(cz + hz + 0.75, out.z));
     return out;
   };
 
@@ -382,6 +433,15 @@ export function pitch(b: Builder): Pitch {
     ball: shown,
     setBall(bs) {
       state = bs;
+    },
+    get owner() {
+      return state.owner ?? 0;
+    },
+    setKeepers(k) {
+      keepers.forEach((kp, i) => {
+        kp.target.set(k[i * 3], 0, k[i * 3 + 1]);
+        kp.lean = k[i * 3 + 2];
+      });
     },
     setScore: drawScore,
     setAim(aim) {
@@ -397,17 +457,46 @@ export function pitch(b: Builder): Pitch {
     netHit(x, y, z, time) {
       netHit.value.set(x, y, z, time);
     },
-    update(dt, serverNow, lights = 0) {
+    update(dt, serverNow, lights = 0, pose) {
       beamMat.uniforms.uOpacity.value = lights * 0.1;
       poolMat.uniforms.uOpacity.value = lights * 0.085;
       ballMat.emissive.setScalar(lights * 0.35);
       pool.visible = lights > 0.02;
-      const t = Math.min(0.5, Math.max(0, (serverNow - state.at) / 1000));
-      predict(t, predicted);
+      // Kaleciler
+      for (const k of keepers) {
+        const r = k.root;
+        const d = r.position.distanceTo(k.target);
+        if (d > 4) r.position.copy(k.target);
+        else r.position.lerp(k.target, 1 - Math.exp(-dt * 12));
+        r.rotation.y = Math.atan2(shown.x - r.position.x, shown.z - r.position.z);
+        k.walk += d * 6;
+        const swing = Math.sin(k.walk) * Math.min(0.6, d * 3);
+        k.legs[0].rotation.x = swing;
+        k.legs[1].rotation.x = -swing;
+        // Plonjon: yana yatar ve hafif havalanır
+        k.body.rotation.z += (-k.lean * 1.25 - k.body.rotation.z) * (1 - Math.exp(-dt * 14));
+        k.body.position.y = Math.abs(k.body.rotation.z) * 0.35;
+      }
+      const owner = state.owner ?? 0;
       const prevX = shown.x, prevZ = shown.z;
-      // Büyük sıçramada (gol sonrası ortaya dönüş) doğrudan, yoksa yumuşak
-      if (shown.distanceTo(predicted) > 3) shown.copy(predicted);
-      else shown.lerp(predicted, 1 - Math.exp(-dt * 18));
+      const p = owner > 0 && pose ? pose(owner) : null;
+      if (p) {
+        // Top ayakta: oyuncunun çizildiği yerin önünde (gecikmesiz)
+        predicted.set(p.x + Math.sin(p.rot) * DRIBBLE_AHEAD, BALL_R, p.z + Math.cos(p.rot) * DRIBBLE_AHEAD);
+        if (shown.distanceTo(predicted) > 3) shown.copy(predicted);
+        else shown.lerp(predicted, 1 - Math.exp(-dt * 30));
+      } else if (owner < 0) {
+        // Kalecinin elinde
+        const k = keepers[owner === -1 ? 0 : 1];
+        predicted.set(k.root.position.x - k.side * 0.35, 1.0, k.root.position.z);
+        shown.lerp(predicted, 1 - Math.exp(-dt * 20));
+      } else {
+        const t = Math.min(0.5, Math.max(0, (serverNow - state.at) / 1000));
+        predict(t, predicted);
+        // Büyük sıçramada (gol sonrası ortaya dönüş) doğrudan, yoksa yumuşak
+        if (shown.distanceTo(predicted) > 3) shown.copy(predicted);
+        else shown.lerp(predicted, 1 - Math.exp(-dt * 18));
+      }
       ballMesh.position.copy(shown);
       // Yuvarlanma: gidilen yol kadar dönüş
       const dx = shown.x - prevX, dz = shown.z - prevZ, dist = Math.hypot(dx, dz);

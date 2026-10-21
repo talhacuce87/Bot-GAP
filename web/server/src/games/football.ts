@@ -1,7 +1,6 @@
-// Futbol: top sunucuda (tek otorite). Koşan oyuncu topu önünde sürer; F'ye dokunmak pas (önündeki oyuncuya),
-// basılı tutmak şut, G aşırtma. Yana basarak vurulursa top falsolu gider. Havadaki top kafayla karşılanır;
-// direkten ve üst direkten seker. Kale ağzından geçen top gol; "!maç" ile süreli, takımlı maç oynanır.
-import { PLAYER_RADIUS } from "../../../shared/constants";
+// Futbol: top sunucuda (tek otorite). Topa yaklaşan oyuncu topu alır ve önünde sürer (top ayağa bağlı);
+// F'ye dokunmak pas, basılı tutmak şut, G aşırtma, yana basarak vurmak falso. Rakibin topuna F ile müdahale
+// edilir. Top çizgiden çıkınca taç/korner/aut; iki yapay zekâ kaleci kaleyi korur. "!maç" süreli takımlı maç.
 import type { BallEvent, BallState, KickKind, MatchState } from "../../../shared/protocol";
 import { BALL_R, KICK_REACH, PITCH } from "../../../shared/zones";
 import { CHAT_HISTORY } from "../chat";
@@ -12,12 +11,13 @@ const GRAVITY = 9.8;
 const ROLL_DAMP = 0.6;
 const AIR_DAMP = 0.08;
 const BOUNCE = 0.5;
-const WALL_BOUNCE = 0.6;
 const POST_BOUNCE = 0.7;
 const POST_R = 0.06;
 const KICK_COOLDOWN_MS = 350;
 const HEAD_COOLDOWN_MS = 400;
 const GOAL_RESET_MS = 2500;
+/** Top dışarı çıkınca oyunun yeniden başlamasına kadar. */
+const OUT_RESET_MS = 1300;
 /** Uzun süre kimse dokunmazsa skor sıfırlanır. */
 const IDLE_RESET_MS = 10 * 60 * 1000;
 const SUBSTEPS = 4;
@@ -28,20 +28,65 @@ const PASS_CONE = 0.55;
 const PASS_RANGE: [number, number] = [2.5, 24];
 export const MATCH_MINUTES: [number, number, number] = [1, 5, 15];
 
+/** Top sahipliği: topun oyuncunun önündeki yeri, alma yarıçapı, alınabilecek en yüksek top hızı. */
+export const DRIBBLE_AHEAD = 0.62;
+const GAIN_R = 0.8;
+const GAIN_MAX_SPEED = 14;
+/** Vuran/topu kaptıran bu süre topu yeniden alamaz. */
+const REGAIN_MS = 350;
+const TACKLE_R = 1.7;
+const TACKLE_COOLDOWN_MS = 1000;
+/** Rakip topun üstüne basıp duruyorsa top serbest kalır (gövde ile kesme). */
+const BLOCK_R = 0.45;
+const BLOCK_MS = 450;
+
+/** Kaleci: kale çizgisinin önünde, ceza alanında kalır. */
+const GK_REACH = 0.7;
+const GK_DIVE_REACH = 1.25;
+const GK_SPEED = 4.2;
+const GK_DIVE_SPEED = 7.5;
+const GK_HOLD_MS = 1100;
+const GK_BOX = 3.2;
+
+interface Keeper {
+  side: -1 | 1;
+  x: number;
+  z: number;
+  /** Plonjon (-1…1, + sağına doğru). */
+  lean: number;
+  holdUntil: number;
+  /** Bu şuta karar verildi mi (tutamadıysa aynı şutta tekrar denemez). */
+  decided: number;
+}
+
 export class Football {
   private b = { x: PITCH.x, y: 0, z: PITCH.z, vx: 0, vy: 0, vz: 0, spin: 0 };
   score: [number, number] = [0, 0];
   private prev = new Map<number, { x: number; z: number; vx: number; vz: number }>();
   private lastKick = new Map<number, number>();
+  /** Topu alamaz (vurdu, kaptırdı, müdahalesi boşa çıktı) şu ana kadar. */
+  private noGain = new Map<number, number>();
+  private lastTackle = new Map<number, number>();
+  private blockSince = new Map<number, number>();
+  /** Topun sahibi: sid; -1/-2 kaleciler; 0 serbest. */
+  private owner = 0;
   private toucher = 0;
   private prevToucher = { sid: 0, at: 0 };
   private lastTouch = 0;
   private resetAt = 0;
+  /** Top dışarıda: bu anda verilen yere konur (kaleci: aut, kaleci atar). */
+  private out: { at: number; x: number; z: number; keeper: number } | null = null;
   private lastSent = 0;
   private wasMoving = false;
   private last = Date.now();
   private match: MatchState | null = null;
   private pendingEv: { ev: BallEvent; by: number } | null = null;
+  /** Her vuruşta artar: kaleci her şuta bir kez karar verir. */
+  private shotId = 0;
+  private keepers: Keeper[] = [-1, 1].map((side) => ({ side: side as -1 | 1, x: PITCH.x + side * (PITCH.hx - 0.6), z: PITCH.z, lean: 0, holdUntil: 0, decided: -1 }));
+  private lastGk = 0;
+  /** Kalecinin kararı için rastgele (testte sabitlenir). */
+  random: () => number = Math.random;
 
   constructor(
     private room: Room,
@@ -50,13 +95,18 @@ export class Football {
 
   state(now: number): BallState {
     const b = this.b;
-    return { x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz, at: now, spin: b.spin };
+    return { x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz, at: now, spin: b.spin, ...(this.owner ? { owner: this.owner } : {}) };
   }
 
   sendTo(conn: Conn, now = Date.now()): void {
     this.room.sendTo(conn, { t: "ball", ...this.state(now) });
     this.room.sendTo(conn, { t: "score", score: this.score });
+    this.room.sendTo(conn, { t: "gk", k: this.gkState() });
     if (this.match) this.room.sendTo(conn, { t: "match", match: this.match });
+  }
+
+  private gkState(): number[] {
+    return this.keepers.flatMap((k) => [round(k.x), round(k.z), round(k.lean)]);
   }
 
   private moving(): boolean {
@@ -71,18 +121,26 @@ export class Football {
     return m.teams[0].includes(sid) ? 0 : m.teams[1].includes(sid) ? 1 : null;
   }
 
+  /** Topun sahibi (sid; kaleciler negatif; 0 serbest). */
+  get ownerSid(): number {
+    return this.owner;
+  }
+
   /**
    * Vuruş: `dir` oyuncunun baktığı yön, `power` 0–1 (basılı tutma), `curve` -1…1 falso.
-   * Pas yerden gider ve baktığı yöndeki oyuncuya (koşuyorsa önüne) yönelir; aşırtma yüksek yay çizer.
+   * Topu ayağında tutan ya da serbest topun yanındaki vurabilir. Pas yerden, baktığı yöndeki oyuncuya
+   * (koşuyorsa önüne) gider; aşırtma yüksek yay çizer; sert şut biraz sapar.
    */
   kick(sid: number, dir: number, power: number, now = Date.now(), kind: KickKind = "shot", curve = 0): void {
     const p = this.room.players.get(sid);
-    if (!p || p.info.spectator || !Number.isFinite(dir) || !Number.isFinite(power) || this.resetAt) return;
+    if (!p || p.info.spectator || !Number.isFinite(dir) || !Number.isFinite(power) || this.resetAt || this.out) return;
     if (kind !== "shot" && kind !== "pass" && kind !== "lob") return;
     if (now - (this.lastKick.get(sid) ?? 0) < KICK_COOLDOWN_MS) return;
     const b = this.b;
-    if (Math.hypot(p.state.x - b.x, p.state.z - b.z) > KICK_REACH || b.y > 1.2) return;
+    if (this.owner && this.owner !== sid) return;
+    if (this.owner !== sid && (Math.hypot(p.state.x - b.x, p.state.z - b.z) > KICK_REACH || b.y > 1.2)) return;
     this.lastKick.set(sid, now);
+    this.release(sid, now);
     const k = Math.max(0, Math.min(1, power));
     const c = Number.isFinite(curve) ? Math.max(-1, Math.min(1, curve)) : 0;
     let speed: number;
@@ -91,10 +149,10 @@ export class Football {
       if (target) {
         // Hedefin koşusuna göre önüne at: varış süresi kadar ilerisi
         const d0 = Math.hypot(target.x - b.x, target.z - b.z);
-        speed = Math.min(16, Math.max(6, d0 * 1.1 + 2));
-        const t = d0 / speed;
-        dir = Math.atan2(target.x + target.vx * t - b.x, target.z + target.vz * t - b.z);
-        speed = Math.min(17, Math.hypot(target.x + target.vx * t - b.x, target.z + target.vz * t - b.z) * 1.1 + 2);
+        const t = d0 / Math.min(16, Math.max(6, d0 * 1.1 + 2));
+        const tx = target.x + target.vx * t, tz = target.z + target.vz * t;
+        dir = Math.atan2(tx - b.x, tz - b.z);
+        speed = Math.min(17, Math.hypot(tx - b.x, tz - b.z) * 1.1 + 2);
       } else speed = 6 + 8 * k;
       b.vy = 0;
       b.spin = 0;
@@ -103,14 +161,43 @@ export class Football {
       b.vy = 5 + 3.5 * k;
       b.spin = c * 0.6;
     } else {
-      speed = 8 + 14 * k;
-      b.vy = 1 + 3.2 * k;
+      speed = 9 + 15 * k;
+      b.vy = 0.6 + 3.4 * k;
       b.spin = c * 1.4;
+      // Tam güçte isabet düşer
+      dir += (this.random() - 0.5) * 0.12 * k * k;
     }
     b.vx = Math.sin(dir) * speed;
     b.vz = Math.cos(dir) * speed;
+    this.shotId++;
     this.touch(sid, now);
     this.pendingEv = { ev: kind, by: sid };
+    this.broadcast(now);
+  }
+
+  /** Müdahale: rakibin ayağındaki topa; başarılıysa top serbest kalır ve müdahale edenin önüne düşer. */
+  tackle(sid: number, now = Date.now()): void {
+    const p = this.room.players.get(sid);
+    const o = this.owner > 0 ? this.room.players.get(this.owner) : undefined;
+    if (!p || !o || this.owner === sid || p.info.spectator) return;
+    if (now - (this.lastTackle.get(sid) ?? 0) < TACKLE_COOLDOWN_MS) return;
+    const b = this.b;
+    if (Math.hypot(p.state.x - b.x, p.state.z - b.z) > TACKLE_R) return;
+    this.lastTackle.set(sid, now);
+    // Önden müdahale daha kolay; arkadan girilirse çoğu zaman boşa çıkar
+    const fx = Math.sin(o.state.rot), fz = Math.cos(o.state.rot);
+    const front = (p.state.x - o.state.x) * fx + (p.state.z - o.state.z) * fz >= 0;
+    if (this.random() < (front ? 0.62 : 0.32)) {
+      const victim = this.owner;
+      this.release(victim, now);
+      this.noGain.set(victim, now + 700);
+      const dx = p.state.x - b.x, dz = p.state.z - b.z, d = Math.hypot(dx, dz) || 1;
+      b.vx = (dx / d) * 3 + Math.sin(p.state.rot) * 1.5;
+      b.vz = (dz / d) * 3 + Math.cos(p.state.rot) * 1.5;
+      b.vy = 0.8;
+      this.touch(sid, now);
+    } else this.noGain.set(sid, now + 900);
+    this.pendingEv = { ev: "tackle", by: sid };
     this.broadcast(now);
   }
 
@@ -143,6 +230,12 @@ export class Football {
     this.lastTouch = now;
   }
 
+  /** Top sahibinden çıkar (vuruş, kaptırma). */
+  private release(sid: number, now: number): void {
+    if (this.owner === sid) this.owner = 0;
+    this.noGain.set(sid, Math.max(this.noGain.get(sid) ?? 0, now + REGAIN_MS));
+  }
+
   private broadcast(now: number): void {
     this.lastSent = now;
     const ev = this.pendingEv;
@@ -160,25 +253,50 @@ export class Football {
     }
     if (this.match) this.matchTick(now);
     if (this.resetAt && now >= this.resetAt) {
-      Object.assign(this.b, { x: PITCH.x, y: 0, z: PITCH.z, vx: 0, vy: 0, vz: 0, spin: 0 });
+      this.place(PITCH.x, PITCH.z);
       this.resetAt = 0;
+      this.resetKeepers();
       this.broadcast(now);
     }
-    const touched = this.dribble(dt, now);
-    const h = dt / SUBSTEPS;
-    for (let i = 0; i < SUBSTEPS; i++) this.step(h, now);
+    if (this.out && now >= this.out.at) {
+      const o = this.out;
+      this.out = null;
+      this.place(o.x, o.z);
+      if (o.keeper) {
+        const k = this.keepers[o.keeper === -1 ? 0 : 1];
+        k.x = o.x;
+        k.z = o.z;
+        this.owner = o.keeper;
+        k.holdUntil = now + GK_HOLD_MS;
+      }
+      this.broadcast(now);
+    }
+    const touched = this.players(dt, now);
+    if (this.owner > 0) this.carry(now);
+    else if (this.owner < 0) this.keeperCarry();
+    else {
+      const h = dt / SUBSTEPS;
+      for (let i = 0; i < SUBSTEPS; i++) this.step(h, now);
+    }
+    this.keeperTick(dt, now);
     const moving = this.moving();
     if (touched || this.pendingEv || (moving && now - this.lastSent > 60) || moving !== this.wasMoving || now - this.lastSent > 2000) this.broadcast(now);
     this.wasMoving = moving;
   }
 
+  private place(x: number, z: number): void {
+    Object.assign(this.b, { x, y: 0, z, vx: 0, vy: 0, vz: 0, spin: 0 });
+    this.owner = 0;
+  }
+
   /**
-   * Sürme: koşan oyuncu topu önünde, kendi hızının biraz üstünde tutar (kısa dokunuşlar); duran oyuncu
-   * yalnızca topu kenara iter. Göğüs/kafa hizasındaki top kafayla karşılanır.
+   * Oyuncular ve top: serbest topa en yakın oyuncu topu alır (göğüsle yumuşatma dahil); kafa hizasındaki
+   * top kafayla karşılanır; topu tutanın üstüne basıp duran rakip topu serbest bırakır.
    */
-  private dribble(dt: number, now: number): boolean {
+  private players(dt: number, now: number): boolean {
     const b = this.b;
     let touched = false;
+    let gain = 0, gainD = Infinity;
     for (const [sid, p] of this.room.players) {
       const prev = this.prev.get(sid);
       const vx = prev && dt > 0 ? (p.state.x - prev.x) / dt : 0;
@@ -186,39 +304,72 @@ export class Football {
       // Hız tik aralığında gürültülü: yumuşat
       const sx = prev ? prev.vx * 0.5 + vx * 0.5 : 0, sz = prev ? prev.vz * 0.5 + vz * 0.5 : 0;
       this.prev.set(sid, { x: p.state.x, z: p.state.z, vx: sx, vz: sz });
-      if (p.info.spectator || this.resetAt) continue;
-      const dx = b.x - p.state.x, dz = b.z - p.state.z;
-      const d = Math.hypot(dx, dz);
-      if (b.y > 0.55) {
-        if (b.y < 2.1 && d < 0.55 && now - (this.lastKick.get(sid) ?? 0) > HEAD_COOLDOWN_MS) touched = this.header(sid, p.state.rot, now) || touched;
+      if (p.info.spectator || this.resetAt || this.out) continue;
+      const d = Math.hypot(b.x - p.state.x, b.z - p.state.z);
+      if (this.owner) {
+        // Gövdeyle kesme: rakip topun üstünde duruyorsa top bir süre sonra serbest kalır
+        if (this.owner > 0 && sid !== this.owner && d < BLOCK_R) {
+          const since = this.blockSince.get(sid) ?? now;
+          this.blockSince.set(sid, since);
+          if (now - since > BLOCK_MS) {
+            this.release(this.owner, now);
+            this.blockSince.clear();
+            b.vx = -b.vx * 0.3;
+            b.vz = -b.vz * 0.3;
+            touched = true;
+          }
+        } else this.blockSince.delete(sid);
         continue;
       }
-      const reach = PLAYER_RADIUS + BALL_R + 0.05;
-      if (d >= reach || d < 1e-4) continue;
-      const speed = Math.hypot(sx, sz);
-      if (speed > 1) {
-        // Önde tut: hedef nokta oyuncunun koştuğu yönde, top oraya oyuncudan biraz hızlı gider
-        const ux = sx / speed, uz = sz / speed;
-        const ahead = reach + 0.35 + speed * 0.05;
-        const tx = p.state.x + ux * ahead, tz = p.state.z + uz * ahead;
-        const knock = speed > 5.5 ? 1.25 : 1.08;
-        b.vx = sx * knock + (tx - b.x) * 5;
-        b.vz = sz * knock + (tz - b.z) * 5;
-        b.spin = 0;
+      if ((this.noGain.get(sid) ?? 0) > now) continue;
+      if (b.y >= 1.0) {
+        if (b.y < 2.3 && d < 0.6 && now - (this.lastKick.get(sid) ?? 0) > HEAD_COOLDOWN_MS) touched = this.header(sid, p.state.rot, now) || touched;
+        continue;
       }
-      const nx = dx / d, nz = dz / d;
-      b.x = p.state.x + nx * reach;
-      b.z = p.state.z + nz * reach;
-      const along = b.vx * nx + b.vz * nz;
-      if (along < 0.8) {
-        b.vx += nx * (0.8 - along);
-        b.vz += nz * (0.8 - along);
+      // Göğüsle/ayakla kontrol: yavaş ya da orta hızdaki topu alır
+      if (d < GAIN_R && Math.hypot(b.vx, b.vz) < GAIN_MAX_SPEED && d < gainD) {
+        gain = sid;
+        gainD = d;
       }
-      this.touch(sid, now);
-      touched = true;
     }
     for (const sid of this.prev.keys()) if (!this.room.players.has(sid)) this.prev.delete(sid);
+    if (gain) {
+      this.owner = gain;
+      this.blockSince.clear();
+      this.touch(gain, now);
+      touched = true;
+    }
     return touched;
+  }
+
+  /** Top ayakta: sahibinin önünde, onun hızıyla (istemci aynı yeri kendi konumundan çizer). */
+  private carry(now: number): void {
+    const p = this.room.players.get(this.owner);
+    const v = this.prev.get(this.owner);
+    if (!p) {
+      this.owner = 0;
+      return;
+    }
+    const b = this.b;
+    const x = p.state.x + Math.sin(p.state.rot) * DRIBBLE_AHEAD, z = p.state.z + Math.cos(p.state.rot) * DRIBBLE_AHEAD;
+    // Sahibi ışınlandı/uzaklaştı (araç, oturma): top serbest kalır
+    if (Math.hypot(x - b.x, z - b.z) > 3) {
+      this.owner = 0;
+      return;
+    }
+    b.x = x;
+    b.z = z;
+    b.y = 0;
+    b.vx = v?.vx ?? 0;
+    b.vz = v?.vz ?? 0;
+    b.vy = 0;
+    b.spin = 0;
+    this.outCheck(now);
+  }
+
+  private keeperCarry(): void {
+    const k = this.keepers[this.owner === -1 ? 0 : 1];
+    Object.assign(this.b, { x: k.x - k.side * 0.45, y: 1.0, z: k.z, vx: 0, vy: 0, vz: 0, spin: 0 });
   }
 
   /** Kafa: top oyuncunun baktığı yöne, gelen hızın bir kısmıyla ve hafif yukarı sekerek gider. */
@@ -228,8 +379,9 @@ export class Football {
     const speed = Math.hypot(b.vx, b.vz) * 0.55 + 4;
     b.vx = Math.sin(rot) * speed;
     b.vz = Math.cos(rot) * speed;
-    b.vy = b.y > 1.5 ? 0.5 : 2.5;
+    b.vy = b.y > 1.6 ? 0.3 : 2.2;
     b.spin = 0;
+    this.shotId++;
     this.touch(sid, now);
     this.pendingEv = { ev: "head", by: sid };
     return true;
@@ -261,48 +413,84 @@ export class Football {
       b.vy = b.vy < -1 ? -b.vy * BOUNCE : 0;
     }
     if (b.y === 0) {
-      const f = Math.exp(-dt * ROLL_DAMP);
+      // Dışarıdaki top çabuk durur (panolara kadar)
+      const f = Math.exp(-dt * (this.out ? ROLL_DAMP * 4 : ROLL_DAMP));
       b.vx *= f;
       b.vz *= f;
       if (Math.hypot(b.vx, b.vz) < 0.05) b.vx = b.vz = 0;
     }
     this.posts();
+    if (!this.out && !this.resetAt) this.saves(now);
+    this.lines(now);
+  }
+
+  /** Çizgiler: kale ağzından geçen gol; yan çizgi taç; kale çizgisi korner ya da aut. Dışarıdaki top panoda durur. */
+  private lines(now: number): void {
+    const b = this.b;
     const lx = b.x - PITCH.x, lz = b.z - PITCH.z;
-    // Yan çizgiler (panolar): sek
-    if (Math.abs(lz) > PITCH.hz - BALL_R) {
-      b.z = PITCH.z + Math.sign(lz) * (PITCH.hz - BALL_R);
-      b.vz = -b.vz * WALL_BOUNCE;
-      b.spin *= -0.5;
+    const inNet = this.resetAt && Math.abs(lx) > PITCH.hx;
+    if (inNet) {
+      // Ağın içi: top ağın arkasında ve yanlarında kalır
+      if (Math.abs(lx) > PITCH.hx + 1.1) {
+        b.x = PITCH.x + Math.sign(lx) * (PITCH.hx + 1.1);
+        b.vx = -b.vx * 0.15;
+      }
+      if (Math.abs(lz) > PITCH.goalHalf - BALL_R) {
+        b.z = PITCH.z + Math.sign(lz) * (PITCH.goalHalf - BALL_R);
+        b.vz = -b.vz * 0.2;
+      }
+      if (b.y > PITCH.goalH - BALL_R) {
+        b.y = PITCH.goalH - BALL_R;
+        b.vy = -Math.abs(b.vy) * 0.3;
+      }
+      b.spin = 0;
+      return;
     }
-    if (Math.abs(lx) > PITCH.hx - BALL_R) {
-      const inMouth = Math.abs(lz) < PITCH.goalHalf - BALL_R && b.y < PITCH.goalH - BALL_R;
-      if (Math.abs(lx) > PITCH.hx + BALL_R && (inMouth || this.resetAt)) {
-        // Kalenin içi (ağ): gol sayılır, top ağın arkasında ve yanlarında kalır
-        if (!this.resetAt) this.goal(lx < 0 ? 0 : 1, now);
-        if (Math.abs(lx) > PITCH.hx + 1.1) {
-          b.x = PITCH.x + Math.sign(lx) * (PITCH.hx + 1.1);
-          b.vx = -b.vx * 0.15;
-        }
-        if (Math.abs(lz) > PITCH.goalHalf - BALL_R) {
-          b.z = PITCH.z + Math.sign(lz) * (PITCH.goalHalf - BALL_R);
-          b.vz = -b.vz * 0.2;
-        }
-        if (b.y > PITCH.goalH - BALL_R) {
-          b.y = PITCH.goalH - BALL_R;
-          b.vy = -Math.abs(b.vy) * 0.3;
-        }
-        b.spin = 0;
-      } else if (!inMouth && Math.abs(lx) <= PITCH.hx + BALL_R) {
-        // Kale ağzı dışı: kenar çizgisinden sek
-        b.x = PITCH.x + Math.sign(lx) * (PITCH.hx - BALL_R);
-        b.vx = -b.vx * WALL_BOUNCE;
-        b.spin *= -0.5;
-      } else if (!inMouth) {
-        // Ağın dışından (üstünden/yanından) gelen: kale çizgisinin dışında kalmasın
-        b.x = PITCH.x + Math.sign(lx) * (PITCH.hx - BALL_R);
-        b.vx = -Math.abs(b.vx) * Math.sign(lx) * WALL_BOUNCE;
+    if (!this.out && !this.resetAt && Math.abs(lx) > PITCH.hx + BALL_R && Math.abs(lz) < PITCH.goalHalf - BALL_R * 0.5 && b.y < PITCH.goalH - BALL_R) {
+      this.goal(lx < 0 ? 0 : 1, now);
+      return;
+    }
+    this.outCheck(now);
+    // Panolar ve kale arkası: top sahadan uzaklaşmasın
+    const maxZ = PITCH.hz + 0.75, maxX = PITCH.hx + 1.6;
+    if (Math.abs(lz) > maxZ) {
+      b.z = PITCH.z + Math.sign(lz) * maxZ;
+      b.vz = -b.vz * 0.3;
+    }
+    if (Math.abs(lx) > maxX) {
+      b.x = PITCH.x + Math.sign(lx) * maxX;
+      b.vx = -b.vx * 0.3;
+    }
+  }
+
+  /** Top çizgiyi geçti mi: taç, korner ya da aut kararı ve yeniden başlama yeri. */
+  private outCheck(now: number): void {
+    if (this.out || this.resetAt) return;
+    const b = this.b;
+    const lx = b.x - PITCH.x, lz = b.z - PITCH.z;
+    if (Math.abs(lz) > PITCH.hz + BALL_R) {
+      const x = Math.max(PITCH.x - PITCH.hx + 0.5, Math.min(PITCH.x + PITCH.hx - 0.5, b.x));
+      this.callOut("🟨 Taç", x, PITCH.z + Math.sign(lz) * (PITCH.hz - 0.35), 0, now);
+    } else if (Math.abs(lx) > PITCH.hx + BALL_R) {
+      const side = lx < 0 ? -1 : 1;
+      // Topa son savunan taraf dokunduysa korner; maç yoksa kaleci son dokunduysa korner, yoksa aut
+      const defending = side === -1 ? 0 : 1;
+      const last = this.toucher;
+      const lastTeam = last === -1 ? 0 : last === -2 ? 1 : this.teamOf(last);
+      const corner = this.match ? lastTeam === defending : last < 0;
+      if (corner) {
+        this.callOut("🚩 Korner", PITCH.x + side * (PITCH.hx - 0.4), PITCH.z + Math.sign(lz || 1) * (PITCH.hz - 0.4), 0, now);
+      } else {
+        this.callOut("🧤 Aut", PITCH.x + side * (PITCH.hx - 1.6), PITCH.z, side === -1 ? -1 : -2, now);
       }
     }
+  }
+
+  private callOut(text: string, x: number, z: number, keeper: number, now: number): void {
+    this.out = { at: now + OUT_RESET_MS, x, z, keeper };
+    if (this.owner > 0) this.release(this.owner, now);
+    this.owner = 0;
+    this.room.broadcast({ t: "fb", text });
   }
 
   /** Direkler ve üst direk: top çarparsa seker ("tak" sesi). */
@@ -341,17 +529,146 @@ export class Football {
     if (Math.abs(vn) > 2) this.pendingEv = { ev, by: 0 };
   }
 
+  // ---------------------------------------------------------------------------
+  // Kaleciler
+  // ---------------------------------------------------------------------------
+
+  private resetKeepers(): void {
+    for (const k of this.keepers) {
+      k.x = PITCH.x + k.side * (PITCH.hx - 0.6);
+      k.z = PITCH.z;
+      k.lean = 0;
+      k.holdUntil = 0;
+    }
+  }
+
+  /** Kaleci hareketi: şut geliyorsa topun kaleye varacağı yere plonjon, yakın serbest topa çıkış, yoksa açı kapatma. */
+  private keeperTick(dt: number, now: number): void {
+    const b = this.b;
+    let active = false;
+    for (const p of this.room.players.values()) if (Math.abs(p.state.x - PITCH.x) < PITCH.hx + 10 && Math.abs(p.state.z - PITCH.z) < PITCH.hz + 10) active = true;
+    for (let i = 0; i < 2; i++) {
+      const k = this.keepers[i];
+      const s = k.side, gx = PITCH.x + s * PITCH.hx;
+      const id = i === 0 ? -1 : -2;
+      if (this.owner === id) {
+        k.lean *= Math.exp(-dt * 6);
+        if (now >= k.holdUntil) this.distribute(k, id, now);
+        continue;
+      }
+      let tx: number, tz: number, speed = GK_SPEED;
+      const towards = b.vx * s;
+      const toLine = (gx - b.x) / (b.vx || 1e-6);
+      if (!this.owner && towards > 3 && toLine > 0 && toLine < 1.6) {
+        // Şut geliyor: topun kale çizgisine varacağı yer
+        const zc = b.z + b.vz * toLine;
+        tz = clamp(zc, PITCH.z - PITCH.goalHalf - 0.3, PITCH.z + PITCH.goalHalf + 0.3);
+        tx = gx - s * 0.5;
+        speed = toLine < 0.8 ? GK_DIVE_SPEED : GK_SPEED * 1.4;
+      } else if (!this.owner && Math.abs(b.x - gx) < GK_BOX && Math.abs(b.z - PITCH.z) < GK_BOX + 0.8 && Math.hypot(b.vx, b.vz) < 7 && b.y < 1) {
+        // Ceza alanındaki serbest topa çık
+        tx = b.x;
+        tz = b.z;
+        speed = GK_SPEED * 1.2;
+      } else {
+        // Açı kapatma: topla kalenin ortası arasında, çizginin biraz önünde
+        const dist = Math.hypot(b.x - gx, b.z - PITCH.z);
+        tz = PITCH.z + clamp((b.z - PITCH.z) * 0.35, -(PITCH.goalHalf - 0.4), PITCH.goalHalf - 0.4);
+        tx = gx - s * (0.6 + Math.min(1.4, (30 - Math.min(30, dist)) / 25));
+        if (!active) [tx, tz] = [gx - s * 0.6, PITCH.z];
+      }
+      tx = clamp(tx, Math.min(gx, gx - s * GK_BOX), Math.max(gx, gx - s * GK_BOX));
+      const dx = tx - k.x, dz = tz - k.z, d = Math.hypot(dx, dz);
+      const stepLen = Math.min(d, speed * dt);
+      if (d > 1e-4) {
+        k.x += (dx / d) * stepLen;
+        k.z += (dz / d) * stepLen;
+      }
+      // Plonjon: hızlı yana gidişte gövde yatar
+      const lateral = d > 1e-4 ? (dz / d) * (stepLen / Math.max(dt, 1e-3)) : 0;
+      const want = speed === GK_DIVE_SPEED ? clamp(lateral / GK_DIVE_SPEED, -1, 1) * -s : 0;
+      k.lean += (want - k.lean) * Math.min(1, dt * 10);
+    }
+    if (active && now - this.lastGk > 66) {
+      this.lastGk = now;
+      this.room.broadcast({ t: "gk", k: this.gkState() });
+    }
+  }
+
+  /**
+   * Kurtarış: kaleci menzilindeki topu tutar ya da (sert şutta) çeler. Her şuta bir kez karar verir;
+   * köşeye ve sert gelen şut daha zor kurtarılır (kaçırırsa aynı şutta tekrar denemez).
+   */
+  private saves(now: number): void {
+    const b = this.b;
+    if (this.owner) return;
+    for (let i = 0; i < 2; i++) {
+      const k = this.keepers[i];
+      const id = i === 0 ? -1 : -2;
+      if (k.decided === this.shotId || this.toucher === id) continue;
+      const reach = GK_REACH + Math.abs(k.lean) * (GK_DIVE_REACH - GK_REACH);
+      if (Math.hypot(b.x - k.x, b.z - k.z) > reach || b.y > 2.2) continue;
+      k.decided = this.shotId;
+      const speed = Math.hypot(b.vx, b.vz);
+      const corner = Math.min(1, Math.abs(b.z - PITCH.z) / PITCH.goalHalf);
+      const chance = clamp(1.3 - speed / 26 - corner * 0.35 - b.y * 0.08, 0.15, 0.97);
+      if (this.random() > chance) continue;
+      this.touch(id, now);
+      if (speed > 16) {
+        // Çelme: top kaleden uzağa, yana sekerek
+        b.vx = -k.side * Math.max(3, Math.abs(b.vx) * 0.3);
+        b.vz = (this.random() - 0.5) * 8;
+        b.vy = 2.5;
+        b.spin = 0;
+      } else {
+        this.owner = id;
+        k.holdUntil = now + GK_HOLD_MS;
+      }
+      this.pendingEv = { ev: "save", by: id };
+    }
+  }
+
+  /** Kaleci topu oyuna sokar: maçta takım arkadaşına, yoksa sahanın içine uzun vuruş. */
+  private distribute(k: Keeper, id: number, now: number): void {
+    const b = this.b;
+    this.owner = 0;
+    const team = k.side === -1 ? 0 : 1;
+    let target: { x: number; z: number } | null = null;
+    let best = Infinity;
+    for (const [sid, p] of this.room.players) {
+      if (p.info.spectator || (this.match && this.teamOf(sid) !== team)) continue;
+      if (!this.match) continue;
+      const d = Math.hypot(p.state.x - k.x, p.state.z - k.z);
+      if (d > 4 && d < best) {
+        best = d;
+        target = { x: p.state.x, z: p.state.z };
+      }
+    }
+    const tx = target?.x ?? PITCH.x - k.side * (4 + this.random() * 6), tz = target?.z ?? PITCH.z + (this.random() - 0.5) * PITCH.hz;
+    const d = Math.hypot(tx - b.x, tz - b.z) || 1;
+    const speed = Math.min(16, d * 0.9 + 3);
+    b.x = k.x - k.side * 0.6;
+    b.y = 0.4;
+    b.vx = ((tx - b.x) / d) * speed;
+    b.vz = ((tz - b.z) / d) * speed;
+    b.vy = 3.2;
+    this.shotId++;
+    this.touch(id, now);
+    this.pendingEv = { ev: "pass", by: id };
+  }
+
   /** `side` 0: batıdaki kaleye gol (doğu/mavi takım sayar), 1: doğudakine (batı/kırmızı sayar). */
   private goal(side: 0 | 1, now: number): void {
     const scoring = side === 0 ? 1 : 0;
     this.score[scoring]++;
     this.resetAt = now + GOAL_RESET_MS;
-    const sid = this.toucher;
+    this.owner = 0;
+    const sid = this.toucher > 0 ? this.toucher : 0;
     const name = this.room.players.get(sid)?.info.name ?? "Biri";
     // Maçta kendi kalesine atan sayılmaz (gol takıma yazılır, oyuncuya görev yok)
-    const own = this.match ? this.teamOf(sid) === side : false;
+    const own = this.match && sid ? this.teamOf(sid) === side : false;
     const pt = this.prevToucher;
-    const assistSid = !own && pt.sid && pt.sid !== sid && now - pt.at < ASSIST_MS && (this.teamOf(pt.sid) ?? 0) === (this.teamOf(sid) ?? 0) ? pt.sid : 0;
+    const assistSid = !own && sid && pt.sid > 0 && pt.sid !== sid && now - pt.at < ASSIST_MS && (this.teamOf(pt.sid) ?? 0) === (this.teamOf(sid) ?? 0) ? pt.sid : 0;
     const assist = assistSid ? this.room.players.get(assistSid)?.info.name : undefined;
     this.room.broadcast({ t: "goal", side, sid, name, score: this.score, ...(assist ? { assist } : {}), ...(own ? { own } : {}) });
     if (sid && !own) this.report(sid, "goal");
@@ -383,7 +700,9 @@ export class Football {
     }
     this.match = { endsAt: now + m * 60_000, teams };
     this.score = [0, 0];
-    Object.assign(this.b, { x: PITCH.x, y: 0, z: PITCH.z, vx: 0, vy: 0, vz: 0, spin: 0 });
+    this.place(PITCH.x, PITCH.z);
+    this.out = null;
+    this.resetKeepers();
     this.resetAt = now + GOAL_RESET_MS;
     this.room.broadcast({ t: "score", score: this.score });
     this.room.broadcast({ t: "match", match: this.match });
@@ -423,6 +742,10 @@ export class Football {
   leave(sid: number): void {
     this.prev.delete(sid);
     this.lastKick.delete(sid);
+    this.noGain.delete(sid);
+    this.lastTackle.delete(sid);
+    this.blockSince.delete(sid);
+    if (this.owner === sid) this.owner = 0;
     if (this.toucher === sid) this.toucher = 0;
     if (this.match) {
       const m = this.match;
@@ -430,4 +753,12 @@ export class Football {
       this.room.broadcast({ t: "match", match: m });
     }
   }
+}
+
+function clamp(v: number, a: number, b: number): number {
+  return Math.max(a, Math.min(b, v));
+}
+
+function round(v: number): number {
+  return Math.round(v * 100) / 100;
 }

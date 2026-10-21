@@ -156,6 +156,8 @@ function glowMesh(mats: THREE.Matrix4[]): THREE.InstancedMesh {
       void main() {
         float s = length(instanceMatrix[0].xyz) * 2.6;
         vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        // Uzaktaki lamba da seçilsin: hale mesafeyle büyür (ekranda küçülüp kaybolmaz)
+        s *= 1.0 + clamp(-center.z / 25.0, 0.0, 3.0);
         vLocal = uv * 2.0 - 1.0;
         gl_Position = projectionMatrix * (center + vec4(position.xy * s, 0.0, 0.0));
       }

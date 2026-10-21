@@ -149,6 +149,9 @@ export class WorldGames {
       case "tresign":
         this.tables.resign(sid, num(msg.id));
         return true;
+      case "tackle":
+        this.football.tackle(sid, now);
+        return true;
       case "kick":
         this.football.kick(sid, num(msg.dir), num(msg.power), now, (msg.kind ?? "shot") as never, num(msg.curve ?? 0));
         return true;

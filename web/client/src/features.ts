@@ -214,8 +214,18 @@ export class Features {
       if (!b.ev || b.by === net.you) return;
       const gain = falloff(Math.hypot(b.x - me.x, b.z - me.z));
       if (b.ev === "post" || b.ev === "bar") sfx.post(Math.max(0.15, gain));
+      else if (b.ev === "save") {
+        sfx.header(Math.max(0.3, gain));
+        sfx.cheer(0.35 * gain);
+      } else if (b.ev === "tackle") sfx.kick(0.35 * gain);
       else if (b.ev === "head") sfx.header(gain);
       else sfx.kick((b.ev === "pass" ? 0.45 : 0.8) * gain);
+    };
+    net.onGk = (k) => world.pitch.setKeepers(k);
+    net.onFb = (text) => {
+      if (Math.hypot(me.x - PITCH.x, me.z - PITCH.z) > 40) return;
+      sfx.whistle();
+      hud.toast(text);
     };
     net.onMatch = (m) => {
       const was = this.match;
@@ -402,9 +412,12 @@ export class Features {
     const near = (p: { x: number; z: number }, r: number) => Math.hypot(me.x - p.x, me.z - p.z) <= r;
     if (me.vehicle === 3) return near(DOCK, 4.5) || Math.hypot(me.x - POND_AREA.x, me.z - POND_AREA.z) > 4.6 ? [{ key: "f", label: "Kayıktan in 🛶", act: "boat-off" }] : [];
     if (me.onStage) return [{ key: "f", label: "Sahneden in 🎤", act: "stage-off" }];
-    // Futbol: top yakınsa şut (basılı tutunca güç)
+    // Futbol: top ayaktaysa ya da serbest top yakınsa vuruş; rakibin ayağındaysa müdahale
     const ball = world.pitch.ball;
-    if (Math.hypot(ball.x - me.x, ball.z - me.z) <= KICK_REACH && !me.seated) {
+    const owner = world.pitch.owner;
+    const ballD = Math.hypot(ball.x - me.x, ball.z - me.z);
+    if (owner > 0 && owner !== this.c.net.you && ballD <= 1.7 && !me.seated) return [{ key: "f", label: "Müdahale 🦵", act: "tackle" }];
+    if ((owner === this.c.net.you || (owner === 0 && ballD <= KICK_REACH)) && !me.seated) {
       const ch = this.charge;
       return [
         { key: "f", label: ch?.kind === "shot" ? "Şut… bırak ⚽" : "Pas · basılı tut: şut ⚽", act: "kick" },
@@ -430,6 +443,11 @@ export class Features {
   /** Etkileşim gerçekleşti (true: işlendi). */
   handleAct(act: string, now: number): boolean {
     const { me, net, hud, emoteFx } = this.c;
+    if (act === "tackle") {
+      net.send({ t: "tackle" });
+      sfx.kick(0.3);
+      return true;
+    }
     if (act === "kick" || act === "lob") {
       // Şarj başlar: bırakınca vurulur (F'ye kısa dokunuş pas). Dokunmatikte hemen orta güçle.
       if (this.c.input.touch) this.kick(0.55, act === "lob" ? "lob" : "shot", 0);
@@ -573,7 +591,8 @@ export class Features {
     }
     // Nişan oku: topun yanındayken vuruş yönü ve gücü
     const ball = world.pitch.ball;
-    const canKick = Math.hypot(ball.x - me.x, ball.z - me.z) <= KICK_REACH + 0.6 && !me.seated && !me.vehicle;
+    const owner = world.pitch.owner;
+    const canKick = (owner === net.you || (owner === 0 && Math.hypot(ball.x - me.x, ball.z - me.z) <= KICK_REACH + 0.6)) && !me.seated && !me.vehicle;
     world.pitch.setAim(
       canKick && !input.touch
         ? { ang: this.aimAngle(), power: ch ? Math.min(1, ch.t / 0.9) : 0, kind: ch ? (ch.kind === "shot" && ch.t < PASS_TAP ? "pass" : ch.kind) : "pass" }
@@ -585,7 +604,11 @@ export class Features {
     const myTeam = m ? (m.teams[0].includes(net.you) ? 0 : m.teams[1].includes(net.you) ? 1 : null) : null;
     this.whud.setScore(nearPitch || m ? this.score : null, clock, myTeam);
     world.pitch.setScore(this.score, clock);
-    world.pitch.update(dt, serverNow, world.env.lights);
+    world.pitch.update(dt, serverNow, world.env.lights, (sid) => {
+      if (sid === net.you) return { x: me.x, z: me.z, rot: me.rot };
+      const r = remotes.map.get(sid);
+      return r?.hasData ? { x: r.x, z: r.z, rot: r.rot } : null;
+    });
     this.updateRings(m);
 
     // Yolculuk: görev için ara ara bildirilir

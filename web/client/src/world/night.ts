@@ -7,8 +7,8 @@ import { timeUniform } from "./geo";
 /** Lamba ampulünün zeminden yüksekliği (scene.ts'teki "bulb" ile aynı). */
 const BULB_Y = 2.7;
 /** Gerçek ışığın tam güçte olduğu ve tamamen söndüğü oyuncu mesafesi. */
-const LIT_NEAR = 14;
-const LIT_FAR = 22;
+const LIT_NEAR = 24;
+const LIT_FAR = 36;
 const WARM = new THREE.Color("#ffc27a");
 const FIRE = new THREE.Color("#ff8a3a");
 
