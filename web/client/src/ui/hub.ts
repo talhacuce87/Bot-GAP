@@ -21,6 +21,8 @@ export interface HubActions {
   queue(): void;
   weather(): void;
   battle(): void;
+  /** Voleybol salonuna ışınlan (salondaysa takım menüsü). */
+  volley(): void;
   /** Evcil hayvan / kamuflaj değişti (sunucuya bildir). */
   cosmetics(): void;
 }
@@ -82,6 +84,7 @@ export class Hub {
     tile(fun, "🏃", "Ebelemece", () => this.a.tag("ebelemece"));
     tile(fun, "🙈", "Saklambaç", () => this.a.tag("saklambac"));
     tile(fun, "⚽", "Futbol maçı", this.a.match);
+    tile(fun, "🏐", "Voleybol", this.a.volley);
     tile(fun, "🙌", "Beşlik çak", () => this.a.pair("five"), actionLabel("five"));
     tile(fun, "🤗", "Sarıl", () => this.a.pair("hug"), actionLabel("hug"));
     tile(fun, "🎵", "Şarkı kuyruğu", this.a.queue);

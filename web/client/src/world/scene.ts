@@ -22,7 +22,8 @@ import { type Stadium, stadium } from "./stadium";
 import { djBooth, type StageLights, stageLights, stageTruss } from "./stageFx";
 import { addRipple, dungeon, GROVE, grove, GROVE_SIGN, GROVE_SIGN_RY, POND, pond, signPost, steppingStones, waterEnv, waterMaterial } from "./zones";
 import { BRIDGE_AXES, buildTerrain, groundY, inCave, mountainHeight, riverMesh, terrainColliders, walkable, WATER_Y, waterfallMesh } from "./terrain";
-import { hall, raceHouse } from "./hall";
+import { hall, raceHouse, volleyHall } from "./hall";
+import { type VolleyCourt, volleyCourt } from "./volleyCourt";
 import { cave } from "./cave";
 import { FAME } from "./fame";
 import { SAKURA, SAKURA_CONFIG, sakuraGarden, type SakuraGarden } from "./sakura";
@@ -60,6 +61,8 @@ export interface World {
   pitch: Pitch;
   /** Stadyum (dünyanın dışında; maçlar burada): saha, tribünler, seyirciler. */
   stadium: Stadium;
+  /** Voleybol salonu (dünyanın dışında; menüden ışınlanılır): saha, file, tabela. */
+  volley: VolleyCourt;
   /** Sahne ışıkları (DJ şovu, karaoke takip spotu). */
   stageLights: StageLights;
   /** Suda dalga halkası (göl, çeşme). */
@@ -1025,6 +1028,10 @@ export function buildWorld(opts: WorldOptions = {}): World {
   scene.add(sports.upper);
   const toys = raceHouse(b);
   scene.add(toys.upper);
+  const vHall = volleyHall(b);
+  scene.add(vHall.upper);
+  const vCourt = volleyCourt(b);
+  scene.add(vCourt.group);
   toyPlatform(b);
   djBooth(b);
   stageTruss(b);
@@ -1157,6 +1164,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       // İçerideyken salonun çatısı ve mağaranın tavanı gizlenir: kamera içeriyi görsün
       sports.update(focus, camera, Math.min(0.1, Math.max(0, time - hallTime)));
       toys.update(focus, camera, Math.min(0.1, Math.max(0, time - hallTime)));
+      vHall.update(focus, camera, Math.min(0.1, Math.max(0, time - hallTime)));
       hallTime = time;
       terrain.cap.visible = !(focus && inCave(focus.x, focus.z));
       music += ((musicOn ? 1 : 0) - music) * 0.08;
@@ -1215,6 +1223,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     hour: () => dayNight.hour,
     pitch: field,
     stadium: arena,
+    volley: vCourt,
     stageLights: lights,
     ripple: addRipple,
     season: SEASON,

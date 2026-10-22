@@ -2,9 +2,12 @@
 // Cihazda (localStorage) saklanır; ayarlar panelinden değiştirilir. Klavye düzeninden bağımsız: fiziksel tuş.
 // İki ayrı takım (profil) var: dünya ve stadyum. Stadyuma ışınlanınca stadyum tuşları geçerli olur
 // (Q pas, F şut, H power şut, G aşırtma, E çalım, R rainbow, C müdahale, B takım); ayarlar paneli o an geçerli takımı gösterir.
+// Voleybol salonunda da kendi takımı var (Volleyball 4.2 düzeni): sol tık manşet/smaç, 1 smaç↔blok, 2 dump,
+// 3 dalış, F/R pas, B pas türü, Q/E güç (Z/X/C: 1/8/15), V servis, T sprint, G antrenman topu, P pozisyon.
+// Orada sol tık ve 1–6 da atanabilir.
 
-export type Profile = "world" | "stadium";
-const KEYS: Record<Profile, string> = { world: "gap-keys", stadium: "gap-keys-stadium" };
+export type Profile = "world" | "stadium" | "volley";
+const KEYS: Record<Profile, string> = { world: "gap-keys", stadium: "gap-keys-stadium", volley: "gap-keys-volley2" };
 
 export type Action =
   | "forward"
@@ -39,15 +42,33 @@ export type Action =
   | "fbTackle"
   | "fbPower"
   | "fbRainbow"
-  | "fbTeam";
-
-/** Tek seferlik kısayollar (menü, fotoğraf, araç, stadyumda futbol…): Input bunları sıraya alır, oyun tüketir. */
-export const HOTKEYS: readonly Action[] = [
-  "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "net",
-  "fbPass", "fbShoot", "fbLob", "fbSkill", "fbTackle", "fbPower", "fbRainbow", "fbTeam",
-];
+  | "fbTeam"
+  | "vHit"
+  | "vMode"
+  | "vDump"
+  | "vDive"
+  | "vSetF"
+  | "vSetB"
+  | "vPowDown"
+  | "vPowUp"
+  | "vPow1"
+  | "vPow8"
+  | "vPow15"
+  | "vSetType"
+  | "vServe"
+  | "vToss"
+  | "vTeam";
 
 const FOOTBALL: readonly Action[] = ["fbPass", "fbShoot", "fbPower", "fbLob", "fbSkill", "fbRainbow", "fbTackle", "fbTeam"];
+const VOLLEY: readonly Action[] = [
+  "vHit", "vMode", "vDump", "vDive", "vSetF", "vSetB", "vSetType", "vPowDown", "vPowUp", "vPow1", "vPow8", "vPow15", "vServe", "vToss", "vTeam",
+];
+
+/** Tek seferlik kısayollar (menü, fotoğraf, araç, stadyumda futbol, voleybol…): Input bunları sıraya alır, oyun tüketir. */
+export const HOTKEYS: readonly Action[] = [
+  "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "net",
+  ...FOOTBALL, ...VOLLEY,
+];
 
 /** Her takımda ayarlanabilen eylemler (sırasıyla panelde). */
 export const PROFILE_ACTIONS: Record<Profile, readonly Action[]> = {
@@ -56,6 +77,7 @@ export const PROFILE_ACTIONS: Record<Profile, readonly Action[]> = {
     "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "net",
   ],
   stadium: [...FOOTBALL, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
+  volley: [...VOLLEY, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
 };
 
 /** Tuş adı: KeyboardEvent.code, "Mouse1" (orta), "Mouse3"/"Mouse4" (yan), "WheelUp"/"WheelDown". */
@@ -95,6 +117,21 @@ export const ACTION_NAMES: Record<Action, string> = {
   fbPower: "Power şut (basılı tut)",
   fbRainbow: "Rainbow çalım",
   fbTeam: "Takım menüsü",
+  vHit: "Manşet (havada: smaç)",
+  vMode: "Zıplama modu: smaç / blok",
+  vDump: "Dump (havada)",
+  vDive: "Dalış",
+  vSetF: "Pas (öne)",
+  vSetB: "Pas (arkaya)",
+  vPowDown: "Güç azalt",
+  vPowUp: "Güç arttır",
+  vPow1: "Güç 1",
+  vPow8: "Güç 8",
+  vPow15: "Güç 15",
+  vSetType: "Pas türü (normal/yüksek/hızlı)",
+  vServe: "Servis",
+  vToss: "Antrenman topu",
+  vTeam: "Voleybol menüsü",
 };
 
 export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
@@ -131,11 +168,28 @@ export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
   fbPower: ["", ""],
   fbRainbow: ["", ""],
   fbTeam: ["", ""],
+  vHit: ["", ""],
+  vMode: ["", ""],
+  vDump: ["", ""],
+  vDive: ["", ""],
+  vSetF: ["", ""],
+  vSetB: ["", ""],
+  vPowDown: ["", ""],
+  vPowUp: ["", ""],
+  vPow1: ["", ""],
+  vPow8: ["", ""],
+  vPow15: ["", ""],
+  vSetType: ["", ""],
+  vServe: ["", ""],
+  vToss: ["", ""],
+  vTeam: ["", ""],
 };
+
+const NONE = Object.fromEntries(Object.keys(DEFAULT_BINDS).map((a) => [a, ["", ""]])) as Record<Action, [Bind, Bind]>;
 
 /** Stadyum: futbol tuşları; dünyanın E/Q/C/F/G işleri (otur, görevler, gardırop, etkileşim) burada yok. */
 export const STADIUM_BINDS: Record<Action, [Bind, Bind]> = {
-  ...(Object.fromEntries(Object.keys(DEFAULT_BINDS).map((a) => [a, ["", ""]])) as Record<Action, [Bind, Bind]>),
+  ...NONE,
   forward: ["KeyW", "ArrowUp"],
   back: ["KeyS", "ArrowDown"],
   left: ["KeyA", "ArrowLeft"],
@@ -158,10 +212,53 @@ export const STADIUM_BINDS: Record<Action, [Bind, Bind]> = {
   fbTeam: ["KeyB", ""],
 };
 
-const DEFAULTS: Record<Profile, Record<Action, [Bind, Bind]>> = { world: DEFAULT_BINDS, stadium: STADIUM_BINDS };
+/**
+ * Voleybol salonu (Volleyball 4.2 düzeni): yerde sol tık manşet, havada smaç; 1 zıplama modu (smaç/blok),
+ * 2 dump, 3 dalış, F/R öne/arkaya pas, B pas türü, Q/E güç (Z/X/C: 1, 8, 15), V servis, T sprint, P pozisyon;
+ * Shift shift lock (kamera ile nişan).
+ */
+export const VOLLEY_BINDS: Record<Action, [Bind, Bind]> = {
+  ...NONE,
+  forward: ["KeyW", "ArrowUp"],
+  back: ["KeyS", "ArrowDown"],
+  left: ["KeyA", "ArrowLeft"],
+  right: ["KeyD", "ArrowRight"],
+  run: ["KeyT", ""],
+  jump: ["Space", ""],
+  shiftlock: ["ShiftLeft", "ShiftRight"],
+  zoomIn: ["WheelUp", ""],
+  zoomOut: ["WheelDown", ""],
+  menu: ["KeyM", ""],
+  camera: ["", ""],
+  net: ["F3", ""],
+  vHit: ["Mouse0", ""],
+  vMode: ["Digit1", ""],
+  vDump: ["Digit2", ""],
+  vDive: ["Digit3", ""],
+  vSetF: ["KeyF", ""],
+  vSetB: ["KeyR", ""],
+  vPowDown: ["KeyQ", ""],
+  vPowUp: ["KeyE", ""],
+  vPow1: ["KeyZ", ""],
+  vPow8: ["KeyX", ""],
+  vPow15: ["KeyC", ""],
+  vSetType: ["KeyB", ""],
+  vServe: ["KeyV", ""],
+  vToss: ["KeyG", ""],
+  vTeam: ["KeyP", ""],
+};
+
+const DEFAULTS: Record<Profile, Record<Action, [Bind, Bind]>> = { world: DEFAULT_BINDS, stadium: STADIUM_BINDS, volley: VOLLEY_BINDS };
 
 /** Atanamaz tuşlar: sohbet, menü kapatma, emote ve sol/sağ tık (seçim ve kamera). */
 export const RESERVED = new Set(["Enter", "NumpadEnter", "Escape", "Mouse0", "Mouse2", ...[1, 2, 3, 4, 5, 6].map((n) => `Digit${n}`)]);
+/** Voleybol salonunda sol tık ve rakamlar da atanabilir (emote yok, sol tık manşet). */
+const VOLLEY_FREE = new Set(["Mouse0", ...[1, 2, 3, 4, 5, 6].map((n) => `Digit${n}`)]);
+
+/** Bu takımda atanamaz mı. */
+export function reserved(bind: Bind, p: Profile = profile): boolean {
+  return RESERVED.has(bind) && !(p === "volley" && VOLLEY_FREE.has(bind));
+}
 
 function load(p: Profile): Record<Action, [Bind, Bind]> {
   const b = structuredClone(DEFAULTS[p]);
@@ -169,7 +266,7 @@ function load(p: Profile): Record<Action, [Bind, Bind]> {
     const saved = JSON.parse(localStorage.getItem(KEYS[p]) || "{}") as Partial<Record<Action, unknown>>;
     for (const a of PROFILE_ACTIONS[p]) {
       const v = saved[a];
-      if (Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "string" && !RESERVED.has(x))) b[a] = [v[0], v[1]];
+      if (Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "string" && !reserved(x, p))) b[a] = [v[0], v[1]];
     }
   } catch {
     // depolama kapalı ya da bozuk: varsayılanlar
@@ -177,7 +274,7 @@ function load(p: Profile): Record<Action, [Bind, Bind]> {
   return b;
 }
 
-const sets: Record<Profile, Record<Action, [Bind, Bind]>> = { world: load("world"), stadium: load("stadium") };
+const sets: Record<Profile, Record<Action, [Bind, Bind]>> = { world: load("world"), stadium: load("stadium"), volley: load("volley") };
 /** Geçerli takım ve atamaları (canlı bağ: setProfile ile değişir). */
 export let profile: Profile = "world";
 export let binds: Record<Action, [Bind, Bind]> = sets.world;
@@ -244,6 +341,7 @@ export function actionsOf(bind: Bind): Action[] {
 }
 
 const MOUSE_NAMES: Record<string, string> = {
+  Mouse0: "Sol tık",
   Mouse1: "Orta tık",
   Mouse3: "Fare geri",
   Mouse4: "Fare ileri",

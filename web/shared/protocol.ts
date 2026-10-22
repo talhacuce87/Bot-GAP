@@ -9,6 +9,7 @@ import type { ChessMove, ChessState } from "./games/chess";
 import type { OkeyMove, OkeyState } from "./games/okey";
 import type { TavlaMove, TavlaState } from "./games/tavla";
 import type { TableKind } from "./zones";
+import type { SetType, VBall, VolleyEv, VolleyHit, VolleyState } from "./volley";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
 export const MSG_SNAPSHOT = 2; // sunucu → istemci: odadaki herkesin konumu
@@ -344,6 +345,15 @@ export type ServerEvent =
   | { t: "tp"; sid: number; x: number; z: number; rot: number; at: number }
   | { t: "tag"; state: TagState | null }
   | { t: "race"; state: RaceState | null }
+  /**
+   * Voleybol: top (id: yoksa maç topu, varsa antrenmanda çağıranın topu; hold: servisçinin elinde, toss: servis
+   * için havaya atan; w: sert vuruşun rüzgar rengi), kaybolan antrenman topu, maç/rally durumu, animasyon (dalış,
+   * blok, havada yatış: v yana, f öne).
+   */
+  | ({ t: "vball"; id?: number; at: number; hold?: number; toss?: number; w?: string; ev?: VolleyEv; by?: number } & VBall)
+  | { t: "vgone"; id: number }
+  | { t: "vstate"; state: VolleyState }
+  | { t: "vact"; sid: number; a: "dive" | "block" | "lean"; v?: number; f?: number }
   /** Yarıştaki arabalar: [sid, x×10, z×10, açı×100, bayrak] tekrarlı (pist birimi). */
   | { t: "rcars"; c: number[] }
   /** İkili etkileşim isteği (yalnızca hedefe) ve gerçekleşen etkileşim (herkese). */
@@ -398,6 +408,24 @@ export type ClientEvent =
   | { t: "rainbow" }
   | { t: "fbteam"; team: 0 | 1 }
   | { t: "fbhome" }
+  /**
+   * Voleybol: vuruş (yön, güç 1–15, pas türü; `dive`: dalışta manşet), blok için zıplama, dalış,
+   * havada yatış (v: -1 sol, 0, 1 sağ; f: 1 öne, -1 geri), antrenman topu, servis topunu ele al (vhold) ve
+   * havaya at (vlift, falso), rüzgar rengi, salona git/dön, pozisyon seç (slot -1: izleyici), maç başlat/bitir.
+   */
+  | { t: "vhit"; kind: VolleyHit; dir: number; p: number; dive?: boolean; st?: SetType }
+  | { t: "vblock" }
+  | { t: "vdive"; dir: number }
+  | { t: "vlean"; v: number; f?: number }
+  | { t: "vtoss" }
+  | { t: "vhold" }
+  | { t: "vlift"; spin: number }
+  | { t: "vwind"; c: string }
+  | { t: "vgo" }
+  | { t: "vhome" }
+  | { t: "vpos"; team: 0 | 1; slot: number }
+  | { t: "vstart"; target: number }
+  | { t: "vstop" }
   /** İnşa: boş arsa sahiplen, kendi arsana blok koy/sil (b 0), arsanı boşalt. */
   | { t: "bclaim" }
   | { t: "bset"; i: number; j: number; k: number; b: number; r: number }

@@ -109,8 +109,20 @@ export const STADIUM = { x: STADIUM_PITCH.x, z: STADIUM_PITCH.z, hw: STADIUM_PIT
 export function inStadium(x: number, z: number): boolean {
   return Math.abs(x - STADIUM.x) < STADIUM.hw + 40 && Math.abs(z - STADIUM.z) < STADIUM.hd + 40;
 }
+
+// ---- Voleybol salonu: dünyanın dışında (doğuda, ufkun ardında), menüden ışınlanılan kapalı salon ----
+// Saha 16×9 m (chibi ölçeğinde); file sahanın ortasında, x ekseninde (batı yarı kırmızı, doğu yarı mavi).
+export const VOLLEY_COURT = { x: 280, z: 0, hx: 12, hz: 6 };
+/** Salonun duvarları (yarı ölçüler) ve yüksekliği. */
+export const VOLLEY_HALL = { x: VOLLEY_COURT.x, z: VOLLEY_COURT.z, hw: VOLLEY_COURT.hx + 7, hd: VOLLEY_COURT.hz + 7, h: 11 };
+
+/** Nokta voleybol salonunun bulunduğu bölgede mi (oraya yalnızca ışınlanılır). */
+export function inVolley(x: number, z: number): boolean {
+  return Math.abs(x - VOLLEY_HALL.x) < VOLLEY_HALL.hw + 30 && Math.abs(z - VOLLEY_HALL.z) < VOLLEY_HALL.hd + 30;
+}
+
 /** Salonun duvarları (dış kenar yarı ölçüleri) ve yüksekliği. */
-export const HALL = { x: PITCH.x, z: PITCH.z, hw: PITCH.hx + 4.6, hd: PITCH.hz + 5, h: 11, door: 3.4 };
+export const HALL ={ x: PITCH.x, z: PITCH.z, hw: PITCH.hx + 4.6, hd: PITCH.hz + 5, h: 11, door: 3.4 };
 export const BALL_R = 0.32;
 /** Topa bu kadar yakın oyuncu topu sürer / şut çekebilir. */
 export const KICK_REACH = 1.6;

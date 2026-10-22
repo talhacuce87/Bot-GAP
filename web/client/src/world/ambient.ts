@@ -181,12 +181,15 @@ export class SeasonParticles {
     this.mesh = mesh;
   }
 
-  /** `light`: gün ışığı (gece kararır; polenler yalnızca gündüz görünür), `wind` 0.5–2 (fırtınada sert). */
-  update(camera: THREE.Vector3, light: number, wind: number): void {
+  /**
+   * `light`: gün ışığı (gece kararır; polenler yalnızca gündüz görünür), `wind` 0.5–2 (fırtınada sert),
+   * `indoor`: kapalı salonda (voleybol) hiç görünmez.
+   */
+  update(camera: THREE.Vector3, light: number, wind: number, indoor = false): void {
     if (!this.mesh) return;
     this.u.uCenter.value.copy(camera);
     this.u.uLight.value = light;
-    if (this.glow) this.mesh.visible = light > 0.7;
+    this.mesh.visible = !indoor && (!this.glow || light > 0.7);
     this.u.uWind.value += (wind - this.u.uWind.value) * 0.01;
   }
 }

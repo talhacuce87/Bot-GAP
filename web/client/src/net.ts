@@ -4,6 +4,7 @@ import { type Act, SEND_HZ } from "../../shared/constants";
 import type { Shot } from "../../shared/tank";
 import type { BattleState } from "../../shared/protocol";
 import type { PlotState } from "../../shared/build";
+import type { VBall, VolleyEv, VolleyState } from "../../shared/volley";
 import {
   type BallState,
   type MatchState,
@@ -106,6 +107,11 @@ export class Net {
   onScore: (score: [number, number], f?: 1) => void = () => {};
   onTag: (s: TagState | null) => void = () => {};
   onRace: (s: RaceState | null) => void = () => {};
+  /** Voleybol: top (sunucu zamanı `at`), maç durumu, dalış/blok animasyonu. */
+  onVball: (b: VBall & { id?: number; at: number; hold?: number; toss?: number; w?: string; ev?: VolleyEv; by?: number }) => void = () => {};
+  onVgone: (id: number) => void = () => {};
+  onVstate: (s: VolleyState) => void = () => {};
+  onVact: (sid: number, a: "dive" | "block" | "lean", v?: number, f?: number) => void = () => {};
   onRcars: (c: number[]) => void = () => {};
   onPairReq: (from: number, name: string, kind: "five" | "hug") => void = () => {};
   onPair: (a: number, b: number, kind: "five" | "hug") => void = () => {};
@@ -424,6 +430,20 @@ export class Net {
         break;
       case "race":
         this.onRace(ev.state);
+        break;
+      case "vball": {
+        const { t: _t, ...ball } = ev;
+        this.onVball(ball);
+        break;
+      }
+      case "vgone":
+        this.onVgone(ev.id);
+        break;
+      case "vstate":
+        this.onVstate(ev.state);
+        break;
+      case "vact":
+        this.onVact(ev.sid, ev.a, ev.v, ev.f);
         break;
       case "rcars":
         this.onRcars(ev.c);

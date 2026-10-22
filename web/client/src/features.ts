@@ -8,6 +8,7 @@ import { assistedShot, attackSide, FINISH_RANGE, goalView } from "../../shared/f
 import { DJ_BOOTH, DOCK, type Field, inStadium, KICK_REACH, PITCH, POND_AREA, RACE_HOUSE, STADIUM_PITCH, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
 import { type Action, actionLabel, onBinds, profile, setProfile } from "./input/keybinds";
 import { RaceClient } from "./race";
+import { VolleyClient } from "./volley";
 import { BilekArms } from "./world/bilekArms";
 import { type AvatarRenderer, type AvatarView, colorFor } from "./avatars/avatars";
 import { Companions } from "./avatars/companions";
@@ -109,6 +110,8 @@ export class Features {
   private build: BuildMode;
   /** Oyuncak pist yarışı. */
   readonly race: RaceClient;
+  /** Voleybol salonu. */
+  readonly volley: VolleyClient;
   private mist = new Mist();
   private leaves: SeasonParticles;
   private confetti = new Confetti();
@@ -198,6 +201,19 @@ export class Features {
       toast: (t) => hud.toast(t),
     });
     c.life.onStop(() => this.race.dispose());
+    this.volley = new VolleyClient({
+      scene: world.scene,
+      court: world.volley,
+      net,
+      input: c.input,
+      me,
+      remotes: c.remotes,
+      camera: c.camera,
+      hudRoot,
+      nameOf: (sid) => this.nameOf(sid),
+      toast: (t) => hud.toast(t),
+    });
+    c.life.onStop(() => this.volley.dispose());
 
     // Ocakçı: çay ocağının arkasında duran sabit karakter
     this.teaMaker = {
@@ -247,6 +263,7 @@ export class Features {
       queue: () => this.whud.openQueue(),
       weather: () => c.say("!hava"),
       battle: c.battle,
+      volley: () => this.volley.menu(),
       cosmetics: () => this.sendCosmetics(),
     });
 
@@ -380,7 +397,7 @@ export class Features {
     // 3B'de bir avatara tıklayınca oyuncu kartı (sürükleme değilse)
     c.canvas.addEventListener("pointerdown", (e) => (this.down = { x: e.clientX, y: e.clientY, at: performance.now() }));
     c.canvas.addEventListener("pointerup", (e) => {
-      if (this.build.active || c.input.locked || Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 6 || performance.now() - this.down.at > 400) return;
+      if (this.build.active || this.volley.active || c.input.locked || Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 6 || performance.now() - this.down.at > 400) return;
       const sid = this.pickAvatar(e.clientX, e.clientY);
       if (sid) this.profile.open(sid, this.nameOf(sid));
     });
@@ -509,6 +526,8 @@ export class Features {
     if (me.onStage) return [{ key: "f", label: "Sahneden in 🎤", act: "stage-off" }];
     // Stadyumda futbolun kendi tuşları var (Q/F/G/E/C), F/G etkileşimi yok (dokunmatikte düğmeler kalır)
     if (this.inArena && !this.c.input.touch) return [];
+    // Voleybol salonunda da (kendi tuşları)
+    if (this.volley.active && !this.c.input.touch) return [];
     // Futbol: top ayaktaysa ya da serbest top yakınsa vuruş; rakibin ayağındaysa müdahale
     const { pitch } = this.here();
     const ball = pitch.ball;
@@ -679,6 +698,7 @@ export class Features {
     if (input.consumeKey("accept")) this.whud.acceptPair();
     if (input.consumeKey("camera")) updateSettings({ firstPerson: !settings.firstPerson });
     if (input.consumeKey("vehicle") && me.vehicle !== 3) this.setVehicle(((me.vehicle + 1) % 3) as Vehicle);
+    this.volley.keys(performance.now() / 1000);
     me.photo = this.photo.active;
   }
 
@@ -788,6 +808,7 @@ export class Features {
     world.pitch.update(dt, serverNow, world.env.lights, pose);
     world.stadium.pitch.update(dt, serverNow, world.env.lights, pose);
     world.stadium.update(performance.now() / 1000);
+    this.volley.update(dt, time, serverNow);
     this.updateRings(m);
 
     // Yolculuk: görev için ara ara bildirilir
@@ -981,7 +1002,8 @@ export class Features {
     const weather = w.kind === "fog" ? 1 : w.kind === "rain" || w.kind === "storm" ? 0.45 : w.kind === "snow" ? 0.35 : 0;
     this.fogColor.copy((world.scene.fog as THREE.Fog).color);
     this.mist.update(camera.position, Math.max(dawn, evening, weather), this.fogColor, dt);
-    this.leaves.update(camera.position, 0.35 + 0.65 * day, w.kind === "storm" ? 2.2 : w.kind === "rain" ? 1.4 : 1);
+    // Kapalı voleybol salonunda yaprak/kar düşmez
+    this.leaves.update(camera.position, 0.35 + 0.65 * day, w.kind === "storm" ? 2.2 : w.kind === "rain" ? 1.4 : 1, this.volley.active);
     this.haze.update(this.stage.show > 0, 1 - day, dt);
     const light = 0.4 + 0.6 * day;
     this.confetti.light = light;

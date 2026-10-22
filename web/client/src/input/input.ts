@@ -1,6 +1,6 @@
 // Tek giriş soyutlaması: klavye + fare (masaüstü), sanal joystick + kaydırma (dokunmatik).
 // Oyun mantığı yalnızca moveX/moveY ve consume*() değerlerini okur. Tuşlar keybinds.ts'ten (ayarlanabilir).
-import { type Action, actionsOf, binds, HOTKEYS, RESERVED } from "./keybinds";
+import { type Action, actionsOf, binds, HOTKEYS, reserved } from "./keybinds";
 
 const JOY_RADIUS = 50;
 /** Dokunuştan sonra tarayıcının ürettiği sahte fare olayları bu süre yok sayılır. */
@@ -72,8 +72,9 @@ export class Input {
         if (actionsOf(e.code).includes("wardrobe")) this.onWardrobe?.();
         return;
       }
+      // Rakam emote; voleybolda bir eyleme atandıysa o eylem
       const d = /^Digit([1-6])$/.exec(e.code);
-      if (d) this.emote = Number(d[1]) - 1;
+      if (d && !actionsOf(e.code).length) this.emote = Number(d[1]) - 1;
       // Atanmış tuş: Space/oklar sayfayı kaydırmasın, odaktaki düğmeyi tetiklemesin
       if (this.press(e.code)) e.preventDefault();
     }, { signal });
@@ -218,7 +219,7 @@ export class Input {
   private onMouseDown(e: MouseEvent): void {
     if (performance.now() - this.lastTouch < TOUCH_MOUSE_MS) return;
     const bind = `Mouse${e.button}`;
-    if (!RESERVED.has(bind)) {
+    if (!reserved(bind)) {
       e.preventDefault(); // orta tık otomatik kaydırma açmasın
       this.press(bind);
       return;
