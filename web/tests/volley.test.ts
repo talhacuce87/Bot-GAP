@@ -260,7 +260,7 @@ describe("voleybol: salon ve maç", () => {
     expect(a.last("vball")?.ev).toBe("bump");
   });
 
-  it("aynı oyuncu üst üste dokunursa çift vuruş: rakip sayı alır", () => {
+  it("aynı oyuncu üst üste dokunursa çift vuruş: rakip sayı alır; dokunan 1 sn topa dokunamaz", () => {
     const { v, sb, place, room } = match();
     // Rally'yi elle kur: top b'nin yanında, mavi tarafta
     rally(v);
@@ -269,7 +269,10 @@ describe("voleybol: salon ve maç", () => {
     v.hit(sb, "bump", 0, 1, false, 5000);
     expect(v.s.touches).toBe(1);
     Object.assign((v as unknown as { main: { b: object } }).main.b, { x: C.x + 3, y: 1, z: C.z, vx: 0, vy: 0, vz: 0 });
-    v.hit(sb, "bump", 0, 1, false, 5400);
+    v.hit(sb, "bump", 0, 1, false, 5400); // tıklama yağmuru: sayılmaz
+    expect(v.s.score).toEqual([0, 0]);
+    expect(v.s.touches).toBe(1);
+    v.hit(sb, "bump", 0, 1, false, 6100);
     expect(v.s.score).toEqual([1, 0]);
     expect(v.s.note).toBe("Çift vuruş");
     void room;
@@ -401,6 +404,64 @@ describe("voleybol: salon ve maç", () => {
     v.tick(5000);
     Object.assign((v as unknown as { main: { b: object } }).main.b, { x: C.x - 1, y: 2.8, z: C.z, vx: 0, vy: 0, vz: 0 });
     v.hit(sa, "spike", Math.PI / 2, 8, false, 5010);
+    expect(v.s.side).toBe(-1);
+  });
+
+  it("servis süresi dolarsa top atılmaz, sayı rakibe geçer", () => {
+    const { v, a, run } = match();
+    run(3200, 15_200);
+    expect(v.s.score).toEqual([0, 1]);
+    expect(v.s.note).toBe("Servis süresi doldu");
+    expect(a.text.some((e) => e.t === "vball" && e.ev === "serve")).toBe(false);
+  });
+
+  it("servis önce karşılanır: smaçla ve blokla karşılanamaz", () => {
+    const { v, a, b, sa, sb, place, jump, run } = match();
+    const ball = (v as unknown as { main: { b: object } }).main.b;
+    place(sa, C.x - C.hx - 1, C.z, Math.PI / 2);
+    v.lift(sa, 0, 3250);
+    v.hit(sa, "serve", Math.PI / 2, 3, false, 3300);
+    expect(v.s.side).toBe(0);
+    // Blok: servis bloklanamaz
+    place(sb, C.x + 0.6, C.z);
+    v.block(sb, 3310);
+    Object.assign(ball, { x: C.x - 0.7, y: 3.0, z: C.z, vx: 8, vy: 0, vz: 0 });
+    run(3320, 3500);
+    expect(a.text.some((e) => e.t === "vball" && e.ev === "block")).toBe(false);
+    // Smaç: olmaz; manşet ya da pas olur
+    place(sb, C.x + 3.4, C.z, -Math.PI / 2);
+    jump(sb);
+    v.tick(3520);
+    Object.assign(ball, { x: C.x + 3, y: 2.8, z: C.z, vx: 0, vy: 0, vz: 0 });
+    v.hit(sb, "spike", -Math.PI / 2, 8, false, 3530);
+    expect(v.s.side).toBe(0);
+    expect(b.last("notice")?.text).toMatch(/karşılanmalı/);
+    expect(v.s.phase).toBe("rally");
+    Object.assign(ball, { x: C.x + 3, y: 2.8, z: C.z, vx: 0, vy: 0, vz: 0 });
+    v.hit(sb, "set", -Math.PI / 2, 8, false, 3540);
+    expect(v.s.side).toBe(1);
+  });
+
+  it("filenin karşısındaki topa dokunulamaz", () => {
+    const { v, sb, place } = match();
+    rally(v);
+    place(sb, C.x + 0.5, C.z);
+    Object.assign((v as unknown as { main: { b: object } }).main.b, { x: C.x - 0.6, y: 1, z: C.z, vx: 0, vy: 0, vz: 0 });
+    v.hit(sb, "bump", -Math.PI / 2, 3, false, 5000);
+    expect(v.s.side).toBe(-1);
+    Object.assign((v as unknown as { main: { b: object } }).main.b, { x: C.x + 0.6, y: 1, z: C.z, vx: 0, vy: 0, vz: 0 });
+    v.hit(sb, "bump", -Math.PI / 2, 3, false, 5010);
+    expect(v.s.side).toBe(1);
+  });
+
+  it("oyuncudan uzaklaşmış hızlı top geriye sarılıp yakalanamaz", () => {
+    const { v, sb, place, run } = match();
+    rally(v);
+    v.tick(4990);
+    place(sb, C.x + 3, C.z - 5);
+    Object.assign((v as unknown as { main: { b: object } }).main.b, { x: C.x + 3, y: 1.5, z: C.z - 5, vx: 0, vy: 0, vz: 20 });
+    run(5000, 5200); // top 4 m ilerledi (geçmişte oyuncunun yanındaydı)
+    v.hit(sb, "bump", 0, 3, false, 5200);
     expect(v.s.side).toBe(-1);
   });
 

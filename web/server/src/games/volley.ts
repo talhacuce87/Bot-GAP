@@ -5,8 +5,9 @@
 // yere değince sayı. Vuruşlar gecikme telafili: oyuncunun bastığı anda gördüğü top konumu (son ~450 ms'lik
 // geçmişte) kontrol edilir ve top oradan fırlatılır. Havada A/D ile yana, W/S ile öne/geri yatan oyuncunun
 // menzili o yana kayar (öne yatan yakına, geri yatan uzağa vurur). Servis: top ele alınır (maçta servisçide),
-// havaya atılır (falso o an seçilir), düşerken vurulur; havadayken vurulursa smaç servis. Arka sıra oyuncusu
-// hücum çizgisinin önünde smaç ve blok yapamaz.
+// havaya atılır (falso o an seçilir), düşerken vurulur; havadayken vurulursa smaç servis; süresinde atılmazsa sayı
+// rakibe geçer. Servis önce karşılanır (smaçla, dumpla ya da blokla karşılanamaz). Arka sıra oyuncusu hücum çizgisinin
+// önünde smaç ve blok yapamaz. Filenin karşısındaki topa dokunulamaz; topa dokunan 1 sn yeniden dokunamaz.
 import { JUMP_MASK, JUMP_SHIFT, VJUMP_TIME } from "../../../shared/constants";
 import type { ServerEvent } from "../../../shared/protocol";
 import {
@@ -15,7 +16,6 @@ import {
   halfOf,
   hitBall,
   inCourt,
-  LOB_POWER,
   isBackRow,
   leanShift,
   members,
@@ -24,7 +24,6 @@ import {
   REACH,
   SET_TYPES,
   type SetType,
-  serveHeight,
   SLOT_POS,
   tossBall,
   V_BALL_R,
@@ -44,7 +43,13 @@ import type { Conn, Room } from "../room";
 const STEP = 1 / 120;
 /** Vuruş geçmişi: bu kadar eski top konumları da kabul (oyuncunun gecikmesi). */
 const HISTORY_MS = 450;
-const HIT_COOLDOWN_MS = 300;
+/**
+ * Geçmişteki konum, top o andan beri en fazla bu kadar yol aldıysa kabul (m): hızlı top oyuncudan uzaklaştıktan
+ * sonra geriye sarılıp yakalanamaz.
+ */
+const REWIND_DIST = 2;
+/** Topa dokunan oyuncu bu kadar süre yeniden dokunamaz (tıklama yağmuruyla çift vuruşa karşı). */
+const TOUCH_COOLDOWN_MS = 1000;
 const TOSS_COOLDOWN_MS = 1200;
 const SERVE_MS = 12_000;
 const POINT_MS = 2600;
@@ -89,6 +94,8 @@ interface Ball {
   dumped: boolean;
   /** Son dokunuş blok muydu (bloklayan yeniden dokunabilir). */
   blockTouch: boolean;
+  /** Servis atıldı, henüz kimse karşılamadı: smaç, dump ve blok olmaz. */
+  served: boolean;
   pendingEv: { ev: VolleyEv; by: number } | null;
   /** Yere değdi, sayı bekliyor (bkz. LAND_GRACE_MS). */
   landing: { winner: 0 | 1; note: string; at: number } | null;
@@ -101,7 +108,7 @@ interface Ball {
 
 const newBall = (id: number, x: number, z: number): Ball => ({
   id, b: { x, y: V_BALL_R, z, vx: 0, vy: 0, vz: 0, ax: 0, az: 0 }, hist: [], hold: 0, tossBy: 0, tossSpin: 0, windC: null,
-  lastToucher: 0, dumped: false, blockTouch: false, pendingEv: null, landing: null, lastSent: 0, wasMoving: false, touchAt: 0, fellAt: 0,
+  lastToucher: 0, dumped: false, blockTouch: false, served: false, pendingEv: null, landing: null, lastSent: 0, wasMoving: false, touchAt: 0, fellAt: 0,
 });
 
 export class Volleyball {
@@ -305,6 +312,7 @@ export class Volleyball {
   private rest(): void {
     Object.assign(this.main.b, { x: VOLLEY_COURT.x - 3, y: V_BALL_R, z: VOLLEY_COURT.z, vx: 0, vy: 0, vz: 0, ax: 0, az: 0 });
     this.main.hold = this.main.tossBy = 0;
+    this.main.served = false;
     this.main.hist = [];
   }
 
@@ -319,6 +327,7 @@ export class Volleyball {
     m.tossBy = 0;
     m.lastToucher = 0;
     m.blockTouch = false;
+    m.served = false;
     Object.assign(this.s, { phase: "serve", server, until: now + SERVE_MS, side: -1, touches: 0 });
     this.sendState();
     this.broadcast(m, now);
@@ -441,7 +450,7 @@ export class Volleyball {
     const dx = Math.sin(p.state.rot), dz = Math.cos(p.state.rot);
     const ball = this.own(sid, p.state.x, p.state.z);
     Object.assign(ball.b, { x: p.state.x + dx * 0.6, y: 1.6, z: p.state.z + dz * 0.6, vx: dx * 0.3, vy: 5.2, vz: dz * 0.3, ax: 0, az: 0 });
-    Object.assign(ball, { hold: 0, tossBy: 0, hist: [], lastToucher: 0, dumped: false, landing: null, windC: null });
+    Object.assign(ball, { hold: 0, tossBy: 0, hist: [], lastToucher: 0, dumped: false, served: false, landing: null, windC: null });
     this.touched(ball, sid, now);
     ball.pendingEv = { ev: "set", by: sid };
     this.broadcast(ball, now);
@@ -454,7 +463,7 @@ export class Volleyball {
     if (now - (this.lastToss.get(sid) ?? -Infinity) < TOSS_COOLDOWN_MS) return;
     this.lastToss.set(sid, now);
     const ball = this.own(sid, p.state.x, p.state.z);
-    Object.assign(ball, { hold: sid, tossBy: 0, landing: null, hist: [], windC: null });
+    Object.assign(ball, { hold: sid, tossBy: 0, served: false, landing: null, hist: [], windC: null });
     Object.assign(ball.b, { x: p.state.x, y: 1.1, z: p.state.z, vx: 0, vy: 0, vz: 0, ax: 0, az: 0 });
     this.touched(ball, sid, now);
     this.broadcast(ball, now);
@@ -505,7 +514,7 @@ export class Volleyball {
     const p = this.room.players.get(sid);
     if (!p || !this.inHall(sid) || !Number.isFinite(dir) || !Number.isFinite(power)) return;
     if (!["bump", "set", "spike", "dump", "serve"].includes(kind)) return;
-    if (now - (this.lastHit.get(sid) ?? 0) < HIT_COOLDOWN_MS) return;
+    if (now - (this.lastHit.get(sid) ?? -Infinity) < TOUCH_COOLDOWN_MS) return;
     const team = this.teamOf(sid);
     if (this.playing && team === null) return;
     // Havaya atılmış servis topu: yalnız atan vurur (hangi tuşla olursa olsun servis)
@@ -518,14 +527,20 @@ export class Volleyball {
     if ((kind === "spike" || kind === "dump") && this.backRowFront(sid)) return this.notice(sid, "🏐 Arka sıra hücum çizgisinin önünden smaç vuramaz.");
     const reach = REACH[dive && kind === "bump" && (this.diveUntil.get(sid) ?? 0) > now ? "dive" : kind];
     const [ox, oz] = this.leanOffset(sid, dir, now);
-    // Elde tutulan ya da servis için atılan toplar dışında menzildeki en yakın top
-    let ball: Ball | null = null, at: (Hist & { d: number }) | null = null;
+    const attack = kind === "spike" || kind === "dump", half = team ?? halfOf(p.state.x);
+    // Elde tutulan ya da servis için atılan toplar dışında, oyuncunun yarısında menzildeki en yakın top (servis
+    // önce karşılanır: smaçla ya da dumpla değil)
+    let ball: Ball | null = null, at: (Hist & { d: number }) | null = null, serveOnly = false;
     for (const x of this.balls()) {
       if (x.hold || x.tossBy) continue;
-      const h = this.sample(x, p.state.x + ox, p.state.z + oz, reach, now, x.landing?.at);
-      if (h && (!at || h.d < at.d)) [ball, at] = [x, h];
+      const h = this.sample(x, p.state.x + ox, p.state.z + oz, reach, now, x.landing?.at, half);
+      if (h && attack && x.served) serveOnly = true;
+      else if (h && (!at || h.d < at.d)) [ball, at] = [x, h];
     }
-    if (!ball || !at) return;
+    if (!ball || !at) {
+      if (serveOnly) this.notice(sid, "🏐 Servis önce karşılanmalı (manşet ya da pas).");
+      return;
+    }
     ball.landing = null;
     this.lastHit.set(sid, now);
     if (this.playing && team !== null) {
@@ -541,6 +556,7 @@ export class Volleyball {
     }
     ball.lastToucher = sid;
     ball.blockTouch = false;
+    ball.served = false;
     ball.dumped = kind === "dump";
     this.touched(ball, sid, now);
     // Oyuncunun gördüğü yerden fırlat, aradan geçen süre kadar ilerlet
@@ -581,22 +597,12 @@ export class Volleyball {
     this.broadcast(ball, now);
   }
 
-  /** Servis süresi doldu: elindeki maç topunu kendiliğinden alttan atar. */
-  private autoServe(sid: number, team: 0 | 1, x: number, z: number, now: number): void {
-    const toward = team === 0 ? 1 : -1, m = this.main;
-    Object.assign(m.b, { x: x + toward * 0.3, y: serveHeight(LOB_POWER), z });
-    hitBall(m.b, "serve", toward > 0 ? Math.PI / 2 : -Math.PI / 2, LOB_POWER);
-    m.hold = 0;
-    m.windC = null;
-    this.served(m, sid, team);
-    this.broadcast(m, now);
-  }
-
   private served(ball: Ball, sid: number, team: 0 | 1): void {
     ball.hist = [];
     ball.lastToucher = sid;
     ball.blockTouch = false;
     ball.dumped = false;
+    ball.served = true;
     if (this.playing && ball === this.main) {
       Object.assign(this.s, { phase: "rally", side: team, touches: 1, note: "" });
       this.sendState();
@@ -612,12 +618,16 @@ export class Volleyball {
 
   /**
    * Oyuncunun basarken gördüğü top: geçmişte (ve şimdi) menzile giren en yakın konum ve uzaklığı. Yoksa null.
+   * Top o konumdan beri REWIND_DIST'ten fazla yol aldıysa sayılmaz; `half` verilirse top o yarıda olmalı (filenin
+   * karşısındaki topa dokunulmaz).
    */
-  private sample(ball: Ball, px: number, pz: number, reach: { r: number; lo: number; hi: number }, now: number, before = Infinity): (Hist & { d: number }) | null {
+  private sample(ball: Ball, px: number, pz: number, reach: { r: number; lo: number; hi: number }, now: number, before = Infinity, half?: 0 | 1): (Hist & { d: number }) | null {
     let best: (Hist & { d: number }) | null = null;
-    const b = ball.b;
+    const b = ball.b, side = half === undefined ? 0 : half === 0 ? -1 : 1;
     for (const h of [...ball.hist, { x: b.x, y: b.y, z: b.z, at: now }]) {
       if (now - h.at > HISTORY_MS || h.at >= before || h.y < reach.lo || h.y > reach.hi) continue;
+      if (side && side * (h.x - VOLLEY_COURT.x) < -V_BALL_R) continue;
+      if (Math.hypot(h.x - b.x, h.y - b.y, h.z - b.z) > REWIND_DIST) continue;
       const d = Math.hypot(h.x - px, h.z - pz);
       if (d <= reach.r && (!best || d < best.d)) best = { ...h, d };
     }
@@ -658,13 +668,10 @@ export class Volleyball {
   private tickMain(dt: number, now: number): void {
     const s = this.s, m = this.main;
     if (m.hold) {
-      // Top servisçinin elinde (fizik yok); maçta süre dolarsa kendiliğinden alttan servis
-      const p = this.room.players.get(m.hold);
+      // Top servisçinin elinde (fizik yok); maçta süre dolarsa servis hakkı yanar, sayı rakibe
       if (s.phase === "serve" && now >= s.until) {
-        if (p) Object.assign(m.b, { x: p.state.x, y: 1.1, z: p.state.z, vx: 0, vy: 0, vz: 0, ax: 0, az: 0 });
-        const team = this.teamOf(m.hold);
-        if (p && team !== null) this.autoServe(m.hold, team, p.state.x, p.state.z, now);
-        else this.startServe(now);
+        this.fault(this.serveTeam, "Servis süresi doldu", now);
+        this.broadcast(m, now);
       } else this.follow(m, now);
       return;
     }
@@ -734,7 +741,7 @@ export class Volleyball {
    * geçemez; aşağı, geldiği yarıya döner. Blok dokunuş sayılmaz (bloklayan yeniden oynayabilir).
    */
   private blockTick(ball: Ball, now: number): void {
-    if (!this.blockUntil.size || ball.dumped) return;
+    if (!this.blockUntil.size || ball.dumped || ball.served) return;
     const b = ball.b, C = VOLLEY_COURT;
     if (Math.abs(b.x - C.x) > 0.5 || b.y < NET_TOP - 0.15 || b.y > NET_TOP + 1.8) return;
     for (const [sid, until] of this.blockUntil) {
@@ -763,6 +770,7 @@ export class Volleyball {
       }
       ball.lastToucher = sid;
       ball.blockTouch = true;
+      ball.served = false;
       ball.fellAt = 0;
       ball.pendingEv = { ev: "block", by: sid };
       return;
