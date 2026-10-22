@@ -3,12 +3,12 @@
 // yığınları; start/bitiş damalı çizgisi, numaralı grid kutuları, beş lambalı start köprüsü (F1 gibi: kırmızılar
 // tek tek yanar, hepsi söner, yeşil yanar), tribün, pit binası, otoparka bağlanan paddock ve iç sahada ağaçlar.
 import * as THREE from "three";
-import { BARRIER, GRID, PIT_GATE, RACE_AREA, START_S, TRACK, TRACK_HALF, TRACK_LENGTH, trackAt, trackProject } from "../../../shared/race";
+import { BARRIER, GRID, PIT_GATE, RACE_AREA, START_S, TRACK, TRACK_HALF, TRACK_LENGTH, trackAt, trackProject } from "../../../shared/ring";
 import type { Builder } from "./builder";
 import { Colliders, type DynamicColliders } from "./colliders";
 import { mat, part } from "./geo";
 
-export interface RaceTrack {
+export interface RingTrack {
   group: THREE.Group;
   /** Start lambaları: yanık kırmızı sayısı (0–5) ve yeşil. */
   setLights(red: number, green: boolean): void;
@@ -143,7 +143,7 @@ function atlasPlane(w: number, h: number, u0: number, v0: number, u1: number, v1
   return g;
 }
 
-export function raceTrack(b: Builder): RaceTrack {
+export function ringTrack(b: Builder): RingTrack {
   const group = new THREE.Group();
   const rand = b.rand;
   const add = (geo: THREE.BufferGeometry, color: THREE.ColorRepresentation, m?: THREE.Matrix4, jitter = 0.03) => b.add(part(geo, color, m, jitter, rand));

@@ -10,7 +10,7 @@ import type { TavlaMove, TavlaState } from "./games/tavla";
 import type { TableKind } from "./zones";
 import type { CarRadio, CarSpec, ParkedCar } from "./car";
 import type { BjView, RouletteBet } from "./casino";
-import type { RaceView } from "./race";
+import type { RingView } from "./ring";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
 export const MSG_SNAPSHOT = 2; // sunucu → istemci: odadaki herkesin konumu
@@ -308,7 +308,7 @@ export type ServerEvent =
   | { t: "radio"; sid: number; radio: CarRadio | null }
   | { t: "parked"; sid: number; parked: ParkedCar | null }
   /** GAP Ring yarışı: grid, lambalar, sıralama ve sonuçlar (faz değişince ve yarışta sık). */
-  | { t: "race"; race: RaceView }
+  | { t: "ring"; ring: RingView }
   | { t: "wallet"; balance: number }
   | { t: "bj"; view: BjView; balance: number }
   | { t: "roulette"; n: number; bets: RouletteBet[]; payout: number; balance: number }
@@ -367,9 +367,9 @@ export type ClientEvent =
   | { t: "radio"; url: string | null }
   /** Arabayı bir yere bırak (inince ya da çağırınca); null: kaldır. */
   | { t: "park"; parked: ParkedCar | null }
-  | { t: "race"; op: "join"; slot: number }
-  | { t: "race"; op: "leave" }
-  | { t: "race"; op: "start"; laps: number }
+  | { t: "ring"; op: "join"; slot: number }
+  | { t: "ring"; op: "leave" }
+  | { t: "ring"; op: "start"; laps: number }
   | { t: "casino"; op: "wallet" | "refill" }
   | { t: "bj"; op: "deal"; bet: number }
   | { t: "bj"; op: "hit" | "stand" | "double" | "split" }

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   BARRIER, CHECKPOINTS, GRID, JUMP_PENALTY, LIGHT_STEP, LIGHTS_DELAY, lightsAt, lineU, MAX_RACERS, RACE_AREA, RACE_PRIZES,
-  RaceSession, START_S, TRACK, TRACK_HALF, TRACK_LENGTH, trackAt, trackProject,
-} from "../shared/race";
+  RingSession, START_S, TRACK, TRACK_HALF, TRACK_LENGTH, trackAt, trackProject,
+} from "../shared/ring";
 
 /** Pistte `from` yay noktasından `dist` metre ileri, `step` adımlarla sürer (her adımda konum bildirir). */
-function drive(race: RaceSession, sid: number, from: number, dist: number, now: { t: number }, step = 1.5, side = 0) {
+function drive(race: RingSession, sid: number, from: number, dist: number, now: { t: number }, step = 1.5, side = 0) {
   for (let d = 0; d <= dist; d += step) {
     const p = trackAt(from + d);
     now.t += 80;
@@ -65,7 +65,7 @@ describe("GAP Ring pisti", () => {
 
 describe("yarış", () => {
   it("F1 lambaları: saniyede bir yanar, gizli bekleme sonrası hepsi söner ve yeşil yanar", () => {
-    const race = new RaceSession(() => 0.5);
+    const race = new RingSession(() => 0.5);
     expect(race.join(1, "A", 0, GRID[0].x, GRID[0].z)).toBeNull();
     expect(race.start(1, 3, 1000)).toBeNull();
     const v = race.view();
@@ -84,7 +84,7 @@ describe("yarış", () => {
   });
 
   it("yalnızca grid sahibi başlatır; dolu kutuya, uzaktan ve yarış sürerken girilmez", () => {
-    const race = new RaceSession();
+    const race = new RingSession();
     expect(race.join(1, "A", 0, GRID[0].x + 30, GRID[0].z)).not.toBeNull();
     race.join(1, "A", 0, GRID[0].x, GRID[0].z);
     expect(race.join(2, "B", 0, GRID[0].x, GRID[0].z)).not.toBeNull();
@@ -96,7 +96,7 @@ describe("yarış", () => {
   });
 
   it("turları kontrol noktalarıyla sayar; ilk bitiren kazanır, erken kalkana ceza, ödüller ilk üçe", () => {
-    const race = new RaceSession(() => 0);
+    const race = new RingSession(() => 0);
     for (const i of [0, 1, 2]) race.join(i + 1, `R${i}`, i, GRID[i].x, GRID[i].z);
     const now = { t: 0 };
     race.start(1, 1, now.t, (sid) => GRID[sid - 1]);
@@ -135,7 +135,7 @@ describe("yarış", () => {
   });
 
   it("tek başına yarışana ödül yok; yarıştan çıkan DNF olur", () => {
-    const race = new RaceSession(() => 0);
+    const race = new RingSession(() => 0);
     race.join(1, "A", 0, GRID[0].x, GRID[0].z);
     race.join(2, "B", 1, GRID[1].x, GRID[1].z);
     const now = { t: 0 };
@@ -154,19 +154,19 @@ describe("yarış", () => {
 
 describe("yarış sunucusu", () => {
   it("arabasız gride geçilmez; bitince ödül cüzdana, durum herkese yayınlanır", async () => {
-    const { RaceHost } = await import("../server/src/race");
+    const { RingHost } = await import("../server/src/ring");
     const sent: unknown[] = [];
     const players = new Map([
       [1, { info: { name: "A", car: {} as unknown }, state: { x: GRID[0].x, z: GRID[0].z } }],
       [2, { info: { name: "B", car: null as unknown }, state: { x: GRID[1].x, z: GRID[1].z } }],
     ]);
     const paid: [number, number][] = [];
-    const host = new RaceHost({ players, broadcast: (ev) => sent.push(ev) }, (sid, amount) => paid.push([sid, amount]), () => 0);
-    expect(host.handle(2, { t: "race", op: "join", slot: 1 }, 0)).toMatch(/Tofaş/);
+    const host = new RingHost({ players, broadcast: (ev) => sent.push(ev) }, (sid, amount) => paid.push([sid, amount]), () => 0);
+    expect(host.handle(2, { t: "ring", op: "join", slot: 1 }, 0)).toMatch(/Tofaş/);
     players.get(2)!.info.car = {};
-    expect(host.handle(1, { t: "race", op: "join", slot: 0 }, 0)).toBeNull();
-    expect(host.handle(2, { t: "race", op: "join", slot: 1 }, 0)).toBeNull();
-    expect(host.handle(1, { t: "race", op: "start", laps: 1 }, 0)).toBeNull();
+    expect(host.handle(1, { t: "ring", op: "join", slot: 0 }, 0)).toBeNull();
+    expect(host.handle(2, { t: "ring", op: "join", slot: 1 }, 0)).toBeNull();
+    expect(host.handle(1, { t: "ring", op: "start", laps: 1 }, 0)).toBeNull();
     expect(sent.length).toBe(3);
     const now = { t: host.session.goAt };
     host.tick(now.t);
@@ -186,7 +186,7 @@ describe("yarış sunucusu", () => {
 describe("tur sayımı (gerçekçi sürüş)", () => {
   /** 30 Hz konum, 16 m/sn; her turun sayıldığı yer (çizgiye göre, m) ve görünen tur. */
   function race(slot: number, laps: number, jumpDuringLights = 0) {
-    const race = new RaceSession(() => 0.3);
+    const race = new RingSession(() => 0.3);
     const g = GRID[slot];
     race.join(1, "A", slot, g.x, g.z);
     race.start(1, laps, 0, () => g);

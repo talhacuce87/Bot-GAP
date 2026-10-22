@@ -13,7 +13,7 @@ import { decodeState, type FishCatch, type Look, type PlayerState, type Profile,
 import { validCar } from "../../shared/car";
 import { resolveRadio } from "./radio";
 import { Casino, type CasinoMsg, Wallets } from "./casino";
-import { RaceHost, type RaceMsg } from "./race";
+import { RingHost, type RingMsg } from "./ring";
 import { CASINO } from "../../shared/zones";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
@@ -168,7 +168,7 @@ rooms.onCreate = (room) => {
     room.games = new WorldGames(room, room.onReport, stageHost(room), () => weather.current);
     room.games.builds = new Builds(room, SHARED_SECRET ? botPost : null);
     // Yarış ödülü casino cüzdanına (test coin) gider
-    room.race = new RaceHost(room, (sid, amount) => {
+    room.ring = new RingHost(room, (sid, amount) => {
       const p = room.players.get(sid);
       if (!p) return;
       const key = p.user.guest ? `guest:${p.user.id}` : p.user.id;
@@ -891,7 +891,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   };
   const sid = room.join(user, conn, Date.now(), opts);
   // Süren ya da bekleyen yarış varsa yeni gelen de görsün (grid, lambalar, sıralama)
-  if (room.race && room.race.session.phase !== "idle") ws.send(JSON.stringify({ t: "race", race: room.race.view() }));
+  if (room.ring && room.ring.session.phase !== "idle") ws.send(JSON.stringify({ t: "ring", ring: room.ring.view() }));
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   const onState = (buf: Buffer) => {
     const sentAt = decodeState(new DataView(buf.buffer, buf.byteOffset, buf.byteLength), incoming);
@@ -926,7 +926,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   let lastPark = 0;
   let lastRadio = 0;
   let lastCasino = 0;
-  let lastRace = 0;
+  let lastRing = 0;
   /** Casino cüzdanı: Discord hesabına bağlı (misafirde oturuma). */
   const walletKey = user.guest ? `guest:${user.id}` : user.id;
   let lastAct = 0;
@@ -1051,11 +1051,11 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const inside = !!st && Math.abs(st.x - CASINO.x) < CASINO.hw && Math.abs(st.z - CASINO.z) < CASINO.hd;
         const out = casino.handle(sid, walletKey, msg as CasinoMsg, inside);
         ws.send(JSON.stringify("error" in out ? { t: "notice", text: out.error } : out));
-      } else if (msg?.t === "race") {
+      } else if (msg?.t === "ring") {
         const now = Date.now();
-        if (now - lastRace < 300) return;
-        lastRace = now;
-        const err = room.race?.handle(sid, msg as RaceMsg, now);
+        if (now - lastRing < 300) return;
+        lastRing = now;
+        const err = room.ring?.handle(sid, msg as RingMsg, now);
         if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
       } else if (msg?.t === "radio") {
         const now = Date.now();

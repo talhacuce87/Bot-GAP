@@ -20,9 +20,9 @@ import type { Player } from "./player";
 import { settings, updateSettings } from "./settings";
 import { BoardGameUi } from "./ui/boardGame";
 import { CasinoUi, fmt } from "./ui/casino/casinoUi";
-import { RaceHud } from "./ui/raceHud";
+import { RingHud } from "./ui/ringHud";
 import { Vehicles } from "./vehicles";
-import { GRID, GRID_REACH, lightsAt, RACE_LAPS, type RaceView, trackAt, trackProject } from "../../shared/race";
+import { GRID, GRID_REACH, lightsAt, RACE_LAPS, type RingView, trackAt, trackProject } from "../../shared/ring";
 import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
@@ -149,8 +149,8 @@ export class Features {
   private proj = new THREE.Vector3();
   private casino: CasinoUi;
   /** GAP Ring: sunucunun yarış durumu, arayüz, seçilen tur sayısı ve ses/uyarı için önceki değerler. */
-  private race: RaceView | null = null;
-  private raceHud: RaceHud;
+  private race: RingView | null = null;
+  private raceHud: RingHud;
   private raceLaps = 3;
   private raceRed = 0;
   private raceGreen = false;
@@ -253,8 +253,8 @@ export class Features {
       onClose: () => me.standUpNow(),
       toast: (t) => hud.toast(t),
     });
-    this.raceHud = new RaceHud(hudRoot, () => net.send({ t: "race", op: "leave" }));
-    net.onRace = (r) => this.onRace(r);
+    this.raceHud = new RingHud(hudRoot, () => net.send({ t: "ring", op: "leave" }));
+    net.onRing = (r) => this.onRace(r);
     this.casinoChip = document.createElement("div");
     this.casinoChip.className = "radio-chip cz-hudchip";
     hudRoot.append(this.casinoChip);
@@ -528,7 +528,7 @@ export class Features {
     return [off];
   }
 
-  private onRace(r: RaceView): void {
+  private onRace(r: RingView): void {
     const { net, hud } = this.c;
     const prev = this.race?.racers.find((x) => x.sid === net.you);
     const mine = r.racers.find((x) => x.sid === net.you);
@@ -556,13 +556,13 @@ export class Features {
     const { me, net, remotes, world } = this.c;
     const r = this.race;
     const l = r ? lightsAt(r, serverNow) : { red: 0, green: false };
-    world.race.setLights(l.red, l.green);
+    world.ring.setLights(l.red, l.green);
     // Gridde yeşile kadar araba kilitli; yarış sürerken pit kapısı kapalı (bitiren ve terk eden çıkabilir)
     const mine = r?.racers.find((x) => x.sid === net.you);
     const waiting = !!mine && (r!.phase === "lobby" || r!.phase === "lights");
     me.carLock = waiting || this.vehicles.tuning.isOpen;
     const active = r?.phase === "lights" || r?.phase === "racing";
-    world.race.setGate(!!active && (!mine || (mine.total === null && !mine.dnf)));
+    world.ring.setGate(!!active && (!mine || (mine.total === null && !mine.dnf)));
     const near = Math.hypot(me.x - 470, me.z + 200) < 140;
     if (near && l.red > this.raceRed) sfx.raceBeep();
     if (near && l.green && !this.raceGreen) sfx.raceBeep(true);
@@ -769,12 +769,12 @@ export class Features {
         const slot = Number(act.slice(10)), g = GRID[slot];
         // Kutuya tam yerleş (sunucu da yakınlığa bakar)
         me.placeCar(g.x, g.z, g.rot);
-        net.send({ t: "race", op: "join", slot });
-      } else if (act === "race-start") net.send({ t: "race", op: "start", laps: this.raceLaps });
+        net.send({ t: "ring", op: "join", slot });
+      } else if (act === "race-start") net.send({ t: "ring", op: "start", laps: this.raceLaps });
       else if (act === "race-laps") {
         this.raceLaps = RACE_LAPS[(RACE_LAPS.indexOf(this.raceLaps as (typeof RACE_LAPS)[number]) + 1) % RACE_LAPS.length];
         this.c.hud.toast(`🏁 Tur sayısı: ${this.raceLaps}`);
-      } else if (act === "race-leave") net.send({ t: "race", op: "leave" });
+      } else if (act === "race-leave") net.send({ t: "ring", op: "leave" });
       return true;
     }
     if (act === "car-enter") {

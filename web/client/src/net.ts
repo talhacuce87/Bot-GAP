@@ -3,7 +3,7 @@
 import { type Act, SEND_HZ } from "../../shared/constants";
 import type { Shot } from "../../shared/tank";
 import type { CarRadio, ParkedCar } from "../../shared/car";
-import type { RaceView } from "../../shared/race";
+import type { RingView } from "../../shared/ring";
 import type { BattleState } from "../../shared/protocol";
 import type { PlotState } from "../../shared/build";
 import {
@@ -87,7 +87,7 @@ export class Net {
   /** Park halindeki araba (sid kendin de olabilir). */
   onParked: (sid: number, parked: ParkedCar | null) => void = () => {};
   /** GAP Ring yarış durumu. */
-  onRace: (race: RaceView) => void = () => {};
+  onRing: (ring: RingView) => void = () => {};
   onTable: (t: TableState) => void = () => {};
   onBall: (b: BallState) => void = () => {};
   onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number], assist?: string, own?: boolean) => void = () => {};
@@ -342,8 +342,8 @@ export class Net {
         this.remotes.setRadio(ev.sid, ev.radio);
         this.onRadio(ev.sid, ev.radio);
         break;
-      case "race":
-        this.onRace(ev.race);
+      case "ring":
+        this.onRing(ev.ring);
         break;
       case "parked":
         this.remotes.setParked(ev.sid, ev.parked);

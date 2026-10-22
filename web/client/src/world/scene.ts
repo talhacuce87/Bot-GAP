@@ -23,7 +23,7 @@ import { addRipple, dungeon, GROVE, grove, GROVE_SIGN, GROVE_SIGN_RY, POND, pond
 import { BRIDGE_AXES, buildTerrain, groundY, inCave, mountainHeight, riverMesh, terrainColliders, walkable, WATER_Y, waterfallMesh } from "./terrain";
 import { casino } from "./casino";
 import { city, type CityNpc, type Room } from "./city";
-import { type RaceTrack, raceTrack } from "./raceTrack";
+import { type RingTrack, ringTrack } from "./ringTrack";
 import { garage, type GarageView } from "./garage";
 import { hall } from "./hall";
 import { cave } from "./cave";
@@ -79,7 +79,7 @@ export interface World {
   /** Şehirdeki dükkân çalışanları. */
   npcs: CityNpc[];
   /** GAP Ring yarış pisti (start lambaları). */
-  race: RaceTrack;
+  ring: RingTrack;
   /** GAP Garaj (tuning atölyesi): işaret nabzı. */
   garage: GarageView;
   /** (x, z) girilebilir bir dükkânın içindeyse o oda. */
@@ -1056,7 +1056,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
   scene.add(cas.group);
   const town = city(b);
   scene.add(town.group);
-  const ring = raceTrack(b);
+  const ring = ringTrack(b);
   scene.add(ring.group);
   const shop = garage(b);
   scene.add(shop.group);
@@ -1180,7 +1180,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     seats: b.seats,
     carColliders: b.carColliders,
     npcs: [...town.npcs, ...cas.npcs],
-    race: ring,
+    ring,
     garage: shop,
     roomAt(x: number, z: number) {
       for (const r of rooms) if (x > r.minX && x < r.maxX && z > r.minZ && z < r.maxZ) return r;

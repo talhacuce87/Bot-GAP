@@ -129,7 +129,7 @@ export const lineU = (s: number) => (((s - START_S) % TRACK_LENGTH) + TRACK_LENG
 // Yarış oturumu
 // ---------------------------------------------------------------------------
 
-export type RacePhase = "idle" | "lobby" | "lights" | "racing" | "done";
+export type RingPhase = "idle" | "lobby" | "lights" | "racing" | "done";
 
 interface Racer {
   sid: number;
@@ -155,7 +155,7 @@ interface Racer {
   dnf: boolean;
 }
 
-export interface RacerView {
+export interface RingRacer {
   sid: number;
   name: string;
   slot: number;
@@ -175,8 +175,8 @@ export interface RacerView {
   prize: number;
 }
 
-export interface RaceView {
-  phase: RacePhase;
+export interface RingView {
+  phase: RingPhase;
   laps: number;
   host: number;
   /** Lambaların başladığı an (sunucu saati). */
@@ -185,14 +185,14 @@ export interface RaceView {
   goAt: number | null;
   /** İlk bitiren varsa diğerlerinin son anı. */
   endAt: number | null;
-  racers: RacerView[];
+  racers: RingRacer[];
 }
 
 /** Tamamlanan tur sayısı: ilk geçiş (cps 1) start geçişidir; turlar yalnızca bitiş çizgisinde (cps 11, 21…) artar. */
 const lapsOf = (cps: number) => (cps > 0 ? Math.floor((cps - 1) / CHECKPOINTS) : 0);
 
-export class RaceSession {
-  phase: RacePhase = "idle";
+export class RingSession {
+  phase: RingPhase = "idle";
   laps = 3;
   host = 0;
   lightsAt = 0;
@@ -383,10 +383,10 @@ export class RaceSession {
     });
   }
 
-  view(): RaceView {
+  view(): RingView {
     const order = this.standings();
     const lead = order[0];
-    const racers = order.map((r, i): RacerView => {
+    const racers = order.map((r, i): RingRacer => {
       const lapsDone = lapsOf(r.cps);
       let gap: number | null = null, lapsDown = 0;
       if (lead && r !== lead && r.cps > 0) {
@@ -414,7 +414,7 @@ export class RaceSession {
 }
 
 /** Lambalar: `now` anında yanık kırmızı sayısı (0–5) ve start verildi mi (yeşil). */
-export function lightsAt(view: Pick<RaceView, "phase" | "lightsAt" | "goAt">, now: number): { red: number; green: boolean } {
+export function lightsAt(view: Pick<RingView, "phase" | "lightsAt" | "goAt">, now: number): { red: number; green: boolean } {
   if (view.phase === "lights") return { red: Math.max(0, Math.min(5, Math.floor((now - view.lightsAt) / LIGHT_STEP) + 1)) * (now >= view.lightsAt ? 1 : 0), green: false };
   if (view.phase === "racing" && view.goAt !== null && now - view.goAt < 4000) return { red: 0, green: true };
   return { red: 0, green: false };

@@ -1,6 +1,6 @@
 // İstemci ve sunucunun ortak sabitleri.
 import { CITY, GROVE, KAHVEHANE, LAKE, ROAD_WALK, roadDist } from "./zones";
-import { RACE_AREA } from "./race";
+import { RACE_AREA } from "./ring";
 
 /** Sunucunun anlık görüntü (snapshot) yayın hızı. */
 export const TICK_HZ = 15;

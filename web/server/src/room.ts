@@ -27,7 +27,7 @@ import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
 import type { WorldGames } from "./games/world";
-import type { RaceHost } from "./race";
+import type { RingHost } from "./ring";
 
 const PET_IDS = new Set<string>(PETS.map((p) => p.id));
 const SKIN_IDS = new Set<string>(SKINS.map((s) => s.id));
@@ -106,7 +106,7 @@ export class Room {
   /** Dünya odasının oyunları (savaş odasında yok); sunucu oda açılınca kurar. */
   games: WorldGames | null = null;
   /** GAP Ring yarışı (savaş odasında yok). */
-  race: RaceHost | null = null;
+  ring: RingHost | null = null;
   /** Görev/sayaç olayı (botta): sunucu bağlar; tank isabeti, savaşta vuruş ve galibiyet buradan. */
   onReport: (sid: number, event: string, amount?: number) => void = () => {};
   private nextSid = 1;
@@ -177,7 +177,7 @@ export class Room {
     this.players.delete(sid);
     this.battle?.leave(sid);
     this.games?.leave(sid);
-    this.race?.leave(sid);
+    this.ring?.leave(sid);
     this.broadcast({ t: "leave", sid });
     // Boşalan yere en eski izleyici geçer; istemciler onu yeni katılan gibi görür.
     if (!p.info.spectator) {
@@ -227,7 +227,7 @@ export class Room {
     p.sampledAt = sampleTime(sentAt, p.sampledAt, now);
     p.lastUpdate = now;
     this.dirty = TRAIL_TICKS;
-    if (p.info.car) this.race?.move(sid, p.state.x, p.state.z, now);
+    if (p.info.car) this.ring?.move(sid, p.state.x, p.state.z, now);
   }
 
   /** Odaya sohbet satırı: geçmişe eklenir ve herkese gider. */
@@ -257,7 +257,7 @@ export class Room {
     if (car && p.info.parked) this.setParked(sid, null);
     if (!car && p.info.radio) this.setRadio(sid, null);
     // Arabadan inen yarıştan çıkar (yarış sürüyorsa DNF)
-    if (!car) this.race?.leave(sid);
+    if (!car) this.ring?.leave(sid);
   }
 
   /** Arabanın radyosu: şarkı (herkes aynı andan dinler) ya da sus (null). Arabada değilse çalmaz. */
@@ -401,7 +401,7 @@ export class Room {
   tick(now: number, force = false): void {
     this.battle?.tick(now);
     this.games?.tick(now);
-    this.race?.tick(now);
+    this.ring?.tick(now);
     const t = this.tank;
     if (!t.driver && t.idleSince && now - t.idleSince > TANK_RETURN_MS) {
       Object.assign(t, { x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, idleSince: 0 });

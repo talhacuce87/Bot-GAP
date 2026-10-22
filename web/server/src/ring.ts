@@ -1,39 +1,39 @@
 // Odanın yarış yöneticisi: oturumu (shared/race) oyunculara bağlar. Grid'e geçme, başlatma ve ayrılma
 // istekleri; konumlardan tur sayımı; faz değişince ve yarışta saniyede iki kez durum yayını; bitince ödüller.
-import { type RaceView, RaceSession } from "../../shared/race";
+import { type RingView, RingSession } from "../../shared/ring";
 import type { ServerEvent } from "../../shared/protocol";
 
 /** Yarış yöneticisinin odadan istedikleri (test için arayüz). */
-export interface RaceRoom {
+export interface RingRoom {
   players: { get(sid: number): { info: { name: string; car?: unknown; spectator?: boolean }; state: { x: number; z: number } } | undefined };
   broadcast(ev: ServerEvent): void;
 }
 
-export type RaceMsg = { t: "race"; op: "join"; slot: number } | { t: "race"; op: "leave" } | { t: "race"; op: "start"; laps: number };
+export type RingMsg = { t: "ring"; op: "join"; slot: number } | { t: "ring"; op: "leave" } | { t: "ring"; op: "start"; laps: number };
 
 /** Yarış sürerken sıralama yayın aralığı (ms). */
 const STANDINGS_MS = 500;
 
-export class RaceHost {
-  readonly session: RaceSession;
+export class RingHost {
+  readonly session: RingSession;
   private lastSent = 0;
   private dirty = false;
 
   constructor(
-    private room: RaceRoom,
+    private room: RingRoom,
     /** Ödül: yarış bitince ilk üçe (sid, coin). */
     private reward: (sid: number, amount: number) => void,
     rng: () => number = Math.random,
   ) {
-    this.session = new RaceSession(rng);
+    this.session = new RingSession(rng);
   }
 
-  view(): RaceView {
+  view(): RingView {
     return this.session.view();
   }
 
   /** İstemci isteği: hata metni ya da null. */
-  handle(sid: number, msg: RaceMsg, now = Date.now()): string | null {
+  handle(sid: number, msg: RingMsg, now = Date.now()): string | null {
     const p = this.room.players.get(sid);
     if (!p || p.info.spectator) return "🏁 Önce dünyaya gir.";
     let err: string | null = null;
@@ -75,6 +75,6 @@ export class RaceHost {
     this.dirty = false;
     this.session.urgent = false;
     this.lastSent = now;
-    this.room.broadcast({ t: "race", race: this.session.view() });
+    this.room.broadcast({ t: "ring", ring: this.session.view() });
   }
 }

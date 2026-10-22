@@ -1,10 +1,10 @@
 // GAP Ring yarış arayüzü: sol üstte sıra, tur, süre ve yarışçılar (lidere fark); üstte mini harita; ekranın
 // üst ortasında F1 lambaları (5 kırmızı, sonra yeşil "BAŞLA!"); sol altta hız göstergesi; gridde bekleme şeridi;
-// bitişte sonuç tablosu. Durumu sunucu gönderir (RaceView); konumlar her kare dışarıdan verilir.
-import { lightsAt, type RaceView, raceTime, RACE_AREA, TRACK, TRACK_HALF } from "../../../shared/race";
+// bitişte sonuç tablosu. Durumu sunucu gönderir (RingView); konumlar her kare dışarıdan verilir.
+import { lightsAt, type RingView, raceTime, RACE_AREA, TRACK, TRACK_HALF } from "../../../shared/ring";
 
-export interface RaceFrame {
-  race: RaceView | null;
+export interface RingFrame {
+  race: RingView | null;
   me: number;
   now: number;
   /** Hız (m/sn) ve araba yönü; yarışçıların konumları. */
@@ -23,10 +23,10 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent?:
   return e;
 }
 
-const gapText = (r: RaceView["racers"][number]) =>
+const gapText = (r: RingView["racers"][number]) =>
   r.dnf ? "DNF" : r.total !== null && r.pos === 1 ? raceTime(r.total) : r.lapsDown ? `+${r.lapsDown} TUR` : r.gap !== null ? `+${(r.gap / 1000).toFixed(1)}` : "—";
 
-export class RaceHud {
+export class RingHud {
   private root: HTMLDivElement;
   private board: HTMLDivElement;
   private posEl: HTMLDivElement;
@@ -104,7 +104,7 @@ export class RaceHud {
     this.alertUntil = performance.now() + ms;
   }
 
-  update(f: RaceFrame): void {
+  update(f: RingFrame): void {
     const race = f.race;
     const mine = race?.racers.find((r) => r.sid === f.me) ?? null;
     const phase = race?.phase ?? "idle";
@@ -218,7 +218,7 @@ export class RaceHud {
     g.fillRect(sx - 1.5, sy - 5, 3, 10);
   }
 
-  private drawMap(race: RaceView, f: RaceFrame): void {
+  private drawMap(race: RingView, f: RingFrame): void {
     const g = this.map.getContext("2d")!;
     const dpr = this.map.width / MAP_W;
     g.setTransform(1, 0, 0, 1, 0, 0);
