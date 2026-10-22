@@ -93,6 +93,9 @@ export function members(s: VolleyState, team: 0 | 1): number[] {
   return s.teams[team].filter((sid) => sid > 0);
 }
 
+/** Topa dokunan oyuncu bu kadar süre yeniden dokunamaz (ms; tıklama yağmuruyla çift vuruşa karşı). */
+export const TOUCH_COOLDOWN_MS = 1000;
+
 /** Vuruşun geçerli olduğu top konumu (oyuncuya göre): yatay uzaklık ve yükseklik aralığı. */
 export const REACH: Record<VolleyHit | "dive", { r: number; lo: number; hi: number }> = {
   bump: { r: 1.35, lo: 0, hi: 2.2 },

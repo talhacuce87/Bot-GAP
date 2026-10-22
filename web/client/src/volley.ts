@@ -24,12 +24,14 @@ import {
   SET_TYPES,
   type SetType,
   serveName,
+  TOUCH_COOLDOWN_MS,
   V_BALL_R,
   type VBall,
   type VolleyEv,
   type VolleyHit,
   type VolleyState,
   emptyTeams,
+  halfOf,
   VOLLEY_TARGETS,
   vPredict,
   WIND_POWER,
@@ -66,7 +68,7 @@ const WINDS: [string, string][] = [
 /** Falso noktasının gidip gelme hızı (rad/sn). */
 const DOT_SPEED = 2.6;
 
-type BallMsg = VBall & { id?: number; at: number; hold?: number; toss?: number; w?: string; ev?: VolleyEv; by?: number };
+type BallMsg = VBall & { id?: number; at: number; hold?: number; toss?: number; sv?: 1; w?: string; ev?: VolleyEv; by?: number };
 type MenuTab = "pos" | "match" | "style";
 
 export interface VolleyDeps {
@@ -96,6 +98,8 @@ export class VolleyClient {
   private runHeld = false;
   private sprinting = false;
   private lastDive = -Infinity;
+  /** Son dokunuşun zamanı (performance.now, ms): bekleme süresinde vuruş hiç gitmez, top yerelde de oynamaz. */
+  private lastTouch = -Infinity;
   private diveUntil = -Infinity;
   private diveHit = false;
   private jumpSeq = -1;
@@ -257,8 +261,10 @@ export class VolleyClient {
     if (!v) this.balls.set(id, (v = new BallView(this.d.scene, b)));
     v.set(b);
     if (b.toss && b.toss !== was?.toss && b.toss !== this.you && this.active) sfx.pop();
-    if (!b.ev || !b.by || b.by === this.you) return;
     const kind = b.ev as VolleyHit;
+    // Sunucunun onayladığı dokunuş (yerelde çizilmemiş olsa bile) beklemeyi başlatır
+    if (b.by === this.you && ["bump", "set", "spike", "dump", "serve"].includes(kind)) this.lastTouch = Math.max(this.lastTouch, performance.now());
+    if (!b.ev || !b.by || b.by === this.you) return;
     if (["bump", "set", "spike", "dump", "serve"].includes(kind)) this.poseOf(b.by, POSE[kind]);
     if (!this.active) return;
     const gain = falloff(Math.hypot(b.x - this.d.me.x, b.z - this.d.me.z));
@@ -422,7 +428,8 @@ export class VolleyClient {
   /**
    * Vuruş: yön kameradan (pas geriye ise ters), güç seviyesi, pas türü; servis topuna seçilen falso. Top
    * yerelde menzildeyse (havada yatınca menzil o yana kayar) yeni yay hemen çizilir; sunucu onaylayınca kendi
-   * yayı gelir, reddederse top eski yoluna döner.
+   * yayı gelir, reddederse top eski yoluna döner. Sunucunun kesin reddedeceği vuruşlar (filenin karşısındaki top,
+   * karşılanmamış servise smaç) yerelde çizilmez; dokunuştan sonraki beklemede vuruş hiç gönderilmez.
    */
   private hit(kind: VolleyHit, turn = 0, dive = false): void {
     const { me, net } = this.d;
@@ -431,18 +438,21 @@ export class VolleyClient {
     const spin = serve && !air && this.power <= LOB_POWER ? (this.spinLock ?? 0) : 0;
     me.rot = kind === "set" && turn ? dir - Math.PI : dir;
     me.vpose = { kind: serve ? (air || this.power > LOB_POWER ? "spike" : "bump") : POSE[kind], at: performance.now() / 1000 };
+    if (performance.now() - this.lastTouch < TOUCH_COOLDOWN_MS) return;
     net.send({ t: "vhit", kind, dir, p: this.power, ...(dive ? { dive: true } : {}), ...(kind === "set" ? { st: this.setType } : {}) });
     const [ox, oz] = air ? leanShift(dir, me.leanDir, me.pitchDir) : [0, 0];
     const px = me.x + ox, pz = me.z + oz;
     const r = REACH[dive ? "dive" : serve ? (air ? "spike" : "serve") : kind];
-    // Servis kendi attığı topa; diğer vuruşlar menzildeki en yakın serbest topa
+    // Servis kendi attığı topa; diğer vuruşlar kendi yarısındaki menzildeki en yakın serbest topa
+    const side = (this.myTeam() ?? halfOf(me.x)) === 0 ? -1 : 1, attack = kind === "spike" || kind === "dump";
     let best: BallView | undefined, bd = Infinity;
     for (const v of this.balls.values()) {
       const b = v.shown, d = Math.hypot(b.x - px, b.z - pz);
-      const free = !v.msg.hold && (serve ? v.msg.toss === this.you : !v.msg.toss);
+      const free = !v.msg.hold && (serve ? v.msg.toss === this.you : !v.msg.toss && !(attack && v.msg.sv) && side * (b.x - VOLLEY_COURT.x) >= -V_BALL_R);
       if (free && d <= r.r && b.y >= r.lo && b.y <= r.hi && d < bd) [best, bd] = [v, d];
     }
     if (!best) return;
+    this.lastTouch = performance.now();
     const b = best.shown;
     const nb: BallMsg = { id: best.msg.id, x: b.x, y: b.y, z: b.z, vx: 0, vy: 0, vz: 0, at: net.serverNow() };
     hitBall(nb, kind, dir, this.power, 0, spin, this.setType, air ? 1 - me.pitchDir * PITCH_DEPTH : 1, serve && air);
