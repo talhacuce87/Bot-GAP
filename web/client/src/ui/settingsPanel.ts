@@ -11,7 +11,7 @@ import {
   settings,
   updateSettings,
 } from "../settings";
-import { type Action, ACTION_NAMES, actionLabel, type Bind, bindLabel, binds, onBinds, PROFILE_ACTIONS, profile, RESERVED, resetBinds, setBind } from "../input/keybinds";
+import { type Action, ACTION_NAMES, actionLabel, type Bind, bindLabel, binds, onBinds, PROFILE_ACTIONS, profile, reserved, resetBinds, setBind } from "../input/keybinds";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text = ""): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -110,8 +110,8 @@ export class SettingsPanel {
     b.replaceChildren();
     const s = settings;
     const keys = !matchMedia("(pointer: coarse)").matches;
-    // Stadyumda tuşlar en üstte (futbol tuşları ayrı bir takım)
-    if (keys && profile === "stadium") this.keys();
+    // Stadyumda ve voleybol salonunda tuşlar en üstte (ayrı takımlar)
+    if (keys && profile !== "world") this.keys();
 
     this.section("Grafik");
     const presets = el("div", "settings-presets", b);
@@ -155,7 +155,7 @@ export class SettingsPanel {
     this.slider("Bakış hassasiyeti", s.sensitivity, 0.3, 2.5, 0.1, (v) => `${v.toFixed(1)}×`, (v) => this.set({ sensitivity: v }));
     this.toggleRow("Dikey bakışı ters çevir", s.invertY, (v) => this.set({ invertY: v }));
 
-    if (keys && profile !== "stadium") this.keys();
+    if (keys && profile === "world") this.keys();
 
     this.section("Gökyüzü");
     this.choice<Settings["clock"]>("Saat (yalnızca sende)", s.clock, [
@@ -184,14 +184,16 @@ export class SettingsPanel {
 
   /** Tuş atamaları: her eyleme iki tuş; tıklanan kutu bir sonraki tuşu/fare düğmesini/tekerleği alır. */
   private keys(): void {
-    const stadium = profile === "stadium";
-    this.section(stadium ? "⚽ Stadyum tuşları" : "Tuşlar");
+    const stadium = profile === "stadium", volley = profile === "volley";
+    this.section(stadium ? "⚽ Stadyum tuşları" : volley ? "🏐 Voleybol tuşları" : "Tuşlar");
     this.body.lastElementChild?.classList.add("settings-keys-head");
     el(
       "div",
       "settings-note",
       this.body,
-      stadium
+      volley
+        ? "Voleybol salonundayken geçerli. Sol tık atamak için bekleyen kutuya sol tıkla. Shift lock ile kamera nişan alır."
+        : stadium
         ? "Stadyumdayken geçerli; dünyaya dönünce dünya tuşları geri gelir. Koş tuşu basılıyken müdahale: kayarak müdahale."
         : "Sağ tık basılı: kamera (imleç yerinde kalır) • 1–6: emote • Enter: sohbet",
     );
@@ -220,7 +222,7 @@ export class SettingsPanel {
       this.endCapture();
       if (bind === null) this.keyNote = "";
       else {
-        if (RESERVED.has(bind)) this.keyNote = `${bindLabel(bind)} atanamaz (oyunda başka işi var).`;
+        if (reserved(bind)) this.keyNote = `${bindLabel(bind)} atanamaz (oyunda başka işi var).`;
         else {
           const taken = setBind(action, slot, bind);
           this.keyNote = taken ? `${bindLabel(bind)}, "${ACTION_NAMES[taken]}" eyleminden alındı.` : "";
@@ -241,6 +243,11 @@ export class SettingsPanel {
       else done(e.code);
     };
     const onMouse = (e: MouseEvent) => {
+      // Voleybolda bekleyen kutuya sol tık: sol tık atanır
+      if (e.button === 0 && profile === "volley" && e.target instanceof Element && e.target.closest(".settings-key.waiting")) {
+        swallow(e);
+        return done("Mouse0");
+      }
       // Sol/sağ tık atamayı iptal eder. Panel yeniden kurulmaz: tıklanan başka kutu tıklamayı alsın
       if (e.button === 0 || e.button === 2) {
         this.endCapture();

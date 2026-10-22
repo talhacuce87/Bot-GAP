@@ -3500,3 +3500,445 @@ canvas.shiftlock {
 #hud.racing .joy-knob {
   display: none !important;
 }
+
+/* ---- Voleybol salonu: skor şeridi, alt panel (top/falso, güç, stamina, zıplama ve pas türü), pozisyon menüsü ---- */
+.vb-hud {
+  display: none;
+}
+
+.vb-hud.show {
+  display: block;
+}
+
+.vb-top {
+  position: absolute;
+  left: 50%;
+  top: max(10px, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 12px;
+  background: rgba(10, 14, 20, 0.62);
+  color: #e8edf3;
+  text-align: center;
+  pointer-events: none;
+}
+
+.vb-score {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.vb-score small {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.vb-red {
+  color: #ff6a5c;
+}
+
+.vb-blue {
+  color: #6aa8ff;
+}
+
+.vb-info {
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.vb-bars {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 96px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  font-family: "Fredoka", system-ui, sans-serif;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.vb-ball {
+  width: 74px;
+  height: 74px;
+  visibility: hidden;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+}
+
+.vb-ball.show {
+  visibility: visible;
+}
+
+.vb-ball.locked .vb-dot {
+  stroke: #fff;
+  stroke-width: 3;
+}
+
+.vb-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.vb-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 112px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.vb-side:first-child {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.vb-side small {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+}
+
+.vb-side b {
+  font-size: 19px;
+}
+
+.vb-key {
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 5px;
+  background: rgba(40, 44, 52, 0.92);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  text-shadow: none;
+}
+
+.vb-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: min(420px, 52vw);
+}
+
+.vb-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vb-meter-row > .vb-key {
+  flex: none;
+}
+
+.vb-meter {
+  position: relative;
+  flex: 1;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(70, 18, 18, 0.85);
+  overflow: hidden;
+}
+
+.vb-meter.sta {
+  background: rgba(14, 60, 26, 0.85);
+}
+
+.vb-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(180deg, #ff5a4a, #d8302a);
+  transition: width 0.12s ease-out;
+}
+
+.vb-meter.sta .vb-meter-fill {
+  background: linear-gradient(180deg, #5cf27a, #2fcf4f);
+}
+
+.vb-meter.sta .vb-meter-fill.low {
+  background: linear-gradient(180deg, #f2b84a, #d8892a);
+}
+
+.vb-meter-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.vb-meter-text span:last-child {
+  letter-spacing: 0.06em;
+}
+
+/* Tuş şeridi iki satıra sığar; dünyanın tuş ipucu salonda gizli */
+#hud.volley .hint {
+  display: none;
+}
+
+.vb-help.show {
+  display: block;
+  width: max-content;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.9;
+}
+
+/* Voleybol menüsü: lacivert-turuncu, sekmeler (pozisyon, maç, özelleştirme) */
+.gpanel.vb-menu {
+  width: min(500px, calc(100vw - 32px));
+  padding: 0 0 12px;
+  overflow: hidden;
+  border: 2px solid #f08a3c;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #13254a 0%, #0c1830 100%);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  font-family: "Fredoka", system-ui, sans-serif;
+}
+
+.vb-menu .wardrobe-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: linear-gradient(90deg, #f08a3c, #e0503f);
+}
+
+.vb-menu .wardrobe-head h3 {
+  margin: 0;
+  color: #fff;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+}
+
+.gpanel.vb-menu .wardrobe-x {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+}
+
+.vb-menu .gpanel-body {
+  padding: 0 12px;
+}
+
+.vb-tabs {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.gpanel .vb-tab {
+  flex: 1;
+  padding: 8px 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #b8c6e0;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.gpanel .vb-tab.on {
+  background: #f08a3c;
+  color: #fff;
+}
+
+.vb-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vb-match-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.vb-match-score small {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.gpanel .vb-start {
+  background: #2f9e5a;
+}
+
+.vb-style-title {
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.vb-wind-preview {
+  height: 54px;
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 84% 50%, #fff 0 11px, transparent 12px),
+    linear-gradient(90deg, transparent 4%, color-mix(in srgb, var(--wind) 35%, transparent) 40%, var(--wind) 82%, transparent 83%),
+    #0a1224;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.vb-swatches {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 6px;
+}
+
+.gpanel .vb-swatch {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  background: var(--wind);
+}
+
+.gpanel .vb-swatch.on {
+  border-color: #fff;
+  box-shadow: 0 0 0 3px #f08a3c;
+}
+
+.vb-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.vb-custom input {
+  width: 44px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* Pozisyonlar: kuşbakışı saha, her yarıda altı pozisyon */
+
+.vb-court {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #0f8fa0;
+}
+
+.vb-half {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-column: span 2;
+  gap: 8px;
+  padding: 8px;
+  border: 3px solid #fff;
+  background: #f6c79c;
+}
+
+.vb-half.h0 {
+  border-right-width: 2px;
+  background: linear-gradient(90deg, #f6c79c 50%, #f9d4b0 50%);
+}
+
+.vb-half.h1 {
+  border-left-width: 2px;
+  background: linear-gradient(90deg, #f9d4b0 50%, #f6c79c 50%);
+}
+
+.gpanel .vb-slot {
+  aspect-ratio: 1.35;
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.gpanel .vb-slot.t0 {
+  background: #e0503f;
+}
+
+.gpanel .vb-slot.t1 {
+  background: #7a57d8;
+}
+
+.gpanel .vb-slot.free {
+  opacity: 0.55;
+  font-size: 20px;
+}
+
+.gpanel .vb-slot.free:hover {
+  opacity: 0.9;
+}
+
+.gpanel .vb-slot.me {
+  outline: 3px solid #ffd23f;
+  outline-offset: 1px;
+}
+
+.gpanel .vb-slot:disabled {
+  cursor: default;
+}
+
+@media (max-width: 560px) {
+  .vb-side {
+    min-width: 0;
+  }
+
+  .vb-side small {
+    display: none;
+  }
+
+  .vb-side b {
+    font-size: 14px;
+  }
+
+  .vb-meter {
+    height: 18px;
+  }
+
+  .vb-meter-text {
+    font-size: 11px;
+  }
+
+  .vb-ball {
+    width: 54px;
+    height: 54px;
+  }
+
+  .vb-swatches {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}

@@ -3,7 +3,7 @@
 // (kamerayla oyuncu arasında kalan) yarı saydam olur, diğer üçü binayı çevreler.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { HALL, RACE_HOUSE } from "../../../shared/zones";
+import { HALL, RACE_HOUSE, VOLLEY_HALL } from "../../../shared/zones";
 import type { Builder } from "./builder";
 import { flatMat, mat, part } from "./geo";
 
@@ -161,7 +161,7 @@ function shed(b: Builder, spec: ShedSpec): Hall {
         meshes[i].castShadow = mat.opacity > 0.95;
       }
     },
-    signAt: signs[spec.doors[0]],
+    signAt: spec.doors.length ? signs[spec.doors[0]] : new THREE.Matrix4(),
   };
 }
 
@@ -190,5 +190,20 @@ export function raceHouse(b: Builder): Hall {
     roof: "#c4473a",
     floor: "#d8c7a6",
     skylight: false,
+  });
+}
+
+/** Voleybol salonu: dünyanın dışında, kapısız (ışınlanılır); ahşap rengi duvarlar, mavi serbest bölge. */
+export function volleyHall(b: Builder): Hall {
+  return shed(b, {
+    ...VOLLEY_HALL,
+    door: 0,
+    doors: [],
+    panel: ["#e9e1d2", "#ded5c4"],
+    base: "#3d6fb0",
+    trim: "#f4f1ea",
+    roof: "#4a5262",
+    floor: "#2f68b0",
+    skylight: true,
   });
 }

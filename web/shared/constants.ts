@@ -1,5 +1,5 @@
 // İstemci ve sunucunun ortak sabitleri.
-import { GROVE, inStadium, KAHVEHANE, LAKE, STADIUM } from "./zones";
+import { GROVE, inStadium, inVolley, KAHVEHANE, LAKE, STADIUM, VOLLEY_HALL } from "./zones";
 
 /** Sunucunun anlık görüntü (snapshot) yayın hızı. */
 export const TICK_HZ = 15;
@@ -14,12 +14,19 @@ export const INTERP_DELAY_MS = 100;
 /** Yürünebilir alan (dikdörtgen, metre); kenarında ağaçlar, güneyinde dağlar. */
 export const WORLD_BOUNDS = { minX: -135, maxX: 125, minZ: -88, maxZ: 162 };
 
-/** `p`yi dünya sınırının `pad` kadar içinde tutar (yerinde değiştirir). Stadyumdaysa stadyumun içinde. */
+/** `p`yi dünya sınırının `pad` kadar içinde tutar (yerinde değiştirir). Stadyumda ya da voleybol salonundaysa onun içinde. */
 export function clampToWorld(p: { x: number; z: number }, pad = 0): void {
   if (inStadium(p.x, p.z)) {
     const s = STADIUM;
     p.x = Math.min(s.x + s.hw - pad, Math.max(s.x - s.hw + pad, p.x));
     p.z = Math.min(s.z + s.hd - pad, Math.max(s.z - s.hd + pad, p.z));
+    return;
+  }
+  if (inVolley(p.x, p.z)) {
+    // Salonun içi (duvar kalınlığı kadar içeride)
+    const s = VOLLEY_HALL, m = 0.6;
+    p.x = Math.min(s.x + s.hw - m - pad, Math.max(s.x - s.hw + m + pad, p.x));
+    p.z = Math.min(s.z + s.hd - m - pad, Math.max(s.z - s.hd + m + pad, p.z));
     return;
   }
   p.x = Math.min(WORLD_BOUNDS.maxX - pad, Math.max(WORLD_BOUNDS.minX + pad, p.x));
@@ -76,17 +83,26 @@ export function maxSpeed(flags: number): number {
  */
 export const JUMP_PEAK = 1.3;
 export const JUMP_TIME = 1.05;
+/** Voleybol salonunda zıplama daha yüksek ve uzun (smaç ve blokta filenin üstüne çıkılır). */
+export const VJUMP_PEAK = 2.3;
+export const VJUMP_TIME = 1.35;
 /** Sürenin bu kadarı çıkış, kalanı iniş. */
 const JUMP_RISE = 0.4;
 
+/** Zıplamanın süresi (`volley`: voleybol salonunda). */
+export function jumpTime(volley = false): number {
+  return volley ? VJUMP_TIME : JUMP_TIME;
+}
+
 /** Zıplamanın başından `t` sn sonraki yükseklik (havada değilse 0). */
-export function jumpHeight(t: number): number {
-  if (!(t > 0 && t < JUMP_TIME)) return 0;
-  const u = t / JUMP_TIME;
-  if (u < JUMP_RISE) return JUMP_PEAK * (1 - (1 - u / JUMP_RISE) ** 2);
+export function jumpHeight(t: number, volley = false): number {
+  const T = jumpTime(volley), peak = volley ? VJUMP_PEAK : JUMP_PEAK;
+  if (!(t > 0 && t < T)) return 0;
+  const u = t / T;
+  if (u < JUMP_RISE) return peak * (1 - (1 - u / JUMP_RISE) ** 2);
   const s = (u - JUMP_RISE) / (1 - JUMP_RISE);
   // Tepede yavaş başlar, sona doğru hızlanır ama son anda biraz yumuşar
-  return JUMP_PEAK * (1 - s ** 2.2) * (1 - 0.15 * s ** 8);
+  return peak * (1 - s ** 2.2) * (1 - 0.15 * s ** 8);
 }
 
 /** Konumlar santimetre hassasiyetinde int16 olarak gönderilir. */

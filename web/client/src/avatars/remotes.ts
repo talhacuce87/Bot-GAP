@@ -1,6 +1,7 @@
 // Uzak oyuncular: snapshot halka tamponu + uyarlanır gecikmeyle (jitter.ts) geriden interpolasyon.
 import type * as THREE from "three";
-import { FLAG_DRIVING, FLAG_SEATED, FLAG_WALKING, JUMP_MASK, JUMP_SHIFT, JUMP_TIME, jumpHeight } from "../../../shared/constants";
+import { FLAG_DRIVING, FLAG_SEATED, FLAG_WALKING, JUMP_MASK, JUMP_SHIFT, jumpHeight, VJUMP_TIME } from "../../../shared/constants";
+import { inVolley } from "../../../shared/zones";
 import type { PlayerInfo } from "../../../shared/protocol";
 import type { AvatarAtlas } from "./atlas";
 import { type AvatarView, colorFor } from "./avatars";
@@ -54,10 +55,14 @@ export class Remote implements AvatarView {
   pair: AvatarView["pair"] = null;
   slide: number | null = null;
   trick: { at: number; side: -1 | 1 } | null = null;
+  vpose: AvatarView["vpose"] = null;
+  vlean = 0;
+  vpitch = 0;
+  vstance: AvatarView["vstance"] = null;
   /** Altındaki yüzey: konumdan bulunur (yükseklik gönderilmez; engelin içine yerden girilemez). */
   baseY = 0;
   private lastJumpSeq = -1;
-  private jumpT = JUMP_TIME;
+  private jumpT = VJUMP_TIME;
   leaving = false;
   readonly color: THREE.Color;
   readonly phase: number;
@@ -159,7 +164,7 @@ export class Remote implements AvatarView {
     if (this.lastJumpSeq >= 0 && seq !== this.lastJumpSeq) this.jumpT = 0;
     if (this.n > 0) this.lastJumpSeq = seq;
     this.jumpT += dt;
-    this.jumpY = jumpHeight(this.jumpT);
+    this.jumpY = jumpHeight(this.jumpT, inVolley(this.x, this.z));
   }
 
   private interp(renderTime: number, dt: number): void {
