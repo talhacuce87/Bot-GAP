@@ -11,7 +11,7 @@ import {
   settings,
   updateSettings,
 } from "../settings";
-import { type Action, ACTION_NAMES, actionLabel, type Bind, bindLabel, binds, RESERVED, resetBinds, setBind } from "../input/keybinds";
+import { type Action, ACTION_NAMES, actionLabel, type Bind, bindLabel, binds, onBinds, PROFILE_ACTIONS, profile, RESERVED, resetBinds, setBind } from "../input/keybinds";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text = ""): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -60,6 +60,15 @@ export class SettingsPanel {
       if (e.key === "Escape") this.close();
     });
     this.root.addEventListener("keyup", (e) => e.stopPropagation());
+    // Stadyuma girip çıkınca geçerli tuş takımı değişir: açıksa yeniden çiz
+    onBinds(() => {
+      if (this.isOpen && !this.capture) this.render();
+    });
+    // Stadyumdaki "Tuşlar" düğmesi: paneli tuşlar bölümünde aç
+    addEventListener("gap:keys", () => {
+      this.open();
+      this.body.querySelector(".settings-keys-head")?.scrollIntoView({ block: "start" });
+    });
   }
 
   get isOpen(): boolean {
@@ -100,6 +109,9 @@ export class SettingsPanel {
     const b = this.body;
     b.replaceChildren();
     const s = settings;
+    const keys = !matchMedia("(pointer: coarse)").matches;
+    // Stadyumda tuşlar en üstte (futbol tuşları ayrı bir takım)
+    if (keys && profile === "stadium") this.keys();
 
     this.section("Grafik");
     const presets = el("div", "settings-presets", b);
@@ -143,7 +155,7 @@ export class SettingsPanel {
     this.slider("Bakış hassasiyeti", s.sensitivity, 0.3, 2.5, 0.1, (v) => `${v.toFixed(1)}×`, (v) => this.set({ sensitivity: v }));
     this.toggleRow("Dikey bakışı ters çevir", s.invertY, (v) => this.set({ invertY: v }));
 
-    if (!matchMedia("(pointer: coarse)").matches) this.keys();
+    if (keys && profile !== "stadium") this.keys();
 
     this.section("Gökyüzü");
     this.choice<Settings["clock"]>("Saat (yalnızca sende)", s.clock, [
@@ -172,9 +184,18 @@ export class SettingsPanel {
 
   /** Tuş atamaları: her eyleme iki tuş; tıklanan kutu bir sonraki tuşu/fare düğmesini/tekerleği alır. */
   private keys(): void {
-    this.section("Tuşlar");
-    el("div", "settings-note", this.body, "Sağ tık basılı: kamera (imleç yerinde kalır) • 1–6: emote • Enter: sohbet");
-    for (const a of Object.keys(ACTION_NAMES) as Action[]) {
+    const stadium = profile === "stadium";
+    this.section(stadium ? "⚽ Stadyum tuşları" : "Tuşlar");
+    this.body.lastElementChild?.classList.add("settings-keys-head");
+    el(
+      "div",
+      "settings-note",
+      this.body,
+      stadium
+        ? "Stadyumdayken geçerli; dünyaya dönünce dünya tuşları geri gelir. Koş tuşu basılıyken müdahale: kayarak müdahale."
+        : "Sağ tık basılı: kamera (imleç yerinde kalır) • 1–6: emote • Enter: sohbet",
+    );
+    for (const a of PROFILE_ACTIONS[profile]) {
       const r = this.row(ACTION_NAMES[a]);
       const wrap = el("div", "settings-keys", r);
       for (const slot of [0, 1] as const) {

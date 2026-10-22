@@ -1,7 +1,10 @@
 // Tuş atamaları: her eyleme iki tuş (klavye `code`'u, fare düğmesi ya da tekerlek yönü).
 // Cihazda (localStorage) saklanır; ayarlar panelinden değiştirilir. Klavye düzeninden bağımsız: fiziksel tuş.
+// İki ayrı takım (profil) var: dünya ve stadyum. Stadyuma ışınlanınca stadyum tuşları geçerli olur
+// (Q pas, F şut, H power şut, G aşırtma, E çalım, R rainbow, C müdahale, B takım); ayarlar paneli o an geçerli takımı gösterir.
 
-const KEY = "gap-keys";
+export type Profile = "world" | "stadium";
+const KEYS: Record<Profile, string> = { world: "gap-keys", stadium: "gap-keys-stadium" };
 
 export type Action =
   | "forward"
@@ -28,10 +31,32 @@ export type Action =
   | "hug"
   | "accept"
   | "build"
-  | "net";
+  | "net"
+  | "fbPass"
+  | "fbShoot"
+  | "fbLob"
+  | "fbSkill"
+  | "fbTackle"
+  | "fbPower"
+  | "fbRainbow"
+  | "fbTeam";
 
-/** Tek seferlik dünya kısayolları (menü, fotoğraf, araç…): Input bunları sıraya alır, oyun tüketir. */
-export const HOTKEYS: readonly Action[] = ["menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "net"];
+/** Tek seferlik kısayollar (menü, fotoğraf, araç, stadyumda futbol…): Input bunları sıraya alır, oyun tüketir. */
+export const HOTKEYS: readonly Action[] = [
+  "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "net",
+  "fbPass", "fbShoot", "fbLob", "fbSkill", "fbTackle", "fbPower", "fbRainbow", "fbTeam",
+];
+
+const FOOTBALL: readonly Action[] = ["fbPass", "fbShoot", "fbPower", "fbLob", "fbSkill", "fbRainbow", "fbTackle", "fbTeam"];
+
+/** Her takımda ayarlanabilen eylemler (sırasıyla panelde). */
+export const PROFILE_ACTIONS: Record<Profile, readonly Action[]> = {
+  world: [
+    "forward", "back", "left", "right", "run", "jump", "shiftlock", "sit", "actF", "actG", "wardrobe", "zoomIn", "zoomOut",
+    "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "net",
+  ],
+  stadium: [...FOOTBALL, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
+};
 
 /** Tuş adı: KeyboardEvent.code, "Mouse1" (orta), "Mouse3"/"Mouse4" (yan), "WheelUp"/"WheelDown". */
 export type Bind = string;
@@ -62,6 +87,14 @@ export const ACTION_NAMES: Record<Action, string> = {
   accept: "İsteği kabul et",
   build: "İnşa modu",
   net: "Ağ paneli",
+  fbPass: "Pas",
+  fbShoot: "Şut (basılı tut: sert)",
+  fbLob: "Aşırtma (basılı tut)",
+  fbSkill: "Çalım",
+  fbTackle: "Müdahale (koşarken: kayarak)",
+  fbPower: "Power şut (basılı tut)",
+  fbRainbow: "Rainbow çalım",
+  fbTeam: "Takım menüsü",
 };
 
 export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
@@ -90,16 +123,51 @@ export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
   accept: ["KeyY", ""],
   build: ["KeyN", ""],
   net: ["F3", ""],
+  fbPass: ["", ""],
+  fbShoot: ["", ""],
+  fbLob: ["", ""],
+  fbSkill: ["", ""],
+  fbTackle: ["", ""],
+  fbPower: ["", ""],
+  fbRainbow: ["", ""],
+  fbTeam: ["", ""],
 };
+
+/** Stadyum: futbol tuşları; dünyanın E/Q/C/F/G işleri (otur, görevler, gardırop, etkileşim) burada yok. */
+export const STADIUM_BINDS: Record<Action, [Bind, Bind]> = {
+  ...(Object.fromEntries(Object.keys(DEFAULT_BINDS).map((a) => [a, ["", ""]])) as Record<Action, [Bind, Bind]>),
+  forward: ["KeyW", "ArrowUp"],
+  back: ["KeyS", "ArrowDown"],
+  left: ["KeyA", "ArrowLeft"],
+  right: ["KeyD", "ArrowRight"],
+  run: ["ShiftLeft", ""],
+  jump: ["Space", ""],
+  shiftlock: ["ShiftRight", ""],
+  zoomIn: ["WheelUp", ""],
+  zoomOut: ["WheelDown", ""],
+  menu: ["KeyM", ""],
+  camera: ["KeyV", ""],
+  net: ["F3", ""],
+  fbPass: ["KeyQ", ""],
+  fbShoot: ["KeyF", ""],
+  fbLob: ["KeyG", ""],
+  fbSkill: ["KeyE", ""],
+  fbTackle: ["KeyC", ""],
+  fbPower: ["KeyH", ""],
+  fbRainbow: ["KeyR", ""],
+  fbTeam: ["KeyB", ""],
+};
+
+const DEFAULTS: Record<Profile, Record<Action, [Bind, Bind]>> = { world: DEFAULT_BINDS, stadium: STADIUM_BINDS };
 
 /** Atanamaz tuşlar: sohbet, menü kapatma, emote ve sol/sağ tık (seçim ve kamera). */
 export const RESERVED = new Set(["Enter", "NumpadEnter", "Escape", "Mouse0", "Mouse2", ...[1, 2, 3, 4, 5, 6].map((n) => `Digit${n}`)]);
 
-function load(): Record<Action, [Bind, Bind]> {
-  const b = structuredClone(DEFAULT_BINDS);
+function load(p: Profile): Record<Action, [Bind, Bind]> {
+  const b = structuredClone(DEFAULTS[p]);
   try {
-    const saved = JSON.parse(localStorage.getItem(KEY) || "{}") as Partial<Record<Action, unknown>>;
-    for (const a of Object.keys(b) as Action[]) {
+    const saved = JSON.parse(localStorage.getItem(KEYS[p]) || "{}") as Partial<Record<Action, unknown>>;
+    for (const a of PROFILE_ACTIONS[p]) {
       const v = saved[a];
       if (Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "string" && !RESERVED.has(x))) b[a] = [v[0], v[1]];
     }
@@ -109,16 +177,31 @@ function load(): Record<Action, [Bind, Bind]> {
   return b;
 }
 
-export const binds: Record<Action, [Bind, Bind]> = load();
+const sets: Record<Profile, Record<Action, [Bind, Bind]>> = { world: load("world"), stadium: load("stadium") };
+/** Geçerli takım ve atamaları (canlı bağ: setProfile ile değişir). */
+export let profile: Profile = "world";
+export let binds: Record<Action, [Bind, Bind]> = sets.world;
 const listeners = new Set<() => void>();
+
+function notify(): void {
+  for (const fn of listeners) fn();
+}
 
 function save(): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(binds));
+    localStorage.setItem(KEYS[profile], JSON.stringify(binds));
   } catch {
     // depolama kapalı: yalnızca bu oturumda geçerli
   }
-  for (const fn of listeners) fn();
+  notify();
+}
+
+/** Stadyuma girince/çıkınca geçerli tuş takımını değiştirir. */
+export function setProfile(p: Profile): void {
+  if (p === profile) return;
+  profile = p;
+  binds = sets[p];
+  notify();
 }
 
 /**
@@ -128,7 +211,7 @@ function save(): void {
 export function setBind(action: Action, slot: 0 | 1, bind: Bind): Action | null {
   let taken: Action | null = null;
   if (bind) {
-    for (const a of Object.keys(binds) as Action[]) {
+    for (const a of PROFILE_ACTIONS[profile]) {
       binds[a].forEach((x, i) => {
         if (x === bind && !(a === action && i === slot)) {
           binds[a][i] = "";
@@ -143,7 +226,7 @@ export function setBind(action: Action, slot: 0 | 1, bind: Bind): Action | null 
 }
 
 export function resetBinds(): void {
-  Object.assign(binds, structuredClone(DEFAULT_BINDS));
+  Object.assign(binds, structuredClone(DEFAULTS[profile]));
   save();
 }
 

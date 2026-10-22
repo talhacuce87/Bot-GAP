@@ -2627,6 +2627,49 @@ canvas.shiftlock {
   display: grid;
 }
 
+/* Stadyum: futbol tuşları şeridi */
+.fb-help {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 10px);
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(10, 14, 20, 0.62);
+  color: #e8edf3;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.fb-help.show {
+  display: flex;
+}
+
+.fb-help b {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.16);
+  text-align: center;
+}
+
+.fb-help button {
+  margin-left: 6px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: #2f6fd0;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
 /* Futbol skoru ve şut gücü */
 .pitch-score {
   position: absolute;
@@ -2990,6 +3033,54 @@ canvas.shiftlock {
 .landing-guest button {
   background: #2e8b57;
   color: #fff;
+}
+/* Stadyum: dünyaya dön ve takım düğmeleri (tank oyunundaki gibi sol üstte), takım menüsü */
+.fb-exit {
+  display: none;
+}
+
+.fb-exit.show {
+  display: block;
+}
+
+.fb-team-panel {
+  width: min(340px, calc(100vw - 32px));
+}
+
+.fb-team-row {
+  display: flex;
+  gap: 8px;
+}
+
+.fb-team-row .fb-team-btn {
+  flex: 1;
+}
+
+.gpanel .fb-team-btn {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.gpanel .fb-team-0 {
+  background: #c9372c;
+}
+
+.gpanel .fb-team-1 {
+  background: #2a62c4;
+}
+
+.gpanel .fb-team-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.gpanel .fb-team-home {
+  margin-top: 4px;
 }
 
 /* ---- Oyuncak pist yarışı ---- */

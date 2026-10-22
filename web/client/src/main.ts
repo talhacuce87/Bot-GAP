@@ -228,6 +228,7 @@ async function start(): Promise<void> {
     reloadOnce(v);
   };
   net.onNotice = (text) => hud.toast(text);
+  net.onTeleport = (x, z, rot) => me.teleport(x, z, rot);
   net.onJail = (jailed, x, z, rot) => {
     const was = me.jailed;
     me.jailed = jailed;

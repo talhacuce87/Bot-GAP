@@ -1,5 +1,5 @@
 // İstemci ve sunucunun ortak sabitleri.
-import { GROVE, KAHVEHANE, LAKE } from "./zones";
+import { GROVE, inStadium, KAHVEHANE, LAKE, STADIUM } from "./zones";
 
 /** Sunucunun anlık görüntü (snapshot) yayın hızı. */
 export const TICK_HZ = 15;
@@ -14,8 +14,14 @@ export const INTERP_DELAY_MS = 100;
 /** Yürünebilir alan (dikdörtgen, metre); kenarında ağaçlar, güneyinde dağlar. */
 export const WORLD_BOUNDS = { minX: -135, maxX: 125, minZ: -88, maxZ: 162 };
 
-/** `p`yi dünya sınırının `pad` kadar içinde tutar (yerinde değiştirir). */
+/** `p`yi dünya sınırının `pad` kadar içinde tutar (yerinde değiştirir). Stadyumdaysa stadyumun içinde. */
 export function clampToWorld(p: { x: number; z: number }, pad = 0): void {
+  if (inStadium(p.x, p.z)) {
+    const s = STADIUM;
+    p.x = Math.min(s.x + s.hw - pad, Math.max(s.x - s.hw + pad, p.x));
+    p.z = Math.min(s.z + s.hd - pad, Math.max(s.z - s.hd + pad, p.z));
+    return;
+  }
   p.x = Math.min(WORLD_BOUNDS.maxX - pad, Math.max(WORLD_BOUNDS.minX + pad, p.x));
   p.z = Math.min(WORLD_BOUNDS.maxZ - pad, Math.max(WORLD_BOUNDS.minZ + pad, p.z));
 }

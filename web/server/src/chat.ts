@@ -83,8 +83,8 @@ export interface WorldCommands {
   skip(): void;
   /** Dünyanın saati ve havası (!saat, !hava <tür>). */
   sky?: Sky;
-  /** Futbol maçı: başlat (dakika; hata metni ya da null) / bitir. */
-  match?: { start(minutes: number): string | null; end(): boolean };
+  /** Stadyumda futbol maçı: başlat (dakika; hata metni ya da null) / bitir / katıl / ayrıl. */
+  match?: { start(minutes: number): string | null; end(): boolean; join(): string | null; leave(): boolean };
 }
 
 const HOLD_TEXT = `${SKY_HOLD_MS / 3_600_000} saat`;
@@ -163,11 +163,19 @@ export async function runCommand(ctx: ChatContext, cmd: string, args: string): P
   }
   if (w && (cmd === "gec" || cmd === "skip")) return w.skip();
   if (w?.match && (cmd === "mac" || cmd === "match")) {
-    if (/^(bitir|dur|son)$/.test(foldName(args))) return w.match.end() ? undefined : ctx.reply("⚽ Süren bir maç yok.");
+    const sub = foldName(args);
+    if (/^(bitir|dur|son)$/.test(sub)) return w.match.end() ? undefined : ctx.reply("⚽ Süren bir maç yok.");
+    if (/^(katil|gir|join)$/.test(sub)) {
+      const err = w.match.join();
+      return err ? ctx.reply(err) : undefined;
+    }
+    if (/^(ayril|cik|leave)$/.test(sub)) return w.match.leave() ? undefined : ctx.reply("⚽ Bir maçta değilsin.");
     const minutes = Math.round(Math.max(1, Math.min(15, Number(args) || 5)));
     const err = w.match.start(minutes);
     if (err) return ctx.reply(err);
-    return ctx.announce(`⚽ ${ctx.user.name} maç başlattı (${minutes} dk)! Batı yarısındakiler 🔴 Kırmızı, doğudakiler 🔵 Mavi. Sonradan gelen az kişili takıma katılır.`);
+    return ctx.announce(
+      `🏟️ ${ctx.user.name} maç başlattı (${minutes} dk)! Sahadakiler stadyuma ışınlandı: batı yarısındakiler 🔴 Kırmızı, doğudakiler 🔵 Mavi. Katılmak için !maç katıl, çıkmak için !maç ayrıl.`,
+    );
   }
 
   const botCmd = BOT_COMMANDS[cmd];

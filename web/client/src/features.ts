@@ -5,7 +5,8 @@ import * as THREE from "three";
 import { FLAG_RUNNING, FLAG_WALKING, vehicleOf, type Vehicle } from "../../shared/constants";
 import type { KickKind, MatchState } from "../../shared/protocol";
 import { assistedShot, attackSide, FINISH_RANGE, goalView } from "../../shared/football";
-import { DJ_BOOTH, DOCK, KICK_REACH, PITCH, POND_AREA, RACE_HOUSE, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
+import { DJ_BOOTH, DOCK, type Field, inStadium, KICK_REACH, PITCH, POND_AREA, RACE_HOUSE, STADIUM_PITCH, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
+import { type Action, actionLabel, onBinds, profile, setProfile } from "./input/keybinds";
 import { RaceClient } from "./race";
 import { type AvatarRenderer, type AvatarView, colorFor } from "./avatars/avatars";
 import { Companions } from "./avatars/companions";
@@ -21,6 +22,7 @@ import { settings, updateSettings } from "./settings";
 import { BoardGameUi } from "./ui/boardGame";
 import type { Hud } from "./ui/hud";
 import { Hub } from "./ui/hub";
+import { button, el, Panel } from "./ui/panel";
 import { canvasToJpeg, PhotoMode } from "./ui/photo";
 import { ProfileUi } from "./ui/profile";
 import { falloff, sfx } from "./ui/sfx";
@@ -29,6 +31,7 @@ import { Confetti, Mist, SeasonParticles, Splashes, StageHaze } from "./world/am
 import { daylight, istanbulHour } from "./world/daynight";
 import { wetUniform } from "./world/geo";
 import { Fireworks } from "./world/fireworks";
+import type { Pitch } from "./world/pitch";
 import { SCREEN_H, SCREEN_W, type World } from "./world/scene";
 import { ScreenGlow } from "./world/screenGlow";
 import { BuildWorld } from "./world/buildWorld";
@@ -80,6 +83,14 @@ const RIDE_REPORT_MS = 8000;
 /** F'ye bundan kısa basmak pas. */
 const PASS_TAP = 0.18;
 const TEAM_COLORS = [new THREE.Color("#ff3b30"), new THREE.Color("#2f8bff")];
+/**
+ * Stadyumda çalım (topun döndüğü yana çapraz atılış; `angle` baktığı yönden sapma) ve kayma: süratin hızı
+ * (m/sn) ve süresi; yerel bekleme (sunucuyla aynı, rainbow da çalımla aynı beklemede).
+ */
+const SKILL_DASH = { speed: 7.5, t: 0.26, cooldown: 1.4, angle: 0.7 };
+const SLIDE_DASH = { speed: 9.5, t: 0.5, cooldown: 1.6 };
+const TACKLE_COOLDOWN = 1;
+const FIELDS: readonly Field[] = [PITCH, STADIUM_PITCH];
 
 /** Kalan maç süresi "m:ss". */
 function matchClock(ms: number): string {
@@ -114,9 +125,21 @@ export class Features {
   private wasOnStage = false;
   /** Sunucunun sabitlediği saat (!saat), null: gerçek saat. */
   private worldClock: number | null = null;
-  private score: [number, number] = [0, 0];
+  /** Skor: salon (0) ve stadyum (1). */
+  private scores: [[number, number], [number, number]] = [[0, 0], [0, 0]];
   /** Basılı tutulan vuruş: tuş, tür ve geçen süre (sn). */
-  private charge: { key: "actF" | "actG"; kind: "shot" | "lob"; t: number } | null = null;
+  private charge: { key: Action; kind: "shot" | "lob" | "power"; t: number } | null = null;
+  /** Stadyum: son çalım/müdahale anı (sn), tuş ipucu şeridi, stadyumda mıyız. */
+  private lastSkill = -Infinity;
+  private lastTackle = -Infinity;
+  private fbHelp: HTMLDivElement;
+  /** Yön tuşu yokken çalım sırayla iki yana. */
+  private skillSide: -1 | 1 = 1;
+  /** Stadyum: takım menüsü (B), dünyaya dön ve takım düğmeleri. */
+  private teamPanel: Panel;
+  private fbExit: HTMLButtonElement;
+  private fbTeamBtn: HTMLButtonElement;
+  private inArena = false;
   private match: MatchState | null = null;
   /** Maçta oyuncuların altındaki takım halkaları. */
   private rings: THREE.InstancedMesh;
@@ -159,6 +182,9 @@ export class Features {
     world.scene.add(this.rings);
     if (this.leaves.mesh) world.scene.add(this.leaves.mesh);
     c.life.onStop(() => this.fireworks.dispose());
+    // Tuşlar değişince stadyum ipucu yenilenir; dünyadan çıkınca (savaş modu) dünya tuşları
+    c.life.onStop(onBinds(() => this.renderFbHelp()));
+    c.life.onStop(() => setProfile("world"));
     this.race = new RaceClient({
       scene: world.scene,
       net,
@@ -213,7 +239,7 @@ export class Features {
       vehicle: (v) => this.setVehicle(v),
       fireworks: () => net.send({ t: "fireworks" }),
       tag: (mode) => c.say(`!${mode}`),
-      match: () => c.say(this.match ? "!maç bitir" : "!maç 5"),
+      match: () => c.say(!this.match ? "!maç 5" : this.myTeam() === null ? "!maç katıl" : "!maç bitir"),
       build: () => this.build.toggle(),
       pair: (kind) => this.pair(kind),
       queue: () => this.whud.openQueue(),
@@ -237,8 +263,28 @@ export class Features {
       const d = Math.hypot(x - c.camera.position.x, z - c.camera.position.z);
       sfx.firework(delay, 0.4 + 0.6 * falloff(d * 0.5), (x - c.camera.position.x) / 40);
     };
+    // Stadyumda tuş ipucu: geçerli atamalarla (ayarlardan değişince yenilenir)
+    this.fbHelp = document.createElement("div");
+    this.fbHelp.className = "fb-help";
+    hudRoot.append(this.fbHelp);
+    // Stadyum: tank oyunundaki gibi sol üstte dünyaya dön ve takım düğmeleri; B ile takım menüsü
+    this.fbExit = el("button", "battle-exit fb-exit", hudRoot, "🏠 Dünyaya dön");
+    this.fbExit.addEventListener("click", () => this.goHome());
+    this.fbTeamBtn = el("button", "battle-switch", hudRoot, "⚽ Takım");
+    this.fbTeamBtn.addEventListener("click", () => this.toggleTeams());
+    this.teamPanel = new Panel(hudRoot, "⚽ TAKIM SEÇ", "fb-team-panel");
+
     net.onBall = (b) => {
-      world.pitch.setBall(b, net.serverNow());
+      this.pitchOf(b.f).setBall(b, net.serverNow());
+      // Kayma ve çalım başkasındaysa: avatarı yere yatar / döner, top yanından yarım daire çizer
+      if ((b.ev === "slide" || b.ev === "skill") && b.by !== net.you) {
+        const r = c.remotes.map.get(b.by ?? 0);
+        const t = performance.now() / 1000;
+        if (b.ev === "skill") {
+          this.pitchOf(b.f).trick(b.by ?? 0, b.side ?? 1, net.serverNow());
+          if (r) r.trick = { at: t, side: b.side ?? 1 };
+        } else if (r) r.slide = t;
+      }
       // Vuruş/direk sesleri (kendi vuruşumuzun sesi basınca çaldı)
       if (!b.ev || b.by === net.you) return;
       const gain = falloff(Math.hypot(b.x - me.x, b.z - me.z));
@@ -246,11 +292,12 @@ export class Features {
       else if (b.ev === "save") {
         sfx.header(Math.max(0.3, gain));
         sfx.cheer(0.35 * gain);
-      } else if (b.ev === "tackle") sfx.kick(0.35 * gain);
+      } else if (b.ev === "tackle" || b.ev === "slide") sfx.kick(0.35 * gain);
+      else if (b.ev === "skill" || b.ev === "rainbow") sfx.kick(0.25 * gain);
       else if (b.ev === "head") sfx.header(gain);
-      else sfx.kick((b.ev === "pass" ? 0.45 : 0.8) * gain);
+      else sfx.kick((b.ev === "pass" ? 0.45 : b.ev === "power" ? 1 : 0.8) * gain);
     };
-    net.onGk = (k) => world.pitch.setKeepers(k);
+    net.onGk = (k, f) => this.pitchOf(f).setKeepers(k);
     net.onPlots = (p) => this.buildWorld.setAll(p);
     net.onPlot = (p) => {
       const was = this.buildWorld.plots[p.id]?.owner;
@@ -259,7 +306,7 @@ export class Features {
     };
     net.onBset = (plot, i, j, k, b, r) => this.buildWorld.set(plot, i, j, k, b, r);
     net.onFb = (text) => {
-      if (Math.hypot(me.x - PITCH.x, me.z - PITCH.z) > 40) return;
+      if (Math.hypot(me.x - PITCH.x, me.z - PITCH.z) > 40 && !inStadium(me.x, me.z)) return;
       sfx.whistle();
       hud.toast(text);
     };
@@ -274,23 +321,26 @@ export class Features {
         sfx.whistle();
         sfx.cheer(0.7);
       }
+      if (this.teamPanel.isOpen) this.renderTeams();
     };
-    net.onScore = (s) => {
-      this.score = s;
-      world.pitch.setScore(s);
+    net.onScore = (s, f) => {
+      this.scores[f ?? 0] = s;
     };
-    net.onGoal = (side, sid, name, s, assist, own) => {
-      this.score = s;
-      world.pitch.setScore(s);
+    net.onGoal = (side, sid, name, s, assist, own, f) => {
+      this.scores[f ?? 0] = s;
+      const F = FIELDS[f ?? 0], p = this.pitchOf(f);
+      // Uzaktaki sahanın golü: yalnızca skor (stadyumdakiler salonun golünü duymaz, tersi de)
+      if (Math.hypot(F.x - me.x, F.z - me.z) > F.hx * 2.5) return;
       sfx.whistle();
-      sfx.cheer(Math.max(0.3, falloff(Math.hypot(PITCH.x - me.x, PITCH.z - me.z))));
-      const bp = world.pitch.ball;
-      world.pitch.netHit(bp.x, bp.y, bp.z, performance.now() / 1000);
+      sfx.cheer(Math.max(f ? 0.8 : 0.3, falloff(Math.hypot(F.x - me.x, F.z - me.z))));
+      const bp = p.ball;
       const t = performance.now() / 1000;
-      const gx = PITCH.x + (side ? 1 : -1) * PITCH.hx;
-      c.emoteFx.emit(gx, 1, PITCH.z, FX_CELL.party, t, 0.5, 6);
-      this.confetti.burst(gx - (side ? 1 : -1) * 1.5, 1.5, PITCH.z, t);
-      c.emoteFx.emit(gx, 1.5, PITCH.z, FX_CELL.ball, t + 0.2, 0.5, 3);
+      p.netHit(bp.x, bp.y, bp.z, t);
+      if (f) world.stadium.cheer(t);
+      const gx = F.x + (side ? 1 : -1) * F.hx;
+      c.emoteFx.emit(gx, 1, F.z, FX_CELL.party, t, 0.5, 6);
+      this.confetti.burst(gx - (side ? 1 : -1) * 1.5, 1.5, F.z, t);
+      c.emoteFx.emit(gx, 1.5, F.z, FX_CELL.ball, t + 0.2, 0.5, 3);
       const who = sid === net.you ? "Sen attın" : name;
       hud.toast(own ? `🙈 Kendi kalesine! ${who} · ${s[0]}–${s[1]}` : `⚽ GOL! ${who}${assist ? ` · asist: ${assist}` : ""} · ${s[0]}–${s[1]}`);
     };
@@ -450,14 +500,17 @@ export class Features {
   // ---------------------------------------------------------------------------
 
   acts(): FeatureAct[] {
-    const { me, world } = this.c;
+    const { me } = this.c;
     if (me.jailed || me.driving || this.race.driving()) return [];
     const near = (p: { x: number; z: number }, r: number) => Math.hypot(me.x - p.x, me.z - p.z) <= r;
     if (me.vehicle === 3) return near(DOCK, 4.5) || Math.hypot(me.x - POND_AREA.x, me.z - POND_AREA.z) > 4.6 ? [{ key: "f", label: "Kayıktan in 🛶", act: "boat-off" }] : [];
     if (me.onStage) return [{ key: "f", label: "Sahneden in 🎤", act: "stage-off" }];
+    // Stadyumda futbolun kendi tuşları var (Q/F/G/E/C), F/G etkileşimi yok (dokunmatikte düğmeler kalır)
+    if (this.inArena && !this.c.input.touch) return [];
     // Futbol: top ayaktaysa ya da serbest top yakınsa vuruş; rakibin ayağındaysa müdahale
-    const ball = world.pitch.ball;
-    const owner = world.pitch.owner;
+    const { pitch } = this.here();
+    const ball = pitch.ball;
+    const owner = pitch.owner;
     const ballD = Math.hypot(ball.x - me.x, ball.z - me.z);
     if (owner > 0 && owner !== this.c.net.you && ballD <= 1.7 && !me.seated) return [{ key: "f", label: "Müdahale 🦵", act: "tackle" }];
     if ((owner === this.c.net.you || (owner === 0 && ballD <= KICK_REACH)) && !me.seated) {
@@ -554,12 +607,24 @@ export class Features {
     return m ? (m.teams[0].includes(you) ? 0 : m.teams[1].includes(you) ? 1 : null) : null;
   }
 
+  /** Sahanın çizimi: 1 stadyum, yoksa salon. */
+  private pitchOf(f: 0 | 1 | undefined): Pitch {
+    return f ? this.c.world.stadium.pitch : this.c.world.pitch;
+  }
+
+  /** Bulunduğum saha (stadyumdaysam stadyum) ve çizimi. */
+  private here(): { F: Field; pitch: Pitch } {
+    return this.inArena ? { F: STADIUM_PITCH, pitch: this.c.world.stadium.pitch } : { F: PITCH, pitch: this.c.world.pitch };
+  }
+
   /** Hücum ettiğim kale ve ona göre durumum (top nerede, kaleye ne kadar dönüğüm). */
   private attack(): { side: -1 | 1; dist: number; off: number } {
-    const { me, world } = this.c;
-    const b = world.pitch.ball;
-    const side = attackSide(this.myTeam(), b.x, b.z, me.rot);
-    return { side, ...goalView(side, b.x, b.z, me.rot) };
+    const { me } = this.c;
+    const { F, pitch } = this.here();
+    const b = pitch.ball;
+    // Maç stadyumda: salonda takım yok, baktığın kaleye
+    const side = attackSide(this.inArena ? this.myTeam() : null, b.x, b.z, me.rot, F);
+    return { side, ...goalView(side, b.x, b.z, me.rot, F) };
   }
 
   /** Kaleye yakın ve dönük: kısa dokunuş pas değil plase şut. */
@@ -573,11 +638,12 @@ export class Features {
    * kalecinin uzak köşesine kendiliğinden nişan alır; aşırtma kaleye yakınken kalecinin üstünden kaleye.
    */
   private kickDir(kind: KickKind): number {
-    const { me, world } = this.c;
-    const b = world.pitch.ball;
+    const { me } = this.c;
+    const { F, pitch } = this.here();
+    const b = pitch.ball;
     const a = this.attack();
-    if (kind === "shot") return assistedShot(a.side, b.x, b.z, me.rot, world.pitch.keeper(a.side).z);
-    if (kind === "lob" && a.dist < 20 && a.off < 0.9) return assistedShot(a.side, b.x, b.z, me.rot, null);
+    if (kind === "shot" || kind === "power") return assistedShot(a.side, b.x, b.z, me.rot, pitch.keeper(a.side).z, F);
+    if (kind === "lob" && a.dist < 20 && a.off < 0.9) return assistedShot(a.side, b.x, b.z, me.rot, null, F);
     return me.rot;
   }
 
@@ -586,7 +652,7 @@ export class Features {
     const ang = this.kickDir(kind);
     net.send({ t: "kick", dir: ang, power, kind, curve: 0 });
     me.rot = ang;
-    sfx.kick(kind === "pass" ? 0.45 : 0.6 + power * 0.4);
+    sfx.kick(kind === "pass" ? 0.45 : kind === "power" ? 1 : 0.6 + power * 0.4);
   }
 
   // ---------------------------------------------------------------------------
@@ -659,50 +725,66 @@ export class Features {
       }
     }
 
-    // Vuruş gücü: basılı tutuldukça dolar (0.9 sn'de tam). F'ye kısa dokunuş pas (kaleye yakınsa plase şut),
-    // uzun basış şut; G aşırtma. Yön oyuncunun baktığı/koştuğu yön, şut kaleye kendiliğinden nişan alır.
+    // Stadyuma girip çıkınca tuş takımı değişir; stadyumda futbolun kendi tuşları
+    const arena = inStadium(me.x, me.z);
+    if (arena !== this.inArena) this.enterArena(arena);
+    this.arenaKeys(time);
+
+    // Vuruş gücü: basılı tutuldukça dolar (0.9 sn'de tam). Salonda F'ye kısa dokunuş pas (kaleye yakınsa
+    // plase şut), uzun basış şut; G aşırtma. Stadyumda pas ayrı tuşta (Q): şut tuşuna dokunmak hafif şut.
+    // Yön oyuncunun baktığı/koştuğu yön, şut kaleye kendiliğinden nişan alır.
+    // Power şut daha uzun dolar (1.1 sn) ve en az orta güçle çıkar.
     const ch = this.charge;
     if (ch) {
+      const full = ch.kind === "power" ? 1.1 : 0.9;
       if (input.heldAction(ch.key)) {
         ch.t += dt;
-        const p = Math.min(1, ch.t / 0.9);
-        const tap = ch.kind === "shot" && ch.t < PASS_TAP;
-        this.whud.setPower(tap ? null : p, ch.kind === "lob" ? "Aşırtma" : "Şut");
+        const p = Math.min(1, ch.t / full);
+        const tap = ch.kind === "shot" && ch.t < PASS_TAP && !this.inArena;
+        this.whud.setPower(tap ? null : p, ch.kind === "lob" ? "Aşırtma" : ch.kind === "power" ? "Power şut" : "Şut");
       } else {
         const tap = ch.kind === "shot" && ch.t < PASS_TAP;
-        if (tap) this.kick(this.finishing() ? 0.5 : 0.4, this.finishing() ? "shot" : "pass");
-        else this.kick(Math.max(0.15, Math.min(1, ch.t / 0.9)), ch.kind);
+        if (tap && !this.inArena) this.kick(this.finishing() ? 0.5 : 0.4, this.finishing() ? "shot" : "pass");
+        else this.kick(Math.max(tap ? 0.3 : ch.kind === "power" ? 0.4 : 0.15, Math.min(1, ch.t / full)), ch.kind);
         this.charge = null;
         this.whud.setPower(null);
       }
     }
-    // Nişan oku: topun yanındayken vuruş yönü ve gücü
-    const ball = world.pitch.ball;
-    const owner = world.pitch.owner;
+    // Nişan oku: topun yanındayken vuruş yönü ve gücü (bulunduğum sahada)
+    const { pitch } = this.here();
+    const other = this.inArena ? world.pitch : world.stadium.pitch;
+    const ball = pitch.ball;
+    const owner = pitch.owner;
     // Topla koşan biraz yavaş (FIFA/PES gibi): savunma yetişebilsin
     me.speedMul = owner === net.you ? 0.88 : 1;
     const canKick = (owner === net.you || (owner === 0 && Math.hypot(ball.x - me.x, ball.z - me.z) <= KICK_REACH + 0.6)) && !me.seated && !me.vehicle;
-    world.pitch.setAim(
+    other.setAim(null);
+    pitch.setAim(
       canKick && !input.touch
         ? (() => {
             // Ok, gidecek yönü gösterir: şutta kaleye kilitlenen yön, pasta baktığın yön
-            const kind: KickKind = ch ? (ch.kind === "shot" && ch.t < PASS_TAP && !this.finishing() ? "pass" : ch.kind) : this.finishing() ? "shot" : "pass";
-            return { ang: this.kickDir(kind), power: ch ? Math.min(1, ch.t / 0.9) : 0, kind };
+            const kind: KickKind = ch ? (ch.kind === "shot" && ch.t < PASS_TAP && !this.finishing() && !this.inArena ? "pass" : ch.kind) : this.finishing() ? "shot" : "pass";
+            return { ang: this.kickDir(kind), power: ch ? Math.min(1, ch.t / (ch.kind === "power" ? 1.1 : 0.9)) : 0, kind };
           })()
         : null,
     );
     const nearPitch = Math.abs(me.x - PITCH.x) < PITCH.hx + 8 && Math.abs(me.z - PITCH.z) < PITCH.hz + 8;
     const m = this.match;
     const clock = m ? matchClock(m.endsAt - serverNow) : null;
-    const myTeam = m ? (m.teams[0].includes(net.you) ? 0 : m.teams[1].includes(net.you) ? 1 : null) : null;
-    this.whud.setScore(nearPitch || m ? this.score : null, clock, myTeam);
-    world.pitch.setScore(this.score, clock);
-    world.pitch.update(dt, serverNow, world.env.lights, (sid) => {
+    const myTeam = this.myTeam();
+    // Köşedeki skor: stadyumda ya da maç sürerken stadyumun, salonda salonun
+    this.whud.setScore(this.inArena || m ? this.scores[1] : nearPitch ? this.scores[0] : null, this.inArena || m ? clock : null, myTeam);
+    world.pitch.setScore(this.scores[0]);
+    world.stadium.pitch.setScore(this.scores[1], clock);
+    const pose = (sid: number) => {
       const run = (f: number) => (f & FLAG_RUNNING ? 2 : f & FLAG_WALKING ? 1 : 0);
       if (sid === net.you) return { x: me.x, z: me.z, rot: me.rot, run: run(me.flags) };
       const r = remotes.map.get(sid);
       return r?.hasData ? { x: r.x, z: r.z, rot: r.rot, run: run(r.flags) } : null;
-    });
+    };
+    world.pitch.update(dt, serverNow, world.env.lights, pose);
+    world.stadium.pitch.update(dt, serverNow, world.env.lights, pose);
+    world.stadium.update(performance.now() / 1000);
     this.updateRings(m);
 
     // Yolculuk: görev için ara ara bildirilir
@@ -746,6 +828,119 @@ export class Features {
     // Hava ve havai fişek
     this.weatherFx.update(time, dt, camera.position, 0.35 + 0.65 * world.env.day);
     world.flash(this.weatherFx.flash);
+  }
+
+  /** Stadyuma girdi/çıktı: tuş takımı, ipucu şeridi ve yarım kalan vuruş. */
+  private enterArena(on: boolean): void {
+    this.inArena = on;
+    setProfile(on ? "stadium" : "world");
+    this.charge = null;
+    this.whud.setPower(null);
+    const keys = on && !this.c.input.touch;
+    this.fbHelp.classList.toggle("show", keys);
+    this.fbExit.classList.toggle("show", on);
+    this.fbTeamBtn.classList.toggle("show", on);
+    if (!on) this.teamPanel.close();
+    if (keys) {
+      this.renderFbHelp();
+      this.c.hud.toast("🏟️ Stadyumdasın! Futbol tuşları geçerli (alttaki şeritte). Değiştirmek için ⌨️ Tuşlar.");
+    }
+  }
+
+  /** Stadyum tuş ipucu: geçerli atamalarla. */
+  renderFbHelp(): void {
+    if (profile !== "stadium") return;
+    const k = (a: Action) => `<b>${actionLabel(a)}</b>`;
+    this.fbHelp.innerHTML =
+      `${k("fbPass")} Pas · ${k("fbShoot")} Şut · ${k("fbPower")} Power · ${k("fbLob")} Aşırtma · ${k("fbSkill")} Çalım · ${k("fbRainbow")} Rainbow · ` +
+      `${k("fbTackle")} Müdahale · ${k("run")}+${k("fbTackle")} Kayarak · ${k("fbTeam")} Takım <button type="button">⌨️ Tuşlar</button>`;
+    this.fbHelp.querySelector("button")?.addEventListener("click", () => dispatchEvent(new Event("gap:keys")));
+  }
+
+  /** Stadyumdan salondaki sahaya (maçtaysa maçtan da çıkar). */
+  private goHome(): void {
+    this.teamPanel.close();
+    this.c.net.send({ t: "fbhome" });
+  }
+
+  private toggleTeams(): void {
+    if (this.teamPanel.isOpen) return this.teamPanel.close();
+    this.renderTeams();
+    this.teamPanel.open();
+  }
+
+  /** Takım menüsü: maçta kırmızı/mavi takıma geç (kişi sayılarıyla); maç yoksa başlat; dünyaya dön. */
+  private renderTeams(): void {
+    const b = this.teamPanel.body, m = this.match, mine = this.myTeam();
+    b.replaceChildren();
+    if (!m) {
+      el("div", "settings-note", b, "Stadyumda süren maç yok.");
+      button(b, "⚽ Maç başlat (5 dk)", () => {
+        this.c.say("!maç 5");
+        this.teamPanel.close();
+      }, "fb-team-btn");
+    } else {
+      el("div", "settings-note", b, mine === null ? "Henüz bir takımda değilsin: seçtiğin takımın yarısına geçersin." : `Takımın: ${mine ? "🔵 Mavi" : "🔴 Kırmızı"}`);
+      const row = el("div", "fb-team-row", b);
+      for (const t of [0, 1] as const) {
+        const btn = button(row, `${t ? "🔵 Mavi" : "🔴 Kırmızı"} · ${m.teams[t].length} kişi`, () => {
+          this.c.net.send({ t: "fbteam", team: t });
+          this.teamPanel.close();
+        }, `fb-team-btn fb-team-${t}`);
+        btn.disabled = mine === t;
+      }
+    }
+    button(b, "🏠 Dünyaya dön", () => this.goHome(), "fb-team-btn fb-team-home");
+  }
+
+  /** Stadyum tuşları: pas, şut, power şut ve aşırtma (basılı tutulur), çalım, rainbow, müdahale (koşarken kayarak), takım menüsü. */
+  private arenaKeys(time: number): void {
+    const { input, me, net } = this.c;
+    const pass = input.consumeKey("fbPass"), shoot = input.consumeKey("fbShoot"), lob = input.consumeKey("fbLob"), power = input.consumeKey("fbPower");
+    const skill = input.consumeKey("fbSkill"), rainbow = input.consumeKey("fbRainbow"), tackle = input.consumeKey("fbTackle"), team = input.consumeKey("fbTeam");
+    if (!this.inArena) return;
+    if (team) this.toggleTeams();
+    if (me.seated || me.vehicle || me.jailed) return;
+    const { pitch } = this.here();
+    const mine = pitch.owner === net.you;
+    const canKick = mine || (pitch.owner === 0 && Math.hypot(pitch.ball.x - me.x, pitch.ball.z - me.z) <= KICK_REACH);
+    if (canKick && !this.charge) {
+      if (pass) this.kick(0.45, "pass");
+      else if (shoot) this.charge = { key: "fbShoot", kind: "shot", t: 0 };
+      else if (power) this.charge = { key: "fbPower", kind: "power", t: 0 };
+      else if (lob) this.charge = { key: "fbLob", kind: "lob", t: 0 };
+    }
+    // Çalım (roulette): top yanından yarım daire çizer, oyuncu o yana dönerek çapraz atılır; o an müdahale
+    // edilemezsin. Yan: basılı yön tuşu, yoksa sırayla iki yana.
+    if (skill && mine && !this.charge && time - this.lastSkill > SKILL_DASH.cooldown) {
+      this.lastSkill = time;
+      const side: -1 | 1 = input.moveX > 0.1 ? 1 : input.moveX < -0.1 ? -1 : (this.skillSide = this.skillSide === 1 ? -1 : 1);
+      net.send({ t: "skill", side });
+      const a = me.rot - side * SKILL_DASH.angle;
+      me.dash(Math.sin(a) * SKILL_DASH.speed, Math.cos(a) * SKILL_DASH.speed, SKILL_DASH.t);
+      me.trick = { at: performance.now() / 1000, side };
+      pitch.trick(net.you, side, net.serverNow());
+      sfx.kick(0.25);
+    }
+    // Rainbow: top arkadan başının üstünden öne; koşup yetişirsin
+    if (rainbow && mine && !this.charge && time - this.lastSkill > SKILL_DASH.cooldown) {
+      this.lastSkill = time;
+      net.send({ t: "rainbow" });
+      sfx.kick(0.3);
+    }
+    // Müdahale: koşarken kayarak (uzun menzil, ıskalarsan bir an yerdesin), yürürken ayakta
+    if (tackle && !mine) {
+      const slide = input.run && (me.flags & FLAG_WALKING) !== 0;
+      if (time - this.lastTackle > (slide ? SLIDE_DASH.cooldown : TACKLE_COOLDOWN)) {
+        this.lastTackle = time;
+        net.send({ t: "tackle", slide });
+        if (slide) {
+          me.dash(Math.sin(me.rot) * SLIDE_DASH.speed, Math.cos(me.rot) * SLIDE_DASH.speed, SLIDE_DASH.t);
+          me.slide = performance.now() / 1000;
+        }
+        sfx.kick(0.3);
+      }
+    }
   }
 
   /** Maçta herkesin altında takım renginde halka. */
