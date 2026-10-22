@@ -26,6 +26,7 @@ import {
   type SetType,
   SLOT_POS,
   tossBall,
+  TOUCH_COOLDOWN_MS,
   V_BALL_R,
   type VBall,
   type VolleyEv,
@@ -48,8 +49,6 @@ const HISTORY_MS = 450;
  * sonra geriye sarılıp yakalanamaz.
  */
 const REWIND_DIST = 2;
-/** Topa dokunan oyuncu bu kadar süre yeniden dokunamaz (tıklama yağmuruyla çift vuruşa karşı). */
-const TOUCH_COOLDOWN_MS = 1000;
 const TOSS_COOLDOWN_MS = 1200;
 const SERVE_MS = 12_000;
 const POINT_MS = 2600;
@@ -155,6 +154,7 @@ export class Volleyball {
       ...(b.ax || b.az ? { ax: b.ax, az: b.az } : {}),
       ...(ball.hold ? { hold: ball.hold } : {}),
       ...(ball.tossBy ? { toss: ball.tossBy } : {}),
+      ...(ball.served ? { sv: 1 as const } : {}),
       ...(ev ? { ev: ev.ev, by: ev.by } : {}),
       ...(ev && ball.windC && HITS.includes(ev.ev) ? { w: ball.windC } : {}),
     };

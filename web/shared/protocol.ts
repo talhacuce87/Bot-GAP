@@ -347,10 +347,10 @@ export type ServerEvent =
   | { t: "race"; state: RaceState | null }
   /**
    * Voleybol: top (id: yoksa maç topu, varsa antrenmanda çağıranın topu; hold: servisçinin elinde, toss: servis
-   * için havaya atan; w: sert vuruşun rüzgar rengi), kaybolan antrenman topu, maç/rally durumu, animasyon (dalış,
+   * için havaya atan; sv: servis atıldı, henüz karşılanmadı; w: sert vuruşun rüzgar rengi), kaybolan antrenman topu, maç/rally durumu, animasyon (dalış,
    * blok, havada yatış: v yana, f öne).
    */
-  | ({ t: "vball"; id?: number; at: number; hold?: number; toss?: number; w?: string; ev?: VolleyEv; by?: number } & VBall)
+  | ({ t: "vball"; id?: number; at: number; hold?: number; toss?: number; sv?: 1; w?: string; ev?: VolleyEv; by?: number } & VBall)
   | { t: "vgone"; id: number }
   | { t: "vstate"; state: VolleyState }
   | { t: "vact"; sid: number; a: "dive" | "block" | "lean"; v?: number; f?: number }

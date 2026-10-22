@@ -422,6 +422,7 @@ describe("voleybol: salon ve maç", () => {
     v.lift(sa, 0, 3250);
     v.hit(sa, "serve", Math.PI / 2, 3, false, 3300);
     expect(v.s.side).toBe(0);
+    expect(a.last("vball")?.sv).toBe(1);
     // Blok: servis bloklanamaz
     place(sb, C.x + 0.6, C.z);
     v.block(sb, 3310);
@@ -440,6 +441,7 @@ describe("voleybol: salon ve maç", () => {
     Object.assign(ball, { x: C.x + 3, y: 2.8, z: C.z, vx: 0, vy: 0, vz: 0 });
     v.hit(sb, "set", -Math.PI / 2, 8, false, 3540);
     expect(v.s.side).toBe(1);
+    expect(a.last("vball")?.sv).toBeUndefined();
   });
 
   it("filenin karşısındaki topa dokunulamaz", () => {
