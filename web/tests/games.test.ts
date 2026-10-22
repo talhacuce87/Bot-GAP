@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BILEK_LEAD_MS, BILEK_LOSE, bilekInitial, bilekLean, bilekPress, type BilekState, bilekTick } from "../shared/games/bilek";
 import { chessInitial, chessMove, type ChessState, inCheck, legalMoves } from "../shared/games/chess";
 import { isWinningHand, okeyDeal, okeyMove, type Tile } from "../shared/games/okey";
 import { tavlaInitial, tavlaMove, tavlaMoves, type TavlaState } from "../shared/games/tavla";
@@ -136,5 +137,71 @@ describe("okey", () => {
     const b = okeyMove(a, 1, { kind: "draw", from: "left" })!;
     expect(b.hands[1]).toContain(s.hands[0][0]);
     expect(okeyMove(b, 1, { kind: "discard", tile: b.hands[1][0], finish: true })).toBeNull();
+  });
+});
+
+describe("bilek güreşi", () => {
+  const rand = () => 0.5;
+  /** İlk turu başlatır: iki çember gelir, ibre BILEK_LEAD_MS sonra döner. */
+  const round = (s: BilekState, now: number): BilekState => bilekTick(s, Math.max(now, s.next), rand)!;
+  const mid = (s: BilekState, side: 0 | 1) => s.checks[side]!.zone + s.checks[side]!.width / 2;
+  const pressAt = (s: BilekState, side: 0 | 1, p: number) => {
+    const c = s.checks[side]!;
+    return bilekPress(s, side, { kind: "press", n: c.n, p }, c.at + p * c.dur, rand);
+  };
+
+  it("yayda basan tutturur, dışında basan kaçırır ve kol ona yatar", () => {
+    let s = round(bilekInitial(0), 0);
+    expect(s.round).toBe(1);
+    s = pressAt(s, 0, mid(s, 0))!;
+    expect(s.checks[0]!.res).toBe("hit");
+    s = pressAt(s, 1, s.checks[1]!.zone - 0.1)!;
+    expect(s.checks[1]!.res).toBe("miss");
+    expect(s.misses).toEqual([0, 1]);
+    expect(bilekLean(s)).toBeLessThan(0);
+    expect(s.next).toBeGreaterThan(0);
+  });
+
+  it("basmayan tur bitince kaçırır; ibre dönmeden basmak sayılmaz", () => {
+    let s = round(bilekInitial(0), 0);
+    const c = s.checks[0]!;
+    expect(bilekPress(s, 0, { kind: "press", n: c.n, p: -0.1 }, c.at - BILEK_LEAD_MS / 2, rand)).toBeNull();
+    s = pressAt(s, 1, mid(s, 1))!;
+    expect(bilekTick(s, c.at + c.dur, rand)).toBeNull();
+    s = bilekTick(s, c.at + c.dur + 1000, rand)!;
+    expect(s.misses).toEqual([1, 0]);
+  });
+
+  it("geçmişe dönük basış (yaya denk gelen eski konum) kaçırmadır", () => {
+    const s = round(bilekInitial(0), 0);
+    const c = s.checks[0]!;
+    const late = bilekPress(s, 0, { kind: "press", n: c.n, p: mid(s, 0) }, c.at + c.dur + 400 + mid(s, 0) * c.dur, rand)!;
+    expect(late.checks[0]!.res).toBe("miss");
+  });
+
+  it(`${BILEK_LOSE} kaçırma farkında kaçıran kaybeder`, () => {
+    let s = bilekInitial(0);
+    for (let i = 0; i < BILEK_LOSE; i++) {
+      expect(s.winner).toBeNull();
+      s = round(s, 0);
+      s = pressAt(s, 0, mid(s, 0))!;
+      s = pressAt(s, 1, 0.01)!;
+    }
+    expect(s.winner).toBe(0);
+    expect(bilekLean(s)).toBe(-1);
+    expect(bilekTick(s, s.checks[0]!.at + 99999, rand)).toBeNull();
+  });
+
+  it("turlar hızlanır ve yay daralır", () => {
+    let s = round(bilekInitial(0), 0);
+    const first = s.checks[0]!;
+    for (let i = 0; i < 10; i++) {
+      s = pressAt(s, 0, mid(s, 0))!;
+      s = pressAt(s, 1, mid(s, 1))!;
+      s = round(s, 0);
+    }
+    expect(s.misses).toEqual([0, 0]);
+    expect(s.checks[0]!.dur).toBeLessThan(first.dur);
+    expect(s.checks[0]!.width).toBeLessThan(first.width);
   });
 });

@@ -49,6 +49,7 @@ export class Remote implements AvatarView {
   jumpY = 0;
   lift = 0;
   mic = false;
+  grip = false;
   hideName = false;
   pair: AvatarView["pair"] = null;
   slide: number | null = null;

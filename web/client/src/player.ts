@@ -103,6 +103,7 @@ export class Player implements AvatarView, PlayerState {
   slide: number | null = null;
   trick: { at: number; side: -1 | 1 } | null = null;
   mic = false;
+  grip = false;
   hideName = false;
   hidden = false;
   /** Zıplamanın başından geçen süre; yerdeyken JUMP_TIME. */

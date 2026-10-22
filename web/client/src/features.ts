@@ -8,6 +8,7 @@ import { assistedShot, attackSide, FINISH_RANGE, goalView } from "../../shared/f
 import { DJ_BOOTH, DOCK, type Field, inStadium, KICK_REACH, PITCH, POND_AREA, RACE_HOUSE, STADIUM_PITCH, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
 import { type Action, actionLabel, onBinds, profile, setProfile } from "./input/keybinds";
 import { RaceClient } from "./race";
+import { BilekArms } from "./world/bilekArms";
 import { type AvatarRenderer, type AvatarView, colorFor } from "./avatars/avatars";
 import { Companions } from "./avatars/companions";
 import { type EmoteFx, FX_CELL } from "./avatars/emotes";
@@ -111,6 +112,7 @@ export class Features {
   private mist = new Mist();
   private leaves: SeasonParticles;
   private confetti = new Confetti();
+  private bilekArms = new BilekArms();
   private splashes = new Splashes();
   private haze = new StageHaze();
   /** Islak zeminde son adım anı (sid → sn): sıçrama adım ritminde. */
@@ -168,7 +170,7 @@ export class Features {
     });
     c.life.onStop(() => (world.colliders.extra = null));
     this.screenGlow = new ScreenGlow(world.screen, SCREEN_W, SCREEN_H);
-    world.scene.add(this.screenGlow.group);
+    world.scene.add(this.screenGlow.group, this.bilekArms.group);
     this.leaves = new SeasonParticles(world.season, c.lowPower);
     world.scene.add(this.mist.mesh, this.confetti.mesh, this.splashes.mesh, this.haze.mesh);
     this.rings = new THREE.InstancedMesh(
@@ -204,7 +206,7 @@ export class Features {
       outfit: { hair: "hair_kisa_doku", tops: "top_tisort", bottoms: "bottom_kot", shoes: "shoes_sneaker", facial: null, hats: null, glasses: null, colors: { hair: "#2a2522", skin: "#e0b48a" } },
     };
 
-    this.boards = new BoardGameUi(hudRoot, () => net.you, (ev) => net.send(ev));
+    this.boards = new BoardGameUi(hudRoot, () => net.you, (ev) => net.send(ev), () => net.serverNow());
     this.profile = new ProfileUi(hudRoot, {
       me: () => net.you,
       request: (sid) => net.send({ t: "profile", sid }),
@@ -693,6 +695,7 @@ export class Features {
     this.buildWorld.update(world.env.lights);
     this.build.update();
     this.race.update(dt, time, 1 - world.env.day);
+    this.bilekArms.update((id) => this.boards.table(id), dt);
     this.screenGlow.update(now, dt, this.c.cinemaOn(), document.querySelector<HTMLVideoElement>(".screen-players video"), world.env.day);
     this.ambient(time, dt, world);
 
@@ -999,15 +1002,28 @@ export class Features {
     for (const r of remotes.map.values()) if (r.hasData && !r.leaving && !r.lift) step(r.info.sid, r.x, r.z, r.flags, r.jumpY);
   }
 
+  /** Bilek güreşi süren masalardaki oyuncular (kolları masada). */
+  private wrestlers(): Set<number> {
+    const out = new Set<number>();
+    for (const spot of TABLES) {
+      const g = spot.kind === "bilek" ? this.boards.table(spot.id)?.game : null;
+      if (g?.kind === "bilek" && g.state.winner === null) for (const s of this.boards.table(spot.id)!.order) out.add(s);
+    }
+    return out;
+  }
+
   /** Avatar çiziminden önce: kendi ve uzak avatarların ek durumları (sahne, mikrofon, isim gizleme). */
   decorate(): void {
     const { me, remotes, net } = this.c;
     me.mic = this.stage.singer === net.you && me.onStage;
+    const wrestlers = this.wrestlers();
+    me.grip = wrestlers.has(net.you);
     me.hideName = this.whud.hiddenName(net.you);
     me.hidden = settings.firstPerson && !me.driving && !this.photo.active;
     for (const r of remotes.map.values()) {
       r.lift = r.info.sid === this.stage.singer ? STAGE.h : 0;
       r.mic = r.info.sid === this.stage.singer;
+      r.grip = wrestlers.has(r.info.sid);
       r.hideName = this.whud.hiddenName(r.info.sid);
     }
   }

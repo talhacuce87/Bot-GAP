@@ -44,10 +44,10 @@ export interface SeatSpot {
   rot: number;
 }
 
-// ---- Kahvehane: tavla, satranç, okey masaları ve çay ocağı (meydanın kuzeyi) ----
+// ---- Kahvehane: tavla, satranç, okey, bilek güreşi masaları ve çay ocağı (meydanın kuzeyi) ----
 export const KAHVEHANE = { x: -102, z: 14, hw: 7.5, hd: 6 };
 const KX = KAHVEHANE.x, KZ = KAHVEHANE.z;
-export type TableKind = "tavla" | "satranc" | "okey";
+export type TableKind = "tavla" | "satranc" | "okey" | "bilek";
 
 export interface TableSpot {
   id: number;
@@ -72,6 +72,8 @@ export const TABLES: TableSpot[] = [
   tableAt(1, "satranc", 3.6, -2.6, 2, 0.95),
   tableAt(2, "okey", 0, 2.2, 4, 1.05),
   tableAt(3, "tavla", 4.4, 3, 2, 0.95),
+  // Bilek güreşi: dar masa, karşılıklı iki tabure (dirsekler ortada buluşsun)
+  tableAt(4, "bilek", -3.4, 1.2, 2, 0.72),
 ];
 /** Masanın çevresinde bu yarıçapta duran izleyebilir. */
 export const TABLE_WATCH_R = 3.2;
