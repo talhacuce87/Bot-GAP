@@ -331,6 +331,12 @@ export class Room {
     return p.sampledAt;
   }
 
+  /** Sunucunun belirlediği yere taşır ve herkese duyurur (stadyuma giriş/çıkış). */
+  moveTo(sid: number, x: number, z: number, rot: number, now = Date.now()): void {
+    const at = this.teleport(sid, x, z, rot, now);
+    if (at) this.broadcast({ t: "tp", sid, x, z, rot, at });
+  }
+
   private tankEvent(): ServerEvent {
     const { driver, x, z, h, tr, el } = this.tank;
     return { t: "tank", driver, x, z, h, tr, el };

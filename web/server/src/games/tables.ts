@@ -1,5 +1,6 @@
 // Kahvehane masaları: oturma, oyunu başlatma, hamle doğrulama (kurallar shared/games), pes etme.
 // Masaya oturan kalkarsa süren oyun biter. Okey'de herkese yalnızca kendi eli gönderilir.
+import { type BilekMove, bilekInitial, bilekPress, type BilekState, bilekTick } from "../../../shared/games/bilek";
 import { chessInitial, chessMove, type ChessMove, type ChessState } from "../../../shared/games/chess";
 import { okeyDeal, okeyMove, type OkeyMove, type OkeyState, okeyView } from "../../../shared/games/okey";
 import { type Side, tavlaInitial, tavlaMove, type TavlaMove, tavlaMoves, tavlaNextTurn, type TavlaState } from "../../../shared/games/tavla";
@@ -10,7 +11,8 @@ import type { Conn, Room } from "../room";
 type Game =
   | { kind: "tavla"; state: TavlaState; order: number[]; passAt: number }
   | { kind: "satranc"; state: ChessState; order: number[] }
-  | { kind: "okey"; state: OkeyState; order: number[] };
+  | { kind: "okey"; state: OkeyState; order: number[] }
+  | { kind: "bilek"; state: BilekState; order: number[] };
 
 interface Table {
   spot: TableSpot;
@@ -122,6 +124,9 @@ export class Tables {
         t.game = { kind, state: tavlaInitial(first, [Math.max(a, b), Math.min(a, b)]), order, passAt: 0 };
         t.note = `Tavla başladı · ${this.name(order[first])} başlıyor (${a}–${b}).`;
         this.checkPass(t.game);
+      } else if (kind === "bilek") {
+        t.game = { kind, state: bilekInitial(Date.now()), order };
+        t.note = `Bilek güreşi başladı · ${this.name(order[0])} – ${this.name(order[1])}. Çember gelince ibre yaydayken SPACE!`;
       } else {
         t.game = { kind, state: chessInitial(), order };
         t.note = `Satranç başladı · beyaz: ${this.name(order[0])}, siyah: ${this.name(order[1])}.`;
@@ -134,6 +139,7 @@ export class Tables {
   private finished(g: Game): boolean {
     if (g.kind === "tavla") return g.state.winner !== null;
     if (g.kind === "satranc") return g.state.result !== null;
+    if (g.kind === "bilek") return g.state.winner !== null;
     return g.state.winner !== null || g.state.draw;
   }
 
@@ -166,6 +172,11 @@ export class Tables {
       if (next.result === "draw") t.note = `Berabere (${next.reason}).`;
       else if (next.result) this.win(t, sid, "mat etti");
       else t.note = `Sıra ${this.name(g.order[next.turn === "w" ? 0 : 1])}'de.`;
+    } else if (g.kind === "bilek") {
+      const next = bilekPress(g.state, idx as 0 | 1, move as BilekMove, Date.now());
+      if (!next) return;
+      g.state = next;
+      if (next.winner !== null) this.win(t, g.order[next.winner], "bilek güreşini kazandı");
     } else {
       const next = okeyMove(g.state, idx, move as OkeyMove);
       if (!next) {
@@ -207,6 +218,14 @@ export class Tables {
   tick(now: number): void {
     for (const t of this.tables) {
       const g = t.game;
+      if (g?.kind === "bilek") {
+        const next = bilekTick(g.state, now);
+        if (!next) continue;
+        g.state = next;
+        if (next.winner !== null) this.win(t, g.order[next.winner], "bilek güreşini kazandı");
+        this.publish(t);
+        continue;
+      }
       if (g?.kind !== "tavla" || !g.passAt || now < g.passAt) continue;
       const stuck = this.name(g.order[g.state.turn]);
       g.state = tavlaNextTurn(g.state, [die(), die()]);

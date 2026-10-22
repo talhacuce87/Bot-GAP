@@ -4,7 +4,7 @@
 // konteyner yalnızca kendi iç IP'sini görür. UDP alan adının vekilinden (Cloudflare) geçmez, doğrudan sunucuya gider.
 // Kurulamazsa ya da kapanırsa her şey WebSocket'ten devam eder.
 import type { DataChannel, PeerConnection } from "node-datachannel";
-import type { ServerEvent } from "../../shared/protocol";
+import { pongFor, type ServerEvent } from "../../shared/protocol";
 
 type Ndc = typeof import("node-datachannel");
 
@@ -115,7 +115,12 @@ export class FastLink {
       if (pc !== this.pc || this.dc) return dc.close();
       this.dc = dc;
       dc.onMessage((m) => {
-        if (typeof m !== "string") this.onBinary(Buffer.isBuffer(m) ? m : Buffer.from(m));
+        if (typeof m === "string") return;
+        const buf = Buffer.isBuffer(m) ? m : Buffer.from(m);
+        // Hızlı yolun ping'i burada cevaplanır: ölçülen, yolun kendi gidiş-dönüşü
+        const pong = pongFor(new DataView(buf.buffer, buf.byteOffset, buf.byteLength), Date.now());
+        if (pong) this.send(pong);
+        else this.onBinary(buf);
       });
       dc.onClosed(() => {
         if (this.dc === dc) this.dc = null;

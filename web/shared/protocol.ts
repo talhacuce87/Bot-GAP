@@ -4,6 +4,7 @@ import type { PlotState } from "./build";
 import type { Source } from "./media";
 import type { Phase } from "./arena";
 import type { Shot } from "./tank";
+import type { BilekMove, BilekState } from "./games/bilek";
 import type { ChessMove, ChessState } from "./games/chess";
 import type { OkeyMove, OkeyState } from "./games/okey";
 import type { TavlaMove, TavlaState } from "./games/tavla";
@@ -11,9 +12,12 @@ import type { TableKind } from "./zones";
 import type { CarRadio, CarSpec, ParkedCar } from "./car";
 import type { BjView, RouletteBet } from "./casino";
 import type { RingView } from "./ring";
+import type { SetType, VBall, VolleyEv, VolleyHit, VolleyState } from "./volley";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
 export const MSG_SNAPSHOT = 2; // sunucu → istemci: odadaki herkesin konumu
+export const MSG_PING = 3; // istemci → sunucu, hızlı yol: yolun kendi gidiş-dönüşü ve kaybı
+export const MSG_PONG = 4; // sunucu → istemci, hızlı yol
 
 const TAU = Math.PI * 2;
 
@@ -84,9 +88,10 @@ export type OkeyView = Omit<OkeyState, "hands" | "pile"> & { hand: number[]; cou
 export type TableGame =
   | { kind: "tavla"; state: TavlaState }
   | { kind: "satranc"; state: ChessState }
-  | { kind: "okey"; state: OkeyView };
+  | { kind: "okey"; state: OkeyView }
+  | { kind: "bilek"; state: BilekState };
 
-export type TableMove = TavlaMove | ChessMove | OkeyMove;
+export type TableMove = TavlaMove | ChessMove | OkeyMove | BilekMove;
 
 /** Kahvehane masası: oturanlar (sid, 0 boş), adları ve oyun (yoksa bekliyor). */
 export interface TableState {
@@ -117,12 +122,20 @@ export interface BallState {
   by?: number;
   /** Top kimin ayağında: oyuncu sid'i; -1 batı, -2 doğu kalecisi; yoksa serbest. */
   owner?: number;
+  /** Hangi saha: 1 stadyum, yoksa salon. */
+  f?: 1;
+  /** Çalımda topun döndüğü yan (1 sağ, -1 sol). */
+  side?: -1 | 1;
 }
 
-export type BallEvent = "shot" | "pass" | "lob" | "head" | "post" | "bar" | "save" | "tackle";
-export type KickKind = "shot" | "pass" | "lob";
+/**
+ * "skill": çalım (roulette: top yanından yarım daire çizer), "rainbow": top arkadan başın üstünden öne,
+ * "slide": kayarak müdahale başladı (yapan yere yatar), "power": power şut.
+ */
+export type BallEvent = KickKind | "head" | "post" | "bar" | "save" | "tackle" | "skill" | "rainbow" | "slide";
+export type KickKind = "shot" | "pass" | "lob" | "power";
 
-/** Futbol maçı: süre, takımlar (sid listeleri; 0 kırmızı batıyı savunur, 1 mavi doğuyu). */
+/** Futbol maçı (stadyumda): süre, takımlar (sid listeleri; 0 kırmızı batıyı savunur, 1 mavi doğuyu). */
 export interface MatchState {
   endsAt: number;
   teams: [number[], number[]];
@@ -140,6 +153,26 @@ export interface TagState {
   scores: Record<number, number>;
   /** Bitince sonuç cümlesi. */
   result: string;
+}
+
+/** Oyuncak pist yarışçısı: `lap` 1'den başlar (0: çizgiye gelmedi); bitirdiyse `place` ve `time` (ms). */
+export interface RacePlayer {
+  sid: number;
+  lap: number;
+  place: number;
+  time: number;
+}
+
+/** Oyuncak pist: lobi (ilk giren başlatır), geri sayım, yarış, sonuç. */
+export interface RaceState {
+  phase: "lobby" | "countdown" | "race" | "end";
+  host: number;
+  track: number;
+  players: RacePlayer[];
+  /** Yeşil ışık (sunucu saati, ms). */
+  startAt: number;
+  /** Yarış/sonuç ekranının bittiği an. */
+  endsAt: number;
 }
 
 /** Sinema kuyruğu, DJ ve sahne. `show` ışık şovu (0 kapalı). */
@@ -315,18 +348,32 @@ export type ServerEvent =
   | { t: "slot"; stops: number[]; mult: number; payout: number; balance: number }
   | ({ t: "table" } & TableState)
   | ({ t: "ball" } & BallState)
-  | { t: "goal"; side: 0 | 1; sid: number; name: string; score: [number, number]; assist?: string; own?: boolean }
+  | { t: "goal"; side: 0 | 1; sid: number; name: string; score: [number, number]; assist?: string; own?: boolean; f?: 1 }
   | { t: "match"; match: MatchState | null }
   /** Kaleciler: [batı x, z, eğilme, doğu x, z, eğilme] (eğilme: plonjon, -1…1). */
-  | { t: "gk"; k: number[] }
+  | { t: "gk"; k: number[]; f?: 1 }
   /** Futbol hakem kararı (taç, korner, aut…): düdük ve kısa yazı. */
   | { t: "fb"; text: string }
   /** Mahalle: bütün arsalar (girişte), tek arsa (sahiplenme/boşaltma), tek blok değişimi (b 0: silindi). */
   | { t: "plots"; plots: PlotState[] }
   | { t: "plot"; plot: PlotState }
   | { t: "bset"; plot: number; i: number; j: number; k: number; b: number; r: number }
-  | { t: "score"; score: [number, number] }
+  | { t: "score"; score: [number, number]; f?: 1 }
+  /** Sunucu oyuncuyu bir yere taşıdı (stadyuma giriş/çıkış): ara geçiş olmadan oraya konur. */
+  | { t: "tp"; sid: number; x: number; z: number; rot: number; at: number }
   | { t: "tag"; state: TagState | null }
+  | { t: "race"; state: RaceState | null }
+  /**
+   * Voleybol: top (id: yoksa maç topu, varsa antrenmanda çağıranın topu; hold: servisçinin elinde, toss: servis
+   * için havaya atan; sv: servis atıldı, henüz karşılanmadı; w: sert vuruşun rüzgar rengi), kaybolan antrenman topu, maç/rally durumu, animasyon (dalış,
+   * blok, havada yatış: v yana, f öne).
+   */
+  | ({ t: "vball"; id?: number; at: number; hold?: number; toss?: number; sv?: 1; w?: string; ev?: VolleyEv; by?: number } & VBall)
+  | { t: "vgone"; id: number }
+  | { t: "vstate"; state: VolleyState }
+  | { t: "vact"; sid: number; a: "dive" | "block" | "lean"; v?: number; f?: number }
+  /** Yarıştaki arabalar: [sid, x×10, z×10, açı×100, bayrak] tekrarlı (pist birimi). */
+  | { t: "rcars"; c: number[] }
   /** İkili etkileşim isteği (yalnızca hedefe) ve gerçekleşen etkileşim (herkese). */
   | { t: "pairreq"; from: number; name: string; kind: "five" | "hug" }
   | { t: "pair"; a: number; b: number; kind: "five" | "hug" }
@@ -341,10 +388,11 @@ export type ClientEvent =
   /** Hızlı yol teklifi (WebRTC). */
   | { t: "rtc"; sdp: string }
   /**
-   * Bağlantı özeti (30 sn'de bir, sunucu loguna): ping ortancası, çizim gecikmesi (ms), hareket eden biri
-   * beklenirken (örnek yetmedi) geçen karelerin oranı, hızlı yol açık mı.
+   * Bağlantı özeti (30 sn'de bir, sunucu loguna): ping ortancası (hızlı yol açıksa onun, `ws` WebSocket'in),
+   * hızlı yolda kayıp oranı, çizim gecikmesi (ms), hareket eden biri beklenirken (örnek yetmedi) geçen
+   * karelerin oranı, hızlı yol açık mı.
    */
-  | { t: "netstat"; rtt: number; delay: number; starve: number; udp: boolean }
+  | { t: "netstat"; rtt: number; ws: number; loss: number; delay: number; starve: number; udp: boolean }
   | { t: "wcmd"; op: "play" | "pause" | "seek"; pos?: number }
   | { t: "wload"; url: string }
   | { t: "emote"; e: number }
@@ -383,13 +431,42 @@ export type ClientEvent =
   | { t: "tresign"; id: number }
   /** Topa vur: yön (radyan), güç (0–1), tür ve falso (-1 sola … 1 sağa). */
   | { t: "kick"; dir: number; power: number; kind?: KickKind; curve?: number }
-  /** Rakibin ayağındaki topa müdahale. */
-  | { t: "tackle" }
+  /** Rakibin ayağındaki topa müdahale; `slide`: koşarken kayarak (uzun menzil, kaçarsa yerde kalır). */
+  | { t: "tackle"; slide?: boolean }
+  /** Çalım (roulette; `side` topun döndüğü yan) ve rainbow; stadyumda takım değiştir, dünyaya dön. */
+  | { t: "skill"; side?: -1 | 1 }
+  | { t: "rainbow" }
+  | { t: "fbteam"; team: 0 | 1 }
+  | { t: "fbhome" }
+  /**
+   * Voleybol: vuruş (yön, güç 1–15, pas türü; `dive`: dalışta manşet), blok için zıplama, dalış,
+   * havada yatış (v: -1 sol, 0, 1 sağ; f: 1 öne, -1 geri), antrenman topu, servis topunu ele al (vhold) ve
+   * havaya at (vlift, falso), rüzgar rengi, salona git/dön, pozisyon seç (slot -1: izleyici), maç başlat/bitir.
+   */
+  | { t: "vhit"; kind: VolleyHit; dir: number; p: number; dive?: boolean; st?: SetType }
+  | { t: "vblock" }
+  | { t: "vdive"; dir: number }
+  | { t: "vlean"; v: number; f?: number }
+  | { t: "vtoss" }
+  | { t: "vhold" }
+  | { t: "vlift"; spin: number }
+  | { t: "vwind"; c: string }
+  | { t: "vgo" }
+  | { t: "vhome" }
+  | { t: "vpos"; team: 0 | 1; slot: number }
+  | { t: "vstart"; target: number }
+  | { t: "vstop" }
   /** İnşa: boş arsa sahiplen, kendi arsana blok koy/sil (b 0), arsanı boşalt. */
   | { t: "bclaim" }
   | { t: "bset"; i: number; j: number; k: number; b: number; r: number }
   | { t: "bfree" }
   | { t: "tagjoin" }
+  /** Oyuncak pist: katıl/ayrıl, pist seç ve başlat (lobiyi açan), araba konumu (yarışta ~15 Hz). */
+  | { t: "rjoin" }
+  | { t: "rleave" }
+  | { t: "rtrack"; i: number }
+  | { t: "rstart" }
+  | { t: "rcar"; x: number; z: number; a: number; f: number }
   | { t: "pair"; kind: "five" | "hug"; to: number }
   | { t: "pairok"; from: number }
   | { t: "profile"; sid: number }
@@ -470,6 +547,33 @@ export function writeSnapshotEntry(view: DataView, index: number, sid: number, s
   view.setUint16(o + 6, quantRot(s.rot), true);
   view.setUint8(o + 8, s.flags & 0xff);
   view.setUint16(o + 9, Math.max(0, Math.min(MAX_AGE_MS, Math.round(age))), true);
+}
+
+export const PING_BYTES = 11;
+export const PONG_BYTES = 19;
+
+/** [type u8][seq u16][c f64] — `c`: istemcinin gönderdiği an (yerel saat, ms). */
+export function writePing(view: DataView, seq: number, c: number): void {
+  view.setUint8(0, MSG_PING);
+  view.setUint16(1, seq & 0xffff, true);
+  view.setFloat64(3, c, true);
+}
+
+/** Ping'in cevabı: [type u8][seq u16][c f64][s f64] — `s`: sunucunun cevapladığı an. Ping değilse null. */
+export function pongFor(ping: DataView, s: number): Uint8Array | null {
+  if (ping.byteLength !== PING_BYTES || ping.getUint8(0) !== MSG_PING) return null;
+  const out = new Uint8Array(PONG_BYTES);
+  const view = new DataView(out.buffer);
+  view.setUint8(0, MSG_PONG);
+  view.setUint16(1, ping.getUint16(1, true), true);
+  view.setFloat64(3, ping.getFloat64(3, true), true);
+  view.setFloat64(11, s, true);
+  return out;
+}
+
+export function readPong(view: DataView): { seq: number; c: number; s: number } | null {
+  if (view.byteLength !== PONG_BYTES || view.getUint8(0) !== MSG_PONG) return null;
+  return { seq: view.getUint16(1, true), c: view.getFloat64(3, true), s: view.getFloat64(11, true) };
 }
 
 /**

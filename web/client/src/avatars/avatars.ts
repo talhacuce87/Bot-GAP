@@ -6,7 +6,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { EMOTES, FLAG_RUNNING, FLAG_SEATED, FLAG_WALKING, vehicleOf } from "../../../shared/constants";
 import type { Look } from "../../../shared/protocol";
 import { ATLAS_CELLS, type AvatarAtlas, NAME_GRID } from "./atlas";
-import type { ChibiLayer, LimbPose } from "./chibi";
+import type { ChibiLayer, LimbPose, VolleyPose } from "./chibi";
 
 export const MAX_AVATARS = ATLAS_CELLS;
 
@@ -34,8 +34,20 @@ export interface AvatarView {
   lift?: number;
   /** İkili etkileşim (beşlik/sarılma): başladığı an (sn) ve dönülecek yön. */
   pair?: { kind: "five" | "hug"; at: number; face: number } | null;
+  /** Kayarak müdahalenin başladığı an (sn): gövde geriye yatar, ayaklar önde. */
+  slide?: number | null;
+  /** Çalımın (roulette) başladığı an (sn) ve yanı: oyuncu topun döndüğü yana bir tur döner. */
+  trick?: { at: number; side: -1 | 1 } | null;
   /** Karaoke: elde mikrofon. */
   mic?: boolean;
+  /** Bilek güreşi: kol öne, masadaki kenetli ele. */
+  grip?: boolean;
+  /** Voleybol hareketi ve başladığı an (sn): kollar; dalışta gövde öne yere uzanır. */
+  vpose?: { kind: VolleyPose; at: number } | null;
+  /** Voleybol: havada yatış (yana -1 sol … 1 sağ; öne 1 … geri -1) ve kolların duruşu (topu tutma, smaça hazır). */
+  vlean?: number;
+  vpitch?: number;
+  vstance?: "hold" | "cock" | null;
   /** İsim etiketi gizli (saklambaçta saklananlar). */
   hideName?: boolean;
   /** Avatar çizilmez (birinci şahıs kamerada kendin); gölge ve evcil hayvan kalır. */
@@ -46,6 +58,18 @@ export interface AvatarView {
 
 /** İkili etkileşim animasyonunun süresi (sn). */
 export const PAIR_ANIM = 1.8;
+
+/** Kayarak müdahale pozunun süresi (sn). */
+export const SLIDE_ANIM = 0.6;
+
+/** Çalım dönüşünün süresi (sn); top da bu sürede yanından yarım daire çizer. */
+export const TRICK_ANIM = 0.55;
+
+/** Voleybol hareketlerinin süresi (sn). */
+/** Dalışta gövdenin öne yatışı (yere paralele yakın) ve yatarken gövde kalınlığı kadar kalkış. */
+const DIVE_TILT = 1.48;
+const DIVE_LIFT = 0.16;
+export const VPOSE_TIME: Record<VolleyPose, number> = { bump: 0.5, set: 0.55, spike: 0.45, block: 0.9, dive: 0.8 };
 
 /** Emote gövde animasyonlarının süresi (sn). */
 const EMOTE_ANIM = { wave: 1.2, hop: 0.45, dance: 2.6 } as const;
@@ -157,7 +181,7 @@ export class AvatarRenderer {
   private xAxis = new THREE.Vector3(1, 0, 0);
   private zAxis = new THREE.Vector3(0, 0, 1);
   private count = 0;
-  private limbs: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, time: 0 };
+  private limbs: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, grip: 0, time: 0 };
 
   constructor(
     atlas: AvatarAtlas,
@@ -258,10 +282,29 @@ export class AvatarRenderer {
     // Belirip kaybolurken alfa yerine ölçek: gövde opak kalır, sıralama sorunu olmaz.
     const s = v.alpha < 1 ? 0.3 + 0.7 * v.alpha : 1;
 
+    // Çalım: topun döndüğü yana bir tur (yumuşak başlayıp biter)
+    const tt = v.trick ? time - v.trick.at : -1;
+    if (v.trick && tt >= 0 && tt < TRICK_ANIM) {
+      const u = tt / TRICK_ANIM;
+      spin = -v.trick.side * Math.PI * 2 * (u * u * (3 - 2 * u));
+    }
     this.quat.setFromAxisAngle(this.up, rot + spin);
     if (sway !== 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, sway * 0.5));
     if (lean !== 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, lean));
     if (hug > 0) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, 0.18 * hug));
+    // Kayarak müdahale: ayaklar önde, gövde geriye yatar
+    const st = v.slide != null ? time - v.slide : -1;
+    if (st >= 0 && st < SLIDE_ANIM) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, -1.15 * Math.min(1, st * 12, (SLIDE_ANIM - st) * 5)));
+    // Voleybol: hareketin ağırlığı (hızla girer, sonda çıkar); dalışta gövde öne yatar
+    const vp = v.vpose, vt = vp ? time - vp.at : -1, vd = vp ? VPOSE_TIME[vp.kind] : 0;
+    const vw = vp && vt >= 0 && vt < vd ? Math.min(1, vt * 14, (vd - vt) * 6) : 0;
+    if (vp?.kind === "dive" && vw > 0) {
+      // Dalış: gövde yere boylu boyunca yatar (ayaklardan döner, göğüs yere değer), kollar başın önünde ileri
+      this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, DIVE_TILT * vw));
+      y += DIVE_LIFT * vw;
+    }
+    if (v.vpitch) this.quat.multiply(this.tilt.setFromAxisAngle(this.xAxis, 0.38 * v.vpitch));
+    if (v.vlean) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, 0.55 * v.vlean));
     // Kaykayda yana duruş ve hafif yatış
     if (vehicle === 2) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, moving ? Math.sin(time * 2.2 + v.phase) * 0.08 : 0));
     this.pos.set(v.x, y, v.z);
@@ -275,6 +318,11 @@ export class AvatarRenderer {
     l.hug = hug;
     l.pedal = vehicle === 1 && moving ? 11 : 0;
     l.mic = v.mic ? 1 : 0;
+    l.grip = v.grip ? 1 : 0;
+    l.vkind = vw > 0 ? vp!.kind : undefined;
+    l.vw = vw;
+    l.vu = vd ? Math.min(1, vt / vd) : 0;
+    l.vstance = v.vstance ?? undefined;
     l.time = time;
     const asChibi = !v.hidden && !v.bodyHidden && (this.chibi?.place(v.outfit, v.x, v.z, this.m, l, self) ?? false);
     if (seated && !vehicle && !asChibi && !v.bodyHidden) {

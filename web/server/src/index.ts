@@ -91,7 +91,7 @@ const rooms = new Rooms();
 const watches = new Watches();
 const rtc = await setupRtc(RTC_PORT, RTC_IP);
 /** İstemcilerin son bağlantı özeti (30 sn'de bir gelir); dakikada bir loga yazılır. */
-const netStats = new Map<WebSocket, { rtt: number; delay: number; starve: number; udp: boolean; at: number }>();
+const netStats = new Map<WebSocket, { rtt: number; ws: number; loss: number; delay: number; starve: number; udp: boolean; at: number }>();
 /** Oda başına ekran paylaşımı (oda anahtarıyla). */
 const shares = new Shares();
 
@@ -762,7 +762,12 @@ async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser,
             queueText: () => room.games!.stage.listText(),
             skip: () => room.games!.stage.djCommand(sid, "skip"),
             sky: room.games.sky,
-            match: { start: (m) => room.games!.football.startMatch(m), end: () => room.games!.football.endMatch() },
+            match: {
+              start: (m) => room.games!.stadium.startMatch(m),
+              end: () => room.games!.stadium.endMatch(),
+              join: () => room.games!.stadium.joinMatch(sid),
+              leave: () => room.games!.stadium.leaveMatch(sid),
+            },
           }
         : undefined,
     },
@@ -960,7 +965,15 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const num = (v: unknown, max: number) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : 0);
         if (now - lastStat < 10_000) return;
         lastStat = now;
-        netStats.set(ws, { rtt: num(msg.rtt, 10_000), delay: num(msg.delay, 10_000), starve: num(msg.starve, 1), udp: msg.udp === true, at: now });
+        netStats.set(ws, {
+          rtt: num(msg.rtt, 10_000),
+          ws: num(msg.ws, 10_000),
+          loss: num(msg.loss, 1),
+          delay: num(msg.delay, 10_000),
+          starve: num(msg.starve, 1),
+          udp: msg.udp === true,
+          at: now,
+        });
       } else if (msg?.t === "act" && ACTS.includes(msg.a)) {
         // Yalnızca o noktanın yanındaysa; sürgündekiler parmaklıktan bir şey atamaz.
         const a = msg.a as Act;
@@ -1187,8 +1200,10 @@ setInterval(() => {
   const med = (a: number[]) => [...a].sort((x, y) => x - y)[a.length >> 1] ?? 0;
   const rtt = s.map((v) => v.rtt);
   const starve = s.map((v) => v.starve);
+  const loss = s.map((v) => v.loss);
   console.log(
-    `[net] ${s.length} oyuncu · ping ${med(rtt)} ms (en kötü ${Math.max(0, ...rtt)}) · çizim gecikmesi ${med(s.map((v) => v.delay))} ms` +
+    `[net] ${s.length} oyuncu · ping ${med(rtt)} ms (en kötü ${Math.max(0, ...rtt)}) · WebSocket ${med(s.map((v) => v.ws))} ms` +
+      ` · kayıp %${(med(loss) * 100).toFixed(1)} (en kötü %${(Math.max(0, ...loss) * 100).toFixed(1)}) · çizim gecikmesi ${med(s.map((v) => v.delay))} ms` +
       ` · bekleme %${(med(starve) * 100).toFixed(1)} (en kötü %${(Math.max(0, ...starve) * 100).toFixed(1)})` +
       ` · UDP ${s.filter((v) => v.udp).length}/${s.length} · event loop p99 ${lag.toFixed(0)} ms`,
   );

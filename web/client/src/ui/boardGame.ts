@@ -1,18 +1,22 @@
-// Kahvehane masası ekranı: satranç, tavla ve okey tahtası (canvas), oyunu başlat / pes et / kalk düğmeleri.
+// Kahvehane masası ekranı: satranç, tavla, okey tahtası ve bilek güreşi (canvas), oyunu başlat / pes et / kalk düğmeleri.
 // Yasal hamleler paylaşılan kurallardan (shared/games) gösterilir; asıl doğrulama sunucuda.
+import { bilekLean } from "../../../shared/games/bilek";
 import { type ChessMove, type ChessState, inCheck, legalMoves } from "../../../shared/games/chess";
 import { COLORS as OKEY_COLORS, tileOf } from "../../../shared/games/okey";
 import { type TavlaMove, tavlaMoves, type TavlaState } from "../../../shared/games/tavla";
 import type { ClientEvent, OkeyView, TableState } from "../../../shared/protocol";
+import { BILEK_H, BILEK_W, drawBilek } from "./bilekUi";
 import { button, el, Panel } from "./panel";
 import { sfx } from "./sfx";
 
-const KIND_NAMES = { tavla: "TAVLA", satranc: "SATRANÇ", okey: "OKEY" } as const;
+const KIND_NAMES = { tavla: "TAVLA", satranc: "SATRANÇ", okey: "OKEY", bilek: "BİLEK GÜREŞİ" } as const;
 const GLYPH: Record<string, string> = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const TILE_COLORS = ["#d99a12", "#2a6fd6", "#1f1f24", "#d23a2a"];
 const RACK = 15;
+/** Bilek güreşi bitince SPACE bu kadar (ms) daha yutulur (son basışlar oyuncuyu kaldırmasın). */
+const AFTER_WIN_MS = 2500;
 
-type Hit = { kind: "sq"; i: number } | { kind: "pt"; i: number } | { kind: "bar" } | { kind: "off" } | { kind: "slot"; i: number } | { kind: "pile" } | { kind: "left" } | { kind: "mine" };
+type Hit = { kind: "sq"; i: number } | { kind: "pt"; i: number } | { kind: "bar" } | { kind: "off" } | { kind: "slot"; i: number } | { kind: "pile" } | { kind: "left" } | { kind: "mine" } | { kind: "press" };
 
 export class BoardGameUi {
   private panel: Panel;
@@ -33,11 +37,19 @@ export class BoardGameUi {
   private pick: number | null = null;
   private drag: { slot: number; x: number; y: number; moved: boolean } | null = null;
   private lastDice = "";
+  // Bilek güreşi: ekran kendi döngüsüyle çizilir (ibre döner), kol eğimi yumuşatılır
+  private raf = 0;
+  private lean = 0;
+  private paintAt = 0;
+  /** Basılan turun başlangıcı (sunucu cevabı gelene kadar ikinci basış gitmesin). */
+  private pressed = 0;
 
   constructor(
     root: HTMLElement,
     private me: () => number,
     private send: (ev: ClientEvent) => void,
+    /** Sunucu saati (ms): bilek güreşinde ibre sunucunun zamanıyla döner. */
+    private now: () => number,
   ) {
     this.panel = new Panel(root, "MASA", "board-panel");
     this.info = el("div", "bg-info", this.panel.body);
@@ -48,6 +60,22 @@ export class BoardGameUi {
     this.canvas.addEventListener("pointermove", (e) => this.move(e));
     this.canvas.addEventListener("pointerup", (e) => this.up(e));
     addEventListener("resize", () => this.isOpen && this.render());
+    // Bilek güreşinde SPACE basıştır (panel kapalıyken de): oyuncu taburede kalsın (zıplayıp kalkmasın),
+    // panel düğmesi tıklanmasın. Oyun bittikten hemen sonraki basışlar da yutulur (kalkmak için yürü/E).
+    addEventListener(
+      "keydown",
+      (e) => {
+        if (e.code !== "Space" || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+        const t = this.wrestling();
+        if (!t) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.repeat) return;
+        if (!this.isOpen || this.id !== t.id) this.open(t.id);
+        this.press(t);
+      },
+      { capture: true },
+    );
     this.panel.onClose = () => {
       this.id = -1;
     };
@@ -90,7 +118,36 @@ export class BoardGameUi {
       if (key !== this.lastDice && prev?.game) sfx.dice();
       this.lastDice = key;
     } else if (t.game?.kind === "okey" && prev?.game?.kind === "okey" && JSON.stringify(prev.game.state.discards) !== JSON.stringify(t.game.state.discards)) sfx.tile();
+    if (t.game?.kind === "bilek" && prev?.game?.kind === "bilek") {
+      const me = this.myIndex(t);
+      const c = t.game.state.checks[me], was = prev.game.state.checks[me];
+      if (c?.res && c.n === was?.n && !was.res) (c.res === "hit" ? sfx.pop : sfx.bump)();
+    }
     if (t.id === this.id && this.panel.isOpen) this.render();
+  }
+
+  /** Oturduğum, süren (ya da az önce biten) bilek güreşi masası. */
+  private wrestling(): TableState | null {
+    const now = this.now();
+    for (const t of this.tables.values()) {
+      const g = t.game;
+      if (g?.kind !== "bilek" || !t.seats.includes(this.me()) || this.myIndex(t) < 0) continue;
+      const ended = Math.max(0, ...g.state.checks.map((c) => c?.done ?? 0));
+      if (g.state.winner === null || now - ended < AFTER_WIN_MS) return t;
+    }
+    return null;
+  }
+
+  /** Skill check'e bas: ibrenin sunucu saatindeki konumu gider (sunucu yayda mı, zamanı tutarlı mı bakar). */
+  private press(t: TableState): void {
+    const g = t.game;
+    if (g?.kind !== "bilek") return;
+    const c = g.state.checks[this.myIndex(t)];
+    if (!c || c.res || this.pressed === c.at) return;
+    const p = (this.now() - c.at) / c.dur;
+    if (p < 0) return;
+    this.pressed = c.at;
+    this.send({ t: "tmove", id: t.id, move: { kind: "press", n: c.n, p } });
   }
 
   private seated(t: TableState): boolean {
@@ -108,26 +165,51 @@ export class BoardGameUi {
     const t = this.tables.get(this.id);
     if (!t) return;
     this.panel.title = `${KIND_NAMES[t.kind]} · MASA ${t.id + 1}`;
-    const g = t.game;
     const players = t.seats.map((s, i) => (s ? t.names[i] : "—")).join(" · ");
     this.info.textContent = `${players}\n${t.note || ""}`;
+    this.paint(t);
+    this.renderActions(t);
+  }
+
+  /** Tahtayı çizer; bilek güreşi açıkken her karede yeniden (ibre ve kol). */
+  private paint(t: TableState): void {
+    const g = t.game;
     this.hits = [];
-    const aspect = t.kind === "satranc" ? 1 : t.kind === "tavla" ? 760 / 520 : 760 / 600;
-    [this.W, this.H] = t.kind === "satranc" ? [512, 512] : t.kind === "tavla" ? [760, 520] : [760, 600];
+    [this.W, this.H] = t.kind === "satranc" ? [512, 512] : t.kind === "tavla" ? [760, 520] : t.kind === "bilek" ? [BILEK_W, BILEK_H] : [760, 600];
+    const aspect = this.W / this.H;
     // Panele ve ekran yüksekliğine sığsın (başlık, bilgi ve düğmeler için ~190 px)
     const cssW = Math.min(this.panel.body.clientWidth || 520, 640, Math.max(240, (innerHeight - 190) * aspect));
     const dpr = Math.min(2, devicePixelRatio || 1);
     this.canvas.style.width = `${cssW}px`;
     this.canvas.style.height = `${cssW / aspect}px`;
-    this.canvas.width = Math.round(cssW * dpr);
-    this.canvas.height = Math.round((cssW / aspect) * dpr);
+    // Boyut değişmedikçe tuvali yeniden ayırma (bilek güreşinde her kare çiziliyor)
+    const cw = Math.round(cssW * dpr), ch = Math.round((cssW / aspect) * dpr);
+    if (this.canvas.width !== cw) this.canvas.width = cw;
+    if (this.canvas.height !== ch) this.canvas.height = ch;
     const k = this.canvas.width / this.W;
     this.g.setTransform(k, 0, 0, k, 0, 0);
     this.g.clearRect(0, 0, this.W, this.H);
     if (t.kind === "satranc") this.drawChess(t, g?.kind === "satranc" ? g.state : null);
     else if (t.kind === "tavla") this.drawTavla(t, g?.kind === "tavla" ? g.state : null);
+    else if (t.kind === "bilek") this.paintBilek(t);
     else this.drawOkey(t, g?.kind === "okey" ? g.state : null);
-    this.renderActions(t);
+  }
+
+  private paintBilek(t: TableState): void {
+    const g = t.game?.kind === "bilek" ? t.game.state : null;
+    const now = performance.now();
+    const dt = this.paintAt ? Math.min(0.1, (now - this.paintAt) / 1000) : 1;
+    this.paintAt = now;
+    this.lean += ((g ? bilekLean(g) : 0) - this.lean) * (1 - Math.exp(-dt * 6));
+    drawBilek(this.g, t, g, this.lean, this.myIndex(t), this.now());
+    this.hits.push({ x: 0, y: 0, w: this.W, h: this.H, hit: { kind: "press" } });
+    if (!this.raf)
+      this.raf = requestAnimationFrame(() => {
+        this.raf = 0;
+        const cur = this.tables.get(this.id);
+        if (this.isOpen && cur?.kind === "bilek") this.paint(cur);
+        else this.paintAt = 0;
+      });
   }
 
   private renderActions(t: TableState): void {
@@ -135,7 +217,7 @@ export class BoardGameUi {
     a.replaceChildren();
     const seated = this.seated(t);
     const g = t.game;
-    const over = !g || (g.kind === "tavla" ? g.state.winner !== null : g.kind === "satranc" ? g.state.result !== null : g.state.winner !== null || g.state.draw);
+    const over = !g || (g.kind === "tavla" || g.kind === "bilek" ? g.state.winner !== null : g.kind === "satranc" ? g.state.result !== null : g.state.winner !== null || g.state.draw);
     if (this.promo) {
       el("span", "", a, "Terfi:");
       for (const [p, label] of [["q", "♛ Vezir"], ["r", "♜ Kale"], ["b", "♝ Fil"], ["n", "♞ At"]]) {
@@ -630,6 +712,7 @@ export class BoardGameUi {
     if (t.kind === "satranc" && h.kind === "sq") this.clickChess(t, h.i);
     else if (t.kind === "tavla") this.clickTavla(t, h);
     else if (t.kind === "okey") this.clickOkey(t, h);
+    else if (t.kind === "bilek" && this.myIndex(t) >= 0) this.press(t);
   }
 
   private move(e: PointerEvent): void {

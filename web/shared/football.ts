@@ -1,6 +1,6 @@
 // Yardımlı vuruş (arcade futbol oyunlarındaki gibi): yön kameradan değil oyuncunun baktığı/koştuğu yönden
 // gelir; kaleye aşağı yukarı dönükse şut kendiliğinden kalecinin uzak köşesine nişan alır.
-import { PITCH } from "./zones";
+import { type Field, PITCH } from "./zones";
 
 /** Bu açıdan (radyan) fazla sapmışsa nişan yardımı yok: baktığı yöne vurur. */
 const ASSIST_MAX = 1.25;
@@ -19,34 +19,34 @@ export function angleDiff(a: number, b: number): number {
 
 /**
  * Hücum edilen kale: maçta takıma göre (kırmızı batıyı savunur, doğuya atar); maç yoksa baktığı yöne
- * daha yakın olan kale. -1 batı, 1 doğu.
+ * daha yakın olan kale. -1 batı, 1 doğu. `F`: saha (salon ya da stadyum).
  */
-export function attackSide(team: 0 | 1 | null, x: number, z: number, facing: number): -1 | 1 {
+export function attackSide(team: 0 | 1 | null, x: number, z: number, facing: number, F: Field = PITCH): -1 | 1 {
   if (team !== null) return team === 0 ? 1 : -1;
-  const east = Math.abs(angleDiff(facing, Math.atan2(PITCH.x + PITCH.hx - x, PITCH.z - z)));
-  const west = Math.abs(angleDiff(facing, Math.atan2(PITCH.x - PITCH.hx - x, PITCH.z - z)));
+  const east = Math.abs(angleDiff(facing, Math.atan2(F.x + F.hx - x, F.z - z)));
+  const west = Math.abs(angleDiff(facing, Math.atan2(F.x - F.hx - x, F.z - z)));
   return east <= west ? 1 : -1;
 }
 
 /** Topun kaleye uzaklığı ve kaleye dönüklük (açı farkı). */
-export function goalView(side: -1 | 1, x: number, z: number, facing: number): { dist: number; off: number } {
-  const gx = PITCH.x + side * PITCH.hx;
-  return { dist: Math.hypot(gx - x, PITCH.z - z), off: Math.abs(angleDiff(facing, Math.atan2(gx - x, PITCH.z - z))) };
+export function goalView(side: -1 | 1, x: number, z: number, facing: number, F: Field = PITCH): { dist: number; off: number } {
+  const gx = F.x + side * F.hx;
+  return { dist: Math.hypot(gx - x, F.z - z), off: Math.abs(angleDiff(facing, Math.atan2(gx - x, F.z - z))) };
 }
 
 /**
  * Şutun yönü: kaleye dönükse kalecinin uzak köşesine (kaleci bilinmiyorsa baktığı tarafa yakın köşeye),
  * yardım kale açısından uzaklaştıkça azalır; kaleye arkası dönükse baktığı yön.
  */
-export function assistedShot(side: -1 | 1, bx: number, bz: number, facing: number, keeperZ: number | null): number {
-  const gx = PITCH.x + side * PITCH.hx;
-  const center = Math.atan2(gx - bx, PITCH.z - bz);
+export function assistedShot(side: -1 | 1, bx: number, bz: number, facing: number, keeperZ: number | null, F: Field = PITCH): number {
+  const gx = F.x + side * F.hx;
+  const center = Math.atan2(gx - bx, F.z - bz);
   const off = Math.abs(angleDiff(facing, center));
   if (off > ASSIST_MAX) return facing;
-  const inset = PITCH.goalHalf - 0.55;
-  const corners = [PITCH.z - inset, PITCH.z + inset].map((z) => Math.atan2(gx - bx, z - bz));
+  const inset = F.goalHalf - 0.55;
+  const corners = [F.z - inset, F.z + inset].map((z) => Math.atan2(gx - bx, z - bz));
   let target: number;
-  if (keeperZ !== null && Math.abs(keeperZ - PITCH.z) > 0.25) target = keeperZ > PITCH.z ? corners[0] : corners[1];
+  if (keeperZ !== null && Math.abs(keeperZ - F.z) > 0.25) target = keeperZ > F.z ? corners[0] : corners[1];
   else target = Math.abs(angleDiff(facing, corners[0])) < Math.abs(angleDiff(facing, corners[1])) ? corners[0] : corners[1];
   const k = off <= ASSIST_FULL ? 1 : 1 - (off - ASSIST_FULL) / (ASSIST_MAX - ASSIST_FULL);
   return facing + angleDiff(target, facing) * k;

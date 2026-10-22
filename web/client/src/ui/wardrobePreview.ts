@@ -30,7 +30,7 @@ const THUMB_PX = 192;
 const THUMBS_PER_FRAME = 2;
 const THUMB_CACHE_MAX = 400;
 
-const IDLE: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, time: 0 };
+const IDLE: LimbPose = { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, grip: 0, time: 0 };
 
 interface ThumbJob {
   key: string;

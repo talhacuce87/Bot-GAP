@@ -2,8 +2,9 @@
 // Sunucu saati her oyuncunun konumuna damga olarak gider; saat sıçrarsa uzak oyuncular da sıçrar ve
 // gönderilen örnek zamanları geriye gider. Bu yüzden yeni ölçüm bir anda değil, yavaşça uygulanır.
 
-/** Son kaç pong'a bakılır (2 sn'de bir: ~12 sn). */
-const WINDOW = 6;
+/** Son bu kadar süredeki pong'lara bakılır (ölçüm sıklığından bağımsız: ağ paneli açıkken hızlı yol sık ölçer). */
+const WINDOW_MS = 12_000;
+const MAX_SAMPLES = 64;
 /** Saat düzeltilirken en fazla bu oranda hızlanır/yavaşlar (20 ms'lik düzeltme 0,4 sn sürer). */
 export const SLEW = 0.05;
 /** Bundan büyük düzeltme beklemeden uygulanır (sayfanın ilk ölçümü, uzun kopukluk sonrası). */
@@ -14,7 +15,7 @@ export class ServerClock {
   private target = 0;
   private at = 0;
   private started = false;
-  private samples: { rtt: number; offset: number }[] = [];
+  private samples: { rtt: number; offset: number; at: number }[] = [];
 
   /** Bu bağlantıda en az bir ölçüm var. */
   get synced(): boolean {
@@ -27,8 +28,8 @@ export class ServerClock {
    */
   sample(sent: number, server: number, received: number): number {
     const rtt = received - sent;
-    this.samples.push({ rtt, offset: server - (sent + rtt / 2) });
-    if (this.samples.length > WINDOW) this.samples.shift();
+    this.samples.push({ rtt, offset: server - (sent + rtt / 2), at: received });
+    while (this.samples.length > MAX_SAMPLES || received - this.samples[0].at > WINDOW_MS) this.samples.shift();
     let best = this.samples[0];
     for (const s of this.samples) if (s.rtt < best.rtt) best = s;
     this.offsetAt(received);
@@ -46,6 +47,11 @@ export class ServerClock {
       this.at = local;
     }
     return this.cur;
+  }
+
+  /** Henüz uygulanmamış düzeltme (ms): yavaşça kapanıyor. */
+  get pending(): number {
+    return this.target - this.cur;
   }
 
   /** `local` anındaki tahmini sunucu saati; büyük düzeltme dışında hep ileri gider. */

@@ -1,14 +1,16 @@
 // Dünya odasının oyunları ve sosyal etkileşimleri tek yerde: kahvehane masaları, futbol, ebelemece/saklambaç,
 // sahne/DJ, ikili etkileşimler (beşlik, sarılma), havai fişek, görev olayları.
 import type { ServerEvent, TagMode, Weather } from "../../../shared/protocol";
-import { SAKURA_SPOT } from "../../../shared/zones";
+import { inStadium, PITCH, SAKURA_SPOT, STADIUM_PITCH } from "../../../shared/zones";
 import type { Conn, Room } from "../room";
 import type { Builds } from "./build";
 import { Football } from "./football";
+import { Race } from "./race";
 import { Sky } from "./sky";
 import { Stage, type StageHost } from "./stage";
 import { Tables } from "./tables";
 import { Tag } from "./tag";
+import { Volleyball } from "./volley";
 
 /** Görev/sayaç olayı (botta): oyuncu, olay, miktar. */
 export type Report = (sid: number, event: string, amount?: number) => void;
@@ -22,9 +24,14 @@ const RIDE_MIN_MS = 4000;
 export class WorldGames {
   readonly tables: Tables;
   readonly football: Football;
+  /** Stadyum: maçlar burada (oyuncular ışınlanır). */
+  readonly stadium: Football;
   readonly tag: Tag;
   readonly stage: Stage;
   readonly sky: Sky;
+  readonly race: Race;
+  /** Voleybol salonu (menüden ışınlanılır). */
+  readonly volley: Volleyball;
   /** Mahalle (bot bağlıysa kalıcı). */
   builds: Builds | null = null;
   /** Hedef → bekleyen istek. */
@@ -46,26 +53,35 @@ export class WorldGames {
     const r = (sid: number, event: string) => report(sid, event);
     this.tables = new Tables(room, r);
     this.football = new Football(room, r);
+    this.stadium = new Football(room, r, STADIUM_PITCH, { home: PITCH });
     this.tag = new Tag(room, r);
     this.stage = new Stage(room, host, r);
     this.sky = new Sky(room, liveWeather);
+    this.race = new Race(room, r);
+    this.volley = new Volleyball(room);
   }
 
   join(sid: number, conn: Conn): void {
     this.tables.sendAll(conn, sid);
     this.football.sendTo(conn);
+    this.stadium.sendTo(conn);
     this.tag.sendTo(conn);
     this.stage.sendTo(conn);
     this.sky.sendTo(conn);
+    this.race.sendTo(conn);
+    this.volley.sendTo(conn);
     this.builds?.sendTo(conn);
   }
 
   leave(sid: number): void {
     this.tables.leave(sid);
     this.football.leave(sid);
+    this.stadium.leave(sid);
     this.tag.leave(sid);
     this.stage.leave(sid);
     this.sky.leave(sid);
+    this.race.leave(sid);
+    this.volley.leave(sid);
     this.pairs.delete(sid);
     for (const [to, req] of this.pairs) if (req.from === sid) this.pairs.delete(to);
     this.sakura.delete(sid);
@@ -76,8 +92,11 @@ export class WorldGames {
   tick(now: number): void {
     this.tables.tick(now);
     this.football.tick(now);
+    this.stadium.tick(now);
     this.tag.tick(now);
     this.sky.tick(now);
+    this.race.tick(now);
+    this.volley.tick(now);
     if (now - this.lastScan > 1000) {
       this.lastScan = now;
       for (const [sid, p] of this.room.players) {
@@ -134,6 +153,12 @@ export class WorldGames {
     this.report(sid, req.kind);
   }
 
+  /** Oyuncunun bulunduğu saha: stadyumdaysa stadyum, yoksa salon. */
+  private fieldOf(sid: number): Football {
+    const p = this.room.players.get(sid);
+    return p && inStadium(p.state.x, p.state.z) ? this.stadium : this.football;
+  }
+
   /** Dünya oyun mesajları (true: işlendi). */
   handle(sid: number, msg: Record<string, unknown>, now = Date.now()): boolean {
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
@@ -163,13 +188,85 @@ export class WorldGames {
         this.builds?.free(sid);
         return true;
       case "tackle":
-        this.football.tackle(sid, now);
+        this.fieldOf(sid).tackle(sid, now, msg.slide === true);
+        return true;
+      case "skill":
+        this.fieldOf(sid).skill(sid, now, msg.side === -1 ? -1 : 1);
+        return true;
+      case "rainbow":
+        this.fieldOf(sid).rainbow(sid, now);
+        return true;
+      case "fbteam": {
+        const err = this.stadium.switchTeam(sid, msg.team === 1 ? 1 : 0, now);
+        if (err) this.send(sid, { t: "notice", text: err });
+        return true;
+      }
+      case "fbhome":
+        this.stadium.goHome(sid, now);
         return true;
       case "kick":
-        this.football.kick(sid, num(msg.dir), num(msg.power), now, (msg.kind ?? "shot") as never, num(msg.curve ?? 0));
+        this.fieldOf(sid).kick(sid, num(msg.dir), num(msg.power), now, (msg.kind ?? "shot") as never, num(msg.curve ?? 0));
         return true;
+      case "vhit":
+        this.volley.hit(sid, msg.kind as never, num(msg.dir), num(msg.p), msg.dive === true, now, msg.st as never);
+        return true;
+      case "vblock":
+        this.volley.block(sid, now);
+        return true;
+      case "vdive":
+        this.volley.dive(sid, now);
+        return true;
+      case "vlean":
+        this.volley.lean(sid, num(msg.v), num(msg.f ?? 0));
+        return true;
+      case "vtoss":
+        this.volley.toss(sid, now);
+        return true;
+      case "vhold":
+        this.volley.take(sid, now);
+        return true;
+      case "vlift":
+        this.volley.lift(sid, num(msg.spin), now);
+        return true;
+      case "vwind":
+        this.volley.wind(sid, String(msg.c));
+        return true;
+      case "vgo":
+      case "vhome":
+      case "vpos":
+      case "vstart":
+      case "vstop": {
+        const v = this.volley;
+        const err =
+          msg.t === "vgo"
+            ? v.go(sid, now)
+            : msg.t === "vpos"
+              ? v.setPos(sid, msg.team === 1 ? 1 : 0, num(msg.slot), now)
+              : msg.t === "vstart"
+                ? v.start(sid, num(msg.target), now)
+                : msg.t === "vstop"
+                  ? v.stop(sid, now)
+                  : (v.home(sid, now), null);
+        if (err) this.send(sid, { t: "notice", text: err });
+        return true;
+      }
       case "tagjoin":
         this.tag.join(sid);
+        return true;
+      case "rjoin":
+        this.race.join(sid);
+        return true;
+      case "rleave":
+        this.race.leave(sid, now);
+        return true;
+      case "rtrack":
+        this.race.setTrack(sid, num(msg.i));
+        return true;
+      case "rstart":
+        this.race.start(sid, now);
+        return true;
+      case "rcar":
+        this.race.car(sid, num(msg.x), num(msg.z), num(msg.a), num(msg.f) | 0, now);
         return true;
       case "pair":
         this.pair(sid, msg.kind, msg.to, now);

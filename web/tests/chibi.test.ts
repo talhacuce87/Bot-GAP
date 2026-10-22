@@ -134,7 +134,7 @@ describe("chibi paketi", () => {
 describe("uzuv pozları", () => {
   const pose = (p: Partial<LimbPose>): THREE.Vector2[] => {
     const a = Array.from({ length: LIMB_COUNT }, () => new THREE.Vector2());
-    setLimbs(a, { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, time: 0, ...p });
+    setLimbs(a, { swing: 0, seated: false, wave: 0, dance: 0, hug: 0, pedal: 0, mic: 0, grip: 0, time: 0, ...p });
     return a;
   };
   // Shader'daki limbMat ile aynı: rz * rx
@@ -159,6 +159,12 @@ describe("uzuv pozları", () => {
     const a = pose({ dance: 1, time: 0 });
     expect(rotate(a[2], new THREE.Vector3(-0.7, -0.7, 0)).y).toBeGreaterThan(0.5);
     expect(rotate(a[3], new THREE.Vector3(0.7, -0.7, 0)).y).toBeGreaterThan(0.5);
+  });
+
+  it("bilek güreşinde kol öne, masaya uzanır", () => {
+    const hand = rotate(pose({ seated: true, grip: 1 })[3], new THREE.Vector3(0.7, -0.7, 0));
+    expect(hand.z).toBeGreaterThan(0.6);
+    expect(hand.y).toBeLessThan(0.1); // masanın üstüne, kalkmaz
   });
 
   it("yürürken kollar ve bacaklar zıt sallanır", () => {

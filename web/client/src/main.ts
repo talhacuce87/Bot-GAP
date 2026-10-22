@@ -35,7 +35,7 @@ import { onBinds } from "./input/keybinds";
 import { Net } from "./net";
 import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
-import { lowPowerDevice as lowPower, onSettings, settings } from "./settings";
+import { lowPowerDevice as lowPower, onSettings, settings, updateSettings } from "./settings";
 import { Bubbles } from "./ui/bubbles";
 import { Hud } from "./ui/hud";
 import { sakuraEntrance } from "./ui/sakuraFx";
@@ -179,6 +179,8 @@ async function start(): Promise<void> {
 
   // Debug: `?at=x,z,yön` ile istenen noktada başla (ekran görüntüsü, bölge testi).
   const atParam = params.has("debug") ? params.get("at") : null;
+  // Debug: `?debug&pist=N` oyuncak pistte sunucusuz antrenman (`&botlar=3`, `&oto` arabamı da otomatik pilot sürer)
+  const practiceTrack = params.has("debug") ? params.get("pist") : null;
   const at = atParam ? atParam.split(",").map(Number) : [];
   if (at.length >= 2 && at.every(Number.isFinite)) me.teleport(at[0], at[1], at[2] ?? Math.PI);
 
@@ -226,6 +228,7 @@ async function start(): Promise<void> {
     reloadOnce(v);
   };
   net.onNotice = (text) => hud.toast(text);
+  net.onTeleport = (x, z, rot) => me.teleport(x, z, rot);
   net.onJail = (jailed, x, z, rot) => {
     const was = me.jailed;
     me.jailed = jailed;
@@ -285,6 +288,10 @@ async function start(): Promise<void> {
   if (params.has("debug")) hud.enableDebug(() => void openYoutubeTest(hudRoot, session));
   syncFps();
   life.onStop(onSettings(syncFps));
+  // Ağ paneli: ayardan ya da kısayolla (F3)
+  const syncNet = () => (settings.showNet ? hud.enableNet(net, () => updateSettings({ showNet: false })) : hud.disableNet());
+  syncNet();
+  life.onStop(onSettings(syncNet));
   new SettingsPanel(hudRoot, () => switchMode(false));
 
   // Watch party: video perdede, kontroller altta. Odaya giren sinemanın koridorunda başlar.
@@ -689,6 +696,7 @@ async function start(): Promise<void> {
       return cinemaOn && me.x >= c.minX && me.x <= c.maxX && me.z >= c.minZ && me.z <= c.maxZ;
     },
   });
+  if (practiceTrack !== null) features.race.requestPractice(Number(practiceTrack) || 0, Number(params.get("botlar") ?? 3) || 0, params.has("oto"), params.has("lobi"));
 
   addEventListener("resize", () => {
     if (!life.active) return;
@@ -862,6 +870,8 @@ async function start(): Promise<void> {
     renderScene(dt);
     perf.frame(dtMs, performance.now() - t0);
     hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);
+    if (input.consumeKey("net")) updateSettings({ showNet: !settings.showNet });
+    hud.updateNet(now);
   };
 
   // Görünmezken çizme: pil ve Discord'un kendisi için. Ağ bağlantısı açık kalır.

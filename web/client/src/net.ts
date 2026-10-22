@@ -6,6 +6,7 @@ import type { CarRadio, ParkedCar } from "../../shared/car";
 import type { RingView } from "../../shared/ring";
 import type { BattleState } from "../../shared/protocol";
 import type { PlotState } from "../../shared/build";
+import type { VBall, VolleyEv, VolleyState } from "../../shared/volley";
 import {
   type BallState,
   type MatchState,
@@ -14,23 +15,29 @@ import {
   type ClientEvent,
   encodeState,
   type FishCatch,
+  MSG_PONG,
+  PING_BYTES,
   type Look,
   type PlayerState,
   type Profile,
   type QuestDone,
+  readPong,
   readSnapshot,
   type ServerEvent,
   type StageState,
   STATE_BYTES,
   type TableState,
-  type TagState,
+  type RaceState,
+  TagState,
   type WardrobeInfo,
   type WatchState,
   type Weather,
+  writePing,
 } from "../../shared/protocol";
 import type { Remotes } from "./avatars/remotes";
 import { Pacer, ServerClock } from "./clock";
 import { InterpDelay } from "./jitter";
+import { NetStats } from "./netstats";
 import { FastLink } from "./rtc";
 import { RttMonitor } from "./rtt";
 
@@ -42,6 +49,9 @@ const PING_MS = 2000;
 const REPEAT = 3;
 /** Bağlantı özeti (sunucu loguna) bu aralıkla gider. */
 const NETSTAT_MS = 30_000;
+/** Hızlı yolun ping aralığı; ağ paneli açıkken sık (grafik akıcı olsun). */
+const UDP_PING_MS = 2000;
+const UDP_PING_LIVE_MS = 250;
 
 export class Net {
   status: NetStatus = "connecting";
@@ -90,11 +100,13 @@ export class Net {
   onRing: (ring: RingView) => void = () => {};
   onTable: (t: TableState) => void = () => {};
   onBall: (b: BallState) => void = () => {};
-  onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number], assist?: string, own?: boolean) => void = () => {};
+  onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number], assist?: string, own?: boolean, f?: 1) => void = () => {};
   /** Futbol maçı başladı/değişti/bitti. */
   onMatch: (m: MatchState | null) => void = () => {};
   /** Kaleciler (x, z, eğilme ×2) ve hakem kararı. */
-  onGk: (k: number[]) => void = () => {};
+  onGk: (k: number[], f?: 1) => void = () => {};
+  /** Sunucu bir oyuncuyu taşıdı (stadyuma giriş/çıkış). */
+  onTeleport: (x: number, z: number, rot: number) => void = () => {};
   /** Sunucudaki istemci sürümü (deploy sonrası farklıysa yenilenir). */
   onVersion: (v: string) => void = () => {};
   onFb: (text: string) => void = () => {};
@@ -102,8 +114,15 @@ export class Net {
   onPlots: (plots: PlotState[]) => void = () => {};
   onPlot: (plot: PlotState) => void = () => {};
   onBset: (plot: number, i: number, j: number, k: number, b: number, r: number) => void = () => {};
-  onScore: (score: [number, number]) => void = () => {};
+  onScore: (score: [number, number], f?: 1) => void = () => {};
   onTag: (s: TagState | null) => void = () => {};
+  onRace: (s: RaceState | null) => void = () => {};
+  /** Voleybol: top (sunucu zamanı `at`), maç durumu, dalış/blok animasyonu. */
+  onVball: (b: VBall & { id?: number; at: number; hold?: number; toss?: number; w?: string; ev?: VolleyEv; by?: number }) => void = () => {};
+  onVgone: (id: number) => void = () => {};
+  onVstate: (s: VolleyState) => void = () => {};
+  onVact: (sid: number, a: "dive" | "block" | "lean", v?: number, f?: number) => void = () => {};
+  onRcars: (c: number[]) => void = () => {};
   onPairReq: (from: number, name: string, kind: "five" | "hug") => void = () => {};
   onPair: (a: number, b: number, kind: "five" | "hug") => void = () => {};
   onQuest: (completed: QuestDone[]) => void = () => {};
@@ -119,7 +138,15 @@ export class Net {
   private lastSentAt = 0;
   private repeat = 0;
   private lastStat = performance.now();
+  private statFrames = 0;
+  private statStarved = 0;
   private fast: FastLink | null = null;
+  private pingBuf = new ArrayBuffer(PING_BYTES);
+  private pingView = new DataView(this.pingBuf);
+  private pingSeq = 0;
+  private lastUdpPing = 0;
+  /** Ağ panelinin verisi. */
+  readonly stats = new NetStats();
   private pingTimer = 0;
   private retry = 0;
   private clock = new ServerClock();
@@ -143,12 +170,24 @@ export class Net {
       const r = this.remotes.map.get(sid);
       if (r) this.interp.feed(r, this.arrival, this.arrivedAt, time, x, z, rot, flags);
     };
+    this.interp.onNeed = (need, now) => this.stats.need(need, now);
     this.connect();
   }
 
-  /** Ekrandaki ping (ms): son ölçümlerin ortancası. */
+  /** Ekrandaki ping (ms): son ölçümlerin ortancası; hızlı yol açıksa onun (hareket o yoldan gidiyor). */
   get rtt(): number {
+    const udp = this.udp ? this.stats.udp.median(5) : NaN;
+    return Number.isFinite(udp) ? udp : this.monitor.rtt;
+  }
+
+  /** WebSocket'in pingi (olaylar, sohbet bu yoldan). */
+  get wsRtt(): number {
     return this.monitor.rtt;
+  }
+
+  /** Saat ölçümünün henüz uygulanmamış düzeltmesi (ms). */
+  get clockPending(): number {
+    return this.clock.pending;
   }
 
   /** Yerel saate göre tahmini sunucu zamanı (ölçüm düzeltmeleri sıçramadan, yavaşça uygulanır). */
@@ -184,7 +223,7 @@ export class Net {
       this.ping();
       this.pingTimer = window.setInterval(() => this.ping(), PING_MS);
     };
-    ws.onmessage = (e) => this.onMessage(e.data);
+    ws.onmessage = (e) => this.onMessage(e.data, false);
     ws.onclose = (e) => this.dropped(e.code);
   }
 
@@ -192,6 +231,7 @@ export class Net {
     window.clearInterval(this.pingTimer);
     this.fast?.close();
     this.fast = null;
+    this.stats.dropPending();
     this.ws = null;
     this.you = -1;
     if (this.closed) return;
@@ -220,17 +260,38 @@ export class Net {
   private ping(): void {
     // Arka plandaki sekmede zamanlayıcılar kısılır; o sırada "pong gelmedi" yanılgısına düşme.
     if (!document.hidden && this.monitor.stalled(performance.now())) return this.reconnect();
-    this.ws?.send(JSON.stringify({ t: "ping", c: performance.timeOrigin + performance.now() }));
+    this.send({ t: "ping", c: performance.timeOrigin + performance.now() });
   }
 
-  private onMessage(data: ArrayBuffer | string): void {
+  /** Hızlı yolun kendi ping'i: gidiş-dönüş, dalgalanma, kayıp (ve daha iyi saat ölçümü). */
+  private udpPing(now: number): void {
+    this.lastUdpPing = now;
+    this.pingSeq = (this.pingSeq + 1) & 0xffff;
+    writePing(this.pingView, this.pingSeq, performance.timeOrigin + now);
+    if (!this.fast?.send(this.pingBuf)) return;
+    this.stats.pingSent(this.pingSeq, now);
+    this.stats.sent(PING_BYTES, true);
+  }
+
+  private onMessage(data: ArrayBuffer | string, udp: boolean): void {
     if (typeof data !== "string") {
+      this.stats.received(data.byteLength, udp);
+      const view = new DataView(data);
+      if (view.byteLength && view.getUint8(0) === MSG_PONG) {
+        const p = readPong(view);
+        if (!p) return;
+        const rtt = this.clock.sample(p.c, p.s, performance.timeOrigin + performance.now());
+        this.stats.pong(p.seq, rtt, performance.now());
+        return;
+      }
+      this.stats.snapshot();
       // Saat ofseti ilk pong'la belli olur; öncesinde gecikme ölçülmez
       this.arrival = this.clock.synced ? this.serverNow() : NaN;
       this.arrivedAt = performance.now();
-      readSnapshot(new DataView(data), this.onEntry);
+      readSnapshot(view, this.onEntry);
       return;
     }
+    this.stats.received(data.length, false);
     const ev = JSON.parse(data) as ServerEvent;
     switch (ev.t) {
       case "welcome":
@@ -249,6 +310,10 @@ export class Net {
       case "jail":
         if (ev.sid === this.you) this.onJail(ev.jailed, ev.x, ev.z, ev.rot);
         else this.remotes.setJailed(ev.sid, ev.jailed, ev.x, ev.z, ev.rot, ev.at);
+        break;
+      case "tp":
+        if (ev.sid === this.you) this.onTeleport(ev.x, ev.z, ev.rot);
+        else this.remotes.teleport(ev.sid, ev.x, ev.z, ev.rot, ev.at);
         break;
       case "board":
         this.onBoard(ev.entries, ev.updated);
@@ -364,13 +429,13 @@ export class Net {
         break;
       }
       case "goal":
-        this.onGoal(ev.side, ev.sid, ev.name, ev.score, ev.assist, ev.own);
+        this.onGoal(ev.side, ev.sid, ev.name, ev.score, ev.assist, ev.own, ev.f);
         break;
       case "match":
         this.onMatch(ev.match);
         break;
       case "gk":
-        this.onGk(ev.k);
+        this.onGk(ev.k, ev.f);
         break;
       case "version":
         this.onVersion(ev.v);
@@ -388,10 +453,30 @@ export class Net {
         this.onBset(ev.plot, ev.i, ev.j, ev.k, ev.b, ev.r);
         break;
       case "score":
-        this.onScore(ev.score);
+        this.onScore(ev.score, ev.f);
         break;
       case "tag":
         this.onTag(ev.state);
+        break;
+      case "race":
+        this.onRace(ev.state);
+        break;
+      case "vball": {
+        const { t: _t, ...ball } = ev;
+        this.onVball(ball);
+        break;
+      }
+      case "vgone":
+        this.onVgone(ev.id);
+        break;
+      case "vstate":
+        this.onVstate(ev.state);
+        break;
+      case "vact":
+        this.onVact(ev.sid, ev.a, ev.v, ev.f);
+        break;
+      case "rcars":
+        this.onRcars(ev.c);
         break;
       case "pairreq":
         this.onPairReq(ev.from, ev.name, ev.kind);
@@ -417,7 +502,7 @@ export class Net {
         if (typeof RTCPeerConnection !== "undefined" && !this.fast) {
           const link = new FastLink(
             (e) => this.send(e),
-            (d) => this.onMessage(d),
+            (d) => this.onMessage(d, true),
             () => {
               if (this.fast === link) this.fast = null;
             },
@@ -433,6 +518,7 @@ export class Net {
         break;
       case "pong": {
         const rtt = this.clock.sample(ev.c, ev.s, performance.timeOrigin + performance.now());
+        this.stats.wsPong(rtt, performance.now());
         if (this.monitor.sample(rtt, performance.now()) && !document.hidden) this.reconnect();
         break;
       }
@@ -448,7 +534,10 @@ export class Net {
   }
 
   send(ev: ClientEvent): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(ev));
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    const msg = JSON.stringify(ev);
+    this.stats.sent(msg.length, false);
+    this.ws.send(msg);
   }
 
   /**
@@ -456,6 +545,9 @@ export class Net {
    * Konum alındığı anla (sunucu saati) gider: uzak oyuncular yayın anına göre değil, bu ana göre çizilir.
    */
   update(dt: number, s: PlayerState): void {
+    const t = performance.now();
+    this.stats.tick(t, this.interp.delay, this.remotes.frames, this.remotes.starvedFrames);
+    if (this.fast?.open && t - this.lastUdpPing > (this.stats.live ? UDP_PING_LIVE_MS : UDP_PING_MS)) this.udpPing(t);
     if (!this.pacer.due(dt)) return;
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN || this.you < 0) return;
@@ -463,13 +555,28 @@ export class Net {
     const now = performance.now();
     if (now - this.lastStat > NETSTAT_MS) {
       this.lastStat = now;
-      this.send({ t: "netstat", rtt: Math.round(this.rtt), delay: Math.round(this.interp.delay), starve: this.remotes.takeStarve(), udp: this.udp });
+      const frames = this.remotes.frames - this.statFrames;
+      const starve = frames > 0 ? (this.remotes.starvedFrames - this.statStarved) / frames : 0;
+      this.statFrames = this.remotes.frames;
+      this.statStarved = this.remotes.starvedFrames;
+      const loss = this.stats.loss;
+      this.send({
+        t: "netstat",
+        rtt: Math.round(this.rtt),
+        ws: Math.round(this.monitor.rtt),
+        loss: Number.isFinite(loss) ? Math.round(loss * 1000) / 1000 : 0,
+        delay: Math.round(this.interp.delay),
+        starve: Math.round(starve * 1000) / 1000,
+        udp: this.udp,
+      });
     }
     const same = Math.abs(l.x - s.x) < 0.005 && Math.abs(l.z - s.z) < 0.005 && Math.abs(l.rot - s.rot) < 0.005 && l.flags === s.flags;
     if (same && this.repeat <= 0 && now - this.lastSentAt < KEEPALIVE_MS) return;
     this.repeat = same ? this.repeat - 1 : REPEAT;
     encodeState(this.sendView, s, this.clock.synced ? this.serverNow() : 0);
-    if (!this.fast?.send(this.sendBuf)) ws.send(this.sendBuf);
+    const udp = this.fast?.send(this.sendBuf) ?? false;
+    if (!udp) ws.send(this.sendBuf);
+    this.stats.sent(STATE_BYTES, udp);
     l.x = s.x;
     l.z = s.z;
     l.rot = s.rot;

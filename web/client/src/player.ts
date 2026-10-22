@@ -10,6 +10,7 @@ import {
   JUMP_SHIFT,
   JUMP_TIME,
   jumpHeight,
+  jumpTime,
   PLAYER_RADIUS,
   RUN_MULTIPLIER,
   type Vehicle,
@@ -102,11 +103,25 @@ export class Player implements AvatarView, PlayerState {
   /** Bu yüzeyin üstündeki yükseklik (zıplarken, düşerken). */
   jumpY = 0;
   pair: AvatarView["pair"] = null;
+  slide: number | null = null;
+  trick: { at: number; side: -1 | 1 } | null = null;
+  vpose: AvatarView["vpose"] = null;
+  /** Voleybol salonunda: yüksek zıplama, havada momentum korunur; A/D yana, W/S öne/geri yatırır. */
+  volley = false;
+  /** Havadaki yatış yönü (yana: -1 sol, 1 sağ; öne: 1 W, -1 S) ve çizimde yumuşatılmış halleri. */
+  leanDir = 0;
+  pitchDir = 0;
+  vlean = 0;
+  vpitch = 0;
+  vstance: AvatarView["vstance"] = null;
   mic = false;
+  grip = false;
   hideName = false;
   hidden = false;
   /** Zıplamanın başından geçen süre; yerdeyken JUMP_TIME. */
   private jumpT = JUMP_TIME;
+  /** Bu zıplama voleybol zıplaması mı (süre ve yükseklik). */
+  private bigJump = false;
   private jumpSeq = 0;
   /** Ayakların yüksekliği; zıplama eğrisi `launchY`den başlar, eğri bitince serbest düşüş `vy` ile. */
   private elev = 0;
@@ -238,14 +253,25 @@ export class Player implements AvatarView, PlayerState {
     }
 
     // Zıplama: ortak eğri (jumpHeight) bulunduğu yüzeyden; uzak istemciler aynı yayı sayaçtan çizer. Kayıkta zıplanmaz.
-    if (jump && this.jumpT >= JUMP_TIME && this.vy === 0 && this.vehicle !== 3) this.startJump();
+    if (jump && this.jumpT >= this.jumpDur && this.vy === 0 && this.vehicle !== 3) this.startJump();
     this.rideTank();
 
     // Kameraya göre hareket yönü: ileri = kameranın baktığı yatay yön.
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const mx = -sy * input.moveY + cy * input.moveX;
     const mz = -cy * input.moveY - sy * input.moveX;
-    if (this.knockT > 0) {
+    const air = this.jumpT < this.jumpDur || this.elev > this.baseY + 0.02;
+    this.leanDir = this.volley && air ? Math.sign(Math.round(input.moveX)) : 0;
+    this.pitchDir = this.volley && air ? Math.sign(Math.round(input.moveY)) : 0;
+    const lk = 1 - Math.exp(-dt * 12);
+    this.vlean += (this.leanDir - this.vlean) * lk;
+    this.vpitch += (this.pitchDir - this.vpitch) * lk;
+    if (this.volley && air && this.knockT <= 0) {
+      // Voleybol: zıplarken momentum korunur (koşarak zıplayan ileri süzülür); tuşlar yalnızca gövdeyi yatırır
+      const f = Math.exp(-dt * 1.6);
+      this.vx *= f;
+      this.vz *= f;
+    } else if (this.knockT > 0) {
       // Savrulurken kontrol yok: hız yavaşça söner
       this.knockT -= dt;
       const f = Math.exp(-dt * 2.5);
@@ -349,19 +375,24 @@ export class Player implements AvatarView, PlayerState {
     return o ? Math.max(g, tankGround(o, this.x, this.z, PLAYER_RADIUS * LEDGE, y)) : g;
   }
 
+  private get jumpDur(): number {
+    return jumpTime(this.bigJump);
+  }
+
   private startJump(): void {
     this.jumpT = 0;
+    this.bigJump = this.volley;
     this.jumpSeq = (this.jumpSeq + 1) & 3;
     this.launchY = this.elev;
   }
 
   /** Havadaysa: önce zıplama eğrisi, bittiyse (ya da kenardan yürüyüp çıktıysa) serbest düşüş. */
   private fly(dt: number): void {
-    if (this.jumpT < JUMP_TIME) {
+    if (this.jumpT < this.jumpDur) {
       const prev = this.elev;
-      this.jumpT = Math.min(JUMP_TIME, this.jumpT + dt);
-      this.elev = this.launchY + jumpHeight(this.jumpT);
-      this.vy = this.jumpT < JUMP_TIME ? (this.elev - prev) / Math.max(dt, 1e-4) : Math.min(this.vy, 0);
+      this.jumpT = Math.min(this.jumpDur, this.jumpT + dt);
+      this.elev = this.launchY + jumpHeight(this.jumpT, this.bigJump);
+      this.vy = this.jumpT < this.jumpDur ? (this.elev - prev) / Math.max(dt, 1e-4) : Math.min(this.vy, 0);
     } else if (this.elev > this.baseY || this.vy !== 0) {
       this.vy -= FALL_G * dt;
       this.elev += this.vy * dt;
@@ -371,11 +402,11 @@ export class Player implements AvatarView, PlayerState {
   /** İnerken bir yüzeye değdiyse oraya konar; basamak kadar yüksek bir yüzeye yürüyerek çıkar. */
   private land(): void {
     const g = this.groundAt(this.elev);
-    const falling = this.jumpT >= JUMP_TIME || this.vy <= 0;
+    const falling = this.jumpT >= this.jumpDur || this.vy <= 0;
     if (this.elev <= g && falling) {
       this.elev = g;
       this.vy = 0;
-      this.jumpT = JUMP_TIME;
+      this.jumpT = this.jumpDur;
     }
     this.baseY = g;
     this.jumpY = Math.max(0, this.elev - g);
@@ -504,6 +535,14 @@ export class Player implements AvatarView, PlayerState {
     this.flags = this.jumpBits();
   }
 
+  /** Futbol: `t` sn kontrolsüz sürat (çalımda öne atılma, kayarak müdahale); hız yavaşça söner. */
+  dash(vx: number, vz: number, t: number): void {
+    if (this.driving || this.seat || this.vehicle) return;
+    this.vx = vx;
+    this.vz = vz;
+    this.knockT = t;
+  }
+
   /** Mermi savurdu: (vx, vz) hızıyla fırlar ve zıplar. Tanktaysa etkilenmez. */
   knock(vx: number, vz: number): void {
     if (this.driving) return;
@@ -511,7 +550,7 @@ export class Player implements AvatarView, PlayerState {
     this.vx = vx;
     this.vz = vz;
     this.knockT = KNOCK_TIME;
-    if (this.jumpT >= JUMP_TIME) this.startJump();
+    if (this.jumpT >= this.jumpDur) this.startJump();
   }
 
   /** Sürüş: W/S gaz-geri, A/D gövdeyi döndürür; kule kameranın baktığı yöne döner. */
@@ -595,7 +634,7 @@ export class Player implements AvatarView, PlayerState {
 
   private resetHeight(): void {
     this.elev = this.baseY = this.jumpY = this.vy = 0;
-    this.jumpT = JUMP_TIME;
+    this.jumpT = this.jumpDur;
     this.onTank = false;
   }
 

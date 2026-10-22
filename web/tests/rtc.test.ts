@@ -3,7 +3,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { RTCPeerConnection } from "node-datachannel/polyfill";
 import { cleanup } from "node-datachannel";
-import type { ClientEvent, ServerEvent } from "../shared/protocol";
+import { type ClientEvent, MSG_PONG, PING_BYTES, type ServerEvent, writePing } from "../shared/protocol";
 import { announce, setupRtc } from "../server/src/rtc";
 import { FastLink as ClientLink } from "../client/src/rtc";
 
@@ -57,6 +57,16 @@ describe("fast path", () => {
     for (const c of clients) {
       expect(c.got.up).toEqual([10 + c.i]);
       expect(c.got.down).toEqual([20 + c.i]);
+    }
+    // Hızlı yolun ping'i sunucunun bağlantısında cevaplanır (oyun koduna uğramaz)
+    const pinger = clients[0];
+    const ping = new DataView(new ArrayBuffer(PING_BYTES));
+    writePing(ping, 7, 123.5);
+    expect(pinger.client.send(ping.buffer)).toBe(true);
+    await until(() => pinger.got.down.length > 1);
+    expect(pinger.got.down.at(-1)).toBe(MSG_PONG);
+    expect(pinger.got.up).toEqual([10]);
+    for (const c of clients) {
       c.client.close();
       c.server.close();
     }

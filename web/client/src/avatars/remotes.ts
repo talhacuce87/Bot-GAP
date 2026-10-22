@@ -1,6 +1,7 @@
 // Uzak oyuncular: snapshot halka tamponu + uyarlanır gecikmeyle (jitter.ts) geriden interpolasyon.
 import type * as THREE from "three";
-import { FLAG_DRIVING, FLAG_SEATED, FLAG_WALKING, JUMP_MASK, JUMP_SHIFT, JUMP_TIME, jumpHeight } from "../../../shared/constants";
+import { FLAG_DRIVING, FLAG_SEATED, FLAG_WALKING, JUMP_MASK, JUMP_SHIFT, jumpHeight, VJUMP_TIME } from "../../../shared/constants";
+import { inVolley } from "../../../shared/zones";
 import type { PlayerInfo } from "../../../shared/protocol";
 import type { AvatarAtlas } from "./atlas";
 import { type AvatarView, colorFor } from "./avatars";
@@ -49,12 +50,19 @@ export class Remote implements AvatarView {
   jumpY = 0;
   lift = 0;
   mic = false;
+  grip = false;
   hideName = false;
   pair: AvatarView["pair"] = null;
+  slide: number | null = null;
+  trick: { at: number; side: -1 | 1 } | null = null;
+  vpose: AvatarView["vpose"] = null;
+  vlean = 0;
+  vpitch = 0;
+  vstance: AvatarView["vstance"] = null;
   /** Altındaki yüzey: konumdan bulunur (yükseklik gönderilmez; engelin içine yerden girilemez). */
   baseY = 0;
   private lastJumpSeq = -1;
-  private jumpT = JUMP_TIME;
+  private jumpT = VJUMP_TIME;
   leaving = false;
   readonly color: THREE.Color;
   readonly phase: number;
@@ -156,7 +164,7 @@ export class Remote implements AvatarView {
     if (this.lastJumpSeq >= 0 && seq !== this.lastJumpSeq) this.jumpT = 0;
     if (this.n > 0) this.lastJumpSeq = seq;
     this.jumpT += dt;
-    this.jumpY = jumpHeight(this.jumpT);
+    this.jumpY = jumpHeight(this.jumpT, inVolley(this.x, this.z));
   }
 
   private interp(renderTime: number, dt: number): void {
@@ -241,8 +249,9 @@ export class Remote implements AvatarView {
 export class Remotes {
   readonly map = new Map<number, Remote>();
   private changed = true;
-  private frames = 0;
-  private starvedFrames = 0;
+  /** Toplam kare ve bunlardan hareket eden biri beklenirken (örnekleri yetmedi) geçenler: okuyan farkını alır. */
+  frames = 0;
+  starvedFrames = 0;
 
   constructor(private atlas: AvatarAtlas) {}
 
@@ -295,6 +304,14 @@ export class Remotes {
     if (r) r.info.parked = parked;
   }
 
+  /** Sunucu taşıdı (stadyuma giriş/çıkış): ara geçiş olmadan oraya. */
+  teleport(sid: number, x: number, z: number, rot: number, at = 0): void {
+    const r = this.map.get(sid);
+    if (!r) return;
+    r.teleport(x, z, rot, at);
+    this.changed = true;
+  }
+
   /** Sürgün durumu değişti: etiketi güncelle, ışınlanmayı interpolasyonsuz uygula. */
   setJailed(sid: number, jailed: boolean, x: number, z: number, rot: number, at = 0): void {
     const r = this.map.get(sid);
@@ -335,12 +352,5 @@ export class Remotes {
     }
     this.frames++;
     if (starved) this.starvedFrames++;
-  }
-
-  /** Son çağrıdan beri, hareket eden biri beklenirken (örnekleri yetmedi) geçen karelerin oranı. */
-  takeStarve(): number {
-    const r = this.frames ? this.starvedFrames / this.frames : 0;
-    this.frames = this.starvedFrames = 0;
-    return Math.round(r * 1000) / 1000;
   }
 }

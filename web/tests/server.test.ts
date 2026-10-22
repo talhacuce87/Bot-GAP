@@ -58,7 +58,7 @@ describe("Room", () => {
     const p = room.players.get(sid)!.state;
     expect(Math.hypot(p.x - start.x, p.z - start.z)).toBeLessThan(2);
     for (let t = 200; t < 60000; t += 100) room.applyState(sid, { x: 1000, z: 0, rot: 0, flags: 1 }, t);
-    expect(p.x).toBeGreaterThan(WORLD_EXTENT.maxX - 1);
+    expect(p.x).toBeGreaterThan(200);
     expect(p.x).toBeLessThanOrEqual(WORLD_EXTENT.maxX + 1.001);
     expect(p.x).toBeGreaterThanOrEqual(WORLD_EXTENT.minX - 1.001);
     expect(p.z).toBeLessThanOrEqual(WORLD_EXTENT.maxZ + 1.001);

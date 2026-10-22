@@ -1,9 +1,10 @@
 // Sade DOM arayüzü. Kare başına DOM'a dokunulmaz: liste olaylarda, debug saniyede iki kez güncellenir.
 import { EMOTES } from "../../../shared/constants";
 import type { Remotes } from "../avatars/remotes";
-import type { NetStatus } from "../net";
+import type { Net, NetStatus } from "../net";
 import type { PerfStats } from "../perf";
 import { actionLabel } from "../input/keybinds";
+import { NetPanel } from "./netPanel";
 
 const STATUS_TEXT: Record<NetStatus, string> = {
   connecting: "bağlanıyor…",
@@ -26,6 +27,9 @@ export class Hud {
   private prompt: HTMLButtonElement;
   private debug: HTMLDivElement | null = null;
   private debugText: HTMLDivElement | null = null;
+  /** Sağ alt sütun: performans ve ağ paneli üst üste (çakışmasın). */
+  private diag: HTMLDivElement;
+  private net: NetPanel | null = null;
   private promptState = "";
   private jail: HTMLDivElement;
   private lastDebug = 0;
@@ -55,6 +59,7 @@ export class Hud {
     this.acts = el("div", "acts", root);
     this.toastEl = el("div", "panel toast", root);
     this.hint = el("div", "hint", root);
+    this.diag = el("div", "diag", root);
     this.refreshHint();
   }
 
@@ -246,7 +251,7 @@ export class Hud {
   /** Performans paneli: ?debug'da YouTube testi düğmesiyle, ayarlardaki FPS göstergesinde yalnız. */
   enableDebug(onYoutubeTest?: () => void): void {
     if (this.debug) return;
-    this.debug = el("div", "panel debug", this.root);
+    this.debug = el("div", "panel debug", this.diag);
     this.debugText = el("div", "", this.debug);
     if (!onYoutubeTest) return;
     const btn = el("button", "", this.debug);
@@ -257,6 +262,22 @@ export class Hud {
   disableDebug(): void {
     this.debug?.remove();
     this.debug = this.debugText = null;
+  }
+
+  /** Ağ paneli (ayarlardan ya da kısayolla): ping, kayıp, grafikler. */
+  enableNet(net: Net, onClose: () => void): void {
+    if (this.net) return;
+    this.net = new NetPanel(this.diag, net, onClose);
+    this.diag.prepend(this.net.root);
+  }
+
+  disableNet(): void {
+    this.net?.destroy();
+    this.net = null;
+  }
+
+  updateNet(now: number): void {
+    this.net?.update(now);
   }
 
   updateDebug(now: number, s: PerfStats, rtt: number, avatars: number): void {

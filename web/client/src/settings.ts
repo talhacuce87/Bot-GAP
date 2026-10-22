@@ -38,6 +38,8 @@ export interface Settings {
   bubbles: boolean;
   /** Köşede FPS göstergesi. */
   showFps: boolean;
+  /** Köşede ağ paneli: ping, kayıp, grafikler (kısayol: F3). */
+  showNet: boolean;
   /** Ses: sinema perdesi, ekran paylaşımı, efektler (0–1). */
   cinemaVolume: number;
   shareVolume: number;
@@ -91,6 +93,7 @@ function defaults(): Settings {
     invertY: false,
     bubbles: true,
     showFps: false,
+    showNet: false,
     cinemaVolume: 1,
     shareVolume: 1,
     sfxVolume: 0.7,
