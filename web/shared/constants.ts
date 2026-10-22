@@ -1,5 +1,6 @@
 // İstemci ve sunucunun ortak sabitleri.
-import { GROVE, KAHVEHANE, LAKE } from "./zones";
+import { CITY, GROVE, KAHVEHANE, LAKE, ROAD_WALK, roadDist } from "./zones";
+import { RACE_AREA } from "./race";
 
 /** Sunucunun anlık görüntü (snapshot) yayın hızı. */
 export const TICK_HZ = 15;
@@ -11,13 +12,27 @@ export const SEND_HZ = 30;
 /** Uzak oyuncuların çizim gecikmesinin başlangıç değeri (ms); sonra ölçüme göre ayarlanır (client/src/jitter.ts). */
 export const INTERP_DELAY_MS = 100;
 
-/** Yürünebilir alan (dikdörtgen, metre); kenarında ağaçlar, güneyinde dağlar. */
+/** Köyün yürünebilir alanı (dikdörtgen, metre); kenarında ağaçlar, güneyinde dağlar. */
 export const WORLD_BOUNDS = { minX: -135, maxX: 125, minZ: -88, maxZ: 162 };
+/**
+ * Bütün dünyayı (köy, doğudaki vadi yolu, GAP Şehri) kapsayan kutu. Gerçek sınır arazidedir: köyün ve
+ * şehrin dışı ile yol koridorunun iki yanı tepe olarak yükselir (bkz. `outsideWorld`).
+ */
+export const WORLD_EXTENT = { minX: WORLD_BOUNDS.minX, maxX: CITY.maxX, minZ: Math.min(WORLD_BOUNDS.minZ, CITY.minZ, RACE_AREA.minZ), maxZ: WORLD_BOUNDS.maxZ };
 
-/** `p`yi dünya sınırının `pad` kadar içinde tutar (yerinde değiştirir). */
+function outsideRect(b: { minX: number; maxX: number; minZ: number; maxZ: number }, x: number, z: number): number {
+  return Math.hypot(Math.max(b.minX - x, 0, x - b.maxX), Math.max(b.minZ - z, 0, z - b.maxZ));
+}
+
+/** Yürünür alanın (köy ∪ yol koridoru ∪ şehir ∪ yarış pisti) dışına uzaklık; içinde 0. */
+export function outsideWorld(x: number, z: number): number {
+  return Math.min(outsideRect(WORLD_BOUNDS, x, z), outsideRect(CITY, x, z), outsideRect(RACE_AREA, x, z), Math.max(0, roadDist(x, z) - ROAD_WALK));
+}
+
+/** `p`yi dünya kutusunun `pad` kadar içinde tutar (yerinde değiştirir). */
 export function clampToWorld(p: { x: number; z: number }, pad = 0): void {
-  p.x = Math.min(WORLD_BOUNDS.maxX - pad, Math.max(WORLD_BOUNDS.minX + pad, p.x));
-  p.z = Math.min(WORLD_BOUNDS.maxZ - pad, Math.max(WORLD_BOUNDS.minZ + pad, p.z));
+  p.x = Math.min(WORLD_EXTENT.maxX - pad, Math.max(WORLD_EXTENT.minX + pad, p.x));
+  p.z = Math.min(WORLD_EXTENT.maxZ - pad, Math.max(WORLD_EXTENT.minZ + pad, p.z));
 }
 /** Oyuncu yürüme hızı (m/sn). */
 export const WALK_SPEED = 4.2;
@@ -83,8 +98,8 @@ export function jumpHeight(t: number): number {
   return JUMP_PEAK * (1 - s ** 2.2) * (1 - 0.15 * s ** 8);
 }
 
-/** Konumlar santimetre hassasiyetinde int16 olarak gönderilir. */
-export const POS_SCALE = 100;
+/** Konumlar 2 cm hassasiyetinde int16 olarak gönderilir: ±655 m, şehir (x ≈ 550) dahil bütün dünya sığar. */
+export const POS_SCALE = 50;
 
 /**
  * Zindan hücresinin iç alanı (oyuncu merkezinin gidebileceği sınırlar, yarıçap düşülmüş).

@@ -9,17 +9,31 @@ import {
   writeSnapshotEntry,
   writeSnapshotHeader,
 } from "../shared/protocol";
+import { WORLD_EXTENT } from "../shared/constants";
 
 describe("protocol", () => {
-  it("state round-trips with centimetre precision and its sample time", () => {
+  it("state round-trips with 2 cm precision and its sample time", () => {
     const view = new DataView(new ArrayBuffer(STATE_BYTES));
     encodeState(view, { x: 12.345, z: -7.891, rot: 4, flags: 3 }, 1_760_000_000_123.25);
     const out: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
     expect(decodeState(view, out)).toBe(1_760_000_000_123.25);
-    expect(out.x).toBeCloseTo(12.35, 2);
-    expect(out.z).toBeCloseTo(-7.89, 2);
+    expect(Math.abs(out.x - 12.345)).toBeLessThanOrEqual(0.01);
+    expect(Math.abs(out.z + 7.891)).toBeLessThanOrEqual(0.01);
     expect(out.rot).toBeCloseTo(4, 3);
     expect(out.flags).toBe(3);
+  });
+
+  it("every corner of the world (village to the far end of the city) fits the encoding", () => {
+    const view = new DataView(new ArrayBuffer(STATE_BYTES));
+    const out: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
+    for (const x of [WORLD_EXTENT.minX, WORLD_EXTENT.maxX]) {
+      for (const z of [WORLD_EXTENT.minZ, WORLD_EXTENT.maxZ]) {
+        encodeState(view, { x, z, rot: 0, flags: 0 });
+        decodeState(view, out);
+        expect(Math.abs(out.x - x)).toBeLessThanOrEqual(0.01);
+        expect(Math.abs(out.z - z)).toBeLessThanOrEqual(0.01);
+      }
+    }
   });
 
   it("normalises negative rotation", () => {

@@ -39,10 +39,12 @@ import {
   TURRET_TOP,
   TURRET_TURN,
 } from "../../shared/tank";
+import { CAR_ACCEL, CAR_BRAKE, CAR_HULL_R, CAR_REVERSE, CAR_SPEED, CAR_TURN, carCircles } from "../../shared/car";
 import type { AvatarView } from "./avatars/avatars";
 import type { Input } from "./input/input";
 import { LEDGE } from "./world/colliders";
 import { SEAT_H } from "./world/builder";
+import type { Room } from "./world/city";
 import type { Seat, World } from "./world/scene";
 
 const SEAT_REACH = 1.3;
@@ -122,6 +124,21 @@ export class Player implements AvatarView, PlayerState {
   outfit: Look | null = null;
   /** Tankı sürüyorsa gövde/kule/namlu açısı ve hız; konumu x/z'dir. */
   driving: { h: number; tr: number; el: number; v: number } | null = null;
+  /** Masaya yaklaşma: kamera bu bakışa yumuşakça geçer (null: normal kamera). */
+  focusView: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null;
+  private focusBlend = 0;
+  private focusLast: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null;
+  private focusLook = new THREE.Vector3();
+  /** Fareyle en son bakıştan beri geçen süre (sn). */
+  private lookIdle = 0;
+  /** Tofaşla gidiyorsa hızı (m/sn, geri vitesteyse eksi); konumu x/z, yönü rot. */
+  car: { v: number } | null = null;
+  /** Yarış gridinde (yeşil yanana kadar): gaz/geri tutmaz, araba yerinde durur. */
+  carLock = false;
+  /** Kendi avatarını gizle (tuning ekranında araba vitrinde, sürücü görünmez). */
+  hideAvatar = false;
+  /** İçinde bulunduğu dükkân (kamera odanın içinde kalır); main.ts her kare günceller. */
+  room: Room | null = null;
   /** Sürerken Space'e basıldı (main.ts sunucuya ateş yollar). */
   wantsFire = false;
   /** Tankta: ekranın ortasındaki nişangâhın baktığı nokta (main.ts kameradan hesaplar). */
@@ -186,12 +203,16 @@ export class Player implements AvatarView, PlayerState {
 
   update(dt: number, input: Input): void {
     input.consumeLook(this.look);
+    // Fareyle bakılmayan süre (arabada kamera ancak bundan sonra arkaya döner)
+    this.lookIdle = this.look.x !== 0 || this.look.y !== 0 ? 0 : this.lookIdle + dt;
     const sens = settings.sensitivity;
     const lookY = this.look.y * 0.004 * sens * (settings.invertY ? -1 : 1);
     this.yaw -= this.look.x * 0.006 * sens;
-    const fp = settings.firstPerson && !this.driving && !this.photo;
+    const fp = settings.firstPerson && !this.driving && !this.car && !this.photo;
     this.pitch = this.driving
       ? THREE.MathUtils.clamp(this.pitch + lookY, TANK_PITCH_MIN, TANK_PITCH_MAX)
+      : this.car
+      ? THREE.MathUtils.clamp(this.pitch + lookY, 0.05, 0.9)
       : THREE.MathUtils.clamp(this.pitch + lookY, fp ? -1.2 : this.photo ? -0.3 : 0.05, fp ? 1.2 : 1.35);
     this.dist = THREE.MathUtils.clamp(this.dist + input.consumeZoom() * 0.6, 2.5, this.photo ? 30 : 12);
     const lockOn = input.shiftLock && !this.driving && !this.seat && !this.vehicle;
@@ -199,6 +220,10 @@ export class Player implements AvatarView, PlayerState {
 
     if (this.driving) {
       this.drive(dt, input);
+      return;
+    }
+    if (this.car) {
+      this.driveCar(dt, input);
       return;
     }
 
@@ -272,6 +297,11 @@ export class Player implements AvatarView, PlayerState {
 
     this.nearSeat = this.vehicle ? null : this.findSeat();
     if (action && this.nearSeat) this.sitOn(this.nearSeat);
+  }
+
+  /** Oturduğu tabure bir casino oyununa aitse oyunu. */
+  get seatGame(): Seat["game"] | null {
+    return this.seat?.game ?? null;
   }
 
   /** Dışarıdan kaldırma (ör. tabureye başkası oturdu). */
@@ -380,6 +410,86 @@ export class Player implements AvatarView, PlayerState {
     this.target.set(x, TANK_CAM_Y, z);
   }
 
+  /** Tofaşa bin: araba olduğu yerde, oyuncunun baktığı yöne doğru belirir. */
+  enterCar(): void {
+    this.seat = null;
+    this.vehicle = 0;
+    this.onStage = false;
+    this.knockT = 0;
+    this.resetHeight();
+    this.vx = this.vz = 0;
+    this.car = { v: 0 };
+    this.flags = (this.flags & ~(3 << VEHICLE_SHIFT)) & ~(FLAG_WALKING | FLAG_RUNNING);
+    this.yaw = this.rot + Math.PI;
+  }
+
+  /** Park halindeki arabaya bin: oyuncu arabanın yerine geçer. */
+  enterCarAt(x: number, z: number, rot: number): void {
+    this.x = x;
+    this.z = z;
+    this.rot = rot;
+    this.enterCar();
+  }
+
+  /** Arabayı bir yere koy (yarış grid kutusu): durur, kamera arkasına geçer. */
+  placeCar(x: number, z: number, rot: number): void {
+    if (!this.car) return;
+    this.x = x;
+    this.z = z;
+    this.rot = rot;
+    this.car.v = 0;
+    this.yaw = rot + Math.PI;
+  }
+
+  /** Tofaştan in: sürücü kapısından (sol) çıkar; araba kaybolur. */
+  exitCar(): void {
+    if (!this.car) return;
+    this.car = null;
+    this.x += Math.cos(this.rot) * 1.6;
+    this.z -= Math.sin(this.rot) * 1.6;
+    this.world.colliders.resolve(this, PLAYER_RADIUS);
+    this.resetHeight();
+    this.flags = this.jumpBits();
+  }
+
+  /** Sürüş: W gaz, S fren/geri, A/D direksiyon (hızla artar), Shift biraz daha hızlı; duvara çarpınca yavaşlar. */
+  private driveCar(dt: number, input: Input): void {
+    const c = this.car!;
+    input.consumeAction();
+    input.consumeJump();
+    const top = CAR_SPEED * (input.run ? 1.15 : 1);
+    if (this.carLock) c.v = 0;
+    else if (input.moveY > 0.1) c.v += (c.v < -0.2 ? CAR_BRAKE : CAR_ACCEL * Math.max(0.15, 1 - c.v / top)) * input.moveY * dt;
+    else if (input.moveY < -0.1) c.v -= (c.v > 0.2 ? CAR_BRAKE : CAR_ACCEL * 0.6) * -input.moveY * dt;
+    else c.v *= Math.exp(-dt * 0.45);
+    c.v = THREE.MathUtils.clamp(c.v, -CAR_REVERSE, top);
+    if (Math.abs(c.v) < 0.03 && Math.abs(input.moveY) < 0.1) c.v = 0;
+    const grip = Math.min(1, Math.abs(c.v) / 4) * (1 - Math.min(0.35, Math.abs(c.v) / 60));
+    this.rot -= input.moveX * CAR_TURN * grip * Math.sign(c.v) * dt;
+    this.x += Math.sin(this.rot) * c.v * dt;
+    this.z += Math.cos(this.rot) * c.v * dt;
+    // Gövdenin ön ve arka dairesini engellerden (ve yalnızca arabayı durduran kapılardan) çıkar
+    const [fx, fz, bx, bz] = carCircles(this.x, this.z, this.rot);
+    const f = { x: fx, z: fz }, b = { x: bx, z: bz };
+    for (const p of [f, b]) {
+      this.world.colliders.resolve(p, CAR_HULL_R);
+      this.world.carColliders.resolve(p, CAR_HULL_R);
+    }
+    const ox = (f.x - fx + b.x - bx) / 2, oz = (f.z - fz + b.z - bz) / 2;
+    this.x += ox;
+    this.z += oz;
+    const hit = Math.hypot(ox, oz);
+    if (hit > 0.01) c.v *= hit > 0.08 ? 0.35 : 0.85;
+    // Kamera serbest: fareyle çevrilir; fare 1,5 sn bırakılınca ve araba giderken yavaşça arkaya döner
+    if (this.lookIdle > 1.5 && Math.abs(c.v) > 1) {
+      const ease = Math.min(1, (this.lookIdle - 1.5) / 1.2);
+      this.yaw = dampAngle(this.yaw, this.rot + Math.PI, 1 - Math.exp(-dt * 2.2 * ease));
+    }
+    this.elev = this.baseY = this.jumpY = 0;
+    this.flags = this.jumpBits();
+    this.nearSeat = null;
+  }
+
   /** Tanktan in: gövdenin soluna çıkar (orası kapalıysa çarpışma iter). */
   exitTank(): void {
     const d = this.driving;
@@ -449,6 +559,7 @@ export class Player implements AvatarView, PlayerState {
   /** Sunucunun belirlediği yere ışınlanır (zindana giriş/çıkış). */
   teleport(x: number, z: number, rot: number): void {
     this.driving = null;
+    this.car = null;
     this.vehicle = 0;
     this.onStage = false;
     this.knockT = 0;
@@ -523,23 +634,23 @@ export class Player implements AvatarView, PlayerState {
 
   updateCamera(camera: THREE.PerspectiveCamera, dt: number): void {
     const k = 1 - Math.exp(-dt * 14);
-    if (settings.firstPerson && !this.driving && !this.photo) {
+    if (settings.firstPerson && !this.driving && !this.car && !this.photo) {
       // Birinci şahıs: göz hizasından, bakış yönü kameranın açısı
       const eye = (this.seat ? 1.0 : 1.32) + this.baseY + this.jumpY + this.lift + (this.vehicle === 1 ? 0.3 : this.vehicle === 2 ? 0.14 : 0);
       this.target.set(this.x, eye, this.z);
       camera.position.copy(this.target);
       const cp = Math.cos(this.pitch);
-      camera.lookAt(this.x - Math.sin(this.yaw) * cp, eye - Math.sin(this.pitch), this.z - Math.cos(this.yaw) * cp);
+      this.applyFocus(camera, this.focusLook.set(this.x - Math.sin(this.yaw) * cp, eye - Math.sin(this.pitch), this.z - Math.cos(this.yaw) * cp), dt);
       return;
     }
     // Zıplarken kamera yarısı kadar yükselir: sarsmadan takip eder.
-    const ty = this.driving ? TANK_CAM_Y : (this.seat ? 1.15 : 1.45) + this.baseY + this.jumpY * 0.5 + this.lift;
+    const ty = this.driving ? TANK_CAM_Y : this.car ? 1.8 : (this.seat ? 1.15 : 1.45) + this.baseY + this.jumpY * 0.5 + this.lift;
     this.target.x += (this.x - this.target.x) * k;
     this.target.y += (ty - this.target.y) * k;
     this.target.z += (this.z - this.target.z) * k;
     const cp = Math.cos(this.pitch);
     // Zindanda kamera duvarların ötesine çıkmasın: parmaklıklardan dışarı bakılır.
-    const dist = this.jailed ? Math.min(this.dist, 3.4) : this.driving ? Math.max(this.dist, TANK_CAM_DIST) : this.dist;
+    const dist = this.jailed ? Math.min(this.dist, 3.4) : this.driving ? Math.max(this.dist, TANK_CAM_DIST) : this.car ? Math.max(this.dist, 7) : this.dist;
     // Shift lock'ta kamera sağ omza kayar: karakter ekranın ortasını kapatmaz
     const side = this.shoulder * SHOULDER;
     this.lookAt.set(this.target.x + Math.cos(this.yaw) * side, this.target.y, this.target.z - Math.sin(this.yaw) * side);
@@ -549,6 +660,27 @@ export class Player implements AvatarView, PlayerState {
       Math.max(0.3, this.lookAt.y + Math.sin(this.pitch) * dist),
       this.lookAt.z + Math.cos(this.yaw) * cp * dist,
     );
-    camera.lookAt(this.lookAt);
+    // Dükkânın içindeyse kamera odanın dışına (duvarın arkasına) ve tavanın üstüne çıkmaz
+    const r = this.room;
+    if (r && !this.car) {
+      const p = camera.position, l = this.lookAt, m = 0.25;
+      const lim = (from: number, to: number, lo: number, hi: number) => (to > hi ? (hi - from) / (to - from) : to < lo ? (lo - from) / (to - from) : 1);
+      const t = Math.max(0, Math.min(lim(l.x, p.x, r.minX + m, r.maxX - m), lim(l.z, p.z, r.minZ + m, r.maxZ - m), lim(l.y, p.y, 0.3, r.ceil - m)));
+      if (t < 1) p.set(l.x + (p.x - l.x) * t, l.y + (p.y - l.y) * t, l.z + (p.z - l.z) * t);
+    }
+    this.applyFocus(camera, this.focusLook.copy(this.lookAt), dt);
+  }
+
+  /** Normal kameradan masa bakışına (ve geri) yumuşak geçiş; `look` normal bakış noktası. */
+  private applyFocus(camera: THREE.PerspectiveCamera, look: THREE.Vector3, dt: number): void {
+    const f = this.focusView ?? this.focusLast;
+    this.focusBlend = THREE.MathUtils.clamp(this.focusBlend + (this.focusView ? dt / 0.9 : -dt / 0.6), 0, 1);
+    if (this.focusView) this.focusLast = this.focusView;
+    if (f && this.focusBlend > 0) {
+      const b = this.focusBlend, e = b * b * (3 - 2 * b);
+      camera.position.lerp(f.pos, e);
+      look.lerp(f.look, e);
+    }
+    camera.lookAt(look);
   }
 }

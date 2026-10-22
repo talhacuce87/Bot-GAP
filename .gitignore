@@ -70,3 +70,6 @@ node_modules/
 
 # Ham chibi paketi (155 MB): repoda yalnızca web/scripts/bake-chibi.mjs çıktısı tutulur
 chibi_asset_pack_v8/
+
+# Dünya sunucusunun yerel verisi (casino test coin bakiyeleri)
+web/data/

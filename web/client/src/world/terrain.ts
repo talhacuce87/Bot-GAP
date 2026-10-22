@@ -2,8 +2,8 @@
 // dağın içinde tünel ve mağara oyuğu, sınırın ötesinde yükselen tepeler. Zemin mesh'i, yürünebilirlik
 // (çarpışma sınırları marching squares ile), mağara tavanı, nehir suyu ve şelale hep buradan çıkar.
 import * as THREE from "three";
-import { WORLD_BOUNDS } from "../../../shared/constants";
-import { BRIDGE, BRIDGES, CAVE, LAKE, MOUNTAIN_EDGE, RIVER, RIVER_BANK, RIVER_HALF, TUNNEL, TUNNEL_HALF, WATERFALL } from "../../../shared/zones";
+import { outsideWorld, WORLD_EXTENT } from "../../../shared/constants";
+import { BRIDGE, BRIDGES, CAVE, CITY, LAKE, MOUNTAIN_EDGE, RIVER, RIVER_BANK, RIVER_HALF, TUNNEL, TUNNEL_HALF, WATERFALL } from "../../../shared/zones";
 import type { Colliders } from "./colliders";
 import { timeUniform } from "./geo";
 import { waterEnv } from "./zones";
@@ -19,7 +19,10 @@ const CAP_START = 7.5;
 const FINE = 2;
 const COARSE = 8;
 const INNER = { minX: -144, maxX: 136, minZ: -96, maxZ: 168 };
-const OUTER = { minX: -264, maxX: 256, minZ: -224, maxZ: 296 };
+/** Doğu: vadi yolu ve GAP Şehri (ince ızgara; kenarları kaba ızgaraya oturur). */
+const EAST = { minX: 136, maxX: 568, minZ: -312, maxZ: 72 };
+const OUTER = { minX: -264, maxX: 720, minZ: -400, maxZ: 296 };
+const inArea = (a: { minX: number; maxX: number; minZ: number; maxZ: number }, x: number, z: number) => x > a.minX && x < a.maxX && z > a.minZ && z < a.maxZ;
 
 // ---------------------------------------------------------------------------
 // Gürültü ve yardımcılar
@@ -134,11 +137,9 @@ function bowl(d: number, inner: number, outer: number): number {
   return -BED * (1 - smooth(inner, outer, d));
 }
 
-/** Sınırın dışına uzaklık (içinde 0). */
+/** Yürünür alanın (köy, yol koridoru, şehir) dışına uzaklık (içinde 0). */
 function outsideBounds(x: number, z: number): number {
-  const b = WORLD_BOUNDS;
-  const dx = Math.max(b.minX - x, 0, x - b.maxX), dz = Math.max(b.minZ - z, 0, z - b.maxZ);
-  return Math.hypot(dx, dz);
+  return outsideWorld(x, z);
 }
 
 /** Zeminin son yüksekliği. */
@@ -149,7 +150,13 @@ export function terrainHeight(x: number, z: number): number {
     if (out < 2) h *= smooth(-0.2, 1.8, out);
   }
   const o = outsideBounds(x, z);
-  if (o > 4) h = Math.max(h, Math.min(8, (o - 4) * 0.22) + (noise(x * 0.08, z * 0.08) - 0.5) * 1.6 * Math.min(1, (o - 4) / 6));
+  // Doğuda (vadi ve şehir) yamaçlar daha dik ve yüksek: yol iki tepe arasından geçer
+  const east = smooth(118, 150, x);
+  // Şehrin çevresinde tepeler daha alçak ve yayvan: şehirden bakınca duvar gibi durmasın
+  const town = smooth(CITY.minX - 50, CITY.minX - 10, x);
+  const o0 = 4 - 1.5 * east;
+  const cap = 8 + 16 * east - 9 * town, slope = 0.22 + 0.4 * east - 0.22 * town;
+  if (o > o0) h = Math.max(h, Math.min(cap, (o - o0) * slope) + (noise(x * 0.08, z * 0.08) - 0.5) * (1.6 + 2.4 * east) * Math.min(1, (o - o0) / 6));
   const rd = riverDist(x, z);
   if (rd < RIVER_BANK) h = Math.min(h, bowl(rd, RIVER_HALF * 0.55, RIVER_BANK));
   const ld = Math.hypot(x - LAKE.x, z - LAKE.z);
@@ -165,8 +172,8 @@ export function terrainHeight(x: number, z: number): number {
  * arasında mesh'ten yüksekte kalabilir).
  */
 export function groundY(x: number, z: number): number {
-  const inner = x > INNER.minX && x < INNER.maxX && z > INNER.minZ && z < INNER.maxZ;
-  const area = inner ? INNER : OUTER, cell = inner ? FINE : COARSE;
+  const fine = inArea(INNER, x, z) ? INNER : inArea(EAST, x, z) ? EAST : null;
+  const area = fine ?? OUTER, cell = fine ? FINE : COARSE;
   const gx = (x - area.minX) / cell, gz = (z - area.minZ) / cell;
   const i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j;
   const X = area.minX + i * cell, Z = area.minZ + j * cell;
@@ -182,7 +189,7 @@ export function groundY(x: number, z: number): number {
 /** Engel değeri: > 0 yürünemez (dik/yüksek ya da su), < 0 yürünür. Köprüler hep yürünür. */
 function blockField(x: number, z: number): number {
   if (onBridge(x, z)) return -1;
-  const b = WORLD_BOUNDS;
+  const b = WORLD_EXTENT;
   if (x < b.minX - 2 || x > b.maxX + 2 || z < b.minZ - 2 || z > b.maxZ + 2) return 1;
   const h = terrainHeight(x, z);
   return Math.max(h - 0.45, -0.15 - h);
@@ -198,7 +205,7 @@ export function walkable(x: number, z: number): boolean {
  * olarak eklenir (nehir kıyısı, göl, dağ eteği, tünel ve mağara duvarları, köprü korkulukları).
  */
 export function terrainColliders(c: Colliders): void {
-  const b = WORLD_BOUNDS;
+  const b = WORLD_EXTENT;
   const x0 = b.minX - 2, z0 = b.minZ - 2;
   const nx = Math.ceil((b.maxX - b.minX + 4) / FINE), nz = Math.ceil((b.maxZ - b.minZ + 4) / FINE);
   const f = new Float32Array((nx + 1) * (nz + 1));
@@ -299,13 +306,17 @@ export interface Terrain {
 export function buildTerrain(grass: (x: number, z: number, out: THREE.Color) => THREE.Color): Terrain {
   const color = (x: number, z: number, h: number, out: THREE.Color) => terrainColor(x, z, h, grass, out);
   const inner = grid(INNER, FINE, terrainHeight, color, () => false);
-  const outer = grid(OUTER, COARSE, terrainHeight, color, (x, z) => x > INNER.minX && x < INNER.maxX && z > INNER.minZ && z < INNER.maxZ);
+  const east = grid(EAST, FINE, terrainHeight, color, () => false);
+  const outer = grid(OUTER, COARSE, terrainHeight, color, (x, z) => inArea(INNER, x, z) || inArea(EAST, x, z));
   const ground = new THREE.BufferGeometry();
   const merge = (name: string) => {
-    const a = inner.getAttribute(name).array as Float32Array, b = outer.getAttribute(name).array as Float32Array;
-    const out = new Float32Array(a.length + b.length);
-    out.set(a);
-    out.set(b, a.length);
+    const parts = [inner, east, outer].map((g) => g.getAttribute(name).array as Float32Array);
+    const out = new Float32Array(parts.reduce((n, a) => n + a.length, 0));
+    let at = 0;
+    for (const a of parts) {
+      out.set(a, at);
+      at += a.length;
+    }
     ground.setAttribute(name, new THREE.BufferAttribute(out, 3));
   };
   merge("position");

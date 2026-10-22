@@ -27,6 +27,10 @@ services:
       # Hızlı yol (WebRTC/UDP): konum ve snapshot'lar. Sunucunun güvenlik duvarında 40000/udp açık olmalı;
       # kapalıysa istemciler birkaç saniye içinde WebSocket'le devam eder.
       - WORLD_RTC_PORT=40000
+      # Casino test coin bakiyeleri gibi küçük kalıcı veriler
+      - WORLD_DATA_DIR=/data
+    volumes:
+      - world-data:/data
     ports:
       - "40000:40000/udp"
     logging:
@@ -34,3 +38,6 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+
+volumes:
+  world-data:

@@ -4,9 +4,9 @@
 // yalnızca oyuncunun çevresindeki kutuda, uzakta zemin lekeleri devralır.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { WORLD_BOUNDS } from "../../../shared/constants";
+import { outsideWorld, WORLD_BOUNDS } from "../../../shared/constants";
 import type { Weather } from "../../../shared/protocol";
-import { BRIDGE, CAVE, HALL, KAHVEHANE, LAKE, PLAZA, RIVER, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
+import { BRIDGE, CAVE, CITY, HALL, KAHVEHANE, LAKE, PLAZA, RIVER, ROAD_PATH, ROAD_WALK, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
 import { HOOD, HOOD_BOX, HOOD_GAP, PLOT_SIZE } from "../../../shared/build";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
@@ -21,6 +21,10 @@ import { type Pitch, pitch } from "./pitch";
 import { djBooth, type StageLights, stageLights, stageTruss } from "./stageFx";
 import { addRipple, dungeon, GROVE, grove, GROVE_SIGN, GROVE_SIGN_RY, POND, pond, signPost, steppingStones, waterEnv, waterMaterial } from "./zones";
 import { BRIDGE_AXES, buildTerrain, groundY, inCave, mountainHeight, riverMesh, terrainColliders, walkable, WATER_Y, waterfallMesh } from "./terrain";
+import { casino } from "./casino";
+import { city, type CityNpc, type Room } from "./city";
+import { type RaceTrack, raceTrack } from "./raceTrack";
+import { garage, type GarageView } from "./garage";
 import { hall } from "./hall";
 import { cave } from "./cave";
 import { FAME } from "./fame";
@@ -70,6 +74,16 @@ export interface World {
   speakers: { x: number; y: number; z: number }[];
   /** Güneşin gökteki yönü (ufkun altındaysa y < 0): ışık huzmeleri ve lens parlaması için. */
   sunDir: THREE.Vector3;
+  /** Yalnızca arabaları durduran engeller (dükkân ve casino kapıları). */
+  carColliders: Colliders;
+  /** Şehirdeki dükkân çalışanları. */
+  npcs: CityNpc[];
+  /** GAP Ring yarış pisti (start lambaları). */
+  race: RaceTrack;
+  /** GAP Garaj (tuning atölyesi): işaret nabzı. */
+  garage: GarageView;
+  /** (x, z) girilebilir bir dükkânın içindeyse o oda. */
+  roomAt(x: number, z: number): Room | null;
 }
 
 export type Season = "spring" | "summer" | "autumn" | "winter";
@@ -166,7 +180,7 @@ function screenTexture(): THREE.CanvasTexture {
 
 /** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
 /** Meydandaki yön tabelası (doğma noktasından kuzeye bakana göre oklar). */
-const DIRECTIONS = ["↑ KAHVEHANE · GÖL", "↑ MAHALLE (İNŞA)", "↗ SİNEMA · DJ", "↗ SAKURA BAHÇESİ", "→ ŞÖHRET KÜRSÜSÜ", "→ KÖPRÜ · KAPALI SAHA", "→ ŞELALE · ZİNDAN", "→ TANK", "↓ MANGAL"];
+const DIRECTIONS = ["↑ KAHVEHANE · GÖL", "↑ MAHALLE (İNŞA)", "↗ SİNEMA · DJ", "↗ SAKURA BAHÇESİ", "→ GAP ŞEHRİ · CASINO", "→ ŞÖHRET KÜRSÜSÜ", "→ KÖPRÜ · KAPALI SAHA", "→ ŞELALE · ZİNDAN", "→ TANK", "↓ MANGAL"];
 const SIGN_DUNGEON = 0;
 const SIGN_GROVE = 1;
 const SIGN_KAHVE = 2;
@@ -223,7 +237,9 @@ function directionPost(b: Builder): SignSpec[] {
   b.add(part(new THREE.CylinderGeometry(0.08, 0.1, 3.7, 6), "#5b3f25", mat(x, 1.85, z)));
   b.add(part(new THREE.ConeGeometry(0.16, 0.25, 6), "#5b3f25", mat(x, 3.8, z)));
   b.colliders.circle(x, z, 0.15);
-  return DIRECTIONS.map((_, i) => ({ at: mat(x, 3.55 - i * 0.33, z + 0.09), w: 1.7, h: 0.3, cell: SIGN_DIR + i }));
+  // Her levhanın arkasında ahşap tahta: levha direğin önünde durur, direk içinden geçmez
+  for (let i = 0; i < DIRECTIONS.length; i++) b.add(part(new THREE.BoxGeometry(1.74, 0.29, 0.04), "#6b4a2b", mat(x, 3.55 - i * 0.33, z + 0.125)));
+  return DIRECTIONS.map((_, i) => ({ at: mat(x, 3.55 - i * 0.33, z + 0.15), w: 1.7, h: 0.3, cell: SIGN_DIR + i }));
 }
 
 // ---------------------------------------------------------------------------
@@ -396,7 +412,7 @@ function nature(b: Builder): void {
     for (let i = 0; i < n; i++) {
       const out = 2 + b.rand() * (i % 3 ? 8 : 18);
       const [x, z] = at((i + b.rand() * 0.5) / n, out);
-      if (mountainHeight(x, z) > 1) continue;
+      if (mountainHeight(x, z) > 1 || outsideWorld(x, z) < 2) continue;
       tree(x, z, 0.9 + b.rand() * 1.0, false);
     }
   };
@@ -417,6 +433,33 @@ function nature(b: Builder): void {
     const slope = Math.abs(mountainHeight(x + 1.5, z) - mountainHeight(x - 1.5, z)) + Math.abs(mountainHeight(x, z + 1.5) - mountainHeight(x, z - 1.5));
     if (slope > 5) continue;
     tree(x, z, 0.8 + b.rand() * 0.8, false, "pine");
+    n++;
+  }
+  // Vadi: yolun iki yanındaki yamaçlarda çam ve meşe, kayalar
+  for (let i = 0; i < ROAD_PATH.length - 1; i += 2) {
+    const [ax, az] = ROAD_PATH[i], [bx, bz] = ROAD_PATH[i + 1];
+    if (ax < W.maxX + 4 || ax > CITY.minX - 6) continue;
+    const l = Math.hypot(bx - ax, bz - az) || 1, nx = -(bz - az) / l, nz = (bx - ax) / l;
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < 2; k++) {
+        const o = ROAD_WALK + 2 + b.rand() * 26;
+        const x = ax + nx * o * side + rand(-1, 1), z = az + nz * o * side + rand(-1, 1);
+        if (outsideWorld(x, z) < 1.5) continue;
+        tree(x, z, 0.8 + b.rand() * 0.9, false, b.rand() > 0.3 ? "pine" : "oak");
+      }
+      if (b.rand() < 0.25) {
+        const o = ROAD_WALK + 1 + b.rand() * 4, sz = 0.8 + b.rand() * 1.6;
+        const x = ax + nx * o * side, z = az + nz * o * side;
+        b.prop("rock", mat(x, heightAt(x, z) + 0.1 * sz, z, b.rand() * 6, sz, sz * 0.7, sz));
+      }
+    }
+  }
+  // Şehrin çevresindeki tepeler: ağaçlık
+  for (let i = 0, n = 0; n < 220 && i < 4000; i++) {
+    const x = rand(CITY.minX - 40, CITY.maxX + 40), z = rand(CITY.minZ - 40, CITY.maxZ + 40);
+    const o = outsideWorld(x, z);
+    if (o < 2 || o > 40) continue;
+    tree(x, z, 0.9 + b.rand() * 1.1, false, b.rand() > 0.35 ? "pine" : "oak");
     n++;
   }
   for (const [cx, cz, cr] of FOREST_CLUSTERS) {
@@ -560,6 +603,11 @@ function paths(b: Builder): void {
   route([12, -12], [SAKURA.x - 8.4, SAKURA.z + 6.6]);
   route([22, -14], [TANK_PARK.x - 5, TANK_PARK.z]);
   route([TANK_PARK.x, TANK_PARK.z + 5], [H.x + 4, H.z - H.hd - 1.5]);
+  // Casinonun ön meydanı → sinema–tank yolu ve tank parkı
+  // Şehre giden asfaltın köydeki başı → sinema–tank yolu ve tank parkı
+  const [roadX, roadZ] = ROAD_PATH[0];
+  route([roadX - 4.5, roadZ + 1], [60, 4.7]);
+  route([roadX - 1, roadZ + 5.2], [TANK_PARK.x + 2, TANK_PARK.z - 5]);
 }
 
 function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matrix4[]): void {
@@ -748,6 +796,8 @@ function mountains(b: Builder): THREE.Mesh {
     const h = 30 + b.rand() * 48;
     const rad = 16 + b.rand() * 18;
     const x = CENTER.x + Math.sin(a) * dist, z = CENTER.z + Math.cos(a) * dist;
+    // Vadi: yol halkanın arasından geçer (yolun üstüne düşen zirve yok)
+    if (outsideWorld(x, z) < rad + 6) continue;
     peak(x, z, h, rad, -2);
     // Yan zirveler: aynı sırtta, alçak
     const tx = Math.cos(a), tz = -Math.sin(a);
@@ -756,6 +806,15 @@ function mountains(b: Builder): THREE.Mesh {
       const off = rad * (0.6 + b.rand() * 0.5) * side;
       peak(x + tx * off, z + tz * off, h * (0.45 + b.rand() * 0.3), rad * (0.6 + b.rand() * 0.25), -2);
     }
+  }
+  // GAP Şehri'nin çevresi: doğu, kuzey ve güneyde ayrı bir dağ halkası (batısı köyün halkası)
+  const town = { x: (CITY.minX + CITY.maxX) / 2, z: (CITY.minZ + CITY.maxZ) / 2 };
+  for (let i = 0; i < 40; i++) {
+    const a = (i / 40) * Math.PI * 2 + b.rand() * 0.1;
+    const dist = 165 + b.rand() * 40, h = 34 + b.rand() * 50, rad = 18 + b.rand() * 18;
+    const x = town.x + Math.sin(a) * dist, z = town.z + Math.cos(a) * dist;
+    if (x < CITY.minX - 20 || outsideWorld(x, z) < rad + 10) continue;
+    peak(x, z, h, rad, -2);
   }
   const m = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, fog: false }));
   m.matrixAutoUpdate = false;
@@ -773,6 +832,11 @@ function clouds(b: Builder): THREE.InstancedMesh {
     const a = b.rand() * Math.PI * 2;
     const r = 30 + b.rand() * 190;
     mats.push(mat(CENTER.x + Math.sin(a) * r, 55 + b.rand() * 25, CENTER.z + Math.cos(a) * r, b.rand() * 6, 1 + b.rand() * 1.2));
+  }
+  // Şehrin üstünde: gökdelenlerden yüksekte
+  for (let i = 0; i < 22; i++) {
+    const a = b.rand() * Math.PI * 2, r = 20 + b.rand() * 150;
+    mats.push(mat((CITY.minX + CITY.maxX) / 2 + Math.sin(a) * r, 85 + b.rand() * 25, (CITY.minZ + CITY.maxZ) / 2 + Math.cos(a) * r, b.rand() * 6, 1.2 + b.rand() * 1.4));
   }
   const m = instanced(puff, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, fog: false, emissive: "#9aa9bd" }), mats);
   m.matrixAutoUpdate = true;
@@ -988,6 +1052,15 @@ export function buildWorld(opts: WorldOptions = {}): World {
   scene.add(field.group);
   const sports = hall(b);
   scene.add(sports.upper);
+  const cas = casino(b, opts.lamps ?? 6);
+  scene.add(cas.group);
+  const town = city(b);
+  scene.add(town.group);
+  const ring = raceTrack(b);
+  scene.add(ring.group);
+  const shop = garage(b);
+  scene.add(shop.group);
+  const rooms = [...town.rooms, shop.room];
   djBooth(b);
   stageTruss(b);
   const lights = stageLights();
@@ -1105,6 +1178,14 @@ export function buildWorld(opts: WorldOptions = {}): World {
     scene,
     colliders: b.colliders,
     seats: b.seats,
+    carColliders: b.carColliders,
+    npcs: [...town.npcs, ...cas.npcs],
+    race: ring,
+    garage: shop,
+    roomAt(x: number, z: number) {
+      for (const r of rooms) if (x > r.minX && x < r.maxX && z > r.minZ && z < r.maxZ) return r;
+      return null;
+    },
     fame,
     screen,
     spawn: { ...SPAWN },
@@ -1116,7 +1197,10 @@ export function buildWorld(opts: WorldOptions = {}): World {
       wetUniform.value = wet < wetTarget ? Math.min(wetTarget, wet + dt / 40) : Math.max(wetTarget, wet - dt / 240);
       night.update(time, env.lights, focus?.x ?? SPAWN.x, focus?.z ?? SPAWN.z);
       // İçerideyken salonun çatısı ve mağaranın tavanı gizlenir: kamera içeriyi görsün
-      sports.update(focus, camera, Math.min(0.1, Math.max(0, time - hallTime)));
+      const hallDt = Math.min(0.1, Math.max(0, time - hallTime));
+      sports.update(focus, camera, hallDt);
+      cas.update(time, hallDt, focus, camera, env.lights);
+      town.update(time, env.lights);
       hallTime = time;
       terrain.cap.visible = !(focus && inCave(focus.x, focus.z));
       music += ((musicOn ? 1 : 0) - music) * 0.08;
@@ -1130,6 +1214,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
       coalColor.copy(coalA).lerp(coalB, Math.min(1, flick + boost * 0.5));
       if (fire) fire.intensity = (0.6 + env.lights * 3.2) * (0.75 + 0.35 * flick + boost * 0.4);
       dayNight.update(Date.now());
+      // Dükkânın içinde: kulenin güneş gölgesi içeriyi (ve çalışanları) karartmasın
+      if (focus && rooms.some((r) => focus.x > r.minX && focus.x < r.maxX && focus.z > r.minZ && focus.z < r.maxZ)) sun.shadow.intensity = 0;
       waterEnv.uNight.value = 1 - env.day;
       // Damlalar ışıktan etkilenmez: gece gökyüzüyle birlikte kararsınlar
       fnt.light.value = 0.35 + 0.65 * Math.min(1, hemi.intensity / 1.6);

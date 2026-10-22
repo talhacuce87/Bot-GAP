@@ -137,4 +137,30 @@ export const sfx = {
     burst(0.05, 0.4, 7000);
     burst(0.06, 0.3, 5000, 0.08);
   },
+  /** Casino: kart kayışı, çip, makara durması, rulet topunun tıkırtısı, kazanç. */
+  card(): void {
+    burst(0.07, 0.22, 5200);
+  },
+  chip(): void {
+    tone(2100, 0.05, "triangle", 0.07);
+    tone(2900, 0.04, "triangle", 0.05, 0.03);
+  },
+  reel(): void {
+    tone(180, 0.09, "square", 0.06, 0, -80);
+    burst(0.05, 0.15, 1800);
+  },
+  tick(gain = 1): void {
+    tone(3200, 0.02, "square", 0.025 * gain);
+  },
+  /** Yarış: start lambası bip'i (son lambada ince), start (yükselen), tur ve bitiş. */
+  raceBeep(go = false): void {
+    if (go) [880, 1175].forEach((f, i) => tone(f, 0.28, "square", 0.06, i * 0.06));
+    else tone(440, 0.16, "square", 0.05);
+  },
+  lap(): void {
+    [784, 988].forEach((f, i) => tone(f, 0.16, "triangle", 0.08, i * 0.1));
+  },
+  win(big = false): void {
+    (big ? [523, 659, 784, 1047, 1319, 1568] : [659, 784, 1047]).forEach((f, i) => tone(f, 0.22, "triangle", 0.09, i * 0.08));
+  },
 };

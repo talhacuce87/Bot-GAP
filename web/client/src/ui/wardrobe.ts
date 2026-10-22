@@ -17,6 +17,13 @@ const TABS: { key: Tab; label: string; focus: PreviewFocus; region: ThumbRegion 
   { key: "colors", label: "Renkler", focus: "body", region: "torso" },
 ];
 
+/** Dükkânda açılan gardırop: yalnızca o dükkânın işi (berberde saç, modada kıyafet). */
+export type WardrobeShop = "barber" | "fashion";
+const SHOP: Record<WardrobeShop, { kicker: string; title: string; tabs: Tab[]; colors: LookColor[] }> = {
+  barber: { kicker: "BERBER CEMİL", title: "BERBER", tabs: ["hair", "facial", "colors"], colors: ["hair"] },
+  fashion: { kicker: "GAP AVM", title: "GAP MODA", tabs: ["tops", "bottoms", "shoes", "hats", "glasses"], colors: [] },
+};
+
 /** Kategori simgeleri (24×24 çizgi). */
 const ICONS: Record<Tab, string> = {
   hair: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12"/>',
@@ -108,6 +115,11 @@ export class Wardrobe {
   private saveBtn: HTMLButtonElement;
   private levelEl: HTMLSpanElement;
   private tab: Tab = "hair";
+  /** Gösterilen sekmeler ve renkler (dükkânda kısıtlı). */
+  private tabs = TABS;
+  private colorKeys = Object.keys(PALETTES) as LookColor[];
+  private kickerEl: HTMLSpanElement;
+  private titleEl: HTMLHeadingElement;
   private look: Look = {};
   /** Açılışta kayıtlı kıyafet (Sıfırla buna döner; kart resimleri bunun üzerine giydirilir). */
   private saved: Look = {};
@@ -129,8 +141,8 @@ export class Wardrobe {
     // ---- Üst şerit: başlık, oyuncu, kapat ----
     const top = el("header", "wd-top", this.panel);
     const title = el("div", "wd-title", top);
-    el("span", "wd-kicker", title).textContent = "KARAKTER";
-    el("h2", "", title).textContent = "GARDIROP";
+    this.kickerEl = el("span", "wd-kicker", title);
+    this.titleEl = el("h2", "", title);
     const player = el("div", "wd-player", top);
     el("span", "wd-player-name", player).textContent = playerName;
     this.levelEl = el("span", "wd-level", player);
@@ -232,10 +244,17 @@ export class Wardrobe {
     else this.open();
   }
 
-  /** `tab` verilirse o sekmeyle açılır (hair, tops, colors…). */
-  open(tab?: string): void {
-    const t = TABS.find((x) => x.key === tab);
+  /** `tab` verilirse o sekmeyle açılır (hair, tops, colors…); `shop` verilirse yalnızca o dükkânın sekmeleri. */
+  open(tab?: string, shop?: WardrobeShop): void {
+    const s = shop ? SHOP[shop] : null;
+    this.tabs = s ? TABS.filter((x) => s.tabs.includes(x.key)) : TABS;
+    this.colorKeys = s ? s.colors : (Object.keys(PALETTES) as LookColor[]);
+    this.kickerEl.textContent = s?.kicker ?? "KARAKTER";
+    this.titleEl.textContent = s?.title ?? "GARDIROP";
+    this.panel.classList.toggle("shop", !!s);
+    const t = this.tabs.find((x) => x.key === tab);
     if (t) this.tab = t.key;
+    else if (!this.tabs.some((x) => x.key === this.tab)) this.tab = this.tabs[0].key;
     this.isOpen = true;
     this.info = null;
     this.dirty = false;
@@ -336,8 +355,8 @@ export class Wardrobe {
   }
 
   private step(dir: number): void {
-    const i = TABS.findIndex((t) => t.key === this.tab);
-    this.select(TABS[(i + dir + TABS.length) % TABS.length].key);
+    const i = this.tabs.findIndex((t) => t.key === this.tab);
+    this.select(this.tabs[(i + dir + this.tabs.length) % this.tabs.length].key);
   }
 
   private labelOf(slot: LookSlot): string {
@@ -347,7 +366,7 @@ export class Wardrobe {
 
   private renderRail(): void {
     this.rail.replaceChildren(
-      ...TABS.map((t) => {
+      ...this.tabs.map((t) => {
         const b = el("button", `wd-slot${t.key === this.tab ? " active" : ""}`);
         icon(t.key, b);
         const text = el("span", "wd-slot-text", b);
@@ -355,7 +374,7 @@ export class Wardrobe {
         const value = el("strong", "", text);
         if (t.key === "colors") {
           value.className = "wd-dots";
-          for (const c of Object.keys(PALETTES) as LookColor[]) {
+          for (const c of this.colorKeys) {
             el("i", "", value).style.background = this.look.colors?.[c] ?? PALETTES[c].colors[c === "hair" ? 1 : 0];
           }
         } else {
@@ -368,8 +387,8 @@ export class Wardrobe {
   }
 
   private renderHead(count: number): void {
-    this.listTitle.textContent = this.tabInfo().label;
-    this.listCount.textContent = this.tab === "colors" ? "Ten · Saç · Göz" : `${count} parça`;
+    this.listTitle.textContent = this.tab === "colors" && this.colorKeys.length === 1 ? `${PALETTES[this.colorKeys[0]].label} rengi` : this.tabInfo().label;
+    this.listCount.textContent = this.tab === "colors" ? this.colorKeys.map((k) => PALETTES[k].label).join(" · ") : `${count} parça`;
     this.search.hidden = this.tab === "colors";
   }
 
@@ -444,7 +463,7 @@ export class Wardrobe {
   private colorsView(): HTMLElement {
     this.renderHead(0);
     const wrap = el("div", "wd-colors");
-    for (const key of Object.keys(PALETTES) as LookColor[]) {
+    for (const key of this.colorKeys) {
       const section = el("div", "wd-color-section", wrap);
       el("div", "wd-group", section).append(Object.assign(el("span", ""), { textContent: PALETTES[key].label }));
       const row = el("div", "wd-color-row", section);
