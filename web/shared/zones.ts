@@ -158,3 +158,88 @@ export const RACE_TRACK_Y = 0.3;
 export const GROVE = { x: -112, z: 118 };
 /** Şöhret Kürsüsü: meydanın doğusu, yüzü meydana dönük. */
 export const FAME = { x: -72, z: 72 };
+
+// ---- Vadi yolu ve GAP Şehri: köyün doğusundan (eski casino yeri) vadiden geçen asfalt, sonunda şehir ----
+
+/** Yolun kontrol noktaları (x, z): köyde başlar, vadide kıvrılır, şehrin bulvarına bağlanır. */
+export const ROAD_POINTS: [number, number][] = [
+  [96, -40], [125, -40], [160, -30], [200, -27], [240, -42], [280, -55], [320, -49], [352, -41], [386, -40],
+];
+/** Asfaltın yarı genişliği (iki şerit) ve koridorun yürünür yarı genişliği (banketler dahil). */
+export const ROAD_HALF = 4.2;
+export const ROAD_WALK = 10;
+
+/** Catmull-Rom ile yumuşatılmış orta çizgi, ~2 m aralıkla (asfalt, arazi ve ileride arabalar aynı çizgiyi izler). */
+export const ROAD_PATH: [number, number][] = (() => {
+  const P = ROAD_POINTS, out: [number, number][] = [];
+  for (let i = 0; i < P.length - 1; i++) {
+    const p0 = P[Math.max(0, i - 1)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(P.length - 1, i + 2)];
+    const n = Math.max(2, Math.round(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / 2));
+    for (let k = 0; k < n; k++) {
+      const t = k / n, t2 = t * t, t3 = t2 * t;
+      const f = (a: number, b: number, c: number, d: number) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push([f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]);
+    }
+  }
+  out.push(P[P.length - 1]);
+  return out;
+})();
+const ROAD_BOX = (() => {
+  const xs = ROAD_PATH.map((p) => p[0]), zs = ROAD_PATH.map((p) => p[1]), m = ROAD_WALK + 40;
+  return { minX: Math.min(...xs) - m, maxX: Math.max(...xs) + m, minZ: Math.min(...zs) - m, maxZ: Math.max(...zs) + m };
+})();
+
+/** Yolun orta çizgisine uzaklık (uzaktaysa Infinity). */
+export function roadDist(x: number, z: number): number {
+  const b = ROAD_BOX;
+  if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return Infinity;
+  let best = Infinity;
+  const P = ROAD_PATH;
+  for (let i = 0; i < P.length - 1; i++) {
+    const [ax, az] = P[i], [bx, bz] = P[i + 1];
+    const ex = bx - ax, ez = bz - az;
+    const t = Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / (ex * ex + ez * ez)));
+    const d = Math.hypot(x - ax - ex * t, z - az - ez * t);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** Şehrin yürünür alanı (çevresi tepe). */
+export const CITY = { minX: 384, maxX: 548, minZ: -120, maxZ: 40 };
+/**
+ * Şehrin cadde ağı: her biri asfaltın orta çizgisi (a → b), asfalt yarı genişliği ve kaldırım genişliği.
+ * Bulvar yolun devamı (dört şerit, ortada refüj).
+ */
+export interface Street {
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  half: number;
+  walk: number;
+}
+export const BOULEVARD_Z = -40;
+export const STREETS: Street[] = [
+  { ax: CITY.minX, az: BOULEVARD_Z, bx: CITY.maxX, bz: BOULEVARD_Z, half: 7.5, walk: 4 },
+  { ax: 424, az: CITY.minZ, bx: 424, bz: CITY.maxZ, half: 5, walk: 3 },
+  { ax: 508, az: CITY.minZ, bx: 508, bz: CITY.maxZ, half: 5, walk: 3 },
+  { ax: 466, az: BOULEVARD_Z, bx: 466, bz: CITY.maxZ, half: 5, walk: 3 },
+  { ax: CITY.minX, az: 10, bx: CITY.maxX, bz: 10, half: 5, walk: 3 },
+];
+
+// ---- Casino: GAP Şehri'nin merkezinde, bulvara bakar; beyaz mermer, altın detay, iki kat ----
+/**
+ * Zemin kat çift yükseklikte oyun salonu; kuzey şeridinde dolu bir kaidenin üstünde VIP katı (`floor2`).
+ * İki yan duvar boyunca merdivenler. Giriş güney cephesinin ortasında (`door` kapının yarı genişliği);
+ * ön meydanı bulvarın kaldırımına kadar uzanır.
+ */
+export const CASINO = { x: 466, z: -78, hw: 17, hd: 13, h: 12, floor2: 4.8, door: 3 };
+/**
+ * GAP Garaj: berberin arkasında, 508 caddesine (doğuya) bakan tuning atölyesi. Arabayla kepenkten girilir;
+ * içerideki parlayan işarete (`spot`, araba batıya bakar) gelince tuning ekranı açılır.
+ */
+export const GARAGE = { x: 493, z: -99, w: 14, d: 24, h: 6.5, door: 3.2, spot: { x: 493.5, z: -99, rot: -Math.PI / 2 } };
+
+/** VIP katının ön kenarı (z): bunun kuzeyi kat. */
+export const CASINO_MEZZ_Z = CASINO.z - CASINO.hd + 9;

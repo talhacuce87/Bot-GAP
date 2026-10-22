@@ -2,6 +2,8 @@
 // Konum ve snapshot'lar sunucu açtıysa hızlı yoldan (WebRTC/UDP, rtc.ts), olaylar her zaman WebSocket'ten.
 import { type Act, SEND_HZ } from "../../shared/constants";
 import type { Shot } from "../../shared/tank";
+import type { CarRadio, ParkedCar } from "../../shared/car";
+import type { RingView } from "../../shared/ring";
 import type { BattleState } from "../../shared/protocol";
 import type { PlotState } from "../../shared/build";
 import type { VBall, VolleyEv, VolleyState } from "../../shared/volley";
@@ -88,6 +90,14 @@ export class Net {
   onFireworks: (seed: number, at: number, count: number) => void = () => {};
   /** Kendi evcil hayvanımız/kamuflajımız sunucudan döndü (diğerlerininki Remotes'a yazılır). */
   onCosm: (sid: number, pet: string | null, skin: string | null) => void = () => {};
+  /** Casino: bakiye ve oyun sonuçları (yalnızca bu oyuncuya). */
+  onCasino: (ev: Extract<ServerEvent, { t: "wallet" | "bj" | "roulette" | "slot" }>) => void = () => {};
+  /** Bir arabanın radyosu değişti (kendininki dahil). */
+  onRadio: (sid: number, radio: CarRadio | null) => void = () => {};
+  /** Park halindeki araba (sid kendin de olabilir). */
+  onParked: (sid: number, parked: ParkedCar | null) => void = () => {};
+  /** GAP Ring yarış durumu. */
+  onRing: (ring: RingView) => void = () => {};
   onTable: (t: TableState) => void = () => {};
   onBall: (b: BallState) => void = () => {};
   onGoal: (side: 0 | 1, sid: number, name: string, score: [number, number], assist?: string, own?: boolean, f?: 1) => void = () => {};
@@ -383,6 +393,26 @@ export class Net {
         break;
       case "fireworks":
         this.onFireworks(ev.seed, ev.at, ev.count);
+        break;
+      case "car":
+        this.remotes.setCar(ev.sid, ev.car);
+        break;
+      case "wallet":
+      case "bj":
+      case "roulette":
+      case "slot":
+        this.onCasino(ev);
+        break;
+      case "radio":
+        this.remotes.setRadio(ev.sid, ev.radio);
+        this.onRadio(ev.sid, ev.radio);
+        break;
+      case "ring":
+        this.onRing(ev.ring);
+        break;
+      case "parked":
+        this.remotes.setParked(ev.sid, ev.parked);
+        this.onParked(ev.sid, ev.parked);
         break;
       case "cosm":
         this.remotes.setCosmetics(ev.sid, ev.pet, ev.skin);

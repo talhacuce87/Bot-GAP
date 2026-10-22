@@ -10,6 +10,11 @@ import { gzipSync } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
 import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
+import { validCar } from "../../shared/car";
+import { resolveRadio } from "./radio";
+import { Casino, type CasinoMsg, Wallets } from "./casino";
+import { RingHost, type RingMsg } from "./ring";
+import { CASINO } from "../../shared/zones";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
 import { CHAT_COOLDOWN_MS, CHAT_HISTORY, CINEMA_COOLDOWN_MS, cleanChat, parseCommand, runCommand } from "./chat";
@@ -32,6 +37,9 @@ function watchLink(w: Watch): string {
 }
 
 const PORT = Number(process.env.PORT || 3000);
+/** Kalıcı küçük veriler (casino bakiyeleri); Docker'da volume. */
+const DATA_DIR = process.env.WORLD_DATA_DIR || "data";
+const casino = new Casino(new Wallets(join(DATA_DIR, "casino-wallets.json")));
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
 const SHARED_SECRET = process.env.WORLD_SHARED_SECRET || "";
@@ -159,6 +167,15 @@ rooms.onCreate = (room) => {
   if (!room.battle) {
     room.games = new WorldGames(room, room.onReport, stageHost(room), () => weather.current);
     room.games.builds = new Builds(room, SHARED_SECRET ? botPost : null);
+    // Yarış ödülü casino cüzdanına (test coin) gider
+    room.ring = new RingHost(room, (sid, amount) => {
+      const p = room.players.get(sid);
+      if (!p) return;
+      const key = p.user.guest ? `guest:${p.user.id}` : p.user.id;
+      casino.wallets.add(key, amount);
+      room.sendTo(p.conn, { t: "wallet", balance: casino.wallets.get(key) });
+      room.sendTo(p.conn, { t: "notice", text: `🏆 Yarış ödülü: +${amount} GAP test coin` });
+    });
   }
 };
 
@@ -878,6 +895,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
     sendFast: (data) => fast?.send(data) ?? false,
   };
   const sid = room.join(user, conn, Date.now(), opts);
+  // Süren ya da bekleyen yarış varsa yeni gelen de görsün (grid, lambalar, sıralama)
+  if (room.ring && room.ring.session.phase !== "idle") ws.send(JSON.stringify({ t: "ring", ring: room.ring.view() }));
   const incoming: PlayerState = { x: 0, z: 0, rot: 0, flags: 0 };
   const onState = (buf: Buffer) => {
     const sentAt = decodeState(new DataView(buf.buffer, buf.byteOffset, buf.byteLength), incoming);
@@ -908,6 +927,13 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   if (share) ws.send(JSON.stringify({ t: "share", sid: share.sid, name: share.name }));
   const limiter = { last: 0 };
   let lastEmote = 0;
+  let lastCar = 0;
+  let lastPark = 0;
+  let lastRadio = 0;
+  let lastCasino = 0;
+  let lastRing = 0;
+  /** Casino cüzdanı: Discord hesabına bağlı (misafirde oturuma). */
+  const walletKey = user.guest ? `guest:${user.id}` : user.id;
   let lastAct = 0;
   let lastFish = 0;
   let lastFishQ = 0;
@@ -1017,6 +1043,43 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         }
       } else if (msg?.t === "cosm") {
         room.setCosmetics(sid, msg.pet, msg.skin);
+      } else if (msg?.t === "car") {
+        const now = Date.now();
+        if (now - lastCar < 300) return;
+        lastCar = now;
+        room.setCar(sid, validCar(msg.car));
+      } else if (msg?.t === "park") {
+        const now = Date.now();
+        if (now - lastPark < 250) return;
+        lastPark = now;
+        room.setParked(sid, msg.parked);
+      } else if (msg?.t === "casino" || msg?.t === "bj" || msg?.t === "roulette" || msg?.t === "slot") {
+        // Bakiye sorgusu ucuz: sınırsız. Oyun hamleleri çok hızlıysa da yanıt ver (istemci kilidini açsın).
+        const now = Date.now();
+        if (!(msg.t === "casino" && msg.op === "wallet")) {
+          if (now - lastCasino < 150) return ws.send(JSON.stringify({ t: "notice", text: "🎰 Biraz yavaş, bir an bekle." }));
+          lastCasino = now;
+        }
+        const st = room.players.get(sid)?.state;
+        const inside = !!st && Math.abs(st.x - CASINO.x) < CASINO.hw && Math.abs(st.z - CASINO.z) < CASINO.hd;
+        const out = casino.handle(sid, walletKey, msg as CasinoMsg, inside);
+        ws.send(JSON.stringify("error" in out ? { t: "notice", text: out.error } : out));
+      } else if (msg?.t === "ring") {
+        const now = Date.now();
+        if (now - lastRing < 300) return;
+        lastRing = now;
+        const err = room.ring?.handle(sid, msg as RingMsg, now);
+        if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
+      } else if (msg?.t === "radio") {
+        const now = Date.now();
+        if (now - lastRadio < 2000) return;
+        lastRadio = now;
+        if (typeof msg.url !== "string" || !msg.url.trim()) return room.setRadio(sid, null);
+        if (!room.players.get(sid)?.info.car) return;
+        void resolveRadio(msg.url.slice(0, 300)).then((r) => {
+          if ("error" in r) ws.send(JSON.stringify({ t: "notice", text: r.error }));
+          else room.setRadio(sid, { id: r.id, title: r.title, at: Date.now() });
+        });
       } else if (msg?.t === "profile" && typeof msg.sid === "number") {
         const now = Date.now();
         if (now - lastProfile < 1000) return;
@@ -1045,6 +1108,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
       s.closeSender();
       endShare(room, s);
     }
+    casino.leave(sid, walletKey);
     room.leave(sid);
     rooms.release(room);
   });

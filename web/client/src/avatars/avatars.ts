@@ -52,6 +52,8 @@ export interface AvatarView {
   hideName?: boolean;
   /** Avatar çizilmez (birinci şahıs kamerada kendin); gölge ve evcil hayvan kalır. */
   hidden?: boolean;
+  /** Yalnızca gövde çizilmez, isim etiketi kalır (Tofaştaki sürücü: kabine sığmaz, etiket tavanın üstünde). */
+  bodyHidden?: boolean;
 }
 
 /** İkili etkileşim animasyonunun süresi (sn). */
@@ -322,12 +324,12 @@ export class AvatarRenderer {
     l.vu = vd ? Math.min(1, vt / vd) : 0;
     l.vstance = v.vstance ?? undefined;
     l.time = time;
-    const asChibi = !v.hidden && (this.chibi?.place(v.outfit, v.x, v.z, this.m, l, self) ?? false);
-    if (seated && !vehicle && !asChibi) {
+    const asChibi = !v.hidden && !v.bodyHidden && (this.chibi?.place(v.outfit, v.x, v.z, this.m, l, self) ?? false);
+    if (seated && !vehicle && !asChibi && !v.bodyHidden) {
       y = base - SEAT_DROP;
       this.m.elements[13] = y;
     }
-    this.body.setMatrixAt(i, asChibi || v.hidden ? HIDDEN : this.m);
+    this.body.setMatrixAt(i, asChibi || v.hidden || v.bodyHidden ? HIDDEN : this.m);
     this.body.setColorAt(i, v.color);
 
     this.m.makeTranslation(v.x, y + NAME_Y * s + (vehicle === 1 ? 0.25 : 0), v.z);

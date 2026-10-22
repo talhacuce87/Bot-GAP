@@ -286,6 +286,24 @@ export class Remotes {
     r.info.skin = skin;
   }
 
+  /** Arabasının radyosu değişti. */
+  setRadio(sid: number, radio: PlayerInfo["radio"]): void {
+    const r = this.map.get(sid);
+    if (r) r.info.radio = radio;
+  }
+
+  /** Tofaşa bindi (araba) ya da indi (null). */
+  setCar(sid: number, car: PlayerInfo["car"]): void {
+    const r = this.map.get(sid);
+    if (r) r.info.car = car;
+  }
+
+  /** Park halindeki arabası değişti. */
+  setParked(sid: number, parked: PlayerInfo["parked"]): void {
+    const r = this.map.get(sid);
+    if (r) r.info.parked = parked;
+  }
+
   /** Sunucu taşıdı (stadyuma giriş/çıkış): ara geçiş olmadan oraya. */
   teleport(sid: number, x: number, z: number, rot: number, at = 0): void {
     const r = this.map.get(sid);

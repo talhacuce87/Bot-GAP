@@ -25,6 +25,11 @@ export interface HubActions {
   volley(): void;
   /** Evcil hayvan / kamuflaj değişti (sunucuya bildir). */
   cosmetics(): void;
+  /** Tofaşa bin ya da in. */
+  car(): void;
+  /** Tofaş garajı (görünüm). */
+  /** Araba radyosu paneli. */
+  radio(): void;
 }
 
 export class Hub {
@@ -77,6 +82,8 @@ export class Hub {
     tile(go, "🚶", "Yürü", () => this.a.vehicle(0));
     tile(go, "🚲", "Bisiklet", () => this.a.vehicle(1), actionLabel("vehicle"));
     tile(go, "🛹", "Kaykay", () => this.a.vehicle(2));
+    tile(go, "🚗", "Araçlarım", this.a.car, actionLabel("car"));
+    tile(go, "📻", "Araba radyosu", this.a.radio, actionLabel("radio"));
     el("div", "settings-note hub-note", body, "🛶 Kayık: gölün batısındaki iskelede F.");
 
     const fun = grid("Eğlence");

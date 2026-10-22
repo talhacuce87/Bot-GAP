@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { FLAG_RUNNING, FLAG_WALKING, vehicleOf, type Vehicle } from "../../shared/constants";
 import type { KickKind, MatchState } from "../../shared/protocol";
 import { assistedShot, attackSide, FINISH_RANGE, goalView } from "../../shared/football";
-import { DJ_BOOTH, DOCK, type Field, inStadium, KICK_REACH, PITCH, POND_AREA, RACE_HOUSE, STADIUM_PITCH, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
+import { CASINO, DJ_BOOTH, DOCK, type Field, inStadium, KICK_REACH, PITCH, POND_AREA, RACE_HOUSE, STADIUM_PITCH, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
 import { type Action, actionLabel, onBinds, profile, setProfile } from "./input/keybinds";
 import { RaceClient } from "./race";
 import { VolleyClient } from "./volley";
@@ -22,7 +22,14 @@ import type { Net } from "./net";
 import type { Player } from "./player";
 import { settings, updateSettings } from "./settings";
 import { BoardGameUi } from "./ui/boardGame";
+import { CasinoUi, fmt } from "./ui/casino/casinoUi";
+import { RingHud } from "./ui/ringHud";
+import { Vehicles } from "./vehicles";
+import { GRID, GRID_REACH, lightsAt, RACE_LAPS, type RingView, trackAt, trackProject } from "../../shared/ring";
 import type { Hud } from "./ui/hud";
+import { RadioPanel } from "./ui/radioPanel";
+import { RadioMixer, type RadioSource } from "./radio";
+import type { CarRadio } from "../../shared/car";
 import { Hub } from "./ui/hub";
 import { button, el, Panel } from "./ui/panel";
 import { canvasToJpeg, PhotoMode } from "./ui/photo";
@@ -37,6 +44,7 @@ import type { Pitch } from "./world/pitch";
 import { SCREEN_H, SCREEN_W, type World } from "./world/scene";
 import { ScreenGlow } from "./world/screenGlow";
 import { BuildWorld } from "./world/buildWorld";
+import type { Seat } from "./world/builder";
 import { BuildMode } from "./ui/buildUi";
 import { WeatherFx } from "./world/weather";
 
@@ -74,6 +82,8 @@ export interface FeatureContext {
   inCinema(): boolean;
   /** Sinemada bir şey oynuyor (perdede ya da tarayıcıda). */
   cinemaOn(): boolean;
+  /** Dükkân gardırobu: berberde yalnızca saç, modada yalnızca kıyafet. */
+  shopWardrobe(shop: "barber" | "fashion"): void;
 }
 
 /** Kişisel saat ayarı → saat; sinema modu en az bu kadar karanlık. */
@@ -155,8 +165,30 @@ export class Features {
   private lastMark = 0;
   private lastTagHud = 0;
   private teaMaker: AvatarView;
+  /** Şehirdeki dükkân çalışanları (world.npcs ile aynı sıra). */
+  private workers: AvatarView[];
+  /** Araçlar: park halindeki arabalar, Araçlarım menüsü (T), GAP Garaj tuning'i. */
+  private vehicles: Vehicles;
+  private radio = new RadioMixer();
+  private radioPanel: RadioPanel;
+  /** Kendi arabanın radyosu (sunucudan). */
+  private myRadio: CarRadio | null = null;
+  /** Yakında çalan şarkının etiketi. */
+  private radioChip: HTMLDivElement;
   private down = { x: 0, y: 0, at: 0 };
   private proj = new THREE.Vector3();
+  private casino: CasinoUi;
+  /** GAP Ring: sunucunun yarış durumu, arayüz, seçilen tur sayısı ve ses/uyarı için önceki değerler. */
+  private ring: RingView | null = null;
+  private raceHud: RingHud;
+  private raceLaps = 3;
+  private raceRed = 0;
+  private raceGreen = false;
+  /** Oturulan casino taburesinin oyunu ve oturma anı: kamera masaya yaklaşınca oyun ekranı açılır. */
+  private casinoSeat: { game: NonNullable<Seat["game"]>; at: number } | null = null;
+  /** Casinonun içindeyken bakiye etiketi. */
+  private casinoChip: HTMLDivElement;
+  private inCasino = false;
 
   constructor(private c: FeatureContext) {
     const { world, net, hud, hudRoot, me } = c;
@@ -165,7 +197,6 @@ export class Features {
     world.scene.add(this.weatherFx.group);
     // Mahalle: bloklar sahnede, çarpışmaya da katılır
     world.scene.add(this.buildWorld.group);
-    world.colliders.extra = this.buildWorld;
     this.build = new BuildMode(hudRoot, this.buildWorld, world.scene, c.canvas, c.camera, {
       userId: () => c.session.user.id,
       send: (ev) => net.send(ev),
@@ -265,7 +296,55 @@ export class Features {
       battle: c.battle,
       volley: () => this.volley.menu(),
       cosmetics: () => this.sendCosmetics(),
+      car: () => this.vehicles.menu.toggle(),
+      radio: () => this.toggleRadio(),
     });
+    this.radioPanel = new RadioPanel(hudRoot, {
+      play: (url) => net.send({ t: "radio", url }),
+      stop: () => net.send({ t: "radio", url: null }),
+    });
+    this.radioChip = document.createElement("div");
+    this.radioChip.className = "radio-chip";
+    hudRoot.append(this.radioChip);
+    c.life.onStop(() => this.radio.dispose());
+    this.casino = new CasinoUi(hudRoot, net, {
+      onClose: () => me.standUpNow(),
+      toast: (t) => hud.toast(t),
+    });
+    this.raceHud = new RingHud(hudRoot, () => net.send({ t: "ring", op: "leave" }));
+    net.onRing = (r) => this.onRace(r);
+    this.casinoChip = document.createElement("div");
+    this.casinoChip.className = "radio-chip cz-hudchip";
+    hudRoot.append(this.casinoChip);
+    net.onCasino = (ev) => {
+      this.casino.event(ev);
+      if (this.inCasino) this.casinoChip.textContent = `💰 ${fmt(this.casino.balance)} GAP · Oynamak için bir tabureye otur`;
+    };
+    // Reddedilen hamle bildirim olarak gelir: oyun ekranı beklemeyi bıraksın
+    const notice = net.onNotice;
+    net.onNotice = (text) => {
+      notice(text);
+      this.casino.failed();
+    };
+    this.vehicles = new Vehicles({
+      world, net, me, remotes: c.remotes, hud, hudRoot, camera: c.camera,
+      block: (on) => c.input.setBlocked(on),
+      racing: () => this.racing,
+      sparkle: (x, z) => c.emoteFx.emit(x, 0, z, FX_CELL.sparkle, performance.now() / 1000, undefined, 4),
+    });
+    // Mahalle blokları ve park halindeki arabalar birlikte çarpışır
+    world.colliders.extra = {
+      resolve: (p, r, y) => {
+        this.buildWorld.resolve(p, r, y);
+        this.vehicles.colliders.resolve(p, r, y);
+      },
+      groundAt: (x, z, r, y) => this.buildWorld.groundAt(x, z, r, y),
+    };
+    // Dükkân çalışanları: tezgâhlarının arkasında duran sabit karakterler
+    this.workers = world.npcs.map((n, i) => ({
+      x: n.x, z: n.z, rot: n.rot, flags: 0, alpha: 1, cell: c.atlas.alloc(n.name),
+      color: colorFor(`npc-${i}`), phase: 0.3 + i * 0.37, emote: -1, emoteAt: 0, jumpY: 0, outfit: n.outfit,
+    }));
 
     // ---- Ağ olayları ----
     net.onClock = (h) => (this.worldClock = h);
@@ -388,16 +467,28 @@ export class Features {
       if (me.onStage && s.singer !== net.you) me.setStage(false);
     };
     net.onCosm = () => {};
+    net.onRadio = (sid, radio) => {
+      if (sid !== net.you) return;
+      this.myRadio = radio;
+      this.radioPanel.set(radio);
+    };
     const prevWelcome = net.onStatus;
     net.onStatus = (s) => {
       prevWelcome(s);
       if (s === "online") this.sendCosmetics();
+      else this.vehicles.reset();
     };
 
     // 3B'de bir avatara tıklayınca oyuncu kartı (sürükleme değilse)
     c.canvas.addEventListener("pointerdown", (e) => (this.down = { x: e.clientX, y: e.clientY, at: performance.now() }));
     c.canvas.addEventListener("pointerup", (e) => {
       if (this.build.active || this.volley.active || c.input.locked || Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 6 || performance.now() - this.down.at > 400) return;
+      // Dükkân çalışanına tıklamak (yakındaysa) onunla konuşmak gibi: berber/moda gardırobu açılır
+      const npc = this.pickWorker(e.clientX, e.clientY);
+      if (npc >= 0) {
+        this.handleAct(`npc:${npc}`, performance.now());
+        return;
+      }
       const sid = this.pickAvatar(e.clientX, e.clientY);
       if (sid) this.profile.open(sid, this.nameOf(sid));
     });
@@ -459,9 +550,164 @@ export class Features {
   private setVehicle(v: Vehicle): void {
     const me = this.c.me;
     if (me.driving || me.jailed) return;
+    if (me.car && !this.vehicles.exit()) return;
+    if (me.car) return;
     if (me.vehicle === 3 && v !== 3) me.setVehicle(v, DOCK);
     else me.setVehicle(v);
     if (v) this.c.hud.toast(v === 1 ? "🚲 Bisiklete bindin (B: değiştir)" : v === 2 ? "🛹 Kaykaydasın (B: değiştir)" : "🛶 Kayıktasın: iskelede F ile in");
+  }
+
+  /** Radyo paneli: yalnızca arabadayken. */
+  private toggleRadio(): void {
+    if (!this.c.me.car && !this.radioPanel.isOpen) return this.c.hud.toast(`📻 Radyo için önce Tofaşa bin (${actionLabel("car")}).`);
+    this.radioPanel.toggle();
+  }
+
+  /** Radyolar: kendi arabanın ve yakındaki arabaların şarkıları, uzaklığa göre sesle; etiket. */
+  private updateRadios(serverNow: number): void {
+    const { me, remotes, net } = this.c;
+    if (!me.car) {
+      this.myRadio = null;
+      if (this.radioPanel.isOpen) this.radioPanel.close();
+    }
+    const sources: RadioSource[] = [];
+    if (me.car && this.myRadio) sources.push({ sid: net.you, radio: this.myRadio, x: me.x, z: me.z, own: true });
+    for (const r of remotes.map.values()) {
+      if (r.hasData && r.info.car && r.info.radio) sources.push({ sid: r.info.sid, radio: r.info.radio, x: r.x, z: r.z, own: false });
+    }
+    const top = this.radio.update(sources, me.x, me.z, serverNow, settings.radioVolume);
+    if (top) {
+      const who = top.sid === net.you ? "Radyon" : `${this.nameOf(top.sid)}'in Tofaşı`;
+      this.radioChip.textContent = `🎵 ${top.title} · ${who}`;
+      this.radioChip.style.opacity = String(Math.min(1, 0.35 + top.gain));
+      this.radioChip.classList.add("show");
+    } else this.radioChip.classList.remove("show");
+  }
+
+  /** Arabadayken: grid kutusuna geç, (grid sahibi) başlat ve tur seç, gridden çık; yarışta F ile inilmez (T ile iner, DNF). */
+  private raceActs(): FeatureAct[] {
+    const { me, net } = this.c;
+    const off: FeatureAct = { key: "f", label: "Arabadan in 🚗", act: "car-off" };
+    const r = this.ring, mine = r?.racers.find((x) => x.sid === net.you);
+    const phase = r?.phase ?? "idle";
+    if (mine && phase === "lobby") {
+      if (r!.host === net.you) {
+        return [
+          { key: "f", label: `Yarışı başlat · ${this.raceLaps} tur 🏁`, act: "ring-start" },
+          { key: "g", label: `Tur: ${this.raceLaps} → ${RACE_LAPS[(RACE_LAPS.indexOf(this.raceLaps as (typeof RACE_LAPS)[number]) + 1) % RACE_LAPS.length]}`, act: "ring-laps" },
+        ];
+      }
+      return [{ key: "g", label: "Gridden çık", act: "ring-leave" }];
+    }
+    if (mine && (phase === "lights" || phase === "racing") && mine.total === null && !mine.dnf) return [];
+    if (phase === "idle" || phase === "lobby") {
+      const taken = new Set(r?.racers.map((x) => x.slot) ?? []);
+      let best = -1, bestD = GRID_REACH;
+      GRID.forEach((g, i) => {
+        const d = Math.hypot(g.x - me.x, g.z - me.z);
+        if (!taken.has(i) && d < bestD) [best, bestD] = [i, d];
+      });
+      if (best >= 0) return [off, { key: "g", label: `Grid ${best + 1}'e geç 🏁`, act: `ring-join:${best}` }];
+    }
+    return [off];
+  }
+
+  private onRace(r: RingView): void {
+    const { net, hud } = this.c;
+    const prev = this.ring?.racers.find((x) => x.sid === net.you);
+    const mine = r.racers.find((x) => x.sid === net.you);
+    const wasPhase = this.ring?.phase;
+    this.ring = r;
+    if (!mine) {
+      if (prev && wasPhase === "lobby" && r.phase === "lobby") hud.toast("🏁 Gridden çıktın.");
+      return;
+    }
+    if (!prev && r.phase === "lobby") hud.toast(r.host === net.you ? "🏁 Gride geçtin! F: başlat · G: tur sayısı" : "🏁 Gride geçtin, grid sahibinin başlatmasını bekle.");
+    if (r.phase === "lights" && wasPhase === "lobby") hud.toast("🔴 Lambalara dikkat! Hepsi sönüp yeşil yanınca gaz!");
+    if (prev && mine.penalty > prev.penalty) this.raceHud.flash(`ERKEN KALKIŞ! +${(mine.penalty - prev.penalty) / 1000} sn`, 2600, "bad");
+    if (prev && r.phase === "racing" && mine.lap > prev.lap && mine.total === null) {
+      sfx.lap();
+      this.raceHud.flash(mine.lap === r.laps ? "SON TUR!" : `TUR ${mine.lap}/${r.laps}`, 1600);
+    }
+    if (prev && prev.total === null && mine.total !== null) {
+      sfx.win(mine.pos === 1);
+      this.raceHud.flash(mine.pos === 1 ? "🏆 KAZANDIN!" : `🏁 BİTİRDİN · P${mine.pos}`, 3200, "good");
+    }
+  }
+
+  /** Lambalar (herkes görür), lamba sesleri (pistin yakınında), yarış arayüzü. */
+  private updateRace(serverNow: number): void {
+    const { me, net, remotes, world } = this.c;
+    const r = this.ring;
+    const l = r ? lightsAt(r, serverNow) : { red: 0, green: false };
+    world.ring.setLights(l.red, l.green);
+    // Gridde yeşile kadar araba kilitli; yarış sürerken pit kapısı kapalı (bitiren ve terk eden çıkabilir)
+    const mine = r?.racers.find((x) => x.sid === net.you);
+    const waiting = !!mine && (r!.phase === "lobby" || r!.phase === "lights");
+    me.carLock = waiting || this.vehicles.tuning.isOpen;
+    const active = r?.phase === "lights" || r?.phase === "racing";
+    world.ring.setGate(!!active && (!mine || (mine.total === null && !mine.dnf)));
+    const near = Math.hypot(me.x - 470, me.z + 200) < 140;
+    if (near && l.red > this.raceRed) sfx.raceBeep();
+    if (near && l.green && !this.raceGreen) sfx.raceBeep(true);
+    this.raceRed = l.red;
+    this.raceGreen = l.green;
+    let wrongWay = false;
+    const speed = me.car?.v ?? 0;
+    if (me.car && r?.phase === "racing" && Math.abs(speed) > 2) {
+      const p = trackAt(trackProject(me.x, me.z).s);
+      wrongWay = (Math.sin(me.rot) * p.dx + Math.cos(me.rot) * p.dz) * Math.sign(speed) < -0.35;
+    }
+    this.raceHud.update({
+      race: r,
+      me: net.you,
+      now: serverNow,
+      speed,
+      wrongWay,
+      pos: (sid) => {
+        if (sid === net.you) return me;
+        const q = remotes.map.get(sid);
+        return q?.hasData ? q : null;
+      },
+    });
+  }
+
+  /** Casino: tabureye oturunca kamera masaya (slotta ekrana) yaklaşır, sonra oyun ekranı açılır; kalkınca kapanır. */
+  private updateCasino(now: number): void {
+    const { me, net } = this.c;
+    const game = me.seatGame;
+    if (game && this.casinoSeat?.game !== game) {
+      // Başka bir masaya geçildi: önceki oyunun ekranı kapanır, yaklaşma yeniden başlar
+      this.casino.close();
+      this.casinoSeat = { game, at: now };
+      // Oturanın arkasından ve biraz yukarıdan masaya bakış
+      const dx = game.x - me.x, dz = game.z - me.z, d = Math.hypot(dx, dz) || 1;
+      const back = game.kind === "slot" ? 0.3 : 0.55, y = game.kind === "slot" ? 1.68 : 2.1;
+      me.focusView = { pos: new THREE.Vector3(me.x - (dx / d) * back, y, me.z - (dz / d) * back), look: new THREE.Vector3(game.x, game.y, game.z) };
+    } else if (!game && this.casinoSeat) {
+      this.casinoSeat = null;
+      this.casino.close();
+      me.focusView = null;
+    }
+    if (this.casinoSeat && !this.casino.isOpen && now - this.casinoSeat.at > 950) this.casino.open(this.casinoSeat.game.kind);
+    // Bağlantı (yeniden) kurulunca da bakiye istensin
+    const inside = net.you > 0 && Math.abs(me.x - CASINO.x) < CASINO.hw && Math.abs(me.z - CASINO.z) < CASINO.hd && !me.car;
+    if (inside && !this.inCasino) net.send({ t: "casino", op: "wallet" });
+    this.inCasino = inside;
+    this.casinoChip.classList.toggle("show", inside && !this.casinoSeat);
+  }
+
+  /** Tofaşa bin ya da in (arabanın görünümü garajdan; herkese sunucu üzerinden gider). */
+  /** Yarışta (lambalar ya da yarış sürerken, bitirmeden): arabadan inilmez, pistten çıkılmaz. */
+  private get racing(): boolean {
+    const r = this.ring, mine = r?.racers.find((x) => x.sid === this.c.net.you);
+    return !!mine && (r!.phase === "lights" || r!.phase === "racing") && mine.total === null && !mine.dnf;
+  }
+
+  /** Arabadaysan in (araba park halinde kalır); değilsen Araçlarım menüsü. */
+  private toggleCar(): void {
+    if (this.c.me.car) this.vehicles.exit();
+    else this.vehicles.menu.toggle();
   }
 
   /** En yakın oyuncuya beşlik/sarılma isteği. */
@@ -499,6 +745,22 @@ export class Features {
   }
 
   /** Ekrandaki tıklamaya en yakın avatar (30 px içinde). */
+  /** Ekranda tıklanan dükkân çalışanı (en çok 6 m uzakta ve ekranda ~40 px yakın), yoksa -1. */
+  private pickWorker(cx: number, cy: number): number {
+    const { camera, me, world } = this.c;
+    let best = -1, bestD = 40;
+    for (const [i, n] of world.npcs.entries()) {
+      if (Math.hypot(n.x - me.x, n.z - me.z) > 6) continue;
+      for (const y of [0.7, 1.2]) {
+        this.proj.set(n.x, y, n.z).project(camera);
+        if (this.proj.z > 1) continue;
+        const d = Math.hypot(((this.proj.x + 1) / 2) * innerWidth - cx, ((1 - this.proj.y) / 2) * innerHeight - cy);
+        if (d < bestD) [best, bestD] = [i, d];
+      }
+    }
+    return best;
+  }
+
   private pickAvatar(cx: number, cy: number): number {
     const { camera, remotes, me, net } = this.c;
     let best = 0, bestD = 30;
@@ -519,8 +781,9 @@ export class Features {
   // ---------------------------------------------------------------------------
 
   acts(): FeatureAct[] {
-    const { me } = this.c;
+    const { me, world } = this.c;
     if (me.jailed || me.driving || this.race.driving()) return [];
+    if (me.car) return this.raceActs();
     const near = (p: { x: number; z: number }, r: number) => Math.hypot(me.x - p.x, me.z - p.z) <= r;
     if (me.vehicle === 3) return near(DOCK, 4.5) || Math.hypot(me.x - POND_AREA.x, me.z - POND_AREA.z) > 4.6 ? [{ key: "f", label: "Kayıktan in 🛶", act: "boat-off" }] : [];
     if (me.onStage) return [{ key: "f", label: "Sahneden in 🎤", act: "stage-off" }];
@@ -528,6 +791,8 @@ export class Features {
     if (this.inArena && !this.c.input.touch) return [];
     // Voleybol salonunda da (kendi tuşları)
     if (this.volley.active && !this.c.input.touch) return [];
+    const enter = this.vehicles.enterAct();
+    if (enter) return [enter];
     // Futbol: top ayaktaysa ya da serbest top yakınsa vuruş; rakibin ayağındaysa müdahale
     const { pitch } = this.here();
     const ball = pitch.ball;
@@ -544,6 +809,7 @@ export class Features {
     }
     if (me.seatTable) return [{ key: "f", label: "Masayı aç 🎲", act: `table:${me.seatTable.id}` }];
     if (near(TEA_COUNTER, TEA_COUNTER.r)) return [{ key: "f", label: "Çay söyle 🍵", act: "cay" }];
+    for (const [i, n] of world.npcs.entries()) if (near(n.act, n.act.r)) return [{ key: "f", label: n.act.label, act: `npc:${i}` }];
     for (const t of TABLES) {
       if (near(t, TABLE_WATCH_R) && !me.seated) return [{ key: "f", label: "Masayı izle 👀 (oynamak için tabureye otur)", act: `table:${t.id}` }];
     }
@@ -577,6 +843,38 @@ export class Features {
     }
     if (act.startsWith("table:")) {
       this.boards.open(Number(act.slice(6)));
+      return true;
+    }
+    if (act.startsWith("npc:")) {
+      const i = Number(act.slice(4)), n = this.c.world.npcs[i], w = this.workers[i];
+      if (!n || !w) return false;
+      w.emote = 0;
+      w.emoteAt = now / 1000;
+      emoteFx.emit(me.x, 0, me.z, FX_CELL[n.act.fx], now / 1000, undefined, 2);
+      hud.toast(`${n.name}: "${n.act.line}"`);
+      if (n.act.shop) this.c.shopWardrobe(n.act.shop);
+      return true;
+    }
+    if (act.startsWith("ring-")) {
+      const { me, net } = this.c;
+      if (act.startsWith("ring-join:")) {
+        const slot = Number(act.slice(10)), g = GRID[slot];
+        // Kutuya tam yerleş (sunucu da yakınlığa bakar)
+        me.placeCar(g.x, g.z, g.rot);
+        net.send({ t: "ring", op: "join", slot });
+      } else if (act === "ring-start") net.send({ t: "ring", op: "start", laps: this.raceLaps });
+      else if (act === "ring-laps") {
+        this.raceLaps = RACE_LAPS[(RACE_LAPS.indexOf(this.raceLaps as (typeof RACE_LAPS)[number]) + 1) % RACE_LAPS.length];
+        this.c.hud.toast(`🏁 Tur sayısı: ${this.raceLaps}`);
+      } else if (act === "ring-leave") net.send({ t: "ring", op: "leave" });
+      return true;
+    }
+    if (act === "car-enter") {
+      this.vehicles.enter();
+      return true;
+    }
+    if (act === "car-off") {
+      this.toggleCar();
       return true;
     }
     switch (act) {
@@ -698,6 +996,8 @@ export class Features {
     if (input.consumeKey("accept")) this.whud.acceptPair();
     if (input.consumeKey("camera")) updateSettings({ firstPerson: !settings.firstPerson });
     if (input.consumeKey("vehicle") && me.vehicle !== 3) this.setVehicle(((me.vehicle + 1) % 3) as Vehicle);
+    if (input.consumeKey("car")) this.vehicles.menu.toggle();
+    if (input.consumeKey("radio")) this.toggleRadio();
     this.volley.keys(performance.now() / 1000);
     me.photo = this.photo.active;
   }
@@ -705,6 +1005,10 @@ export class Features {
   update(time: number, dt: number, now: number): void {
     const { me, net, world, remotes, input, emoteFx, camera } = this.c;
     const serverNow = net.serverNow();
+    this.updateRadios(serverNow);
+    this.updateCasino(now);
+    this.updateRace(serverNow);
+    this.vehicles.update(dt, time);
 
     // Saat: kişisel ayar > sinema modu (gündüzse) > dünyanın saati (!saat) > gerçek saat
     let hour: number | null = settings.clock === "auto" ? this.worldClock : CLOCK_HOURS[settings.clock];
@@ -850,6 +1154,9 @@ export class Features {
     world.stageLights.update(time, this.stage.show, singer, this.c.music(), 1 - world.env.day * 0.85);
 
     // Hava ve havai fişek
+    // İçeride yağmur ve yaprak yağmaz
+    this.weatherFx.group.visible = !this.c.me.room;
+    if (this.leaves.mesh) this.leaves.mesh.visible = !this.c.me.room;
     this.weatherFx.update(time, dt, camera.position, 0.35 + 0.65 * world.env.day);
     world.flash(this.weatherFx.flash);
   }
@@ -1054,6 +1361,8 @@ export class Features {
   pushExtras(time: number, dt: number): void {
     const { me, remotes, avatars, net } = this.c;
     avatars.push(this.teaMaker, time);
+    // Çalışanlar yalnızca yakındayken çizilir (her chibi on binlerce üçgen)
+    for (const w of this.workers) if ((w.x - me.x) ** 2 + (w.z - me.z) ** 2 < 28 * 28) avatars.push(w, time);
     const c = this.companions;
     c.begin();
     if (!me.driving) c.push(net.you, me, settings.pet || null, time, dt);

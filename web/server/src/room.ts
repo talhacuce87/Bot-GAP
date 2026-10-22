@@ -22,10 +22,12 @@ import {
   writeSnapshotHeader,
 } from "../../shared/protocol";
 import { SPAWN } from "../../shared/zones";
+import { CAR_MAX_SPEED, type CarRadio, type CarSpec, type ParkedCar, PARK_REACH, validCar } from "../../shared/car";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
 import type { WorldGames } from "./games/world";
+import type { RingHost } from "./ring";
 
 const PET_IDS = new Set<string>(PETS.map((p) => p.id));
 const SKIN_IDS = new Set<string>(SKINS.map((s) => s.id));
@@ -103,6 +105,8 @@ export class Room {
   readonly battle: Battle | null;
   /** Dünya odasının oyunları (savaş odasında yok); sunucu oda açılınca kurar. */
   games: WorldGames | null = null;
+  /** GAP Ring yarışı (savaş odasında yok). */
+  ring: RingHost | null = null;
   /** Görev/sayaç olayı (botta): sunucu bağlar; tank isabeti, savaşta vuruş ve galibiyet buradan. */
   onReport: (sid: number, event: string, amount?: number) => void = () => {};
   private nextSid = 1;
@@ -173,6 +177,7 @@ export class Room {
     this.players.delete(sid);
     this.battle?.leave(sid);
     this.games?.leave(sid);
+    this.ring?.leave(sid);
     this.broadcast({ t: "leave", sid });
     // Boşalan yere en eski izleyici geçer; istemciler onu yeni katılan gibi görür.
     if (!p.info.spectator) {
@@ -203,7 +208,7 @@ export class Room {
     if (sentAt > 0) p.sentAt = sentAt;
     const dt = Math.min(1, Math.max(0, (now - p.lastUpdate) / 1000));
     // Araçtan inip binerken iki durumun hızlısı (bisikletten inen bir an daha hızlı gidebilir)
-    const maxStep = Math.max(maxSpeed(s.flags), maxSpeed(p.state.flags)) * dt * 1.3 + 0.5;
+    const maxStep = (p.info.car ? CAR_MAX_SPEED : Math.max(maxSpeed(s.flags), maxSpeed(p.state.flags))) * dt * 1.3 + 0.5;
     let dx = s.x - p.state.x;
     let dz = s.z - p.state.z;
     const d = Math.hypot(dx, dz);
@@ -222,6 +227,7 @@ export class Room {
     p.sampledAt = sampleTime(sentAt, p.sampledAt, now);
     p.lastUpdate = now;
     this.dirty = TRAIL_TICKS;
+    if (p.info.car) this.ring?.move(sid, p.state.x, p.state.z, now);
   }
 
   /** Odaya sohbet satırı: geçmişe eklenir ve herkese gider. */
@@ -241,6 +247,47 @@ export class Room {
     this.battle?.refresh();
   }
 
+  /** Tofaşa bin (doğrulanmış araba) ya da in (null); odaya duyurur. */
+  setCar(sid: number, car: CarSpec | null): void {
+    const p = this.players.get(sid);
+    if (!p || p.info.spectator || (car && (p.info.jailed || this.tank.driver === sid))) return;
+    p.info.car = car;
+    this.broadcast({ t: "car", sid, car });
+    // Park halindeki arabasına bindi: park yeri boşalır
+    if (car && p.info.parked) this.setParked(sid, null);
+    if (!car && p.info.radio) this.setRadio(sid, null);
+    // Arabadan inen yarıştan çıkar (yarış sürüyorsa DNF)
+    if (!car) this.ring?.leave(sid);
+  }
+
+  /** Arabanın radyosu: şarkı (herkes aynı andan dinler) ya da sus (null). Arabada değilse çalmaz. */
+  /** Arabayı park et (indiği yer ya da çağırdığı yer): oyuncunun yakınında olmalı. Geçersizse yok sayılır. */
+  setParked(sid: number, v: unknown): void {
+    const p = this.players.get(sid);
+    if (!p || p.info.spectator) return;
+    let parked: ParkedCar | null = null;
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      const car = validCar(o.car);
+      const x = Number(o.x), z = Number(o.z), rot = Number(o.rot);
+      if (!car || ![x, z, rot].every(Number.isFinite)) return;
+      if (Math.hypot(x - p.state.x, z - p.state.z) > PARK_REACH) return;
+      const at = { x, z };
+      clampToWorld(at, 1);
+      parked = { car, x: at.x, z: at.z, rot };
+    }
+    if (!parked && !p.info.parked) return;
+    p.info.parked = parked;
+    this.broadcast({ t: "parked", sid, parked });
+  }
+
+  setRadio(sid: number, radio: CarRadio | null): void {
+    const p = this.players.get(sid);
+    if (!p || (radio && !p.info.car)) return;
+    p.info.radio = radio;
+    this.broadcast({ t: "radio", sid, radio });
+  }
+
   /** Bottan gelen (doğrulanmış) kıyafeti uygular ve odaya duyurur. Oyuncu ayrıldıysa bir şey yapmaz. */
   setLook(sid: number, look: Look): void {
     const p = this.players.get(sid);
@@ -258,6 +305,7 @@ export class Room {
       const jailed = p.forceJail || (!p.user.guest && isExiled(p.user.id, p.guild));
       if (jailed === p.info.jailed) continue;
       if (jailed && this.tank.driver === sid) this.exitTank(sid);
+      if (jailed && p.info.car) this.setCar(sid, null);
       p.info.jailed = jailed;
       Object.assign(p.state, jailed ? JAIL_SPAWN : RELEASE_SPAWN);
       p.state.flags = 0;
@@ -300,6 +348,7 @@ export class Room {
     const t = this.tank;
     if (!p || p.info.spectator || p.info.jailed || t.driver) return false;
     if (Math.hypot(p.state.x - t.x, p.state.z - t.z) > TANK_REACH + 0.5) return false;
+    if (p.info.car) this.setCar(sid, null);
     t.driver = sid;
     // Sürücü tankın yerine geçer; sonraki konumları tankı taşır.
     p.state.x = t.x;
@@ -358,6 +407,7 @@ export class Room {
   tick(now: number, force = false): void {
     this.battle?.tick(now);
     this.games?.tick(now);
+    this.ring?.tick(now);
     const t = this.tank;
     if (!t.driver && t.idleSince && now - t.idleSince > TANK_RETURN_MS) {
       Object.assign(t, { x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, idleSince: 0 });

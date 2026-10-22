@@ -12,6 +12,8 @@ export interface Seat {
   table?: { id: number; seat: number };
   /** Oturulan yüzeyin yüksekliği; verilmezse bank (SEAT_H). */
   h?: number;
+  /** Casino taburesi: oturunca bu oyun açılır; (x, y, z) kameranın yaklaşıp baktığı nokta (masa ya da ekran). */
+  game?: { kind: "blackjack" | "roulette" | "slot"; x: number; y: number; z: number };
 }
 
 /** Bankların oturma yüksekliği: avatarların oturma duruşu buna göre ayarlı. */
@@ -25,6 +27,8 @@ export class Builder {
   /** Tek mesh'te birleştirilecek, vertex renkli statik geometri. */
   readonly statics: THREE.BufferGeometry[] = [];
   readonly colliders = new Colliders();
+  /** Yalnızca arabaları durduran engeller (dükkân ve casino kapıları: yaya geçer, araba girmez). */
+  readonly carColliders = new Colliders();
   readonly seats: Seat[] = [];
   readonly props: Record<PropKind, THREE.Matrix4[]> = {
     pine: [], oak: [], sakura: [], rock: [], bush: [], stone: [], post: [], bulb: [], flame: [], log: [],

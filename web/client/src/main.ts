@@ -25,6 +25,7 @@ import { AvatarRenderer, bodyY, colorFor, MAX_AVATARS } from "./avatars/avatars"
 import { ChibiLayer } from "./avatars/chibi";
 import type { ChibiManifest } from "./avatars/chibiPack";
 import { Bots } from "./avatars/bots";
+import { Cars } from "./cars";
 import { DustFx } from "./avatars/dust";
 import { EmoteFx, FX_CELL, ThrowFx } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
@@ -178,7 +179,6 @@ async function start(): Promise<void> {
 
   // Debug: `?at=x,z,yön` ile istenen noktada başla (ekran görüntüsü, bölge testi).
   const atParam = params.has("debug") ? params.get("at") : null;
-  const birdsEye = params.has("debug") && params.has("harita");
   // Debug: `?debug&pist=N` oyuncak pistte sunucusuz antrenman (`&botlar=3`, `&oto` arabamı da otomatik pilot sürer)
   const practiceTrack = params.has("debug") ? params.get("pist") : null;
   const at = atParam ? atParam.split(",").map(Number) : [];
@@ -682,9 +682,11 @@ async function start(): Promise<void> {
   };
 
   // ---- Yeni özellikler: hava, futbol, kahvehane, DJ, mini oyunlar, araçlar, görevler, fotoğraf ----
+  const cars = new Cars(world.scene);
   const features = new Features({
     life, world, net, me, remotes, atlas, avatars, hud, hudRoot, input, emoteFx, session, camera, canvas, lowPower,
     renderNow: () => renderScene(0),
+    shopWardrobe: (shop) => wardrobe.open(undefined, shop),
     say: (text) => net.send({ t: "chat", text }),
     battle: () => switchMode(true),
     music: () => (musicOn ? 1 : 0),
@@ -805,19 +807,18 @@ async function start(): Promise<void> {
     me.obstacle = me.driving ? null : hullCircles(tankView.x, tankView.z, tankView.h);
 
     features.decorate();
+    me.room = world.roomAt(me.x, me.z);
+    // Tofaşlar: arabadaki oyuncu sürücü koltuğunda oturur
+    cars.begin();
+    if (me.car) cars.push(net.you, settings.car, me.x, me.z, me.rot, world.env.lights);
+    for (const r of remotes.map.values()) if (r.hasData && r.info.car) cars.push(r.info.sid, r.info.car, r.x, r.z, r.rot, world.env.lights);
+    cars.end();
     avatars.begin(camera.position);
-    if (!me.driving) avatars.push(me, time, true);
-    for (const r of remotes.map.values()) if (r.hasData && r.info.sid !== tank.driver) avatars.push(r, time);
+    if (!me.driving && !me.hideAvatar) avatars.push(me.car ? cars.seat(net.you, me) : me, time, true);
+    for (const r of remotes.map.values()) if (r.hasData && r.info.sid !== tank.driver) avatars.push(r.info.car ? cars.seat(r.info.sid, r) : r, time);
     features.pushExtras(time, dt);
     avatars.end();
     me.updateCamera(camera, dt);
-    // Debug: `?debug&harita` bütün haritayı yukarıdan gösterir (yerleşim kontrolü)
-    if (birdsEye) {
-      camera.position.set(-5, 300, 150);
-      camera.lookAt(-5, 0, 30);
-      const fog = world.scene.fog as THREE.Fog | null;
-      if (fog) [fog.near, fog.far] = [600, 1200];
-    }
     features.update(time, dt, now);
     if (me.driving) {
       me.aimAt = aimRay(camera, aimPoint);

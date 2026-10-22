@@ -9,6 +9,9 @@ import type { ChessMove, ChessState } from "./games/chess";
 import type { OkeyMove, OkeyState } from "./games/okey";
 import type { TavlaMove, TavlaState } from "./games/tavla";
 import type { TableKind } from "./zones";
+import type { CarRadio, CarSpec, ParkedCar } from "./car";
+import type { BjView, RouletteBet } from "./casino";
+import type { RingView } from "./ring";
 import type { SetType, VBall, VolleyEv, VolleyHit, VolleyState } from "./volley";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
@@ -45,6 +48,12 @@ export interface PlayerInfo {
   /** Peşinden gelen evcil hayvan (PETS) ve tank kamuflajı (SKINS); istemcide saklanır. */
   pet?: string | null;
   skin?: string | null;
+  /** Tofaşla geziyorsa arabası (yoksa yürüyor). */
+  car?: CarSpec | null;
+  /** Park halindeki arabası (indiği yerde kalır). */
+  parked?: ParkedCar | null;
+  /** Arabasının radyosunda çalan şarkı. */
+  radio?: CarRadio | null;
 }
 
 export const PETS = [
@@ -328,6 +337,15 @@ export type ServerEvent =
   /** Havai fişek gösterisi: `seed` herkes aynı patlamaları görsün, `at` başlangıç (sunucu ms). */
   | { t: "fireworks"; seed: number; at: number; count: number }
   | { t: "cosm"; sid: number; pet: string | null; skin: string | null }
+  | { t: "car"; sid: number; car: CarSpec | null }
+  | { t: "radio"; sid: number; radio: CarRadio | null }
+  | { t: "parked"; sid: number; parked: ParkedCar | null }
+  /** GAP Ring yarışı: grid, lambalar, sıralama ve sonuçlar (faz değişince ve yarışta sık). */
+  | { t: "ring"; ring: RingView }
+  | { t: "wallet"; balance: number }
+  | { t: "bj"; view: BjView; balance: number }
+  | { t: "roulette"; n: number; bets: RouletteBet[]; payout: number; balance: number }
+  | { t: "slot"; stops: number[]; mult: number; payout: number; balance: number }
   | ({ t: "table" } & TableState)
   | ({ t: "ball" } & BallState)
   | { t: "goal"; side: 0 | 1; sid: number; name: string; score: [number, number]; assist?: string; own?: boolean; f?: 1 }
@@ -393,6 +411,18 @@ export type ClientEvent =
   /** Activity'den paylaşılamıyorsa: aynı odanın tarayıcı linki istenir (cevap "open"). */
   | { t: "sharelink" }
   | { t: "cosm"; pet: string | null; skin: string | null }
+  | { t: "car"; car: CarSpec | null }
+  | { t: "radio"; url: string | null }
+  /** Arabayı bir yere bırak (inince ya da çağırınca); null: kaldır. */
+  | { t: "park"; parked: ParkedCar | null }
+  | { t: "ring"; op: "join"; slot: number }
+  | { t: "ring"; op: "leave" }
+  | { t: "ring"; op: "start"; laps: number }
+  | { t: "casino"; op: "wallet" | "refill" }
+  | { t: "bj"; op: "deal"; bet: number }
+  | { t: "bj"; op: "hit" | "stand" | "double" | "split" }
+  | { t: "roulette"; bets: RouletteBet[] }
+  | { t: "slot"; bet: number }
   /** Masaya otur / kalk / oyunu başlat / hamle / pes et. */
   | { t: "tsit"; id: number; seat: number }
   | { t: "tleave" }

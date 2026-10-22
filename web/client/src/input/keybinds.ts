@@ -34,6 +34,8 @@ export type Action =
   | "hug"
   | "accept"
   | "build"
+  | "car"
+  | "radio"
   | "net"
   | "fbPass"
   | "fbShoot"
@@ -66,7 +68,7 @@ const VOLLEY: readonly Action[] = [
 
 /** Tek seferlik kısayollar (menü, fotoğraf, araç, stadyumda futbol, voleybol…): Input bunları sıraya alır, oyun tüketir. */
 export const HOTKEYS: readonly Action[] = [
-  "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "net",
+  "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "car", "radio", "net",
   ...FOOTBALL, ...VOLLEY,
 ];
 
@@ -74,7 +76,7 @@ export const HOTKEYS: readonly Action[] = [
 export const PROFILE_ACTIONS: Record<Profile, readonly Action[]> = {
   world: [
     "forward", "back", "left", "right", "run", "jump", "shiftlock", "sit", "actF", "actG", "wardrobe", "zoomIn", "zoomOut",
-    "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "net",
+    "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "car", "radio", "net",
   ],
   stadium: [...FOOTBALL, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
   volley: [...VOLLEY, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
@@ -108,6 +110,8 @@ export const ACTION_NAMES: Record<Action, string> = {
   hug: "Sarıl",
   accept: "İsteği kabul et",
   build: "İnşa modu",
+  car: "Araçlarım (araba çağır)",
+  radio: "Araba radyosu",
   net: "Ağ paneli",
   fbPass: "Pas",
   fbShoot: "Şut (basılı tut: sert)",
@@ -159,6 +163,8 @@ export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
   hug: ["KeyJ", ""],
   accept: ["KeyY", ""],
   build: ["KeyN", ""],
+  car: ["KeyT", ""],
+  radio: ["KeyR", ""],
   net: ["F3", ""],
   fbPass: ["", ""],
   fbShoot: ["", ""],

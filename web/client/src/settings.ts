@@ -1,6 +1,8 @@
 // İstemci ayarları: cihazda (localStorage) saklanır, herkesin kendi ekranını etkiler.
 // Grafik ön ayarı alanları birlikte doldurur; tek tek değiştirilen alan ön ayarı "özel" yapar.
 
+import { CAR_MODELS, type CarSpec, DEFAULT_CAR, validCar } from "../../shared/car";
+
 const KEY = "gap-settings";
 
 export type Preset = "low" | "medium" | "high" | "ultra";
@@ -46,6 +48,12 @@ export interface Settings {
   firstPerson: boolean;
   /** Evcil hayvan (PETS id, "" yok) ve tank kamuflajı (SKINS id). */
   pet: string;
+  /** Son çağrılan/sürülen Tofaş (görünümü GAP Garaj'da düzenlenir). */
+  car: CarSpec;
+  /** Her modelin kendi tuning'i (Şahin, Doğan SLX, Kartal herkeste var). */
+  cars: Record<CarSpec["model"], CarSpec>;
+  /** Araba radyolarının sesi (0–1). */
+  radioVolume: number;
   skin: string;
   /** Kendi ekranında saat: "auto" dünyanın saati (gerçek ya da !saat), diğerleri yalnızca sende sabit. */
   clock: "auto" | "day" | "sunset" | "night";
@@ -91,6 +99,9 @@ function defaults(): Settings {
     sfxVolume: 0.7,
     firstPerson: false,
     pet: "",
+    car: { ...DEFAULT_CAR },
+    cars: Object.fromEntries(CAR_MODELS.map((m) => [m.id, { ...DEFAULT_CAR, model: m.id }])) as Settings["cars"],
+    radioVolume: 0.8,
     skin: "std",
     clock: "auto",
     cinemaDim: true,
@@ -107,6 +118,13 @@ function load(): Settings {
   } catch {
     // depolama kapalı ya da bozuk: varsayılanlar
   }
+  s.car = validCar(s.car) ?? { ...DEFAULT_CAR };
+  // Model başına tuning: eski kayıtta yalnızca tek araba vardı (o modelin ayarı olur, diğerleri onun boyasıyla)
+  const cars = (s.cars ?? {}) as Partial<Record<string, unknown>>;
+  s.cars = Object.fromEntries(
+    CAR_MODELS.map((m) => [m.id, validCar(cars[m.id]) ?? (s.car.model === m.id ? { ...s.car } : { ...s.car, model: m.id })]),
+  ) as Settings["cars"];
+  for (const m of CAR_MODELS) s.cars[m.id].model = m.id;
   // Eski bağlantılar: ?low ve ?nobloom kayıtlı ayarı bu oturum için ezer
   if (params.has("low")) Object.assign(s, PRESETS.low, { preset: "low" });
   if (params.has("nobloom")) s.bloom = false;
