@@ -46,6 +46,8 @@ QUESTS: tuple[Quest, ...] = (
     Quest("stage", "Sahneye çık ya da DJ ol", "stage", 1, 5),
     Quest("race_play", "Oyuncak pistte bir yarışa katıl", "race_play", 1, 6),
     Quest("race_win", "Oyuncak pistte bir yarış kazan", "race_win", 1, 12),
+    # Dünya sunucusu bir vakti kişi başı bir kez sayar (vakit girmeden kılınmaz)
+    Quest("namaz", "GAP Camii'nde bir vakit namazı kıl", "namaz", 1, 6),
 )
 BY_KEY = {q.key: q for q in QUESTS}
 EVENTS = {q.event for q in QUESTS}

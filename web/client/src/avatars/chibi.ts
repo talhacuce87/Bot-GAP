@@ -42,6 +42,8 @@ export interface LimbPose {
   vu?: number;
   /** Sürekli duruş: servis topunu önde tutma ya da havada smaça hazır (sağ kol geride yukarı). */
   vstance?: "hold" | "cock";
+  /** Namaz duruşu: bacaklar ve kollar (x öne/geri; `roll` kolları içe), diğer hareketlerin yerine geçer. */
+  pray?: { leg: number; arm: number; roll: number };
   time: number;
 }
 
@@ -292,6 +294,14 @@ export function setLimbs(a: THREE.Vector2[], p: LimbPose): void {
     a[2].y = -0.3;
   }
   const vw = p.vw ?? 0;
+  if (p.pray) {
+    // Önce öne kaldırılır, sonra gövdenin ekseni etrafında içe (−X'teki kol + açıyla içe gelir)
+    a[2].x = a[3].x = p.pray.arm;
+    a[2].y = p.pray.roll;
+    a[3].y = -p.pray.roll;
+    a[4].x = a[5].x = p.pray.leg;
+    return;
+  }
   if (p.vkind && vw > 0) {
     // Voleybol: kollar hedef duruşa (x öne/yukarı kaldırma, y yana); ağırlıkla karışır
     const u = p.vu ?? 0;

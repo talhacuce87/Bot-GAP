@@ -8,6 +8,7 @@ import { assistedShot, attackSide, FINISH_RANGE, goalView } from "../../shared/f
 import { CASINO, DJ_BOOTH, DOCK, type Field, inStadium, KICK_REACH, PITCH, POND_AREA, RACE_HOUSE, STADIUM_PITCH, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
 import { type Action, actionLabel, onBinds, profile, setProfile } from "./input/keybinds";
 import { RaceClient } from "./race";
+import { MosqueClient } from "./mosque";
 import { VolleyClient } from "./volley";
 import { BilekArms } from "./world/bilekArms";
 import { type AvatarRenderer, type AvatarView, colorFor } from "./avatars/avatars";
@@ -121,6 +122,8 @@ export class Features {
   private build: BuildMode;
   /** Oyuncak pist yarışı. */
   readonly race: RaceClient;
+  /** GAP Camii: abdest, cemaat, namaz. */
+  readonly mosque: MosqueClient;
   /** Voleybol salonu. */
   readonly volley: VolleyClient;
   private mist = new Mist();
@@ -235,6 +238,16 @@ export class Features {
       toast: (t) => hud.toast(t),
     });
     c.life.onStop(() => this.race.dispose());
+    this.mosque = new MosqueClient({
+      net,
+      me,
+      remotes: c.remotes,
+      input: c.input,
+      hudRoot,
+      minarets: world.minarets,
+      toast: (t) => hud.toast(t),
+    });
+    c.life.onStop(() => this.mosque.dispose());
     this.volley = new VolleyClient({
       scene: world.scene,
       court: world.volley,
@@ -469,6 +482,7 @@ export class Features {
     };
     net.onTag = (s) => this.whud.setTag(s, net.serverNow());
     net.onRace = (s) => this.race.onState(s);
+    net.onNamaz = (s) => this.mosque.onSessions(s);
     net.onRcars = (cars) => this.race.onCars(cars);
     net.onPairReq = (from, name, kind) => {
       this.whud.pairRequest(from, name, kind);
@@ -800,6 +814,10 @@ export class Features {
   acts(): FeatureAct[] {
     const { me, world } = this.c;
     if (me.jailed || me.driving || this.race.driving()) return [];
+    // Camide (namazda, abdest alırken, harimde ya da şadırvanda) yalnızca cami eylemleri
+    if (this.mosque.busy()) return this.mosque.acts();
+    const camii = this.mosque.acts();
+    if (camii.length) return camii;
     if (me.car) return this.raceActs();
     const near = (p: { x: number; z: number }, r: number) => Math.hypot(me.x - p.x, me.z - p.z) <= r;
     if (me.vehicle === 3) return near(DOCK, 4.5) || Math.hypot(me.x - POND_AREA.x, me.z - POND_AREA.z) > 4.6 ? [{ key: "f", label: "Kayıktan in 🛶", act: "boat-off" }] : [];
@@ -847,6 +865,7 @@ export class Features {
   /** Etkileşim gerçekleşti (true: işlendi). */
   handleAct(act: string, now: number): boolean {
     const { me, net, hud, emoteFx } = this.c;
+    if (this.mosque.handleAct(act)) return true;
     if (act === "tackle") {
       net.send({ t: "tackle" });
       sfx.kick(0.3);
@@ -1037,6 +1056,7 @@ export class Features {
     this.buildWorld.update(world.env.lights);
     this.build.update();
     this.race.update(dt, time, 1 - world.env.day);
+    this.mosque.update(time);
     this.bilekArms.update((id) => this.boards.table(id), dt);
     this.screenGlow.update(now, dt, this.c.cinemaOn(), document.querySelector<HTMLVideoElement>(".screen-players video"), world.env.day);
     this.ambient(time, dt, world);

@@ -5952,3 +5952,25 @@ b.cz-num {
     grid-template-columns: repeat(5, 1fr);
   }
 }
+
+/* ---- Cami: namaz göstergesi ---- */
+.namaz-banner {
+  position: absolute;
+  top: max(64px, calc(env(safe-area-inset-top) + 54px));
+  left: 50%;
+  display: none;
+  padding: 8px 16px;
+  border: 1px solid rgba(214, 170, 60, 0.6);
+  border-radius: 12px;
+  background: rgba(14, 35, 26, 0.86);
+  color: #f3e3b0;
+  font-weight: 700;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 8;
+}
+
+.namaz-banner.show {
+  display: block;
+}

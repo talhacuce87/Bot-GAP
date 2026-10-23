@@ -5,6 +5,7 @@ import { inStadium, PITCH, SAKURA_SPOT, STADIUM_PITCH } from "../../../shared/zo
 import type { Conn, Room } from "../room";
 import type { Builds } from "./build";
 import { Football } from "./football";
+import { Mosque } from "./mosque";
 import { Race } from "./race";
 import { Sky } from "./sky";
 import { Stage, type StageHost } from "./stage";
@@ -30,6 +31,7 @@ export class WorldGames {
   readonly stage: Stage;
   readonly sky: Sky;
   readonly race: Race;
+  readonly mosque: Mosque;
   /** Voleybol salonu (menüden ışınlanılır). */
   readonly volley: Volleyball;
   /** Mahalle (bot bağlıysa kalıcı). */
@@ -58,6 +60,7 @@ export class WorldGames {
     this.stage = new Stage(room, host, r);
     this.sky = new Sky(room, liveWeather);
     this.race = new Race(room, r);
+    this.mosque = new Mosque(room, r);
     this.volley = new Volleyball(room);
   }
 
@@ -69,6 +72,7 @@ export class WorldGames {
     this.stage.sendTo(conn);
     this.sky.sendTo(conn);
     this.race.sendTo(conn);
+    this.mosque.sendTo(conn);
     this.volley.sendTo(conn);
     this.builds?.sendTo(conn);
   }
@@ -81,6 +85,7 @@ export class WorldGames {
     this.stage.leave(sid);
     this.sky.leave(sid);
     this.race.leave(sid);
+    this.mosque.gone(sid);
     this.volley.leave(sid);
     this.pairs.delete(sid);
     for (const [to, req] of this.pairs) if (req.from === sid) this.pairs.delete(to);
@@ -96,6 +101,7 @@ export class WorldGames {
     this.tag.tick(now);
     this.sky.tick(now);
     this.race.tick(now);
+    this.mosque.tick(now);
     this.volley.tick(now);
     if (now - this.lastScan > 1000) {
       this.lastScan = now;
@@ -111,7 +117,7 @@ export class WorldGames {
 
   /** Saklambaçta gözü kapalı ebe yürüyemez. */
   frozen(sid: number): boolean {
-    return this.tag.frozen(sid);
+    return this.tag.frozen(sid) || this.mosque.praying(sid);
   }
 
   /** Havai fişek (komut ya da özel gün): herkes aynı tohumla aynı gösteriyi görür. */
@@ -252,6 +258,21 @@ export class WorldGames {
       }
       case "tagjoin":
         this.tag.join(sid);
+        return true;
+      case "abdest":
+        this.mosque.abdestAl(sid, now);
+        return true;
+      case "imam":
+        this.mosque.imam(sid, now);
+        return true;
+      case "munferit":
+        this.mosque.munferit(sid, now);
+        return true;
+      case "saf":
+        this.mosque.join(sid, now);
+        return true;
+      case "nleave":
+        this.mosque.leave(sid);
         return true;
       case "rjoin":
         this.race.join(sid);

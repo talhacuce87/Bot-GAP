@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { EMOTES, FLAG_RUNNING, FLAG_SEATED, FLAG_WALKING, vehicleOf } from "../../../shared/constants";
+import { postureAt, type Posture } from "../../../shared/mosque";
 import type { Look } from "../../../shared/protocol";
 import { ATLAS_CELLS, type AvatarAtlas, NAME_GRID } from "./atlas";
 import type { ChibiLayer, LimbPose, VolleyPose } from "./chibi";
@@ -52,6 +53,12 @@ export interface AvatarView {
   hideName?: boolean;
   /** Avatar çizilmez (birinci şahıs kamerada kendin); gölge ve evcil hayvan kalır. */
   hidden?: boolean;
+  /** Namazda: başladığı an (sn, döngü saati; kamette ileri) ve rekât sayısı. Duruşlar shared/mosque.ts akışından. */
+  namaz?: { start: number; rekat: number } | null;
+  /** Şadırvanda abdest aldığı an (sn): birkaç saniye çömelip ellerini yıkar. */
+  abdestAt?: number;
+  /** Duruşun ek yan dönüşü (yalnızca debug görünüm denemesi: yandan bakmak için). */
+  poseYaw?: number;
   /** Yalnızca gövde çizilmez, isim etiketi kalır (Tofaştaki sürücü: kabine sığmaz, etiket tavanın üstünde). */
   bodyHidden?: boolean;
 }
@@ -67,6 +74,57 @@ export const TRICK_ANIM = 0.55;
 
 /** Voleybol hareketlerinin süresi (sn). */
 /** Dalışta gövdenin öne yatışı (yere paralele yakın) ve yatarken gövde kalınlığı kadar kalkış. */
+/**
+ * Namaz duruşları: gövdenin kalçadan öne yatışı (rad), kalçanın yerden yüksekliği (m), bacak ve kol açıları,
+ * kolların içe dönüşü ve gövdenin yana dönüşü (selam). Kalça (paketin 0.525'i × CHIBI_SCALE) yerinde kalır.
+ */
+const HIP = 0.525 * 0.72;
+interface PrayPose {
+  tilt: number;
+  hip: number;
+  leg: number;
+  arm: number;
+  roll: number;
+  yaw: number;
+}
+const KADE: PrayPose = { tilt: 0.05, hip: 0.2, leg: 0.98, arm: -0.55, roll: 0.25, yaw: 0 };
+const PRAY_POSES: Record<Posture | "abdest", PrayPose> = {
+  tekbir: { tilt: 0, hip: HIP, leg: 0, arm: -2.7, roll: 0, yaw: 0 },
+  kiyam: { tilt: 0, hip: HIP, leg: 0, arm: -0.75, roll: 0.55, yaw: 0 },
+  ruku: { tilt: 1.2, hip: HIP, leg: -1.2, arm: -1.1, roll: 0.05, yaw: 0 },
+  kavme: { tilt: 0, hip: HIP, leg: 0, arm: -0.05, roll: 0, yaw: 0 },
+  // Secde: kalça yukarıda (diz üstü), baş yerde; kollar başın önünde yere
+  secde: { tilt: 1.72, hip: 0.42, leg: -1.72, arm: -1.95, roll: 0.15, yaw: 0 },
+  celse: KADE,
+  kade: KADE,
+  selamR: { ...KADE, yaw: -0.6 },
+  selamL: { ...KADE, yaw: 0.6 },
+  abdest: { tilt: 0.45, hip: 0.22, leg: 0.98, arm: -1.3, roll: 0.35, yaw: 0 },
+};
+const ABDEST_ANIM = 4.5;
+const _pose: PrayPose = { tilt: 0, hip: HIP, leg: 0, arm: 0, roll: 0, yaw: 0 };
+
+/** O anki namaz (ya da abdest) duruşu; yoksa null. Geçişler yumuşak. */
+function prayPose(v: AvatarView, time: number): PrayPose | null {
+  let cur: PrayPose | null = null, prev: PrayPose | null = null, k = 1;
+  if (v.namaz) {
+    const at = postureAt(v.namaz.rekat, time - v.namaz.start);
+    if (!at) return v.namaz.start > time ? PRAY_POSES.kiyam : null;
+    cur = PRAY_POSES[at.step.posture];
+    prev = PRAY_POSES[at.prev];
+    k = at.k;
+  } else if (v.abdestAt !== undefined && time - v.abdestAt >= 0 && time - v.abdestAt < ABDEST_ANIM) {
+    const t = time - v.abdestAt;
+    cur = PRAY_POSES.abdest;
+    prev = PRAY_POSES.kavme;
+    k = Math.min(1, t * 3, (ABDEST_ANIM - t) * 3);
+  }
+  if (!cur || !prev) return null;
+  for (const key of ["tilt", "hip", "leg", "arm", "roll", "yaw"] as const) _pose[key] = prev[key] + (cur[key] - prev[key]) * k;
+  if (v.abdestAt !== undefined && !v.namaz) _pose.arm += Math.sin(time * 9) * 0.25; // el yıkama
+  return _pose;
+}
+
 const DIVE_TILT = 1.48;
 const DIVE_LIFT = 0.16;
 export const VPOSE_TIME: Record<VolleyPose, number> = { bump: 0.5, set: 0.55, spike: 0.45, block: 0.9, dive: 0.8 };
@@ -307,7 +365,18 @@ export class AvatarRenderer {
     if (v.vlean) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, 0.55 * v.vlean));
     // Kaykayda yana duruş ve hafif yatış
     if (vehicle === 2) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, moving ? Math.sin(time * 2.2 + v.phase) * 0.08 : 0));
-    this.pos.set(v.x, y, v.z);
+    // Namaz/abdest: gövde kalçadan yatar (kalça yerinde kalacak şekilde ötelenir), selamda yana döner
+    const pray = prayPose(v, time);
+    let px = v.x, pz = v.z;
+    if (pray) {
+      const yawed = v.rot + pray.yaw + (v.poseYaw ?? 0);
+      this.quat.setFromAxisAngle(this.up, yawed).multiply(this.tilt.setFromAxisAngle(this.xAxis, pray.tilt));
+      const oz = -HIP * Math.sin(pray.tilt);
+      px += Math.sin(yawed) * oz;
+      pz += Math.cos(yawed) * oz;
+      y = (v.baseY ?? 0) + pray.hip - HIP * Math.cos(pray.tilt);
+    }
+    this.pos.set(px, y, pz);
     this.scl.set(s, s, s);
     this.m.compose(this.pos, this.quat, this.scl);
     const l = this.limbs;
@@ -323,8 +392,10 @@ export class AvatarRenderer {
     l.vw = vw;
     l.vu = vd ? Math.min(1, vt / vd) : 0;
     l.vstance = v.vstance ?? undefined;
+    l.pray = pray ? { leg: pray.leg, arm: pray.arm, roll: pray.roll } : undefined;
+    if (pray) l.seated = false;
     l.time = time;
-    const asChibi = !v.hidden && !v.bodyHidden && (this.chibi?.place(v.outfit, v.x, v.z, this.m, l, self) ?? false);
+    const asChibi = !v.hidden && !v.bodyHidden && (this.chibi?.place(v.outfit, px, pz, this.m, l, self) ?? false);
     if (seated && !vehicle && !asChibi && !v.bodyHidden) {
       y = base - SEAT_DROP;
       this.m.elements[13] = y;

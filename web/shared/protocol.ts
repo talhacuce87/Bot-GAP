@@ -155,6 +155,17 @@ export interface TagState {
   result: string;
 }
 
+/** Camide bir namaz: imam (0 ise tek başına), saftakiler (imam ilk), vakit, rekât ve başlangıç/bitiş (sunucu ms). */
+export interface NamazSession {
+  id: number;
+  imam: number;
+  members: number[];
+  vakitKey: "sabah" | "ogle" | "ikindi" | "aksam" | "yatsi";
+  rekat: number;
+  startAt: number;
+  endsAt: number;
+}
+
 /** Oyuncak pist yarışçısı: `lap` 1'den başlar (0: çizgiye gelmedi); bitirdiyse `place` ve `time` (ms). */
 export interface RacePlayer {
   sid: number;
@@ -363,6 +374,7 @@ export type ServerEvent =
   | { t: "tp"; sid: number; x: number; z: number; rot: number; at: number }
   | { t: "tag"; state: TagState | null }
   | { t: "race"; state: RaceState | null }
+  | { t: "namaz"; sessions: NamazSession[] }
   /**
    * Voleybol: top (id: yoksa maç topu, varsa antrenmanda çağıranın topu; hold: servisçinin elinde, toss: servis
    * için havaya atan; sv: servis atıldı, henüz karşılanmadı; w: sert vuruşun rüzgar rengi), kaybolan antrenman topu, maç/rally durumu, animasyon (dalış,
@@ -464,6 +476,12 @@ export type ClientEvent =
   | { t: "bfree" }
   | { t: "tagjoin" }
   /** Oyuncak pist: katıl/ayrıl, pist seç ve başlat (lobiyi açan), araba konumu (yarışta ~15 Hz). */
+  /** Cami: şadırvanda abdest, mihrapta imam ol, tek başına kıl, kamette safa dur, namazı boz. */
+  | { t: "abdest" }
+  | { t: "imam" }
+  | { t: "munferit" }
+  | { t: "saf" }
+  | { t: "nleave" }
   | { t: "rjoin" }
   | { t: "rleave" }
   | { t: "rtrack"; i: number }

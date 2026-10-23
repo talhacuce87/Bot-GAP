@@ -3,6 +3,7 @@
 // (çarpışma sınırları marching squares ile), mağara tavanı, nehir suyu ve şelale hep buradan çıkar.
 import * as THREE from "three";
 import { outsideWorld, WORLD_EXTENT } from "../../../shared/constants";
+import { MOSQUE_AREA } from "../../../shared/mosque";
 import { BRIDGE, BRIDGES, CAVE, CITY, LAKE, MOUNTAIN_EDGE, RIVER, RIVER_BANK, RIVER_HALF, ROAD_HALF, roadDist, ROOM_FLATS, TUNNEL, TUNNEL_HALF, WATERFALL } from "../../../shared/zones";
 import type { Colliders } from "./colliders";
 import { timeUniform } from "./geo";
@@ -23,6 +24,8 @@ const INNER = { minX: -144, maxX: 136, minZ: -96, maxZ: 168 };
 const EAST = { minX: 136, maxX: 416, minZ: -312, maxZ: 72 };
 /** Batı: dağın ardındaki mahalle ve otobanın geçidi (ince ızgara; kenarları kaba ızgaraya oturur). */
 const WEST = { minX: -576, maxX: -144, minZ: -192, maxZ: 208 };
+/** Güney: şehrin altındaki cami külliyesi (ince ızgara; EAST'in güneyinden başlar). */
+const SOUTH = { minX: 240, maxX: 400, minZ: 72, maxZ: 200 };
 const OUTER = { minX: -704, maxX: 720, minZ: -400, maxZ: 560 };
 const inArea = (a: { minX: number; maxX: number; minZ: number; maxZ: number }, x: number, z: number) => x > a.minX && x < a.maxX && z > a.minZ && z < a.maxZ;
 
@@ -98,7 +101,11 @@ export function mountainHeight(x: number, z: number): number {
   const west = 0.35 + 0.65 * smooth(-96, -66, x);
   const n = noise(x * 0.035, z * 0.035) * 0.6 + noise(x * 0.09 + 5, z * 0.09 + 3) * 0.3 + noise(x * 0.21 + 9, z * 0.21 + 1) * 0.1;
   const ridge = Math.pow(1 - Math.abs(2 * noise(x * 0.05 + 11, z * 0.05 + 7) - 1), 2);
-  return rise * west * (7 + n * 9 + ridge * 15 + Math.min(9, d * 0.12));
+  // GAP Camii'nin vadisi: külliyenin alanında dağ yok, kenarından uzaklaştıkça yükselir (cami dağlarla çevrili)
+  const m = MOSQUE_AREA;
+  const dm = Math.hypot(Math.max(m.minX - x, 0, x - m.maxX), Math.max(m.minZ - z, 0, z - m.maxZ));
+  const valley = dm < 40 ? smooth(6, 40, dm) : 1;
+  return rise * west * valley * (7 + n * 9 + ridge * 15 + Math.min(9, d * 0.12));
 }
 
 /** Mağara ya da tünelin dışına uzaklık (içinde ≤ 0). */
@@ -186,7 +193,7 @@ export function terrainHeight(x: number, z: number): number {
  * arasında mesh'ten yüksekte kalabilir).
  */
 export function groundY(x: number, z: number): number {
-  const fine = inArea(INNER, x, z) ? INNER : inArea(EAST, x, z) ? EAST : inArea(WEST, x, z) ? WEST : null;
+  const fine = inArea(INNER, x, z) ? INNER : inArea(EAST, x, z) ? EAST : inArea(WEST, x, z) ? WEST : inArea(SOUTH, x, z) ? SOUTH : null;
   const area = fine ?? OUTER, cell = fine ? FINE : COARSE;
   const gx = (x - area.minX) / cell, gz = (z - area.minZ) / cell;
   const i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j;
@@ -322,10 +329,11 @@ export function buildTerrain(grass: (x: number, z: number, out: THREE.Color) => 
   const inner = grid(INNER, FINE, terrainHeight, color, () => false);
   const east = grid(EAST, FINE, terrainHeight, color, () => false);
   const west = grid(WEST, FINE, terrainHeight, color, () => false);
-  const outer = grid(OUTER, COARSE, terrainHeight, color, (x, z) => inArea(INNER, x, z) || inArea(EAST, x, z) || inArea(WEST, x, z));
+  const south = grid(SOUTH, FINE, terrainHeight, color, () => false);
+  const outer = grid(OUTER, COARSE, terrainHeight, color, (x, z) => inArea(INNER, x, z) || inArea(EAST, x, z) || inArea(WEST, x, z) || inArea(SOUTH, x, z));
   const ground = new THREE.BufferGeometry();
   const merge = (name: string) => {
-    const parts = [inner, east, west, outer].map((g) => g.getAttribute(name).array as Float32Array);
+    const parts = [inner, east, west, south, outer].map((g) => g.getAttribute(name).array as Float32Array);
     const out = new Float32Array(parts.reduce((n, a) => n + a.length, 0));
     let at = 0;
     for (const a of parts) {

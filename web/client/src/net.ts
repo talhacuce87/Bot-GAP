@@ -27,6 +27,7 @@ import {
   type StageState,
   STATE_BYTES,
   type TableState,
+  type NamazSession,
   type RaceState,
   TagState,
   type WardrobeInfo,
@@ -119,6 +120,7 @@ export class Net {
   onScore: (score: [number, number], f?: 1) => void = () => {};
   onTag: (s: TagState | null) => void = () => {};
   onRace: (s: RaceState | null) => void = () => {};
+  onNamaz: (s: NamazSession[]) => void = () => {};
   /** Voleybol: top (sunucu zamanı `at`), maç durumu, dalış/blok animasyonu. */
   onVball: (b: VBall & { id?: number; at: number; hold?: number; toss?: number; w?: string; ev?: VolleyEv; by?: number }) => void = () => {};
   onVgone: (id: number) => void = () => {};
@@ -478,6 +480,9 @@ export class Net {
         break;
       case "race":
         this.onRace(ev.state);
+        break;
+      case "namaz":
+        this.onNamaz(ev.sessions);
         break;
       case "vball": {
         const { t: _t, ...ball } = ev;

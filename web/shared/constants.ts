@@ -2,6 +2,7 @@
 import { CITY, GROVE, inStadium, inVolley, KAHVEHANE, LAKE, ROAD_WALK, roadDist, STADIUM, VOLLEY_HALL } from "./zones";
 import { RACE_AREA } from "./ring";
 import { HOOD_BOX, HOOD_CORNER } from "./build";
+import { MOSQUE_AREA } from "./mosque";
 
 /** Sunucunun anlık görüntü (snapshot) yayın hızı. */
 export const TICK_HZ = 15;
@@ -23,7 +24,7 @@ export const WORLD_EXTENT = {
   minX: HOOD_BOX.minX,
   maxX: CITY.maxX,
   minZ: Math.min(WORLD_BOUNDS.minZ, CITY.minZ, RACE_AREA.minZ, HOOD_BOX.minZ),
-  maxZ: Math.max(WORLD_BOUNDS.maxZ, HOOD_BOX.maxZ),
+  maxZ: Math.max(WORLD_BOUNDS.maxZ, HOOD_BOX.maxZ, MOSQUE_AREA.maxZ),
 };
 
 function outsideRect(b: { minX: number; maxX: number; minZ: number; maxZ: number }, x: number, z: number): number {
@@ -41,6 +42,8 @@ export function outsideWorld(x: number, z: number): number {
     outsideRect(WORLD_BOUNDS, x, z),
     outsideRect(CITY, x, z),
     outsideRect(RACE_AREA, x, z),
+    // GAP Camii: şehrin güney kenarına bitişik
+    outsideRect(MOSQUE_AREA, x, z),
     Math.max(0, roadDist(x, z) - ROAD_WALK),
     outsideRoundRect(HOOD_BOX, HOOD_CORNER, x, z),
   );
