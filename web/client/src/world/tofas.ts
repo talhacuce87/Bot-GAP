@@ -150,6 +150,8 @@ export interface TofasMesh {
   setHeadlights(n: number, o?: { decal?: boolean; haze?: number }): void;
   /** Tekerlekler: `dist` metre yuvarlanır (geri giderken eksi), ön tekerlekler `steer` radyan döner. */
   roll(dist: number, steer: number): void;
+  /** Hasar (0 yok – 3 ağır): boya kararır, tozlanır. */
+  setDamage(level: number): void;
   dispose(): void;
 }
 
@@ -654,6 +656,9 @@ export function buildTofas(spec: CarSpec): TofasMesh {
       poolUniforms.uOpacity.value = 0.75 * n;
       for (const m of heads) m.opacity = 0.85 * n;
       for (const m of tails) m.opacity = 0.6 * n;
+    },
+    setDamage(level) {
+      bodyMat.color.setScalar(1 - 0.16 * Math.max(0, Math.min(3, level)));
     },
     roll(dist, steer) {
       spin = (spin + dist / TIRE_R) % (Math.PI * 2);

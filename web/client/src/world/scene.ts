@@ -35,6 +35,7 @@ import { SAKURA, SAKURA_CONFIG, sakuraGarden, type SakuraGarden } from "./sakura
 import { TANK_PARK } from "../../../shared/tank";
 import { villagePaths } from "./walkways";
 import { simitci } from "./simitci";
+import { tiledStatics } from "./tiles";
 
 export type { Seat };
 
@@ -1098,10 +1099,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
   paths(b);
   nature(b);
 
-  const statics = new THREE.Mesh(mergeGeometries(b.statics), withWetness(withCloudShadows(new THREE.MeshLambertMaterial({ vertexColors: true }))));
-  statics.matrixAutoUpdate = false;
-  statics.castShadow = statics.receiveShadow = true;
-  scene.add(statics);
+  // Statik dünya 96 m'lik karolarda: görünmeyen ve gölge kutusunun dışındaki karolar çizilmez (tiles.ts)
+  scene.add(tiledStatics(b.statics, withWetness(withCloudShadows(new THREE.MeshLambertMaterial({ vertexColors: true })))));
   const { bulbMaterial } = propMeshes(b, scene);
   grassAndFlowers(b, scene, garden.grass);
   scene.add(garden.petals);

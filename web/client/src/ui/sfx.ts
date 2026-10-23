@@ -5,6 +5,11 @@ import { settings } from "../settings";
 let ctx: AudioContext | null = null;
 let noise: AudioBuffer | null = null;
 
+/** Ses bağlamı (sürekli sesler için: motor); henüz açılmadıysa açmayı dener. */
+export function audioContext(): AudioContext | null {
+  return audio();
+}
+
 function audio(): AudioContext | null {
   if (ctx) return ctx;
   try {
@@ -146,6 +151,13 @@ export const sfx = {
   bump(gain = 1): void {
     burst(0.07, 0.3 * gain, 2500);
     tone(220, 0.08, "triangle", 0.12 * gain, 0, -80);
+  },
+  /** Araba çarptı: metal ezilmesi ve cam şıngırtısı (şiddet 0–1). */
+  crash(gain = 1): void {
+    burst(0.35, 0.45 * gain, 1800);
+    burst(0.12, 0.3 * gain, 6000, 0.03);
+    tone(95, 0.25, "sawtooth", 0.12 * gain, 0, -50);
+    tone(1900, 0.18, "triangle", 0.03 * gain, 0.05, 400);
   },
   /** Araba kornası (iki ton birlikte, kısa ya da uzun). */
   horn(gain = 1, long = false): void {

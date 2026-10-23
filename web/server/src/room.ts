@@ -256,6 +256,7 @@ export class Room {
     const p = this.players.get(sid);
     if (!p || p.info.spectator || (car && (p.info.jailed || this.tank.driver === sid))) return;
     p.info.car = car;
+    if (!car) p.info.dmg = 0;
     this.broadcast({ t: "car", sid, car });
     // Park halindeki arabasına bindi: park yeri boşalır
     if (car && p.info.parked) this.setParked(sid, null);
@@ -265,6 +266,14 @@ export class Room {
   }
 
   /** Arabanın radyosu: şarkı (herkes aynı andan dinler) ya da sus (null). Arabada değilse çalmaz. */
+  /** Arabanın hasar seviyesi (0–3): yalnızca arabadayken; odaya duyurulur. */
+  setCarDamage(sid: number, d: unknown): void {
+    const p = this.players.get(sid);
+    if (!p || !p.info.car || !Number.isInteger(d) || (d as number) < 0 || (d as number) > 3 || p.info.dmg === d) return;
+    p.info.dmg = d as number;
+    this.broadcast({ t: "cardmg", sid, d: d as number });
+  }
+
   /** Arabayı park et (indiği yer ya da çağırdığı yer): oyuncunun yakınında olmalı. Geçersizse yok sayılır. */
   setParked(sid: number, v: unknown): void {
     const p = this.players.get(sid);

@@ -54,6 +54,8 @@ export interface PlayerInfo {
   parked?: ParkedCar | null;
   /** Arabasının radyosunda çalan şarkı. */
   radio?: CarRadio | null;
+  /** Arabasının hasarı (0 yok – 3 ağır): duman ve kararmış boya. */
+  dmg?: number;
 }
 
 export const PETS = [
@@ -395,7 +397,9 @@ export type ServerEvent =
   | { t: "season"; season: string; top: { id: string; name: string; kills: number; wins: number }[] }
   // ---- NPC şehir (feat/npc-sehir) ----
   /** Araba bir NPC yayaya çarptı: herkes savrulup düşmesini görür (`by` çarpan). */
-  | { t: "pedhit"; id: number; vx: number; vz: number; by: number };
+  | { t: "pedhit"; id: number; vx: number; vz: number; by: number }
+  /** Arabanın hasar seviyesi değişti (0–3). */
+  | { t: "cardmg"; sid: number; d: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */
 export type ClientEvent =
@@ -506,7 +510,9 @@ export type ClientEvent =
   | { t: "skin"; skin: string }
   // ---- NPC şehir (feat/npc-sehir) ----
   /** Arabanla NPC yayaya çarptın (yaya kimliği ve arabanın hızı). */
-  | { t: "pedhit"; id: number; vx: number; vz: number };
+  | { t: "pedhit"; id: number; vx: number; vz: number }
+  /** Arabamın hasar seviyesi (0–3; çarptıkça artar, garajda sıfırlanır). */
+  | { t: "cardmg"; d: number };
 
 /** Konum mesajı: durum + konumun ait olduğu an (gönderenin sunucu saati tahmini). */
 export const STATE_BYTES = 16;
