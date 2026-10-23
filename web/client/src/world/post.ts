@@ -268,9 +268,11 @@ export class PostFx {
     }
     this.bloom.enabled = o.bloom;
     if (o.bloom) {
-      this.bloom.threshold = 0.72 + 0.4 * env.day;
-      this.bloom.strength = 0.85 * env.lights + 0.4 * env.day;
-      this.bloom.radius = 0.55;
+      // Ölçülü: yalnızca gerçekten parlak şeyler (ampul, far, stop, güneş) ışır, ışıma kaynağın çevresinde kalır.
+      // Eşik düşük olunca lambaların aydınlattığı duvar, kaldırım ve yol da ışıyıp sahneyi bulanıklaştırıyordu.
+      this.bloom.threshold = 0.95 + 0.2 * env.day;
+      this.bloom.strength = 0.35 * env.lights + 0.15 * env.day;
+      this.bloom.radius = 0.35;
     }
     this.rays.enabled = !!o.godrays && !!o.sunDir && this.aimRays(o.sunDir, env);
     this.dof.enabled = !!o.dof;

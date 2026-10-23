@@ -714,7 +714,7 @@ async function start(): Promise<void> {
   };
 
   // ---- Yeni özellikler: hava, futbol, kahvehane, DJ, mini oyunlar, araçlar, görevler, fotoğraf ----
-  const cars = new Cars(world.scene);
+  const cars = new Cars(world.scene, { headlights: true, lamps: world.lamps });
   const features = new Features({
     life, world, net, me, remotes, atlas, avatars, hud, hudRoot, input, emoteFx, session, camera, canvas, lowPower,
     renderNow: () => renderScene(0),
@@ -841,7 +841,7 @@ async function start(): Promise<void> {
     features.decorate();
     me.room = world.roomAt(me.x, me.z);
     // Tofaşlar: arabadaki oyuncu sürücü koltuğunda oturur
-    cars.begin();
+    cars.begin(me.x, me.z);
     if (me.car) cars.push(net.you, settings.car, me.x, me.z, me.rot, world.env.lights);
     for (const r of remotes.map.values()) if (r.hasData && r.info.car) cars.push(r.info.sid, r.info.car, r.x, r.z, r.rot, world.env.lights);
     cars.end();

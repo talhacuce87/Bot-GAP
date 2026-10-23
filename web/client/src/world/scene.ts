@@ -13,6 +13,7 @@ import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
 import { DayNight, skyDome } from "./daynight";
 import { GrassField } from "./grassField";
+import { LampField, lampsFrom } from "./lamps";
 import { NightFx } from "./night";
 import { FameBoard, fameStatics } from "./fame";
 import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, wetEnv, wetUniform, windMaterial, withCloudShadows, withWetness } from "./geo";
@@ -49,6 +50,8 @@ export interface World {
   /** Biri şiş çevirdi: duman kabarır, köz parlar (`time`: döngü saati, sn). */
   grillBoost(time: number): void;
   sakura: SakuraGarden;
+  /** Bütün lambaların ve farların gerçek gece ışığı (düşük grafikte null). */
+  lamps: LampField | null;
   /** Gün ışığı (0 gece, 1 gündüz), lambaların yanma oranı ve gün batımı tonu; DayNight günceller. */
   env: { day: number; lights: number; dusk: number };
   /** Güneş gölgesi (renderer.shadowMap ayrıca açılmalı). */
@@ -1063,7 +1066,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
   wetEnv.uWetSkyT.value = sky.uniforms.uTop.value;
   wetEnv.uWetSun.value = sky.uniforms.uSunDir.value;
   /** Yağmurda zemin ıslanır (~40 sn), bitince yavaşça kurur (~4 dk). */
-  let wetTarget = 0, lastTime = 0, weatherKnown = false;
+  let wetTarget = 0, lastTime = 0, weatherKnown = false, lampPatchAt = -Infinity;
 
   const terrain = buildTerrain(groundColor);
   b.add(terrain.ground);
@@ -1160,11 +1163,15 @@ export function buildWorld(opts: WorldOptions = {}): World {
   scene.add(smokeMesh);
   const smokeBoost = (smokeMesh.material as THREE.ShaderMaterial).uniforms.uBoost;
   // Gece: yakın lambalarda gerçek ışık (sayı sabit; zayıf cihazda yok), ateş böcekleri, ay
+  // Gece: bütün lambalar gerçek ışık verir (ızgaralı, lamps.ts). Düşük grafikte kapalı: o zaman yalnızca en
+  // yakın birkaç lamba gerçek ışık alır, gerisi zemin lekesiyle aydınlanır (NightFx).
+  const lampField = (opts.lamps ?? 6) > 0 ? new LampField(lampsFrom(b.props.bulb, b.props.flame)) : null;
   const night = new NightFx({
     bulbs: b.props.bulb,
     flames: b.props.flame,
     swarms: [...FOREST_CLUSTERS.slice(0, 6), [SAKURA.x, SAKURA.z, SAKURA_CONFIG.radius], [POND.x, POND.z, POND.r + 4], [GROVE.x, GROVE.z, 10], [poolX, poolZ - 6, 8]],
-    lights: opts.lamps ?? 6,
+    lights: lampField ? 0 : (opts.lamps ?? 6),
+    pools: !lampField,
     skyRadius: 240,
     moonDir: MOON_DIR,
   });
@@ -1247,6 +1254,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     },
     fame,
     screen,
+    lamps: lampField,
     spawn: { ...SPAWN },
     update(time: number, focus?: { x: number; z: number }, camera?: THREE.Vector3) {
       timeUniform.value = time;
@@ -1255,6 +1263,14 @@ export function buildWorld(opts: WorldOptions = {}): World {
       const wet = wetUniform.value;
       wetUniform.value = wet < wetTarget ? Math.min(wetTarget, wet + dt / 40) : Math.max(wetTarget, wet - dt / 240);
       night.update(time, env.lights, focus?.x ?? SPAWN.x, focus?.z ?? SPAWN.z);
+      if (lampField) {
+        lampField.setNight(env.lights);
+        // Sonradan eklenen malzemeler (arabalar, inşa blokları, avatarlar) de gece ışığı alsın
+        if (time - lampPatchAt > 2) {
+          lampPatchAt = time;
+          lampField.patchScene(scene);
+        }
+      }
       // İçerideyken salonun çatısı ve mağaranın tavanı gizlenir: kamera içeriyi görsün
       const hallDt = Math.min(0.1, Math.max(0, time - hallTime));
       sports.update(focus, camera, hallDt);

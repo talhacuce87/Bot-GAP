@@ -11,7 +11,7 @@ import { BOULEVARD_Z, CASINO, CITY, RIVER_BANK, ROAD_HALF, ROAD_PATH, ROAD_WALK,
 import type { Look } from "../../../shared/protocol";
 import type { Builder } from "./builder";
 import { floodMaterial } from "./casino";
-import { HOOD_PARK, HOOD_ROADS, HOOD_ROUNDABOUT, HOOD_SIDEWALK, HOOD_STREET_HALF, onHoodStreet } from "../../../shared/build";
+import { HOOD_PARK, HOOD_ROADS, HOOD_ROUNDABOUT, HOOD_SIDEWALK, HOOD_STREET_HALF, onHoodStreet, PLOTS } from "../../../shared/build";
 import { ROAD_BRIDGE_HALF, riverDist } from "./terrain";
 import { furnish, type Kit, MALL_SIGNS, SHOPS } from "./interiors";
 import { mat, part } from "./geo";
@@ -463,15 +463,26 @@ export function city(b: Builder): City {
       // Kesişmelerde ve kavşakta çizgi yok
       const others = (x: number, z: number) => HOOD_ROADS.some((o, m) => m !== k && polylineDist(o, x, z) < W + 1) || Math.hypot(x - HOOD_ROUNDABOUT.x, z - HOOD_ROUNDABOUT.z) < HOOD_ROUNDABOUT.r + 2;
       for (let i = 0; i < n; i += 2) if (!others(r[i][0], r[i][1]) && !others(r[i + 1][0], r[i + 1][1])) ribbon(i, i + 1, -0.08, 0.08, y + 0.009, YELLOW, 0, r);
-      // Ağaç sırası (kaldırımın dış yarısında) ve lambalar, karşılıklı değil şaşırtmalı
+      // Kenar çizgileri (gece yolun nerede bittiği seçilsin); kesişmelerde ve kavşakta kesilir
+      for (let i = 0; i < n; i++) {
+        if (others(r[i][0], r[i][1]) || others(r[i + 1][0], r[i + 1][1])) continue;
+        for (const sd of [-1, 1]) ribbon(i, i + 1, sd > 0 ? H - 0.3 : -H + 0.16, sd > 0 ? H - 0.16 : -H + 0.3, y + 0.009, LINE, 0, r);
+      }
+      // Lambalar kaldırımda (kolu yola uzanır); ağaçlar kaldırımın dışındaki çimenlikte, tepeleri asfalta
+      // taşmasın diye hiçbir yolun 2,5 m yakınına ve arsaların içine dikilmez (yer yoksa ağaç yok)
       for (let i = 3, t = 0; i < n - 2; i += 6, t++) {
-        const s = t % 2 ? 1 : -1, p = sidePt(i, s, H + 1.25, r);
-        if (others(p.x, p.z) || onAsphalt(p.x, p.z, 0.5)) continue;
-        if (t % 3 === 2) streetLamp(p.x, p.z, p.heading + (s > 0 ? -Math.PI / 2 : Math.PI / 2) + Math.PI, 5.2);
-        else {
-          b.prop(rand() > 0.25 ? "oak" : "sakura", mat(p.x, 0, p.z, rand() * 6, 0.7 + rand() * 0.2));
-          b.colliders.circle(p.x, p.z, 0.28);
+        const s = t % 2 ? 1 : -1;
+        if (t % 3 === 2) {
+          const p = sidePt(i, s, H + 1.25, r);
+          if (others(p.x, p.z) || onAsphalt(p.x, p.z, 0.5)) continue;
+          streetLamp(p.x, p.z, p.heading + (s > 0 ? -Math.PI / 2 : Math.PI / 2) + Math.PI, 5.2);
+          continue;
         }
+        const p = sidePt(i, s, W + 1.9, r);
+        const inPlot = PLOTS.some((q) => p.x > q.x0 - 2 && p.x < q.x0 + q.size + 2 && p.z > q.z0 - 2 && p.z < q.z0 + q.size + 2);
+        if (inPlot || onAsphalt(p.x, p.z, 2.5) || others(p.x, p.z)) continue;
+        b.prop(rand() > 0.25 ? "oak" : "sakura", mat(p.x, 0, p.z, rand() * 6, 0.6 + rand() * 0.15));
+        b.colliders.circle(p.x, p.z, 0.28);
       }
     });
     // Orta bulvarın batı ucu: parkın girişinde dönüş yeri
@@ -499,9 +510,16 @@ export function city(b: Builder): City {
       b.prop("rock", mat(P.x + Math.cos(a) * rr, 0.1, P.z + Math.sin(a) * rr, rand() * 6, sz, sz * 0.6, sz));
     }
     b.colliders.circle(P.x, P.z, P.pond);
+    // Göletin çevresinde alçak park lambaları (gece yürüyüş yolu aydınlık)
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2 + 0.2, lx = P.x + Math.cos(a) * (P.pond + 5), lz = P.z + Math.sin(a) * (P.pond + 5);
+      b.prop("post", mat(lx, 0, lz));
+      b.prop("bulb", mat(lx, 2.7, lz));
+      b.colliders.circle(lx, lz, 0.15);
+    }
     for (let k = 0, placed = 0; placed < 40 && k < 400; k++) {
       const x = P.x - 36 + rand() * 72, z = P.z - 78 + rand() * 156;
-      if (Math.hypot(x - P.x, z - P.z) < P.pond + 4 || onAsphalt(x, z, 3) || x > -548) continue;
+      if (Math.hypot(x - P.x, z - P.z) < P.pond + 7 || onAsphalt(x, z, 3) || x > -548) continue; // gölet, lambaları ve yolu
       // Döngünün içinde kalsın: o hizadaki döngünün batı kenarının doğusunda
       const west = Math.min(...HOOD_ROADS[4].filter(([, pz]) => Math.abs(pz - z) < 4).map(([px]) => px));
       if (!(x > west + 6)) continue;

@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { timeUniform } from "./geo";
 
-/** Lamba ampulünün zeminden yüksekliği (scene.ts'teki "bulb" ile aynı). */
+/** Köy patikalarındaki kısa lambanın ampul yüksekliği (scene.ts'teki "bulb"); şehir ve mahalle lambaları daha uzun. */
 const BULB_Y = 2.7;
 /** Gerçek ışığın tam güçte olduğu ve tamamen söndüğü oyuncu mesafesi. */
 const LIT_NEAR = 24;
@@ -20,6 +20,8 @@ export interface NightOptions {
   swarms: [number, number, number][];
   /** Gerçek ışık sayısı (zayıf cihazda 0). */
   lights: number;
+  /** Zemindeki ışık lekeleri (bütün lambalar gerçek ışık verirken gerekmez, bkz. lamps.ts). */
+  pools?: boolean;
   skyRadius: number;
   /** Ay yönü (gece ışığının geldiği yer). */
   moonDir: THREE.Vector3;
@@ -75,7 +77,11 @@ function poolMesh(lamps: Lamp[], realLights: boolean): { mesh: THREE.InstancedMe
   });
   const m = new THREE.InstancedMesh(geo, material, lamps.length);
   const mm = new THREE.Matrix4();
-  lamps.forEach((l, i) => m.setMatrixAt(i, mm.makeScale(l.fire ? 5 : 8.5, 1, l.fire ? 5 : 8.5).setPosition(l.x, 0.05, l.z)));
+  // Uzun lambanın ışık lekesi daha geniş
+  lamps.forEach((l, i) => {
+    const r = l.fire ? 5 : 8.5 * Math.max(1, (l.y / BULB_Y) * 0.8);
+    m.setMatrixAt(i, mm.makeScale(r, 1, r).setPosition(l.x, 0.05, l.z));
+  });
   m.computeBoundingSphere();
   m.matrixAutoUpdate = false;
   m.renderOrder = 1;
@@ -189,6 +195,7 @@ export class NightFx {
   private flies: THREE.Points;
   private moon: THREE.Mesh;
   private order: number[] = [];
+  private showPools: boolean;
   private lastPick = -Infinity;
   private v = new THREE.Vector3();
 
@@ -196,10 +203,12 @@ export class NightFx {
     for (const [list, fire] of [[o.bulbs, false], [o.flames, true]] as const) {
       for (const m of list) {
         this.v.setFromMatrixPosition(m);
-        this.lamps.push({ x: this.v.x, y: fire ? this.v.y + 0.3 : BULB_Y, z: this.v.z, fire });
+        // Işık ampulün gerçek yüksekliğinde (şehir ve mahalle lambaları 5–6 m: ışık direğin ortasından çıkmasın)
+        this.lamps.push({ x: this.v.x, y: fire ? this.v.y + 0.3 : Math.max(BULB_Y, this.v.y), z: this.v.z, fire });
       }
     }
     this.pools = poolMesh(this.lamps, o.lights > 0);
+    this.showPools = o.pools ?? true;
     for (let i = 0; i < o.lights; i++) {
       const l = new THREE.PointLight(WARM, 0, 11, 1.6);
       this.pool.push(l);
@@ -219,7 +228,8 @@ export class NightFx {
   update(time: number, lights: number, x: number, z: number): void {
     const on = lights > 0.01;
     // Işıklar hep sahnede kalır (yalnızca güçleri sıfırlanır): sayıları değişirse bütün shader'lar yeniden derlenir.
-    this.pools.mesh.visible = this.flies.visible = this.moon.visible = on;
+    this.pools.mesh.visible = on && this.showPools;
+    this.flies.visible = this.moon.visible = on;
     this.pools.opacity.value = lights * 0.55;
     this.pools.focus.value.set(x, z);
     this.flyOpacity.value = lights;
@@ -245,7 +255,10 @@ export class NightFx {
       const flick = lamp.fire ? 0.8 + 0.2 * Math.sin(time * 13 + lamp.x) * Math.sin(time * 7.7 + lamp.z) : 1;
       l.position.set(lamp.x, lamp.y - 0.25, lamp.z);
       l.color.copy(lamp.fire ? FIRE : WARM);
-      l.intensity = lights * fade * flick * (lamp.fire ? 5 : 9);
+      // Uzun lamba daha geniş alanı aydınlatır (yükseklikle menzil ve güç artar)
+      const tall = lamp.fire ? 1 : lamp.y / BULB_Y;
+      l.distance = 11 * Math.max(1, tall * 0.85);
+      l.intensity = lights * fade * flick * (lamp.fire ? 5 : 9 * tall * tall * 0.8 + 1.8);
     });
   }
 }

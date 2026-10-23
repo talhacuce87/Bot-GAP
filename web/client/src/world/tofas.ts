@@ -31,6 +31,25 @@ const RUBBER = "#121315";
 
 const MODEL_NAMES = { sahin: "ŞAHİN", dogan: "DOĞAN SLX", kartal: "KARTAL" } as const;
 
+/** Far ve stop halesi: merkezden yumuşakça sönen yuvarlak parıltı (bir kez üretilir). */
+let roundGlowTex: THREE.CanvasTexture | null = null;
+function roundGlow(): THREE.CanvasTexture {
+  if (roundGlowTex) return roundGlowTex;
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.25, "rgba(255,255,255,0.55)");
+  grad.addColorStop(0.6, "rgba(255,255,255,0.12)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  roundGlowTex = new THREE.CanvasTexture(c);
+  roundGlowTex.colorSpace = THREE.SRGBColorSpace;
+  return roundGlowTex;
+}
+
 /** Bir kez üretilen dokular: yumuşak ışık hâlesi (neon) ve yumuşak gölge. */
 let glowTex: THREE.CanvasTexture | null = null;
 let shadowTex: THREE.CanvasTexture | null = null;
@@ -120,8 +139,15 @@ function poly(pts: [number, number][]): THREE.Shape {
 
 export interface TofasMesh {
   group: THREE.Group;
+  /** Far camının rengi (gerçek far ışığı da bu renkte). */
+  headColor: THREE.Color;
   /** Neon ve farların gece parlaklığı (0–1). */
   setNight(n: number): void;
+  /**
+   * Farlar (0 kapalı – 1 gece tam): far ve stop haleleri; `haze` (yağmur 0–1) kadar havada huzme; `decal`
+   * yolda ışık lekesi (gerçek far ışığı olmayan düşük grafikte).
+   */
+  setHeadlights(n: number, o?: { decal?: boolean; haze?: number }): void;
   /** Tekerlekler: `dist` metre yuvarlanır (geri giderken eksi), ön tekerlekler `steer` radyan döner. */
   roll(dist: number, steer: number): void;
   dispose(): void;
@@ -514,8 +540,121 @@ export function buildTofas(spec: CarSpec): TofasMesh {
     tubes.push(part(new THREE.CylinderGeometry(0.018, 0.018, W - 0.4, 6).rotateZ(Math.PI / 2), neonHex, mat(0, 0.27 + dy, ZF - 0.25)));
     mesh(tubes, new THREE.MeshBasicMaterial({ vertexColors: true }));
   }
+  // ---------------------------------------------------------------
+  // Farlar: gece öne uzanan hüzmeler (iki koni), yolda önü aydınlatan ışık lekesi, far ve stop haleleri.
+  // Hepsi toplamalı ve ucuz: sahnedeki bütün arabalarda çalışır (gerçek ışık yalnızca en yakın birkaçında,
+  // bkz. cars.ts). Gündüz görünmez.
+  // ---------------------------------------------------------------
+  const headCol = new THREE.Color(head);
+  const lampY = 0.64 + dy, lampX = dogan ? 0.52 : 0.46;
+  const beamUniforms = { uColor: { value: headCol }, uOpacity: { value: 0 } };
+  const beamMat = new THREE.ShaderMaterial({
+    uniforms: beamUniforms,
+    vertexShader: /* glsl */ `
+      varying float vAlong;
+      varying float vFacing;
+      void main() {
+        vAlong = uv.y;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vec3 n = normalize(mat3(modelMatrix) * normal);
+        vFacing = abs(dot(n, normalize(cameraPosition - wp.xyz)));
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      varying float vAlong;
+      varying float vFacing;
+      void main() {
+        // Fara yakın parlak, uca doğru söner; koninin kenarlarından bakınca yumuşak (sert çizgi olmasın)
+        float a = pow(vAlong, 1.8) * pow(vFacing, 1.5) * uOpacity;
+        gl_FragColor = vec4(uColor * a, a);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+  const BEAM_LEN = 11;
+  for (const sx of [-1, 1]) {
+    // Koni: tepesi farda, ekseni öne (+z), hafif aşağı ve dışa bakar
+    const g = new THREE.ConeGeometry(1.6, BEAM_LEN, 20, 1, true).translate(0, -BEAM_LEN / 2, 0).rotateX(-Math.PI / 2 + 0.07).rotateY(sx * 0.05);
+    const m = new THREE.Mesh(g, beamMat);
+    m.position.set(sx * lampX, lampY, FZ + 0.05);
+    m.renderOrder = 7;
+    m.frustumCulled = false;
+    group.add(m);
+    disposables.push(g);
+  }
+  disposables.push(beamMat);
+  // Yolda ışık lekesi: arabanın önünde genişleyen yumuşak yamuk
+  const poolUniforms = { uColor: { value: headCol }, uOpacity: { value: 0 } };
+  const poolMat = new THREE.ShaderMaterial({
+    uniforms: poolUniforms,
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      varying vec2 vUv;
+      void main() {
+        float along = vUv.y;                       // 0 araba, 1 uç
+        float half = 0.12 + 0.36 * along;          // genişlik öne doğru açılır
+        float x = abs(vUv.x - 0.5);
+        float side = 1.0 - smoothstep(half * 0.5, half, x);
+        // Yakında güçlü, uzağa doğru yavaşça söner (far uzağa vurur)
+        float len = smoothstep(0.0, 0.05, along) * (1.0 - smoothstep(0.3, 1.0, along) * 0.85) * (1.0 - smoothstep(0.85, 1.0, along));
+        float a = side * len * uOpacity;
+        gl_FragColor = vec4(uColor * a, a);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -8,
+  });
+  const POOL_LEN = 30;
+  const poolGeo = new THREE.PlaneGeometry(10, POOL_LEN).rotateX(-Math.PI / 2).rotateY(Math.PI);
+  const pool = new THREE.Mesh(poolGeo, poolMat);
+  pool.position.set(0, 0.08, FZ + POOL_LEN / 2 - 0.4);
+  pool.renderOrder = 2;
+  group.add(pool);
+  disposables.push(poolGeo, poolMat);
+  // Far ve stop haleleri: camın etrafında küçük, yuvarlak parıltı (kameraya dönük)
+  const halo = (color: THREE.ColorRepresentation, size: number, x: number, y: number, z: number) => {
+    const m = new THREE.SpriteMaterial({ map: roundGlow(), color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    const sp = new THREE.Sprite(m);
+    sp.scale.set(size, size, 1);
+    sp.position.set(x, y, z);
+    sp.renderOrder = 8;
+    group.add(sp);
+    disposables.push(m);
+    return m;
+  };
+  const heads = [-1, 1].map((sx) => halo(headCol, 0.45, sx * lampX, lampY, FZ + 0.06));
+  const tails = [-1, 1].map((sx) => halo("#ff2a1a", 0.3, sx * 0.66, 0.72 + dy, RZ - 0.05));
+  pool.visible = false;
   return {
     group,
+    headColor: headCol,
+    setHeadlights(n, o = {}) {
+      const on = n > 0.01, haze = Math.min(1, (o.haze ?? 0) * 1.5);
+      pool.visible = on && o.decal !== false;
+      for (const c of group.children) if (c instanceof THREE.Mesh && c.material === beamMat) c.visible = on && haze > 0.02;
+      beamUniforms.uOpacity.value = 0.1 * n * haze;
+      poolUniforms.uOpacity.value = 0.75 * n;
+      for (const m of heads) m.opacity = 0.85 * n;
+      for (const m of tails) m.opacity = 0.6 * n;
+    },
     roll(dist, steer) {
       spin = (spin + dist / TIRE_R) % (Math.PI * 2);
       for (const m of spins) m.rotation.x = spin;

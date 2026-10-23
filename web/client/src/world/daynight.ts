@@ -154,10 +154,10 @@ function glowMesh(mats: THREE.Matrix4[]): THREE.InstancedMesh {
     vertexShader: /* glsl */ `
       varying vec2 vLocal;
       void main() {
-        float s = length(instanceMatrix[0].xyz) * 2.6;
+        // Küçük ışıma (gerçekte ampul parlak, çevresi az ışır); uzaktaki lamba da seçilsin diye biraz büyür
+        float s = length(instanceMatrix[0].xyz) * 1.15;
         vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-        // Uzaktaki lamba da seçilsin: hale mesafeyle büyür (ekranda küçülüp kaybolmaz)
-        s *= 1.0 + clamp(-center.z / 25.0, 0.0, 3.0);
+        s *= 1.0 + clamp(-center.z / 60.0, 0.0, 1.5);
         vLocal = uv * 2.0 - 1.0;
         gl_Position = projectionMatrix * (center + vec4(position.xy * s, 0.0, 0.0));
       }
@@ -168,8 +168,8 @@ function glowMesh(mats: THREE.Matrix4[]): THREE.InstancedMesh {
       void main() {
         float d = dot(vLocal, vLocal);
         if (d > 1.0) discard;
-        float a = (1.0 - d) * (1.0 - d) * uOpacity;
-        gl_FragColor = vec4(vec3(1.0, 0.78, 0.42) * a, a);
+        float a = pow(1.0 - d, 3.0) * uOpacity;
+        gl_FragColor = vec4(vec3(1.0, 0.86, 0.64) * a, a);
       }
     `,
     transparent: true,
@@ -396,7 +396,8 @@ export class DayNight {
 
     // Gece daha karanlık: lambaların aydınlattığı yerler öne çıksın
     // Gün batımında gök daha çok aydınlatır: güneşe karşı bakınca gölgede kalan yüzler kararmasın
-    this.hemiBase = (0.34 + 1.26 * day + 0.5 * dusk) * (1 - 0.12 * oc);
+    // Gece ortam ışığı kısık: lambaların aydınlattığı yerlerle karanlık arasındaki fark gece hissini verir
+    this.hemiBase = (0.26 + 1.34 * day + 0.5 * dusk) * (1 - 0.12 * oc);
     p.hemi.intensity = this.hemiBase;
     p.hemi.color.copy(PAL.hemiNightSky).lerp(PAL.hemiDaySky, day).lerp(PAL.hemiDuskSky, dusk * 0.5);
     p.hemi.groundColor.copy(PAL.hemiNightGround).lerp(PAL.hemiDayGround, day);
@@ -411,8 +412,9 @@ export class DayNight {
     this.env.day = day;
     this.env.lights = lights;
     this.env.dusk = dusk;
-    p.bulbMaterial.color.copy(PAL.bulbOff).lerp(PAL.bulbOn, lights);
-    (this.glow.material as THREE.ShaderMaterial).uniforms.uOpacity.value = lights * 0.55;
+    // Gece ampul HDR parlaklıkta: parıltı (bloom) açıkken doğal ışıma ondan gelir
+    p.bulbMaterial.color.copy(PAL.bulbOff).lerp(PAL.bulbOn, lights).multiplyScalar(1 + 0.6 * lights);
+    (this.glow.material as THREE.ShaderMaterial).uniforms.uOpacity.value = lights * 0.45;
     this.glow.visible = lights > 0.01;
 
     const starA = (1 - smooth(0.0, 0.35, day)) * 0.9 * (1 - oc);

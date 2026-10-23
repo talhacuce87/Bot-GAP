@@ -1,9 +1,14 @@
 // Tofaşlar: Tofaşla gezen her oyuncunun (sen ve uzaktakiler) arabası, konumunda ve yönünde çizilir.
 // Sürücü avatarı sol öndeki koltukta oturur. Aynı görünümdeki arabalar ayrı ayrı kurulur (az sayıda).
+// Gece sürülen arabaların farları yanar: en yakın birkaçının ışığı yolu, duvarları ve insanları gerçekten
+// aydınlatır (lamps.ts'in ızgaralı gece ışığı); havada huzme yalnızca yağmurda görünür. Düşük grafikte gerçek
+// ışık yok: yolda ışık lekesi taklit eder.
 import * as THREE from "three";
 import { FLAG_SEATED } from "../../shared/constants";
 import type { CarSpec } from "../../shared/car";
 import type { AvatarView } from "./avatars/avatars";
+import { wetEnv } from "./world/geo";
+import { type LampField, MAX_CARS } from "./world/lamps";
 import { buildTofas, type TofasMesh } from "./world/tofas";
 
 /** Sürücü koltuğu: arabanın merkezinden sola ve biraz arkaya; oturma yüzeyi alçak. */
@@ -22,6 +27,17 @@ interface Entry {
   steer: number;
 }
 
+export interface CarsOptions {
+  /** Farlar gece yansın mı (sürülen arabalar evet, park halindekiler hayır). */
+  headlights?: boolean;
+  /** Gerçek gece ışığı (yoksa düşük grafik: farlar yolda ışık lekesiyle taklit edilir). */
+  lamps?: LampField | null;
+}
+
+/** Farın arabanın merkezinden önü ve yerden yüksekliği. */
+const HEAD_AHEAD = 2.3;
+const HEAD_Y = 0.7;
+
 /** Aks aralığı (direksiyon açısı için) ve en büyük direksiyon açısı. */
 const WHEELBASE = 2.49;
 const MAX_STEER = 0.5;
@@ -29,10 +45,18 @@ const MAX_STEER = 0.5;
 export class Cars {
   private entries = new Map<number, Entry>();
   private seated = new Map<number, AvatarView>();
+  private night = 0;
+  private focus = { x: 0, z: 0 };
 
-  constructor(private scene: THREE.Scene) {}
+  constructor(
+    private scene: THREE.Scene,
+    private opts: CarsOptions = {},
+  ) {}
 
-  begin(): void {
+  /** Kare başı; `fx/fz`: gerçek far ışığının hangi arabalara verileceği (en yakınlar). */
+  begin(fx = 0, fz = 0): void {
+    this.focus.x = fx;
+    this.focus.z = fz;
     for (const e of this.entries.values()) e.seen = false;
   }
 
@@ -64,11 +88,23 @@ export class Cars {
     e.mesh.group.position.set(x, 0, z);
     e.mesh.group.rotation.y = rot;
     e.mesh.setNight(night);
+    e.mesh.setHeadlights(this.opts.headlights ? night : 0, { decal: !this.opts.lamps, haze: wetEnv.uWetRain.value });
+    this.night = night;
   }
 
-  /** Bu kare görünmeyen arabaları kaldırır. */
+  /** Bu kare görünmeyen arabaları kaldırır; gerçek far ışığını en yakın arabalara verir. */
   end(): void {
     for (const [sid, e] of this.entries) if (!e.seen) this.drop(sid);
+    const lamps = this.opts.lamps;
+    if (!lamps || !this.opts.headlights) return;
+    if (this.night < 0.01) return lamps.setHeadlights([]);
+    const near = [...this.entries.values()].sort((a, b) => (a.x - this.focus.x) ** 2 + (a.z - this.focus.z) ** 2 - ((b.x - this.focus.x) ** 2 + (b.z - this.focus.z) ** 2));
+    lamps.setHeadlights(
+      near.slice(0, MAX_CARS).map((e) => {
+        const dx = Math.sin(e.rot), dz = Math.cos(e.rot);
+        return { x: e.x + dx * HEAD_AHEAD, y: HEAD_Y, z: e.z + dz * HEAD_AHEAD, dx, dz, color: e.mesh.headColor };
+      }),
+    );
   }
 
   private drop(sid: number): void {
