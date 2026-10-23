@@ -65,6 +65,64 @@ export function instanced(geo: THREE.BufferGeometry, material: THREE.Material, m
   return mesh;
 }
 
+/**
+ * Dünyaya serpilmiş statik örnekler bölgelere bölünür (bölge başına bir InstancedMesh): kameranın ve gölge
+ * kutusunun dışındaki bölgeler hiç çizilmez. Tek mesh'te bütün dünyanın ağaçları her kare (iki kez: gölge
+ * dahil) çiziliyordu. `maxDist` verilirse `cullFar` o uzaklıktan ötedeki bölgeleri gizler (sisin ya da
+ * shader'daki gömülmenin arkası zaten görünmez).
+ */
+export function instancedRegions(
+  geo: THREE.BufferGeometry,
+  material: THREE.Material,
+  matrices: THREE.Matrix4[],
+  opts: { cell?: number; colors?: THREE.Color[]; maxDist?: number } = {},
+): THREE.Group {
+  const cell = opts.cell ?? 128;
+  const buckets = new Map<string, number[]>();
+  matrices.forEach((m, i) => {
+    const key = `${Math.floor(m.elements[12] / cell)},${Math.floor(m.elements[14] / cell)}`;
+    let list = buckets.get(key);
+    if (!list) buckets.set(key, (list = []));
+    list.push(i);
+  });
+  const group = new THREE.Group();
+  group.userData.maxDist = opts.maxDist ?? Infinity;
+  for (const [key, list] of [...buckets].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const mesh = instanced(geo, material, list.map((i) => matrices[i]));
+    if (opts.colors) list.forEach((i, k) => mesh.setColorAt(k, opts.colors![i]));
+    mesh.name = `bölge ${key}`;
+    group.add(mesh);
+  }
+  return group;
+}
+
+/** Kamera konumuna göre `maxDist` ötesindeki bölgeleri gizler (kare başına; birkaç düzine mesh). */
+export function cullFar(group: THREE.Group, x: number, z: number): void {
+  const max = group.userData.maxDist as number;
+  for (const o of group.children) {
+    // Örnekli mesh'te örneklerin küresi, düz mesh'te geometrininki
+    const s = (o as THREE.InstancedMesh).boundingSphere ?? (o as THREE.Mesh).geometry.boundingSphere!;
+    o.visible = Math.hypot(s.center.x - x, s.center.z - z) - s.radius < max;
+  }
+}
+
+/** Örneklerin kapsayan küresi (InstancedMesh.computeBoundingSphere gibi ama küre nesnesini korur), `pad` kadar pay. */
+export function boundInstances(mesh: THREE.InstancedMesh, pad: number): void {
+  const geo = mesh.geometry.boundingSphere!, out = mesh.boundingSphere!;
+  const e = mesh.instanceMatrix.array;
+  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < mesh.count; i++) {
+    const o = i * 16, x = e[o + 12], y = e[o + 13], z = e[o + 14];
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+  }
+  // Ölçek 1 civarı: geometri küresinin merkezi küçük, yarıçapa eklenir
+  const scale = Math.hypot(e[0], e[1], e[2]) || 1;
+  out.center.set((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+  out.radius = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2 + (geo.radius + geo.center.length()) * scale + pad;
+}
+
 /** Tüm animasyonlu shader'ların paylaştığı saat (saniye). Kare başına tek atama. */
 export const timeUniform = { value: 0 };
 

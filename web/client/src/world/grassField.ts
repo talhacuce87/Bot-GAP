@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { timeUniform } from "./geo";
 
 const RADIUS = 18;
+const MASK_RES = 256;
 const PATCH = RADIUS * 2;
 export const MAX_PUSHERS = 8;
 
@@ -62,6 +63,10 @@ export class GrassField {
   private center = { value: new THREE.Vector2() };
   private pushers = { value: Array.from({ length: MAX_PUSHERS }, () => new THREE.Vector3(1e5, 1e5, 0)) };
   private fwd = new THREE.Vector3();
+  /** Maskenin izin kanalı (MASK_RES²): alanın altında hiç çimen yoksa mesh çizilmez. */
+  private allowed: Uint8Array;
+  private maskMin: number;
+  private maskSize: number;
 
   constructor(mask: GrassMask, count: number) {
     const blade = bladeGeometry();
@@ -82,7 +87,12 @@ export class GrassField {
     geo.setAttribute("aRand", new THREE.InstancedBufferAttribute(rnd, 3));
     geo.instanceCount = count;
 
-    const tex = bakeMask(mask, 256);
+    const tex = bakeMask(mask, MASK_RES);
+    const data = tex.image.data as Uint8Array;
+    this.allowed = new Uint8Array(MASK_RES * MASK_RES);
+    for (let k = 0; k < this.allowed.length; k++) this.allowed[k] = data[k * 4];
+    this.maskMin = mask.min;
+    this.maskSize = mask.size;
     const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, {
@@ -144,6 +154,15 @@ export class GrassField {
     this.mesh.matrixAutoUpdate = false;
   }
 
+  private anyGrass(cx: number, cz: number): boolean {
+    const k = MASK_RES / this.maskSize;
+    const i0 = Math.max(0, Math.floor((cx - RADIUS - this.maskMin) * k)), i1 = Math.min(MASK_RES - 1, Math.floor((cx + RADIUS - this.maskMin) * k));
+    const j0 = Math.max(0, Math.floor((cz - RADIUS - this.maskMin) * k)), j1 = Math.min(MASK_RES - 1, Math.floor((cz + RADIUS - this.maskMin) * k));
+    // Shader 0.35'in altını gömer
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (this.allowed[j * MASK_RES + i] > 89) return true;
+    return false;
+  }
+
   /**
    * Kare başına: alan kameranın baktığı yöne kayar (önündeki çimen sık); `pushers` x, z, yarıçap.
    */
@@ -152,6 +171,8 @@ export class GrassField {
     this.fwd.y = 0;
     this.fwd.normalize();
     this.center.value.set(camera.position.x + this.fwd.x * RADIUS * 0.55, camera.position.z + this.fwd.z * RADIUS * 0.55);
+    // Asfalt, meydan, bina içi: alanın altında hiç çimen yoksa 30 bin yaprak boşuna işlenmesin
+    this.mesh.visible = this.anyGrass(this.center.value.x, this.center.value.y);
     const u = this.pushers.value;
     for (let i = 0; i < MAX_PUSHERS; i++) {
       const p = pushers[i];

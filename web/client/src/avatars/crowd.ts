@@ -3,7 +3,7 @@
 // sallama, telefon) bulunur; gölge haritası yok (zemin lekesi var). Onlarca yaya ~20 draw call.
 import * as THREE from "three";
 import type { Look } from "../../../shared/protocol";
-import { blobTexture } from "../world/geo";
+import { blobTexture, boundInstances } from "../world/geo";
 import { CHIBI_SCALE } from "./chibi";
 import { type ChibiPack, LIMB_COUNT } from "./chibiPack";
 
@@ -12,6 +12,10 @@ const PER_OUTFIT = 48;
 /** Kontur: chibi.ts ile aynı kalınlık ve kameradan itme (oyuncularla aynı çizgi). */
 const OUTLINE_WIDTH = 0.012;
 const OUTLINE_PUSH = 0.03;
+/** Bundan uzakta kontur pikselden ince: çizilmez (yarı üçgen). Yayalar yakından uzağa gelir. */
+const OUTLINE_R = 28;
+/** Bundan uzaktakiler daha kaba görünümle (LOD2, ~1/5 üçgen) çizilir. */
+const NEAR_R = 18;
 
 const CROWD_GLSL = /* glsl */ `
   attribute vec4 aPose;
@@ -57,11 +61,14 @@ interface Batch {
   outline: THREE.InstancedMesh;
   pose: THREE.InstancedBufferAttribute;
   n: number;
+  /** Konturu çizilen ilk örnek sayısı. */
+  lined: number;
 }
 
 export class CrowdRenderer {
   readonly group = new THREE.Group();
-  private batches: Batch[] = [];
+  /** Kıyafet başına [yakın, uzak] (paket LOD2 taşımıyorsa yalnızca yakın). */
+  private batches: Batch[][] = [];
   private shadow: THREE.InstancedMesh;
   private shadowN = 0;
   private m = new THREE.Matrix4();
@@ -117,31 +124,53 @@ export class CrowdRenderer {
       // Kıyafetler arasında kareye nefes aldır
       await new Promise((r) => setTimeout(r, 0));
       const geo = pack.build(look, 1);
-      const pose = new THREE.InstancedBufferAttribute(new Float32Array(PER_OUTFIT * 4), 4);
-      pose.setUsage(THREE.DynamicDrawUsage);
-      geo.setAttribute("aPose", pose);
-      const mesh = new THREE.InstancedMesh(geo, material, PER_OUTFIT);
-      mesh.receiveShadow = true;
-      // Kontur aynı örnek matrislerini kullanır
-      const outline = new THREE.InstancedMesh(geo, line, PER_OUTFIT);
-      outline.instanceMatrix = mesh.instanceMatrix;
-      for (const m of [mesh, outline]) {
-        m.count = 0;
-        m.frustumCulled = false;
-        this.group.add(m);
+      const tiers = [geo];
+      // Uzak görünüm aynı köşeleri kaba indeksle çizer (köşe belleği paylaşılır)
+      const farIndex = geo.userData.farIndex as THREE.BufferAttribute | undefined;
+      if (farIndex) {
+        const g2 = new THREE.BufferGeometry();
+        for (const name of ["position", "normal", "color", "aLimb", "aOutline"]) g2.setAttribute(name, geo.getAttribute(name));
+        g2.setIndex(farIndex);
+        g2.boundingSphere = geo.boundingSphere;
+        tiers.push(g2);
       }
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      this.batches.push({ mesh, outline, pose, n: 0 });
+      this.batches.push(tiers.map((g) => this.batch(g, material, line)));
     }
     this.ready = true;
+  }
+
+  private batch(geo: THREE.BufferGeometry, material: THREE.Material, line: THREE.Material): Batch {
+    const pose = new THREE.InstancedBufferAttribute(new Float32Array(PER_OUTFIT * 4), 4);
+    pose.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute("aPose", pose);
+    const mesh = new THREE.InstancedMesh(geo, material, PER_OUTFIT);
+    mesh.receiveShadow = true;
+    // Kontur aynı örnek matrislerini kullanır
+    const outline = new THREE.InstancedMesh(geo, line, PER_OUTFIT);
+    outline.instanceMatrix = mesh.instanceMatrix;
+    // Örnekler her kare yer değiştirir: küre end()'de yeniden hesaplanır (iki mesh aynı küre)
+    if (!geo.boundingSphere) geo.computeBoundingSphere();
+    mesh.boundingSphere = outline.boundingSphere = new THREE.Sphere();
+    for (const m of [mesh, outline]) {
+      m.count = 0;
+      this.group.add(m);
+    }
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return { mesh, outline, pose, n: 0, lined: 0 };
   }
 
   get outfits(): number {
     return this.batches.length;
   }
 
-  begin(): void {
-    for (const b of this.batches) b.n = 0;
+  private camX = 0;
+  private camZ = 0;
+
+  /** Kamera konumu: konturlar yalnızca yakındakilere (örnekler yakından uzağa itilmeli). */
+  begin(camX = 0, camZ = 0): void {
+    this.camX = camX;
+    this.camZ = camZ;
+    for (const tiers of this.batches) for (const b of tiers) b.n = b.lined = 0;
     this.shadowN = 0;
   }
 
@@ -150,9 +179,13 @@ export class CrowdRenderer {
    * `scale` belirip kaybolurken küçültür.
    */
   push(outfit: number, x: number, y: number, z: number, rot: number, p: CrowdPose, time: number, fall = 0, scale = 1): void {
-    const b = this.batches[outfit % this.batches.length];
-    if (!b || b.n >= PER_OUTFIT) return;
+    const tiers = this.batches[outfit % this.batches.length];
+    if (!tiers) return;
+    const d2 = (x - this.camX) ** 2 + (z - this.camZ) ** 2;
+    const b = tiers[d2 < NEAR_R * NEAR_R ? 0 : tiers.length - 1];
+    if (b.n >= PER_OUTFIT) return;
     const i = b.n++;
+    if (d2 < OUTLINE_R * OUTLINE_R) b.lined = b.n;
     this.q.setFromAxisAngle(this.up, rot);
     if (fall) this.q.multiply(this.tilt.setFromAxisAngle(this.side, -fall));
     this.v.set(x, y, z);
@@ -167,8 +200,11 @@ export class CrowdRenderer {
   }
 
   end(): void {
-    for (const b of this.batches) {
-      b.mesh.count = b.outline.count = b.n;
+    for (const b of this.batches.flat()) {
+      b.mesh.count = b.n;
+      b.outline.count = b.lined;
+      // El sallama ve düşme pozu geometrinin dışına taşar: yarım metre pay
+      if (b.n) boundInstances(b.mesh, 0.5);
       b.mesh.instanceMatrix.needsUpdate = true;
       b.pose.needsUpdate = true;
     }

@@ -16,7 +16,7 @@ import { GrassField } from "./grassField";
 import { LampField, lampsFrom } from "./lamps";
 import { NightFx } from "./night";
 import { FameBoard, fameStatics } from "./fame";
-import { blobTexture, flatMat, flickerMaterial, instanced, mat, part, timeUniform, wetEnv, wetUniform, windMaterial, withCloudShadows, withWetness } from "./geo";
+import { blobTexture, cullFar, flatMat, flickerMaterial, instanced, instancedRegions, mat, part, timeUniform, wetEnv, wetUniform, windMaterial, withCloudShadows, withWetness } from "./geo";
 import { kahvehane } from "./kahvehane";
 import { type Pitch, pitch } from "./pitch";
 import { type Stadium, stadium } from "./stadium";
@@ -619,7 +619,7 @@ function paths(b: Builder): void {
   for (const pts of villagePaths()) for (let i = 0; i < pts.length - 1; i++) path(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
 }
 
-function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matrix4[]): void {
+function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matrix4[], far: THREE.Group[]): void {
   // Çimen tutamı: 3 ince üçgen, dipte koyu uçta açık
   const blades: number[] = [];
   const cols: number[] = [];
@@ -665,19 +665,24 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matri
   }
   grass.push(...extraGrass);
   if (grass.length) {
-    const tufts = instanced(tuft, withCloudShadows(windMaterial(0.28, { side: THREE.DoubleSide }, [32, 44])), grass);
-    tufts.receiveShadow = true;
+    // 44 m'de shader'da gömülür: ötesindeki bölgeler hiç çizilmez
+    const tufts = instancedRegions(tuft, withCloudShadows(windMaterial(0.28, { side: THREE.DoubleSide }, [32, 44])), grass, { cell: 64, maxDist: 44 });
+    tufts.traverse((o) => (o.receiveShadow = true));
     scene.add(tufts);
+    far.push(tufts);
   }
 
   const head = part(new THREE.OctahedronGeometry(0.075, 0), "#ffffff", new THREE.Matrix4().makeScale(1, 0.6, 1));
   if (!flowers.length) return;
-  const fm = instanced(head, windMaterial(0.5, {}, [40, 52]), flowers);
-  flowerColors.forEach((c, i) => fm.setColorAt(i, c));
+  const fm = instancedRegions(head, windMaterial(0.5, {}, [40, 52]), flowers, { cell: 64, maxDist: 52, colors: flowerColors });
   scene.add(fm);
+  far.push(fm);
 }
 
-function propMeshes(b: Builder, scene: THREE.Scene): { bulbMaterial: THREE.MeshBasicMaterial } {
+/** Ağaç, kaya, çalı ve leke bölgeleri bu uzaklıktan ötede çizilmez (açık havada sis 140 m'de tam). */
+const PROP_FAR = 150;
+
+function propMeshes(b: Builder, scene: THREE.Scene, far: THREE.Group[]): { bulbMaterial: THREE.MeshBasicMaterial } {
   const r = b.rand;
   const look = SEASON_LOOK[SEASON];
   // Ağaçlarda alt kapaklar hiç görünmez (kamera zeminin altına inmez): openEnded ile üçgen sayısı yarıya iner.
@@ -709,7 +714,7 @@ function propMeshes(b: Builder, scene: THREE.Scene): { bulbMaterial: THREE.MeshB
     ]),
     stone: part(new THREE.CylinderGeometry(1, 1, 0.06, 7), "#b9b2a2", undefined, 0.1, r),
     post: part(new THREE.CylinderGeometry(0.07, 0.1, 2.6, 6), "#2f3440", mat(0, 1.3, 0)),
-    bulb: new THREE.SphereGeometry(0.22, 8, 6),
+    bulb: new THREE.SphereGeometry(0.22, 6, 4),
     flame: new THREE.ConeGeometry(0.16, 0.42, 6).translate(0, 0.1, 0),
     log: part(new THREE.CylinderGeometry(0.22, 0.24, 1.55, 7), "#7b5233", new THREE.Matrix4().makeRotationZ(Math.PI / 2), 0.15, r),
   };
@@ -731,10 +736,15 @@ function propMeshes(b: Builder, scene: THREE.Scene): { bulbMaterial: THREE.MeshB
   const casters: PropKind[] = ["pine", "oak", "sakura", "rock", "bush", "post", "log"];
   for (const kind of Object.keys(geos) as PropKind[]) {
     if (!b.props[kind].length) continue;
-    const m = instanced(geos[kind], materials[kind], b.props[kind]);
-    m.castShadow = casters.includes(kind);
-    m.receiveShadow = kind !== "bulb" && kind !== "flame";
+    // Ampul ve alevler sisten etkilenmez (gece uzaktan parlar): uzaklıkla gizlenmezler
+    const glow = kind === "bulb" || kind === "flame";
+    const m = instancedRegions(geos[kind], materials[kind], b.props[kind], { cell: 160, maxDist: glow ? Infinity : PROP_FAR });
+    m.traverse((o) => {
+      o.castShadow = casters.includes(kind);
+      o.receiveShadow = !glow;
+    });
     scene.add(m);
+    if (!glow) far.push(m);
   }
   return { bulbMaterial: materials.bulb as THREE.MeshBasicMaterial };
 }
@@ -743,7 +753,7 @@ function propMeshes(b: Builder, scene: THREE.Scene): { bulbMaterial: THREE.MeshB
  * Ağaç/çalı altı lekeleri. Gerçek gölge açıkken `focus` (x, z, yarıçap) çevresinde silinir:
  * yakında gerçek gölge, uzakta leke; ikisi üst üste binmez.
  */
-function shadowsMesh(b: Builder, focus: { value: THREE.Vector3 }): THREE.InstancedMesh {
+function shadowsMesh(b: Builder, focus: { value: THREE.Vector3 }): THREE.Group {
   const mats: THREE.Matrix4[] = [];
   for (let i = 0; i < b.shadows.length; i += 3) {
     const s = b.shadows[i + 2] * 2;
@@ -765,8 +775,8 @@ function shadowsMesh(b: Builder, focus: { value: THREE.Vector3 }): THREE.Instanc
       .replace("#include <map_fragment>", "#include <map_fragment>\ndiffuseColor.a *= vBlobFade;");
   };
   material.customProgramCacheKey = () => "blob-fade";
-  const m = instanced(new THREE.PlaneGeometry(1, 1), material, mats);
-  m.renderOrder = 1;
+  const m = instancedRegions(new THREE.PlaneGeometry(1, 1), material, mats, { cell: 160, maxDist: PROP_FAR });
+  m.traverse((o) => (o.renderOrder = 1));
   return m;
 }
 
@@ -1072,10 +1082,13 @@ export function buildWorld(opts: WorldOptions = {}): World {
   scene.add(arena.group);
   const sports = hall(b);
   scene.add(sports.upper);
+  // Bölgelere bölünmüş örnekler ve iç mekânlar; uzaktakiler kare başına gizlenir (cullFar)
+  const far: THREE.Group[] = [];
   const cas = casino(b, opts.lamps ?? 6);
   scene.add(cas.group);
   const town = city(b);
   scene.add(town.group);
+  far.push(town.interiors);
   const cami = mosque(b);
   scene.add(cami.group);
   const vendors = simitci(b);
@@ -1101,10 +1114,12 @@ export function buildWorld(opts: WorldOptions = {}): World {
 
   // Statik dünya 96 m'lik karolarda: görünmeyen ve gölge kutusunun dışındaki karolar çizilmez (tiles.ts)
   scene.add(tiledStatics(b.statics, withWetness(withCloudShadows(new THREE.MeshLambertMaterial({ vertexColors: true })))));
-  const { bulbMaterial } = propMeshes(b, scene);
-  grassAndFlowers(b, scene, garden.grass);
+  const { bulbMaterial } = propMeshes(b, scene, far);
+  grassAndFlowers(b, scene, garden.grass, far);
   scene.add(garden.petals);
-  scene.add(shadowsMesh(b, blobFocus));
+  const blobs = shadowsMesh(b, blobFocus);
+  scene.add(blobs);
+  far.push(blobs);
   const mountainMesh = mountains(b);
   scene.add(mountainMesh);
   const cloudMesh = clouds(b);
@@ -1251,6 +1266,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       music += ((musicOn ? 1 : 0) - music) * 0.08;
       speakers.update(time, music);
       cloudMesh.rotation.y = time * 0.004;
+      if (camera) for (const g of far) cullFar(g, camera.x, camera.z);
       pd.update(time);
       const boost = Math.min(1, Math.max(0, (boostUntil - time) / 4));
       smokeBoost.value = boost;
@@ -1260,7 +1276,11 @@ export function buildWorld(opts: WorldOptions = {}): World {
       if (fire) fire.intensity = (0.6 + env.lights * 3.2) * (0.75 + 0.35 * flick + boost * 0.4);
       dayNight.update(Date.now());
       // Dükkânın içinde: kulenin güneş gölgesi içeriyi (ve çalışanları) karartmasın
-      if (focus && rooms.some((r) => focus.x > r.minX && focus.x < r.maxX && focus.z > r.minZ && focus.z < r.maxZ)) sun.shadow.intensity = 0;
+      // Casinoda da öyle (çatı içerideyken gizli): gölge kapalıyken haritası her kare boşuna çizilmesin
+      const indoors = !!focus && (rooms.some((r) => focus.x > r.minX && focus.x < r.maxX && focus.z > r.minZ && focus.z < r.maxZ) || cas.inside(focus.x, focus.z));
+      if (indoors) sun.shadow.intensity = 0;
+      // (harita henüz yoksa bir kez çizilmeli: yoksa gölge alan malzemeler boş örnekleyiciyle çizilemez)
+      sun.shadow.autoUpdate = !indoors || !sun.shadow.map;
       waterEnv.uNight.value = 1 - env.day;
       // Damlalar ışıktan etkilenmez: gece gökyüzüyle birlikte kararsınlar
       fnt.light.value = 0.35 + 0.65 * Math.min(1, hemi.intensity / 1.6);

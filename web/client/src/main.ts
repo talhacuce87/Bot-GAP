@@ -100,6 +100,8 @@ async function start(): Promise<void> {
     return;
   }
   renderer.setSize(innerWidth, innerHeight, false);
+  // Shader hata denetimi her programda derlemenin bitmesini bekletir (getProgramInfoLog): yalnızca geliştirmede
+  renderer.debug.checkShaderErrors = import.meta.env.DEV;
   // Ton eşleme: düşük poli renkler aynı kalır, yalnızca parlak uçlar (güneş, lambalar) yumuşar
   renderer.toneMapping = THREE.NeutralToneMapping;
   // Uzak: büyük haritanın bir ucundan ufuktaki dağlar görünsün
@@ -589,7 +591,7 @@ async function start(): Promise<void> {
   }
 
   // Debug: gardırobu bot olmadan denemek için (ekran görüntüsü testleri)
-  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe, gapNet: net, gapDust: dust, gapMe: me, gapShare: startShare });
+  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe, gapNet: net, gapDust: dust, gapMe: me, gapShare: startShare, gapWorld: world, gapRenderer: renderer, gapCamera: camera });
 
   // ---- Etkileşimler: mangalda şiş çevir, zindanda çay ver / domates at ----
   const HEART = 2; // EMOTES içindeki ❤️
@@ -734,6 +736,7 @@ async function start(): Promise<void> {
     },
   });
   if (params.has("debug") && params.get("namaz")) features.mosque.debugPose(params.get("namaz")!);
+  if (params.has("debug")) Object.assign(window, { gapFeatures: features });
   // NPC trafik de gece far ışığı alır (en yakınlar, oyuncu arabalarıyla birlikte)
   cars.extra = { list: () => features.npcHeadlights(), get night() { return world.env.lights; } };
   if (practiceTrack !== null) features.race.requestPractice(Number(practiceTrack) || 0, Number(params.get("botlar") ?? 3) || 0, params.has("oto"), params.has("lobi"));
@@ -931,6 +934,10 @@ async function start(): Promise<void> {
     if (document.hidden) renderer.setAnimationLoop(null);
     else run();
   });
+  // Sahnedeki shader'lar yükleme ekranı açıkken ve paralel derlenir; yoksa ilk karede ~70 program sırayla
+  // derlenir ve ekran saniyelerce donar
+  await renderer.compileAsync(world.scene, camera).catch(() => undefined);
+  if (!life.active) return;
   run();
   loading.remove();
 }

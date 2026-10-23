@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { type CarSpec, DEFAULT_CAR } from "../../../shared/car";
-import { blobTexture } from "./geo";
+import { blobTexture, boundInstances } from "./geo";
 import { buildTofas } from "./tofas";
 
 /** NPC arabaların modelleri ve renkleri (bir arabanın görünümü bu listeden). */
@@ -68,14 +68,28 @@ export class TrafficCars {
     this.shadow.frustumCulled = false;
     this.shadow.renderOrder = 2;
     this.group.add(this.shadow);
+    // Görünümler tarayıcı boştayken önceden kurulur: araba ilk göründüğü karede takılma olmasın
+    const idle: (f: () => void) => void = typeof requestIdleCallback === "function" ? (f) => requestIdleCallback(f, { timeout: 2000 }) : (f) => setTimeout(f, 50);
+    const warm = (look: number) => {
+      if (look >= TRAFFIC_LOOKS.length) return;
+      idle(() => {
+        if (!this.batches.has(look)) this.make(look);
+        warm(look + 1);
+      });
+    };
+    warm(0);
   }
 
-  /** Görünümün mesh'leri ilk kullanıldığında kurulur; bu kare başka biri kurulduysa null (araba sonra belirir). */
+  /** Görünümün mesh'leri henüz kurulmadıysa bu kare kurulur; başka biri kurulduysa null (araba sonra belirir). */
   private batch(look: number): Batch | null {
-    let b = this.batches.get(look);
+    const b = this.batches.get(look);
     if (b) return b;
     if (this.built) return null;
     this.built = true;
+    return this.make(look);
+  }
+
+  private make(look: number): Batch {
     const g = harvest({ ...DEFAULT_CAR, ...TRAFFIC_LOOKS[look % TRAFFIC_LOOKS.length] });
     const mk = (geo: THREE.BufferGeometry, mat: THREE.Material) => {
       const mesh = new THREE.InstancedMesh(geo, mat, MAX_PER_LOOK);
@@ -85,8 +99,14 @@ export class TrafficCars {
       this.group.add(mesh);
       return mesh;
     };
-    b = { body: mk(g.body, this.bodyMat), glass: mk(g.glass, this.glassMat), glow: mk(g.glow, this.glowMat), n: 0 };
+    const b: Batch = { body: mk(g.body, this.bodyMat), glass: mk(g.glass, this.glassMat), glow: mk(g.glow, this.glowMat), n: 0 };
     b.body.castShadow = true;
+    // Örnekler her kare yer değiştirir: küre end()'de yeniden hesaplanır, üç mesh aynı küreyi kullanır.
+    // Böylece kameranın ve gölge kutusunun dışında kalan görünümler çizilmez.
+    b.body.geometry.computeBoundingSphere();
+    b.body.boundingSphere = new THREE.Sphere();
+    b.glass.boundingSphere = b.glow.boundingSphere = b.body.boundingSphere;
+    for (const mesh of [b.body, b.glass, b.glow]) mesh.frustumCulled = true;
     b.glass.renderOrder = 3;
     this.batches.set(look, b);
     return b;
@@ -117,8 +137,10 @@ export class TrafficCars {
         mesh.count = b.n;
         mesh.instanceMatrix.needsUpdate = true;
       }
+      if (b.n) boundInstances(b.body, 0);
     }
     this.shadow.count = this.shadowN;
     this.shadow.instanceMatrix.needsUpdate = true;
   }
 }
+

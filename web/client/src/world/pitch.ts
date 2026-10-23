@@ -372,7 +372,7 @@ export function pitch(b: Builder, F: Field = PITCH, opt: PitchOptions = {}): Pit
   }
 
   // Top: beyaz ikosahedron, beşgen lekeler siyah
-  const ballGeo = new THREE.IcosahedronGeometry(BALL_R, 1).toNonIndexed();
+  const ballGeo = new THREE.IcosahedronGeometry(BALL_R, 1); // çokyüzlüler zaten indekssiz
   const cols = new Float32Array(ballGeo.attributes.position.count * 3);
   for (let i = 0; i < cols.length; i += 9) {
     const dark = (i / 9) % 5 === 0;
