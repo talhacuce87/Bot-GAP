@@ -246,3 +246,32 @@ describe("flags", () => {
     expect(p.state.z).toBeGreaterThan(onFoot + 2);
   });
 });
+
+describe("kaldığın yerden başla", () => {
+  it("girişten sonra bir kez ve kısa sürede, yalnızca dünyanın içine; kabul edilirse herkese duyurulur", async () => {
+    const { RESUME_MS } = await import("../server/src/room");
+    const { HOOD_ROUNDABOUT } = await import("../shared/build");
+    const { STADIUM } = await import("../shared/zones");
+    const room = new Room("dunya");
+    const a = new FakeConn(), b = new FakeConn();
+    const sa = room.join(member("a"), a, 1000);
+    const sb = room.join(member("b"), b, 1000);
+    // Dünyanın dışı ve ışınlanılan oda reddedilir
+    expect(room.resume(sa, WORLD_EXTENT.minX - 50, 0, 0, 2000)).toBe(false);
+    expect(room.resume(sa, STADIUM.x, STADIUM.z, 0, 2000)).toBe(false);
+    expect(room.resume(sa, Number.NaN, 0, 0, 2000)).toBe(false);
+    // Mahallenin girişi: kabul, herkes ışınlandığını görür
+    expect(room.resume(sa, HOOD_ROUNDABOUT.x + 20, HOOD_ROUNDABOUT.z, 1, 2000)).toBe(true);
+    const tp = b.text.filter((e) => e.t === "tp").at(-1);
+    expect(tp).toMatchObject({ t: "tp", sid: sa, x: HOOD_ROUNDABOUT.x + 20, z: HOOD_ROUNDABOUT.z });
+    // İkinci kez ve süresi geçince yok
+    expect(room.resume(sa, 0, 0, 0, 3000)).toBe(false);
+    expect(room.resume(sb, 0, 0, 0, 1000 + RESUME_MS + 1)).toBe(false);
+  });
+
+  it("sürgündeki kaldığı yerden başlamaz (zindanda kalır)", () => {
+    const room = new Room("dunya");
+    const s = room.join(member("j"), new FakeConn(), 1000, { jailed: true });
+    expect(room.resume(s, 0, 0, 0, 2000)).toBe(false);
+  });
+});

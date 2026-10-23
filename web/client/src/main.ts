@@ -33,6 +33,7 @@ import { login, type Session } from "./discord";
 import { Input } from "./input/input";
 import { onBinds } from "./input/keybinds";
 import { Net } from "./net";
+import { loadLastPos, resumable, saveLastPos } from "./lastPos";
 import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
 import { lowPowerDevice as lowPower, onSettings, settings, updateSettings } from "./settings";
@@ -238,6 +239,28 @@ async function start(): Promise<void> {
     else if (jailed && !was) me.teleport(JAIL_SPAWN.x, JAIL_SPAWN.z, JAIL_SPAWN.rot);
     else if (!jailed && was) me.teleport(RELEASE_SPAWN.x, RELEASE_SPAWN.z, RELEASE_SPAWN.rot);
   };
+  // Kaldığın yerden başla: oyuna girince tarayıcının sakladığı son konum, yeniden bağlanınca bulunduğun yer.
+  // Sunucu doğrular ve herkese duyurur (yoksa sunucudaki konum doğuş noktasından koşarak yetişirdi).
+  // İzleme linkiyle gelen sinemada başlar; sürgündeki zindanda kalır.
+  let restored = false;
+  net.onWelcome = (jailed) => {
+    if (jailed) return;
+    if (!restored) {
+      restored = true;
+      const last = session.mode === "watch" || at.length ? null : loadLastPos();
+      if (last) me.teleport(last.x, last.z, last.rot);
+    }
+    if (resumable(me.x, me.z)) net.send({ t: "resume", x: me.x, z: me.z, rot: me.rot });
+  };
+  const savePos = () => {
+    if (!me.jailed && net.status === "online") saveLastPos({ x: me.x, z: me.z, rot: me.rot });
+  };
+  const posTimer = window.setInterval(savePos, 3000);
+  addEventListener("pagehide", savePos);
+  life.onStop(() => {
+    window.clearInterval(posTimer);
+    removeEventListener("pagehide", savePos);
+  });
   net.onTank = (s) => {
     Object.assign(tank, s);
     if (s.driver === net.you) {

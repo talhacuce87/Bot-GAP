@@ -59,6 +59,8 @@ export class Net {
   onStatus: (s: NetStatus) => void = () => {};
   /** Kendi sürgün durumumuz değişti (girişte ya da canlı). */
   onJail: (jailed: boolean, x: number, z: number, rot: number) => void = () => {};
+  /** Odaya girildi (ilk bağlantı ya da yeniden bağlanma); sürgündeyse true. */
+  onWelcome: (jailed: boolean) => void = () => {};
   onBoard: (entries: BoardEntry[], updated: number) => void = () => {};
   /** `link`: izleme odasının tarayıcı adresi (Activity'de "Tarayıcıda izle"). */
   onWatch: (s: WatchState, link?: string) => void = () => {};
@@ -318,6 +320,7 @@ export class Net {
         if (me?.look) this.onMyLook(me.look);
         this.lastSent.flags = -1; // hemen tam durum gönder
         this.setStatus("online");
+        this.onWelcome(!!me?.jailed);
         break;
       case "join":
         if (ev.player.sid !== this.you && !ev.player.spectator) this.remotes.add(ev.player);

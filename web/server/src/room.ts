@@ -6,6 +6,7 @@ import {
   FLAG_MASK,
   JAIL_SPAWN,
   maxSpeed,
+  outsideWorld,
   RELEASE_SPAWN,
   ROOM_MAX_PLAYERS,
 } from "../../shared/constants";
@@ -21,7 +22,7 @@ import {
   writeSnapshotEntry,
   writeSnapshotHeader,
 } from "../../shared/protocol";
-import { SPAWN } from "../../shared/zones";
+import { inStadium, inVolley, SPAWN } from "../../shared/zones";
 import { CAR_MAX_SPEED, type CarRadio, type CarSpec, type ParkedCar, PARK_REACH, validCar } from "../../shared/car";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
@@ -69,8 +70,13 @@ interface Player {
   /** Son konum mesajının geldiği an (hız kontrolü buna göre). */
   lastUpdate: number;
   joinedAt: number;
+  /** Kaldığı yerden başladı mı (girişte bir kez). */
+  resumed?: boolean;
   conn: Conn;
 }
+
+/** Kaldığı yerden başlama isteği girişten sonra bu kadar süre kabul edilir. */
+export const RESUME_MS = 10_000;
 
 const MAX_BUFFERED = 64 * 1024;
 const SPAWN_RADIUS = 3;
@@ -327,6 +333,20 @@ export class Room {
     p.lastUpdate = now;
     this.dirty = TRAIL_TICKS;
     return p.sampledAt;
+  }
+
+  /**
+   * Kaldığı yerden başla: tarayıcının sakladığı son konum (oyuna yeniden girince) ya da yeniden bağlanınca
+   * bulunduğu yer. Girişten sonra bir kez ve RESUME_MS içinde; yalnızca dünyanın içinde (ışınlanılan odalar,
+   * sürgün, izleyici ve savaş odası hariç). Kabul edilirse herkese duyurulur. Yoksa oyuncu doğuş noktasında kalır.
+   */
+  resume(sid: number, x: number, z: number, rot: number, now = Date.now()): boolean {
+    const p = this.players.get(sid);
+    if (!p || p.resumed || now - p.joinedAt > RESUME_MS || p.info.jailed || p.info.spectator || this.battle) return false;
+    if (![x, z, rot].every(Number.isFinite) || outsideWorld(x, z) > 0 || inStadium(x, z) || inVolley(x, z)) return false;
+    p.resumed = true;
+    this.moveTo(sid, x, z, rot, now);
+    return true;
   }
 
   /** Sunucunun belirlediği yere taşır ve herkese duyurur (stadyuma giriş/çıkış). */

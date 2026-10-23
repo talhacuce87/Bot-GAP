@@ -396,6 +396,8 @@ export type ClientEvent =
   | { t: "wcmd"; op: "play" | "pause" | "seek"; pos?: number }
   | { t: "wload"; url: string }
   | { t: "emote"; e: number }
+  /** Girişte: kaldığın yerden başla (sunucu doğrular, kabul ederse herkese duyurur). */
+  | { t: "resume"; x: number; z: number; rot: number }
   | { t: "act"; a: Act }
   | { t: "fish" }
   /** Gölün yanına gelince: sonraki balık hakkı ne zaman? (cevap "fishwait") */

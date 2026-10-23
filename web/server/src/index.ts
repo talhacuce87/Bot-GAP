@@ -1052,6 +1052,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
       const msg = JSON.parse(data.toString());
       if (msg && typeof msg === "object" && room.battle?.handle(sid, msg)) {
         // savaş mesajı işlendi
+      } else if (msg?.t === "resume") {
+        room.resume(sid, Number(msg.x), Number(msg.z), Number(msg.rot));
       } else if (msg?.t === "ping" && typeof msg.c === "number") {
         ws.send(JSON.stringify({ t: "pong", c: msg.c, s: Date.now() }));
       } else if (msg?.t === "rtc" && fast) {
