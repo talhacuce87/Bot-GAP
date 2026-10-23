@@ -64,7 +64,7 @@ export class Cars {
   }
 
   /** Bu kare `sid`in arabası (x, z, rot) — yoksa çağırma. */
-  push(sid: number, spec: CarSpec, x: number, z: number, rot: number, night: number): void {
+  push(sid: number, spec: CarSpec, x: number, z: number, rot: number, night: number, dmg = 0): void {
     const key = JSON.stringify(spec);
     let e = this.entries.get(sid);
     if (!e || e.key !== key) {
@@ -91,6 +91,7 @@ export class Cars {
     e.mesh.group.position.set(x, 0, z);
     e.mesh.group.rotation.y = rot;
     e.mesh.setNight(night);
+    e.mesh.setDamage(dmg);
     e.mesh.setHeadlights(this.opts.headlights ? night : 0, { decal: !this.opts.lamps, haze: wetEnv.uWetRain.value });
     this.night = night;
   }

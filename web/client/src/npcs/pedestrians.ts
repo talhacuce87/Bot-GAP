@@ -570,8 +570,16 @@ export class Pedestrians {
           tz += (dz / d) * (1.4 - d) * 0.8;
         }
       }
-      this.ox[i] += (tx - this.ox[i]) * (run ? Math.min(1, k * 3) : k);
-      this.oz[i] += (tz - this.oz[i]) * (run ? Math.min(1, k * 3) : k);
+      // Uzun süredir görünmüyorduysa eski kayma kalmasın (belirirken sıçramasın)
+      if (this.seen[i] < this.frame - 1) this.ox[i] = this.oz[i] = 0;
+      // Kayma yürüyerek/koşarak olur: hızı sınırlı (ışınlanır gibi yana atlamasın)
+      {
+        const ex = (tx - this.ox[i]) * k * 2, ez = (tz - this.oz[i]) * k * 2, e = Math.hypot(ex, ez);
+        const max = (run ? 3.2 : 1.1) * dt;
+        const f = e > max ? max / e : 1;
+        this.ox[i] += ex * f;
+        this.oz[i] += ez * f;
+      }
       let x = base.x + this.ox[i], z = base.z + this.oz[i];
       let want = base.rot, moving = base.moving || run;
       if (waveAt && !run && p.kind !== "sit") {

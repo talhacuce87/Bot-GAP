@@ -146,6 +146,8 @@ export class Player implements AvatarView, PlayerState {
   private focusLook = new THREE.Vector3();
   /** Fareyle en son bakıştan beri geçen süre (sn). */
   private lookIdle = 0;
+  /** Arabayla bir yere sertçe çarptı: çarpma anındaki hız (m/sn). */
+  onCrash: ((speed: number) => void) | null = null;
   /** Tofaşla gidiyorsa hızı (m/sn, geri vitesteyse eksi); konumu x/z, yönü rot. */
   car: { v: number } | null = null;
   /** Yarış gridinde (yeşil yanana kadar): gaz/geri tutmaz, araba yerinde durur. */
@@ -510,6 +512,7 @@ export class Player implements AvatarView, PlayerState {
     this.x += ox;
     this.z += oz;
     const hit = Math.hypot(ox, oz);
+    if (hit > 0.08 && Math.abs(c.v) > 2.5) this.onCrash?.(Math.abs(c.v));
     if (hit > 0.01) c.v *= hit > 0.08 ? 0.35 : 0.85;
     // Kamera serbest: fareyle çevrilir; fare 1,5 sn bırakılınca ve araba giderken yavaşça arkaya döner
     if (this.lookIdle > 1.5 && Math.abs(c.v) > 1) {

@@ -119,3 +119,22 @@ describe("pedhit (sunucu)", () => {
     expect(b.hits().map((h) => h.id)).toEqual([1, 2]);
   });
 });
+
+describe("araba hasarı (sunucu)", () => {
+  it("yalnızca arabadayken 0–3 kabul edilir, herkese duyurulur; arabadan inince sıfırlanır", () => {
+    const room = new Room("g:dmg");
+    const a = new FakeConn(), b = new FakeConn();
+    const sa = room.join(member("a"), a, 0);
+    room.join(member("b"), b, 0);
+    const dmg = () => b.text.filter((e) => e.t === "cardmg");
+    room.setCarDamage(sa, 2);
+    expect(dmg()).toEqual([]);
+    room.setCar(sa, DEFAULT_CAR);
+    room.setCarDamage(sa, 7);
+    room.setCarDamage(sa, 1.5);
+    room.setCarDamage(sa, 2);
+    expect(dmg()).toEqual([{ t: "cardmg", sid: sa, d: 2 }]);
+    room.setCar(sa, null);
+    expect(room.players.get(sa)!.info.dmg).toBe(0);
+  });
+});

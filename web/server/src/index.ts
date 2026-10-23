@@ -1150,6 +1150,11 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (now - lastCar < 300) return;
         lastCar = now;
         room.setCar(sid, validCar(msg.car));
+      } else if (msg?.t === "cardmg") {
+        const now = Date.now();
+        if (now - lastCar < 300) return;
+        lastCar = now;
+        room.setCarDamage(sid, msg.d);
       } else if (msg?.t === "park") {
         const now = Date.now();
         if (now - lastPark < 250) return;

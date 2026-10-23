@@ -52,6 +52,8 @@ import { WeatherFx } from "./world/weather";
 import { CityLife } from "./npcs/cityLife";
 import { PED_SID_BASE } from "./npcs/pedestrians";
 import type { ChibiPack } from "./avatars/chibiPack";
+import { EngineSounds, type EngineSource } from "./ui/engine";
+import { CarSmoke } from "./world/carSmoke";
 
 /** Yakındaki etkileşim (F/G düğmesi). */
 export interface FeatureAct {
@@ -204,11 +206,34 @@ export class Features {
   private inCasino = false;
   /** NPC yayalar, güvercinler, sokak kedileri. */
   private cityLife: CityLife;
+  /** Kendi arabanın hasarı (0–3.99; seviye tam kısmı): çarptıkça artar, garajda onarılır. */
+  private damage = 0;
+  private engines = new EngineSounds();
+  private engineSources: EngineSource[] = [];
+  private prevCars = new Map<number, { x: number; z: number }>();
+  private smoke = new CarSmoke();
+  private smokeAt = 0;
+  private lastCarV = 0;
+  private hadCar = false;
 
   constructor(private c: FeatureContext) {
     const { world, net, hud, hudRoot, me } = c;
     world.scene.add(this.companions.group, this.fireworks.points);
     this.cityLife = new CityLife(c.lowPower, world.seats);
+    world.scene.add(this.smoke.mesh);
+    // Arabayla sert çarpma: ses, 💥, hasar (seviye değişince herkese)
+    me.onCrash = (speed) => {
+      const k = Math.min(1, speed / 14);
+      sfx.crash(0.4 + 0.6 * k);
+      c.emoteFx.emit(me.x + Math.sin(me.rot) * 2.2, 0.6, me.z + Math.cos(me.rot) * 2.2, FX_CELL.splat, performance.now() / 1000, undefined, 1);
+      const before = this.carDamage;
+      this.damage = Math.min(3.99, this.damage + Math.max(0, speed - 3) / 18);
+      if (this.carDamage !== before) {
+        net.send({ t: "cardmg", d: this.carDamage });
+        if (this.carDamage === 3) hud.toast("💨 Araban ağır hasarlı! GAP Garaj'da onarılır.");
+      }
+    };
+    c.life.onStop(() => this.engines.silence());
     world.scene.add(this.cityLife.group);
     net.onPedhit = (id, vx, vz, by) => {
       const line = this.cityLife.hit(id, vx, vz, performance.now() / 1000);
@@ -1064,6 +1089,7 @@ export class Features {
     this.updateRadios(serverNow);
     this.updateCasino(now);
     this.updateRace(serverNow);
+    this.updateCarFx(time, dt);
     this.cityLife.update({
       pack: this.c.chibiPack(), serverMs: serverNow, time, dt, camera: camera.position, hour: world.hour(), me, remotes,
       send: (ev) => net.send(ev),
@@ -1430,6 +1456,59 @@ export class Features {
     for (const r of remotes.map.values()) if (r.hasData) c.push(r.info.sid, r, r.info.pet, time, dt);
     this.cityLife.pushCats(c, net.serverNow(), time, dt, this.c.camera.position);
     c.end();
+  }
+
+  /** Kendi arabanın hasar seviyesi (0–3). */
+  get carDamage(): number {
+    return Math.floor(this.damage);
+  }
+
+  /** Motor sesleri, hasar dumanı, garajda onarım. */
+  private updateCarFx(time: number, dt: number): void {
+    const { me, net, remotes, camera, hud } = this.c;
+    // Arabaya binince hasarı herkese bildir; garajda onar
+    if (me.car && !this.hadCar && this.carDamage) net.send({ t: "cardmg", d: this.carDamage });
+    this.hadCar = !!me.car;
+    if (this.vehicles.tuning.isOpen && this.damage > 0) {
+      this.damage = 0;
+      net.send({ t: "cardmg", d: 0 });
+      hud.toast("🔧 Araban onarıldı.");
+    }
+    // Motorlar: sen, yakındaki oyuncu arabaları ve NPC arabalar
+    const list = this.engineSources;
+    list.length = 0;
+    const cam = camera.position;
+    // Kameranın sağ yönü (ses sağdan/soldan gelsin)
+    const rx = camera.matrixWorld.elements[0], rz = camera.matrixWorld.elements[2];
+    const add = (x: number, z: number, speed: number, throttle: number, own = false) => {
+      const dx = x - cam.x, dz = z - cam.z, dist = Math.hypot(dx, dz);
+      list.push({ speed, throttle, dist: own ? 0 : dist, pan: own ? 0 : (dx * rx + dz * rz) / Math.max(1, dist), own });
+    };
+    if (me.car) {
+      const acc = (me.car.v - this.lastCarV) / Math.max(dt, 1e-3);
+      this.lastCarV = me.car.v;
+      add(me.x, me.z, me.car.v, Math.max(0, Math.min(1, acc / 4 + 0.15)), true);
+    }
+    for (const r of remotes.map.values()) {
+      if (!r.hasData || !r.info.car) continue;
+      const p = this.prevCars.get(r.info.sid);
+      const sp = p && dt > 0 ? Math.hypot(r.x - p.x, r.z - p.z) / dt : 0;
+      if (p) [p.x, p.z] = [r.x, r.z];
+      else this.prevCars.set(r.info.sid, { x: r.x, z: r.z });
+      add(r.x, r.z, sp, 0.4);
+    }
+    for (const car of this.cityLife.traffic.cars) if (car.shown) add(car.x, car.z, car.v, car.v > 1 ? 0.35 : 0.05);
+    this.engines.update(list);
+    // Hasarlı arabalardan duman (2: açık gri, 3: kara)
+    if (time - this.smokeAt > 0.12) {
+      this.smokeAt = time;
+      const puff = (x: number, z: number, rot: number, d: number) => {
+        if (d >= 2) this.smoke.emit(x + Math.sin(rot) * 1.7, 1.1, z + Math.cos(rot) * 1.7, time, d === 3 ? 0.9 : 0.3);
+      };
+      if (me.car) puff(me.x, me.z, me.rot, this.carDamage);
+      for (const r of remotes.map.values()) if (r.hasData && r.info.car && Math.hypot(r.x - me.x, r.z - me.z) < 120) puff(r.x, r.z, r.rot, r.info.dmg ?? 0);
+    }
+    this.smoke.update(time, camera);
   }
 
   /** Gece farı yanan NPC arabalar (Cars gerçek far ışığını bunlarla paylaşır). */
