@@ -3,7 +3,7 @@
 // animasyonlu kısımlar (köz, duman, su, ördekler).
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { DOCK, GROVE as GROVE_AT, LAKE, PLAZA } from "../../../shared/zones";
+import { DOCK, GROVE as GROVE_AT, LAKE, onAsphalt, PLAZA } from "../../../shared/zones";
 import type { Builder } from "./builder";
 import { flatMat, mat, part, timeUniform } from "./geo";
 
@@ -28,6 +28,7 @@ export function steppingStones(b: Builder, ax: number, az: number, bx: number, b
     const x = ax + (bx - ax) * t + px * side;
     const z = az + (bz - az) * t + pz * side;
     if (b.blocked?.(x, z)) continue; // suya taş dizilmez
+    if (onAsphalt(x, z, 1.2)) continue; // patika yolu keserken asfaltın içinden taş görünmesin
     const s = 0.35 + b.rand() * 0.2;
     b.prop("stone", mat(x, 0.03, z, b.rand() * 6, s, 1, s * (0.8 + b.rand() * 0.4)));
   }

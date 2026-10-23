@@ -2299,6 +2299,50 @@ canvas.shiftlock {
   right: calc(max(10px, env(safe-area-inset-right)) + 100px);
 }
 
+/* Harita (U): geniş panel, tuval kalan yeri doldurur */
+.map-btn {
+  top: calc(max(10px, env(safe-area-inset-top)) + 90px);
+  right: calc(max(10px, env(safe-area-inset-right)) + 100px);
+}
+
+.gpanel.map-panel {
+  width: min(1180px, calc(100vw - 20px));
+  height: min(760px, calc(100vh - 40px));
+}
+
+.map-panel .gpanel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.map-canvas {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border-radius: 8px;
+  touch-action: none;
+  cursor: grab;
+  background: #867a68;
+}
+
+.map-canvas:active {
+  cursor: grabbing;
+}
+
+.map-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-hint {
+  margin-left: auto;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
 .gpanel {
   background: rgba(18, 24, 36, 0.94);
   position: absolute;

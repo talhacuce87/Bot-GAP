@@ -2,15 +2,16 @@
 // grid kutuları, kontrol noktaları; F1 usulü start (5 kırmızı lamba saniyede bir yanar, rastgele beklemeden sonra
 // hepsi söner = start), tur sayımı, sıralama, arayla fark, erken kalkış cezası ve ödüller. Saf mantık: sunucu
 // yetkilidir (konumlardan sayar), istemci aynı pisti çizer ve arayüzü gösterir.
+import { CITY_DX } from "./zones";
 
 /** Pist alanı (dünyanın yürünür alanına eklenir; çevresi tepe). Güney kenarı şehre (otoparka) bağlanır. */
-export const RACE_AREA = { minX: 394, maxX: 544, minZ: -292, maxZ: -116 };
+export const RACE_AREA = { minX: 394 + CITY_DX, maxX: 544 + CITY_DX, minZ: -292, maxZ: -116 };
 /** Asfaltın yarı genişliği. */
 export const TRACK_HALF = 6;
 /** Bariyerler orta çizgiden bu kadar uzakta (asfalt + kaçış şeridi). */
 export const BARRIER = TRACK_HALF + 3.5;
 /** Pite giriş: ana düzlüğün güney bariyerindeki açıklık (otoparktan gelen yol buradan girer). */
-export const PIT_GATE = { x: 466, half: 7 };
+export const PIT_GATE = { x: 466 + CITY_DX, half: 7 };
 export const MAX_RACERS = 8;
 export const RACE_LAPS = [1, 3, 5] as const;
 /** İlk üçe test coin (en az iki yarışçı varsa). */
@@ -29,14 +30,14 @@ export const CHECKPOINTS = 10;
 
 /** Orta çizginin kontrol noktaları, sürüş yönünde. Ana düzlük güneyde (doğuya), sonra doğu kanadı kuzeye,
  *  saç tokası, kuzey düzlüğü batıya, batıda S virajları ve ana düzlüğe dönüş. */
-const CONTROL: [number, number][] = [
+const CONTROL: [number, number][] = ([
   [424, -138], [464, -138], [504, -138],
   [525, -146], [533, -168], [532, -198], [528, -226],
   [530, -252], [520, -272], [494, -281], [462, -280],
   [434, -270], [418, -248], [424, -224], [448, -213],
   [463, -201], [461, -183], [442, -171], [420, -170],
   [408.7, -165.3], [404, -154], [408.7, -142.7],
-];
+] as [number, number][]).map(([x, z]) => [x + CITY_DX, z]);
 
 export interface TrackPoint {
   x: number;
@@ -111,7 +112,7 @@ export function trackProject(x: number, z: number): { s: number; d: number } {
 }
 
 /** Start/bitiş çizgisi: ana düzlükte, pit kapısının doğusunda. */
-export const START_S = trackProject(492, -138).s;
+export const START_S = trackProject(492 + CITY_DX, -138).s;
 /** Grid kutuları: çizginin gerisinde iki sıra, kademeli (F1 gibi); yön sürüş yönü. */
 export const GRID: { x: number; z: number; rot: number }[] = Array.from({ length: MAX_RACERS }, (_, i) => {
   const back = 9 + i * 5.5, side = i % 2 ? -2.8 : 2.8;

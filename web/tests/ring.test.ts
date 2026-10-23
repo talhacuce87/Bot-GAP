@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CITY_DX } from "../shared/zones";
 import {
   BARRIER, CHECKPOINTS, GRID, JUMP_PENALTY, LIGHT_STEP, LIGHTS_DELAY, lightsAt, lineU, MAX_RACERS, RACE_AREA, RACE_PRIZES,
   RingSession, START_S, TRACK, TRACK_HALF, TRACK_LENGTH, trackAt, trackProject,
@@ -59,7 +60,7 @@ describe("GAP Ring pisti", () => {
     }
     // Ana düzlük ve pit kapısı güneyde (z ≈ −138), çizgi kapının doğusunda
     expect(Math.abs(trackAt(START_S).z + 138)).toBeLessThan(1);
-    expect(trackAt(START_S).x).toBeGreaterThan(476);
+    expect(trackAt(START_S).x).toBeGreaterThan(476 + CITY_DX);
   });
 });
 

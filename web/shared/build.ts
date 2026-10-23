@@ -1,70 +1,113 @@
-// İnşa: "GAP Mahallesi"nde ya da dağın ardındaki büyük mahallede her üyeye bir arsa. Arsada 1 m'lik ızgaraya
-// blok konur (duvar, döşeme, çatı, cam, kapı, lamba…). Sunucu ve istemci aynı tanımları kullanır; arsalar bot veritabanında saklanır.
+// İnşa: köyün batısında, dağın ardındaki mahallede her üyeye bir arsa. Arsada 1 m'lik ızgaraya blok konur
+// (duvar, döşeme, çatı, cam, kapı, lamba…). Sunucu ve istemci aynı tanımları kullanır; arsalar bot veritabanında
+// saklanır. Köydeki eski küçük mahalle kalktı (yerinden otoban geçer); oradaki evler buraya taşınır.
+import { polylineDist, smoothPath } from "./path";
 
-/** Küçük mahallenin arsa kenarı (blok), bütün arsaların en yüksek katı ve küçük arsanın blok sınırı. */
-export const PLOT_SIZE = 18;
+/** Arsa kenarı (blok), en yüksek kat ve blok sınırı. */
+export const PLOT_SIZE = 50;
 export const PLOT_H = 40;
-export const PLOT_MAX_BLOCKS = 5000;
-/** Büyük mahallenin arsa kenarı, blok sınırı ve arsalar arası sokak. */
-export const BIG_PLOT_SIZE = 50;
-export const BIG_PLOT_MAX_BLOCKS = 20000;
-export const BIG_GAP = 6;
-/** Arsalar arası sokak genişliği. */
-export const HOOD_GAP = 3;
-/** Mahallenin en küçük köşesi (dünya x/z): kahvehanenin güneyi, gölün kuzeyi, nehrin batısı. */
-export const HOOD = { x0: -133, z0: -34, cols: 3, rows: 2 };
-/** Büyük mahalle: köyün batısındaki dağ halkasının ardında; küçük mahallenin sokağından geçitle gidilir. */
-export const BIG_HOOD = { x0: -514, z0: -152, cols: 4, rows: 5 };
-const GAP = HOOD_GAP;
+export const PLOT_MAX_BLOCKS = 20000;
+/** Mahalle caddesi: iki şeritli asfalt (yarı genişlik) ve iki yanında kaldırım. */
+export const HOOD_STREET_HALF = 3.2;
+export const HOOD_SIDEWALK = 1.8;
+/**
+ * Veritabanındaki arsa numarası = PLOT_DB_BASE + dizin. Altındaki numaralar eski mahallelerin (9×9 ya da
+ * 18×18) arsalarıdır: sunucu ilk yüklemede onları buradaki boş arsalara taşır.
+ */
+export const PLOT_DB_BASE = 10;
+
+// ---- Mahalle: köyün batısında, dağın ardında ----
+// Otoban doğu kenardaki göbekli kavşaktan girer. Kavşaktan batıya hafifçe kıvrılan üç bulvar (kuzey, orta,
+// güney) ve doğuda onları bağlayan kıvrımlı cadde; batı uçta bulvarlar göletli parkın çevresindeki döngüye
+// bağlanır. Arsalar bulvarların arasında dört sıra; sıralar yarım arsa kaydırılmış (ızgara hissi olmasın).
+
+/** Göbekli kavşak: merkez, asfalt halkanın dış yarıçapı ve ortadaki adanın yarıçapı. */
+export const HOOD_ROUNDABOUT = { x: -225, z: -14, r: 13, island: 6 };
+/** Otobanın bağlandığı orta bulvarın kavşaktaki hizası. */
+export const HOOD_MAIN_Z = HOOD_ROUNDABOUT.z;
+/** Göletli park: gölet merkezi ve yarıçapı (parkın kendisi batı döngüsünün içi). */
+export const HOOD_PARK = { x: -590, z: -14, pond: 14 };
+
+/**
+ * Bulvarların ve arsa sıralarının dalgası (z kayması, m): batıda ve doğuda (park döngüsüne ve doğu caddesine
+ * bağlandıkları yerde) sıfıra iner. Arsalar da bulundukları yerin dalgasıyla kayar: sıralar dalgalanır ama
+ * arsayla cadde arasındaki mesafe her yerde aynı kalır.
+ */
+export function hoodWave(x: number): number {
+  const env = Math.min(1, Math.max(0, (x + 548) / 40), Math.max(0, (-232 - x) / 40));
+  return 9 * env * Math.sin((x + 560) / 62);
+}
+/** Bulvar: batıdan doğuya her 20 m'de bir dalgalı kontrol noktası. */
+const avenue = (z: number, east: number, west: number): [number, number][] => {
+  const pts: [number, number][] = [[east, z]];
+  for (let x = -250; x > west + 10; x -= 20) pts.push([x, z + hoodWave(x)]);
+  pts.push([west, z]);
+  return pts;
+};
+
+/** Caddelerin kontrol noktaları: bulvarlar doğudan batıya, doğu caddesi kuzeyden güneye, park döngüsü. */
+const HOOD_ROAD_POINTS: [number, number][][] = [
+  avenue(-86, -222, -548),
+  avenue(-14, -225, -552),
+  avenue(58, -222, -548),
+  [[-222, -86], [-226, -50], [-225, -14], [-226, 22], [-222, 58]],
+  [[-548, -85], [-585, -96], [-620, -62], [-628, -14], [-620, 34], [-585, 68], [-548, 57]],
+];
+export const HOOD_ROADS: [number, number][][] = HOOD_ROAD_POINTS.map((p) => smoothPath(p, 30));
+/** Mahalleden köye giden bağlantı yollarının başladığı yer: doğu caddesinin iki ucu (kuzey, güney). */
+export const LINK_STARTS: [number, number][] = [[-222, -86], [-222, 58]];
 
 export interface Plot {
+  /** Dizin (oyunda ve protokolde arsa numarası). */
   id: number;
+  /** Veritabanındaki numarası. */
+  db: number;
   /** En küçük köşe (dünya, tam sayı): blok (i, j, k) dünyada x0+i … x0+i+1. */
   x0: number;
   z0: number;
   /** Kenar (blok) ve blok sınırı. */
   size: number;
   max: number;
-  big: boolean;
+  /** Ön yüz (caddeye bakan): -1 kuzey kenarı (z0), 1 güney kenarı (z0 + size). Tabela oraya konur. */
+  front: -1 | 1;
 }
 
-/** Arsalar: önce küçük mahalle (0–5), sonra büyük mahalle. Sıra değişmez: kayıtlı arsalar id ile saklanır. */
+/** Arsa sıraları: kuzey kenarı, ilk arsanın batı kenarı ve caddeye bakan yüz. */
+const ROWS: { z0: number; x0: number; front: -1 | 1 }[] = [
+  { z0: -144, x0: -540, front: 1 },
+  { z0: -74, x0: -525, front: -1 },
+  { z0: -4, x0: -540, front: -1 },
+  { z0: 66, x0: -525, front: -1 },
+];
+const PLOT_STEP = 60;
+
+/** Arsalar: sıra sıra, batıdan doğuya. Sıra değişmez: kayıtlı arsalar numarayla saklanır. */
 export const PLOTS: Plot[] = [];
-for (let r = 0; r < HOOD.rows; r++) {
-  for (let c = 0; c < HOOD.cols; c++) {
-    PLOTS.push({ id: PLOTS.length, x0: HOOD.x0 + c * (PLOT_SIZE + GAP), z0: HOOD.z0 + r * (PLOT_SIZE + GAP), size: PLOT_SIZE, max: PLOT_MAX_BLOCKS, big: false });
-  }
-}
-for (let r = 0; r < BIG_HOOD.rows; r++) {
-  for (let c = 0; c < BIG_HOOD.cols; c++) {
-    const step = BIG_PLOT_SIZE + BIG_GAP;
-    PLOTS.push({ id: PLOTS.length, x0: BIG_HOOD.x0 + c * step, z0: BIG_HOOD.z0 + r * step, size: BIG_PLOT_SIZE, max: BIG_PLOT_MAX_BLOCKS, big: true });
+for (const row of ROWS) {
+  for (let c = 0; c < 5; c++) {
+    const x0 = row.x0 + c * PLOT_STEP;
+    const z0 = row.z0 + Math.round(hoodWave(x0 + PLOT_SIZE / 2));
+    PLOTS.push({ id: PLOTS.length, db: PLOT_DB_BASE + PLOTS.length, x0, z0, size: PLOT_SIZE, max: PLOT_MAX_BLOCKS, front: row.front });
   }
 }
 
-/** Mahallenin kapladığı kutu (ağaç/kaya dikilmez). */
-export const HOOD_BOX = {
-  minX: HOOD.x0 - 2,
-  maxX: HOOD.x0 + HOOD.cols * PLOT_SIZE + (HOOD.cols - 1) * GAP + 2,
-  minZ: HOOD.z0 - 2,
-  maxZ: HOOD.z0 + HOOD.rows * PLOT_SIZE + (HOOD.rows - 1) * GAP + 2,
-};
+/** Mahallenin yürünür alanı (çevresi tepe); köşeleri HOOD_CORNER yarıçapıyla yuvarlak. */
+export const HOOD_BOX = { minX: -640, maxX: -210, minZ: -166, maxZ: 138 };
+export const HOOD_CORNER = 45;
 
-/** Büyük mahallenin yürünür alanı (çevresinde sokak payıyla; dışı tepe). */
-export const BIG_HOOD_BOX = {
-  minX: BIG_HOOD.x0 - BIG_GAP,
-  maxX: BIG_HOOD.x0 + BIG_HOOD.cols * BIG_PLOT_SIZE + (BIG_HOOD.cols - 1) * BIG_GAP + BIG_GAP,
-  minZ: BIG_HOOD.z0 - BIG_GAP,
-  maxZ: BIG_HOOD.z0 + BIG_HOOD.rows * BIG_PLOT_SIZE + (BIG_HOOD.rows - 1) * BIG_GAP + BIG_GAP,
-};
+/** Mahallenin caddelerinin asfaltında mı (`margin` kenardan dışarısı da sayılır). Kavşağın adası asfalt değil. */
+export function onHoodStreet(x: number, z: number, margin = 0): boolean {
+  const B = HOOD_BOX;
+  if (x < B.minX - margin || x > B.maxX + margin || z < B.minZ - margin || z > B.maxZ + margin) return false;
+  const R = HOOD_ROUNDABOUT, dr = Math.hypot(x - R.x, z - R.z);
+  if (dr < R.r + margin) return dr > R.island + margin;
+  return HOOD_ROADS.some((r) => polylineDist(r, x, z) < HOOD_STREET_HALF + margin);
+}
 
-/** Geçit: küçük mahallenin sokağından (batı ucu) büyük mahallenin doğu sokağına düz yol; yürünür yarı genişlik. */
-export const HOOD_PASS = { z: HOOD.z0 + PLOT_SIZE + HOOD_GAP / 2, x0: BIG_HOOD_BOX.maxX - 2, x1: HOOD_BOX.minX + 2, half: 5 };
-
-/** Geçidin dışına uzaklık (içinde 0). */
-export function passOutside(x: number, z: number): number {
-  const P = HOOD_PASS;
-  return Math.max(0, Math.hypot(Math.max(P.x0 - x, 0, x - P.x1), z - P.z) - P.half);
+/** Arsa numarası veritabanındaki numaradan (bu mahallenin değilse -1). */
+export function plotOfDb(db: number): number {
+  const id = db - PLOT_DB_BASE;
+  return Number.isInteger(id) && id >= 0 && id < PLOTS.length ? id : -1;
 }
 
 export type BlockKind = "cube" | "slab" | "wedge" | "glass" | "door" | "lamp" | "plant" | "fence";

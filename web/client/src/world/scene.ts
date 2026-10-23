@@ -6,8 +6,8 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { outsideWorld, WORLD_BOUNDS } from "../../../shared/constants";
 import type { Weather } from "../../../shared/protocol";
-import { BRIDGE, CAVE, CITY, HALL, KAHVEHANE, LAKE, PLAZA, RACE_HOUSE, RACE_SCALE, RACE_TRACK_Y, RIVER, ROAD_PATH, ROAD_WALK, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
-import { BIG_GAP, BIG_HOOD, BIG_HOOD_BOX, BIG_PLOT_SIZE, HOOD, HOOD_BOX, HOOD_GAP, HOOD_PASS, PLOT_SIZE } from "../../../shared/build";
+import { BRIDGE, CAVE, CITY, HALL, KAHVEHANE, LAKE, PLAZA, RACE_HOUSE, RACE_SCALE, RACE_TRACK_Y, RIVER, onAsphalt, ROAD_PATH, ROAD_RIVER, ROAD_VILLAGE_GATE, ROAD_WALK, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
+import { HOOD_BOX } from "../../../shared/build";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
 import type { Colliders } from "./colliders";
@@ -186,7 +186,7 @@ function screenTexture(): THREE.CanvasTexture {
 
 /** Yön tabelasındaki satırlar (meydandan bakan oyuncuya göre ok). */
 /** Meydandaki yön tabelası (doğma noktasından kuzeye bakana göre oklar). */
-const DIRECTIONS = ["↑ KAHVEHANE · GÖL", "↖ OYUNCAK PİST", "↑ MAHALLELER (İNŞA)", "↗ SİNEMA · DJ", "↗ SAKURA BAHÇESİ", "→ GAP ŞEHRİ · CASINO", "→ ŞÖHRET KÜRSÜSÜ", "→ KÖPRÜ · KAPALI SAHA", "→ ŞELALE · ZİNDAN", "→ TANK", "↓ MANGAL"];
+const DIRECTIONS = ["↑ KAHVEHANE · GÖL", "↖ OYUNCAK PİST", "↖ OTOBAN · MAHALLE (İNŞA)", "↗ SİNEMA · DJ", "↗ SAKURA BAHÇESİ", "→ GAP ŞEHRİ · CASINO", "→ ŞÖHRET KÜRSÜSÜ", "→ KÖPRÜ · KAPALI SAHA", "→ ŞELALE · ZİNDAN", "→ TANK", "↓ MANGAL"];
 const SIGN_DUNGEON = 0;
 const SIGN_GROVE = 1;
 const SIGN_KAHVE = 2;
@@ -471,10 +471,10 @@ function nature(b: Builder): void {
     tree(x, z, 0.9 + b.rand() * 1.1, false, b.rand() > 0.35 ? "pine" : "oak");
     n++;
   }
-  // Büyük mahallenin çevresindeki tepeler ve geçidin iki yanı: ağaçlık
-  const BH = BIG_HOOD_BOX;
+  // Mahallenin çevresindeki tepeler ve otoban geçidinin iki yanı: ağaçlık
+  const BH = HOOD_BOX;
   for (let i = 0, n = 0; n < 260 && i < 5000; i++) {
-    const x = rand(BH.minX - 40, HOOD_PASS.x1), z = rand(BH.minZ - 40, BH.maxZ + 40);
+    const x = rand(BH.minX - 40, W.minX), z = rand(BH.minZ - 40, BH.maxZ + 40);
     const o = outsideWorld(x, z);
     if (o < 2 || o > 36) continue;
     tree(x, z, 0.9 + b.rand() * 1.1, false, b.rand() > 0.35 ? "pine" : "oak");
@@ -601,7 +601,7 @@ function paths(b: Builder): void {
     for (let d = lampEvery * 0.6, k = 0; d < len - 3; d += lampEvery, k++) {
       const side = k % 2 ? 1.7 : -1.7; // zikzak: iki yanı da aydınlansın
       const x = ax + ux * d - uz * side, z = az + uz * d + ux * side;
-      if (!walkable(x, z)) continue;
+      if (!walkable(x, z) || onAsphalt(x, z, 1.5)) continue; // yolun ortasında direk kalmasın
       b.prop("post", mat(x, 0, z));
       b.prop("bulb", mat(x, 2.7, z));
       b.colliders.circle(x, z, 0.15);
@@ -617,32 +617,19 @@ function paths(b: Builder): void {
     const p: [number, number] = [a.x - a.ux * e, a.z - a.uz * e], q: [number, number] = [a.x + a.ux * e, a.z + a.uz * e];
     return p[0] < q[0] ? [p, q] : [q, p];
   };
-  const [b1w, b1e] = ends(0), [b2w, b2e] = ends(1);
+  const [b2w, b2e] = ends(0);
   const P = PLAZA, K = KAHVEHANE, H = HALL;
-  // Mahallenin sokakları (arsaların arası): doğu sokağı kahvehaneden göle giden yolun da parçası
-  const streetX = [0, 1].map((c) => HOOD.x0 + (c + 1) * PLOT_SIZE + c * HOOD_GAP + HOOD_GAP / 2);
-  const streetZ = HOOD.z0 + PLOT_SIZE + HOOD_GAP / 2;
-  const hoodTop = HOOD_BOX.maxZ + 0.5;
-  // Meydan → kahvehane → (mahallenin doğu sokağından) göl
+  const RW = ROAD_RIVER.west, RE = ROAD_RIVER.east;
+  // Meydan → kahvehane → göl (otobanın altından geçer)
   route([P.x, P.z - 10.9], [K.x + 1, K.z + K.hd + 1.4]);
   // Kahvehane yolundan oyuncak pistin kapısına
   route([P.x - 0.6, RACE_HOUSE.z], [RACE_HOUSE.x + RACE_HOUSE.hw + 1.4, RACE_HOUSE.z]);
-  route([K.x - 1, K.z - K.hd - 1.6], [streetX[1], hoodTop], [streetX[1], HOOD_BOX.minZ - 0.5], [LAKE.x - 4, LAKE.z + LAKE.r + 2.6]);
-  route([streetX[0], hoodTop], [streetX[0], HOOD_BOX.minZ + 1]);
-  route([HOOD_BOX.minX + 1, streetZ], [HOOD_BOX.maxX - 1, streetZ]);
-  // Mahalleden geçitle dağın ardındaki büyük mahalleye; orada doğu sokağı ve arsa sıraları arası sokaklar
-  route([HOOD_PASS.x1 - 1, HOOD_PASS.z], [HOOD_PASS.x0, HOOD_PASS.z]);
-  const BH = BIG_HOOD_BOX, bigStep = BIG_PLOT_SIZE + BIG_GAP;
-  route([BH.maxX - BIG_GAP / 2, BH.minZ + 1], [BH.maxX - BIG_GAP / 2, BH.maxZ - 1]);
-  for (let r = 1; r < BIG_HOOD.rows; r++) {
-    const z = BIG_HOOD.z0 + r * bigStep - BIG_GAP / 2;
-    route([BH.maxX - BIG_GAP, z], [BH.minX + 1, z]);
-  }
-  // Meydan → mahalle (kahvehanenin doğusundan)
-  route([P.x + 7.7, P.z - 7.7], [streetX[1], 24], [streetX[1], hoodTop]);
-  // Kahvehane → (mahallenin kuzeyinden) 1. köprü → sinema
-  route([K.x + K.hw + 1.2, K.z - 2], [HOOD_BOX.maxX + 1, hoodTop], [b1w[0], b1w[1]]);
-  route([b1e[0], b1e[1]], [-6, -6], [0, -9]);
+  route([K.x - 1, K.z - K.hd - 1.6], [LAKE.x - 4, LAKE.z + LAKE.r + 2.6]);
+  // Meydan → köy yolunun ucu (yol kahvehanenin doğusundan otobana çıkar)
+  route([P.x + 7.7, P.z - 7.7], [-88.5, 51.5]);
+  // Kahvehane → otoban köprüsünün (güney kaldırımı) batı ucu; doğu ucundan (kuzey kaldırımı) sinemaya
+  route([K.x + K.hw + 1.2, K.z - 2], [RW[0], RW[1] + 6.2]);
+  route([RE[0], RE[1] - 6.2], [-6, -12.5], [0, -15]);
   // Meydan → 2. köprü → kapalı saha; köprüden şelaleye ve mağaraya
   route([P.x + 10.9, P.z], [b2w[0], b2w[1]]);
   route([b2e[0], b2e[1]], [H.x - H.hw - 1.5, H.z]);
@@ -658,7 +645,7 @@ function paths(b: Builder): void {
   route([TANK_PARK.x, TANK_PARK.z + 5], [H.x + 4, H.z - H.hd - 1.5]);
   // Casinonun ön meydanı → sinema–tank yolu ve tank parkı
   // Şehre giden asfaltın köydeki başı → sinema–tank yolu ve tank parkı
-  const [roadX, roadZ] = ROAD_PATH[0];
+  const [roadX, roadZ] = ROAD_VILLAGE_GATE;
   route([roadX - 4.5, roadZ + 1], [60, 4.7]);
   route([roadX - 1, roadZ + 5.2], [TANK_PARK.x + 2, TANK_PARK.z - 5]);
 }
@@ -869,13 +856,13 @@ function mountains(b: Builder): THREE.Mesh {
     if (x < CITY.minX - 20 || outsideWorld(x, z) < rad + 10) continue;
     peak(x, z, h, rad, -2);
   }
-  // Büyük mahallenin çevresi: batı, kuzey ve güneyde dağ halkası (doğusu köyün halkası)
-  const hood = { x: (BIG_HOOD_BOX.minX + BIG_HOOD_BOX.maxX) / 2, z: (BIG_HOOD_BOX.minZ + BIG_HOOD_BOX.maxZ) / 2 };
+  // Mahallenin (dağın ardı) çevresi: batı, kuzey ve güneyde dağ halkası (doğusu köyün halkası)
+  const hood = { x: (HOOD_BOX.minX + HOOD_BOX.maxX) / 2, z: (HOOD_BOX.minZ + HOOD_BOX.maxZ) / 2 };
   for (let i = 0; i < 44; i++) {
     const a = (i / 44) * Math.PI * 2 + b.rand() * 0.1;
     const dist = 200 + b.rand() * 40, h = 34 + b.rand() * 46, rad = 18 + b.rand() * 18;
     const x = hood.x + Math.sin(a) * dist, z = hood.z + Math.cos(a) * dist;
-    if (x > BIG_HOOD_BOX.maxX + 20 || outsideWorld(x, z) < rad + 10) continue;
+    if (x > HOOD_BOX.maxX + 20 || outsideWorld(x, z) < rad + 10) continue;
     peak(x, z, h, rad, -2);
   }
   const m = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, fog: false }));
@@ -1107,7 +1094,6 @@ export function buildWorld(opts: WorldOptions = {}): World {
   tankPark(b);
   // Mahalle: arsalara ağaç/kaya dikilmez (bloklar ve tabelalar features'ta)
   b.clearBox(HOOD_BOX.minX, HOOD_BOX.maxX, HOOD_BOX.minZ, HOOD_BOX.maxZ);
-  b.clearBox(BIG_HOOD_BOX.minX, BIG_HOOD_BOX.maxX, BIG_HOOD_BOX.minZ, BIG_HOOD_BOX.maxZ);
   scene.add(pd.water, pd.ducks);
   fameStatics(b);
   const kh = kahvehane(b);

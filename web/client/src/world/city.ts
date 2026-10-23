@@ -7,10 +7,12 @@
 // mesh'lerde. Gece pencereler yanar, gökdelenlerin tepesindeki kırmızı ikaz lambaları yanıp söner.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { BOULEVARD_Z, CASINO, CITY, ROAD_HALF, ROAD_PATH, ROAD_WALK, STREETS, type Street, GARAGE } from "../../../shared/zones";
+import { BOULEVARD_Z, CASINO, CITY, RIVER_BANK, ROAD_HALF, ROAD_PATH, ROAD_WALK, CITY_DX, LINK_ROADS, onAsphalt, polylineDist, roadDist, STREETS, type Street, GARAGE, VILLAGE_ROAD_HALF, VILLAGE_ROADS, villageRoadDist } from "../../../shared/zones";
 import type { Look } from "../../../shared/protocol";
 import type { Builder } from "./builder";
 import { floodMaterial } from "./casino";
+import { HOOD_PARK, HOOD_ROADS, HOOD_ROUNDABOUT, HOOD_SIDEWALK, HOOD_STREET_HALF, onHoodStreet } from "../../../shared/build";
+import { ROAD_BRIDGE_HALF, riverDist } from "./terrain";
 import { furnish, type Kit, MALL_SIGNS, SHOPS } from "./interiors";
 import { mat, part } from "./geo";
 
@@ -23,12 +25,15 @@ const LINE = "#f1f1ec";
 const YELLOW = "#f2c230";
 const STEEL = "#4b5058";
 const STEEL_LIGHT = "#9aa2ab";
+const CONCRETE_DARK = "#8e8a82";
 const LAWN = "#6f9c4c";
 const GOLD = "#d6aa3c";
 
 /** Basamak yüksekliğinin altında: kaldırımda yürürken ayak gömülmesin diye ince. */
 const Y_BASE = 0.02;
 const Y_ASPHALT = 0.04;
+/** Köprü nehrin oyuğunun bu kadar içinde (kıyıların biraz ötesine dek). */
+const RIVER_SPAN = RIVER_BANK + 0.5;
 const Y_WALK = 0.08;
 
 /** Girilebilir dükkânın içi (eksene hizalı); içerideyken kamera bunun içinde kalır. */
@@ -313,17 +318,17 @@ export function city(b: Builder): City {
   // Vadi yolu: asfalt şerit, banket, çizgiler, bariyerler, lambalar, tabelalar
   // ==================================================================
   const path = ROAD_PATH;
-  const tangent = (i: number): [number, number] => {
-    const a = path[Math.max(0, i - 1)], c = path[Math.min(path.length - 1, i + 1)];
+  const tangent = (i: number, pts = path): [number, number] => {
+    const a = pts[Math.max(0, i - 1)], c = pts[Math.min(pts.length - 1, i + 1)];
     const l = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1;
     return [(c[0] - a[0]) / l, (c[1] - a[1]) / l];
   };
-  /** Yolun iki kenar ofseti arasında şerit (o0 < o1; + sağ/güney tarafı). */
-  const ribbon = (i0: number, i1: number, o0: number, o1: number, y: number, color: string, jitter = 0.03) => {
+  /** Yolun iki kenar ofseti arasında şerit (o0 < o1; + sağ/güney tarafı). `pts`: hangi yol (otoban ya da köy yolu). */
+  const ribbon = (i0: number, i1: number, o0: number, o1: number, y: number, color: string, jitter = 0.03, pts = path) => {
     const pos: number[] = [];
     for (let i = i0; i < i1; i++) {
-      const [ax, az] = path[i], [bx, bz] = path[i + 1];
-      const [tax, taz] = tangent(i), [tbx, tbz] = tangent(i + 1);
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const [tax, taz] = tangent(i, pts), [tbx, tbz] = tangent(i + 1, pts);
       // Normal (sağa): (−tz, tx)
       const a0 = [ax - taz * o0, az + tax * o0], a1 = [ax - taz * o1, az + tax * o1];
       const b0 = [bx - tbz * o0, bz + tbx * o0], b1 = [bx - tbz * o1, bz + tbx * o1];
@@ -356,17 +361,11 @@ export function city(b: Builder): City {
       box(len, 0.03, ROAD_HALF * 2, ASPHALT, ex + len / 2, Y_ASPHALT - 0.015, ez, 0, 0.04);
     }
   }
-  // Köydeki başlangıç: yarım daire döner kavşak ucu (asfalt bitişi) ve kenar taşı
-  {
-    const [sx, sz] = path[0];
-    solid(new THREE.CircleGeometry(ROAD_HALF + 1.4, 24, Math.PI / 2, Math.PI).rotateX(-Math.PI / 2), "#8f8878", mat(sx, Y_BASE - 0.002, sz), 0.04);
-    solid(new THREE.CircleGeometry(ROAD_HALF, 24, Math.PI / 2, Math.PI).rotateX(-Math.PI / 2), ASPHALT, mat(sx, Y_ASPHALT - 0.002, sz), 0.04);
-  }
 
   /** Yol üzerindeki i'nci noktanın sağ (s=1) ya da sol (s=−1) kenarından `o` uzaklıkta nokta ve yol yönü. */
-  const sidePt = (i: number, s: number, o: number) => {
-    const [tx, tz] = tangent(i);
-    return { x: path[i][0] - tz * o * s, z: path[i][1] + tx * o * s, heading: Math.atan2(tx, tz) };
+  const sidePt = (i: number, s: number, o: number, pts = path) => {
+    const [tx, tz] = tangent(i, pts);
+    return { x: pts[i][0] - tz * o * s, z: pts[i][1] + tx * o * s, heading: Math.atan2(tx, tz) };
   };
   // Bariyerler (vadide, köy sınırından sonra): direkler ve galvaniz bariyer; üstünden atlanır
   const valley = path.findIndex((p) => p[0] > 132), valleyEnd = path.findIndex((p) => p[0] > CITY.minX - 10);
@@ -378,6 +377,26 @@ export function city(b: Builder): City {
       if (i % 2 === 0) box(0.12, 0.75, 0.12, STEEL, a.x, 0.37, a.z, ry, 0.02);
       if (i % 8 === 0) gbox(0.1, 0.1, 0.03, s > 0 ? "#ff8a2a" : "#ffffff", a.x, 0.82, a.z, ry);
       b.colliders.segment(a.x, a.z, c.x, c.z, 0.1, 0.8);
+    }
+  }
+  // Otobanın nehir köprüsü: tabliyenin iki yanında beton kiriş ve korkuluk, altında ayaklar (yayalar
+  // kaldırımından geçer; yürünürlük terrain.ts'te). Nehrin oyuğu boyunca, iki kıyının biraz ötesine dek.
+  const overRiver = path.map((p) => riverDist(p[0], p[1]) < RIVER_SPAN);
+  for (let i = 0; i < path.length - 1; i++) {
+    if (!overRiver[i] && !overRiver[i + 1]) continue;
+    for (const s of [-1, 1]) {
+      const a = sidePt(i, s, ROAD_BRIDGE_HALF), c = sidePt(i + 1, s, ROAD_BRIDGE_HALF);
+      const len = Math.hypot(c.x - a.x, c.z - a.z), ry = Math.atan2(-(c.z - a.z), c.x - a.x);
+      const mx = (a.x + c.x) / 2, mz = (a.z + c.z) / 2;
+      box(len + 0.05, 0.9, 0.35, CONCRETE_DARK, mx, -0.42, mz, ry, 0.03);
+      box(len + 0.05, 0.12, 0.14, STEEL_LIGHT, mx, 1.0, mz, ry, 0.02);
+      box(len + 0.05, 0.06, 0.06, STEEL_LIGHT, mx, 0.55, mz, ry, 0.02);
+      if (i % 2 === 0) box(0.1, 1.0, 0.1, STEEL, a.x, 0.5, a.z, ry, 0.02);
+      b.colliders.segment(a.x, a.z, c.x, c.z, 0.12);
+    }
+    if (i % 4 === 0) {
+      const [px, pz] = path[i];
+      box(ROAD_BRIDGE_HALF * 1.6, 2.2, 1.1, CONCRETE_DARK, px, -1.6, pz, sidePt(i, 1, 0).heading, 0.04);
     }
   }
   /** Modern sokak lambası: ince direk, yola uzanan kol, altı LED'li başlık (ampul gece ışığı verir). */
@@ -392,8 +411,104 @@ export function city(b: Builder): City {
     b.colliders.circle(x, z, 0.16);
   };
   for (let i = 6, k = 0; i < last - 4; i += 15, k++) {
+    if (overRiver[i]) continue; // köprüde lamba suya düşerdi
     const s = k % 2 ? 1 : -1, p = sidePt(i, s, ROAD_HALF + 2.2);
+    if (villageRoadDist(p.x, p.z) < VILLAGE_ROAD_HALF + 1.5) continue; // köy yolunun ağzına düşmesin
     streetLamp(p.x, p.z, p.heading + (s > 0 ? -Math.PI / 2 : Math.PI / 2) + Math.PI);
+  }
+  // Mahallenin kuzey ve güney bağlantı yolları: otobanla aynı genişlik. Bağlandıkları yerde (otoban, köy yolu,
+  // mahalle caddesi) asfaltları ayrı yükseklikte (titreşmesin); çizgiler ve lambalar kavşakların dışında.
+  for (const r of LINK_ROADS) {
+    const n = r.length - 1;
+    for (let i = 0; i < n; i++) b.clearSegment(r[i][0], r[i][1], r[i + 1][0], r[i + 1][1], ROAD_WALK);
+    ribbon(0, n, -ROAD_HALF - 1.4, ROAD_HALF + 1.4, Y_BASE - 0.003, "#8f8878", 0.06, r);
+    ribbon(0, n, -ROAD_HALF, ROAD_HALF, Y_ASPHALT - 0.003, ASPHALT, 0.05, r);
+    const free = (p: [number, number]) => polylineDist(ROAD_PATH, p[0], p[1]) > ROAD_HALF + 1.6 && !onHoodStreet(p[0], p[1], 2) && villageRoadDist(p[0], p[1]) > VILLAGE_ROAD_HALF + 1.6;
+    const i0 = Math.max(0, r.findIndex(free)), i1 = r.length - 1 - Math.max(0, [...r].reverse().findIndex(free));
+    for (const s of [-1, 1]) ribbon(i0, i1, s > 0 ? ROAD_HALF - 0.38 : -ROAD_HALF + 0.2, s > 0 ? ROAD_HALF - 0.2 : -ROAD_HALF + 0.38, Y_ASPHALT + 0.001, LINE, 0, r);
+    for (let i = i0; i < i1; i += 3) ribbon(i, Math.min(i + 1, i1), -0.09, 0.09, Y_ASPHALT + 0.002, YELLOW, 0, r);
+    for (let i = i0 + 4, k = 0; i < i1 - 2; i += 15, k++) {
+      const s = k % 2 ? 1 : -1, p = sidePt(i, s, ROAD_HALF + 2.2, r);
+      if (onAsphalt(p.x, p.z, 0.5)) continue;
+      streetLamp(p.x, p.z, p.heading + (s > 0 ? -Math.PI / 2 : Math.PI / 2) + Math.PI);
+    }
+  }
+  // Köy yolları: otobandan ayrılan dar asfalt. Kavşakta otobanın asfaltının biraz altında kalır (aynı
+  // yükseklikte iki yüzey titreşir); kenar ve orta çizgiler otobanın dışında başlar, uçta yuvarlak dönüş yeri.
+  for (const r of VILLAGE_ROADS) {
+    const n = r.length - 1, H = VILLAGE_ROAD_HALF;
+    for (let i = 0; i < n; i++) b.clearSegment(r[i][0], r[i][1], r[i + 1][0], r[i + 1][1], H + 3);
+    ribbon(0, n, -H - 1, H + 1, Y_BASE - 0.006, "#8f8878", 0.06, r);
+    ribbon(0, n, -H, H, Y_ASPHALT - 0.006, ASPHALT, 0.05, r);
+    const start = Math.max(0, r.findIndex((p) => roadDist(p[0], p[1]) > ROAD_HALF + 1.6));
+    for (const s of [-1, 1]) ribbon(start, n, s > 0 ? H - 0.32 : -H + 0.18, s > 0 ? H - 0.18 : -H + 0.32, Y_ASPHALT - 0.002, LINE, 0, r);
+    for (let i = start; i < n; i += 3) ribbon(i, Math.min(i + 1, n), -0.08, 0.08, Y_ASPHALT - 0.001, YELLOW, 0, r);
+    const [ex, ez] = r[n];
+    solid(new THREE.CircleGeometry(H + 1, 24).rotateX(-Math.PI / 2), "#8f8878", mat(ex, Y_BASE - 0.008, ez), 0.04);
+    solid(new THREE.CircleGeometry(H, 24).rotateX(-Math.PI / 2), ASPHALT, mat(ex, Y_ASPHALT - 0.008, ez), 0.04);
+    for (let i = start + 3, k = 0; i < n - 1; i += 8, k++) {
+      const s = k % 2 ? 1 : -1, p = sidePt(i, s, H + 1.8, r);
+      streetLamp(p.x, p.z, p.heading + (s > 0 ? -Math.PI / 2 : Math.PI / 2) + Math.PI, 5.2);
+    }
+  }
+  // Mahalle (dağın ardı): kıvrımlı bulvarlar, doğu caddesi ve park döngüsü; iki yanda kaldırım, kesikli orta
+  // çizgi, ağaç sıraları ve lambalar. Girişte göbekli kavşak (adası çimen, ortasında çınar), batıda göletli park.
+  // Her cadde bir öncekinden biraz yüksekte: kesiştikleri yerde iki yüzey aynı yükseklikte titreşmesin.
+  {
+    const H = HOOD_STREET_HALF, W = H + HOOD_SIDEWALK;
+    HOOD_ROADS.forEach((r, k) => {
+      const n = r.length - 1, y = 0.016 + k * 0.0012;
+      ribbon(0, n, -W, W, y, CONCRETE, 0.03, r);
+      ribbon(0, n, -H, H, y + 0.008, ASPHALT, 0.04, r);
+      // Kesişmelerde ve kavşakta çizgi yok
+      const others = (x: number, z: number) => HOOD_ROADS.some((o, m) => m !== k && polylineDist(o, x, z) < W + 1) || Math.hypot(x - HOOD_ROUNDABOUT.x, z - HOOD_ROUNDABOUT.z) < HOOD_ROUNDABOUT.r + 2;
+      for (let i = 0; i < n; i += 2) if (!others(r[i][0], r[i][1]) && !others(r[i + 1][0], r[i + 1][1])) ribbon(i, i + 1, -0.08, 0.08, y + 0.009, YELLOW, 0, r);
+      // Ağaç sırası (kaldırımın dış yarısında) ve lambalar, karşılıklı değil şaşırtmalı
+      for (let i = 3, t = 0; i < n - 2; i += 6, t++) {
+        const s = t % 2 ? 1 : -1, p = sidePt(i, s, H + 1.25, r);
+        if (others(p.x, p.z) || onAsphalt(p.x, p.z, 0.5)) continue;
+        if (t % 3 === 2) streetLamp(p.x, p.z, p.heading + (s > 0 ? -Math.PI / 2 : Math.PI / 2) + Math.PI, 5.2);
+        else {
+          b.prop(rand() > 0.25 ? "oak" : "sakura", mat(p.x, 0, p.z, rand() * 6, 0.7 + rand() * 0.2));
+          b.colliders.circle(p.x, p.z, 0.28);
+        }
+      }
+    });
+    // Orta bulvarın batı ucu: parkın girişinde dönüş yeri
+    const mid = HOOD_ROADS[1], [ex, ez] = mid[mid.length - 1];
+    solid(new THREE.CircleGeometry(W, 28).rotateX(-Math.PI / 2), CONCRETE, mat(ex, 0.03, ez), 0.03);
+    solid(new THREE.CircleGeometry(H + 1, 28).rotateX(-Math.PI / 2), ASPHALT, mat(ex, 0.038, ez), 0.04);
+    // Göbekli kavşak
+    const R = HOOD_ROUNDABOUT;
+    solid(new THREE.CircleGeometry(R.r + HOOD_SIDEWALK, 40).rotateX(-Math.PI / 2), CONCRETE, mat(R.x, 0.04, R.z), 0.03);
+    solid(new THREE.CircleGeometry(R.r, 40).rotateX(-Math.PI / 2), ASPHALT, mat(R.x, 0.046, R.z), 0.04);
+    solid(new THREE.RingGeometry(R.island, R.island + 0.35, 40).rotateX(-Math.PI / 2), "#f4f4f0", mat(R.x, 0.05, R.z), 0);
+    solid(new THREE.CylinderGeometry(R.island, R.island, 0.22, 40), "#6f9a4a", mat(R.x, 0.11, R.z), 0.05);
+    b.prop("oak", mat(R.x, 0.2, R.z, 0.6, 1.5));
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      b.prop("bush", mat(R.x + Math.cos(a) * (R.island - 1.2), 0.3, R.z + Math.sin(a) * (R.island - 1.2), a, 0.8, 0.6, 0.8));
+    }
+    b.colliders.circle(R.x, R.z, R.island);
+    // Göletli park: su, kıyı taşları, çevresinde ağaçlar (batı döngüsünün içi)
+    const P = HOOD_PARK;
+    solid(new THREE.CircleGeometry(P.pond + 1.6, 40).rotateX(-Math.PI / 2), "#b9ad8c", mat(P.x, 0.02, P.z), 0.05);
+    solid(new THREE.CircleGeometry(P.pond, 40).rotateX(-Math.PI / 2), "#4f8fc4", mat(P.x, 0.03, P.z), 0.03);
+    for (let k = 0; k < 22; k++) {
+      const a = (k / 22) * Math.PI * 2 + rand() * 0.2, rr = P.pond + 0.6 + rand() * 0.6, sz = 0.5 + rand() * 0.6;
+      b.prop("rock", mat(P.x + Math.cos(a) * rr, 0.1, P.z + Math.sin(a) * rr, rand() * 6, sz, sz * 0.6, sz));
+    }
+    b.colliders.circle(P.x, P.z, P.pond);
+    for (let k = 0, placed = 0; placed < 40 && k < 400; k++) {
+      const x = P.x - 36 + rand() * 72, z = P.z - 78 + rand() * 156;
+      if (Math.hypot(x - P.x, z - P.z) < P.pond + 4 || onAsphalt(x, z, 3) || x > -548) continue;
+      // Döngünün içinde kalsın: o hizadaki döngünün batı kenarının doğusunda
+      const west = Math.min(...HOOD_ROADS[4].filter(([, pz]) => Math.abs(pz - z) < 4).map(([px]) => px));
+      if (!(x > west + 6)) continue;
+      b.prop(rand() > 0.4 ? "oak" : "pine", mat(x, 0, z, rand() * 6, 0.8 + rand() * 0.6));
+      b.colliders.circle(x, z, 0.35);
+      placed++;
+    }
   }
   // Reflektörlü kenar direkleri
   for (let i = valley; i < valleyEnd; i += 5) {
@@ -565,7 +680,7 @@ export function city(b: Builder): City {
     }
   }
   // Sokak lambaları ve kaldırım ağaçları (durak gibi yerlerin çevresi boş kalır)
-  const BUS = { x: 404, z: BOULEVARD_Z + STREETS[0].half + STREETS[0].walk - 0.9 };
+  const BUS = { x: 404 + CITY_DX, z: BOULEVARD_Z + STREETS[0].half + STREETS[0].walk - 0.9 };
   // Durak ve GAP Garaj'ın kepenk önü boş kalır (lamba, ağaç dikilmez)
   const keepClear: [number, number, number][] = [[BUS.x, BUS.z, 5], [GARAGE.x + GARAGE.w / 2 + 2, GARAGE.z, 7]];
   const clearOf = (x: number, z: number) => keepClear.every(([cx, cz, r]) => Math.hypot(x - cx, z - cz) > r);
@@ -973,12 +1088,12 @@ export function city(b: Builder): City {
   const carColor = () => CAR_COLORS[Math.floor(rand() * CAR_COLORS.length)];
 
   // ---- Kuzey sırası (bulvarın kuzeyi): gökdelenler; ortada casino ----
-  glassTower({ x: 400, z: -70, w: 20, d: 17, h: 46, glass: "#3d6e8f", frame: "#e9edf0", face: 0, shop: "GAP KAHVE", billboard: "GAP AIR" });
-  residence({ x: 400, z: -103, w: 20, d: 14, h: 30, face: 0, accent: "#d6aa3c" });
-  glassTower({ x: 438.5, z: -72, w: 10, d: 13, h: 38, glass: "#2e5a74", frame: "#cfd6dd", face: 0, shop: "ECZANE", crown: "#ffd36b" });
-  glassTower({ x: 493.5, z: -72, w: 10, d: 13, h: 42, glass: "#355b6b", frame: "#cfd6dd", face: 0, shop: "BERBER", crown: "#ffd36b" });
-  glassTower({ x: 531, z: -72, w: 24, d: 22, h: 68, glass: "#1f4f72", frame: "#f2f5f7", face: 0, shop: "GAP BANK", helipad: true, crown: "#5fd3ff", billboard: "GAP TOWER" });
-  residence({ x: 531, z: -106, w: 22, d: 12, h: 34, face: 0, accent: "#5fd3ff" });
+  glassTower({ x: 400 + CITY_DX, z: -70, w: 20, d: 17, h: 46, glass: "#3d6e8f", frame: "#e9edf0", face: 0, shop: "GAP KAHVE", billboard: "GAP AIR" });
+  residence({ x: 400 + CITY_DX, z: -103, w: 20, d: 14, h: 30, face: 0, accent: "#d6aa3c" });
+  glassTower({ x: 438.5 + CITY_DX, z: -72, w: 10, d: 13, h: 38, glass: "#2e5a74", frame: "#cfd6dd", face: 0, shop: "ECZANE", crown: "#ffd36b" });
+  glassTower({ x: 493.5 + CITY_DX, z: -72, w: 10, d: 13, h: 42, glass: "#355b6b", frame: "#cfd6dd", face: 0, shop: "BERBER", crown: "#ffd36b" });
+  glassTower({ x: 531 + CITY_DX, z: -72, w: 24, d: 22, h: 68, glass: "#1f4f72", frame: "#f2f5f7", face: 0, shop: "GAP BANK", helipad: true, crown: "#5fd3ff", billboard: "GAP TOWER" });
+  residence({ x: 531 + CITY_DX, z: -106, w: 22, d: 12, h: 34, face: 0, accent: "#5fd3ff" });
   // Casinonun arkasında otopark
   {
     const px = CASINO.x, pz = CASINO.z - CASINO.hd - 14;
@@ -1000,7 +1115,7 @@ export function city(b: Builder): City {
   // ---- Güney sırası (bulvar ile güney caddesi arası): park, ofis, AVM, kule ----
   // Park: çim, çapraz yollar, havuz ve fıskiye, banklar, ağaçlar, çiçek tarhları
   {
-    const px = 401, pz = -13.5, pw = 30, pd = 31;
+    const px = 401 + CITY_DX, pz = -13.5, pw = 30, pd = 31;
     box(pw, 0.03, pd, LAWN, px, Y_BASE + 0.015, pz, 0, 0.08);
     for (const r of [Math.atan2(pd, pw), -Math.atan2(pd, pw)]) box(Math.hypot(pw, pd) - 2, 0.03, 2.2, "#d8ccb0", px, Y_BASE + 0.03, pz, r, 0.04);
     cyl(5.4, 5.4, 0.03, "#d8ccb0", px, Y_BASE + 0.035, pz, 28);
@@ -1039,9 +1154,9 @@ export function city(b: Builder): City {
       b.colliders.circle(lx, lz, 0.15);
     }
   }
-  midrise({ x: 445, z: -13.5, w: 24, d: 26, floors: 4, color: "#c9805e", face: Math.PI, shop: "GAP MARKET", awning: "#2e8b57", roofSign: "GAP COLA" });
-  mall(487, -13.5, 24, 26, Math.PI);
-  glassTower({ x: 531, z: -13.5, w: 22, d: 22, h: 56, glass: "#3a6b7d", frame: "#eef2f4", face: Math.PI, shop: "OTEL GAP", crown: "#ffd36b", billboard: "OTEL GAP" });
+  midrise({ x: 445 + CITY_DX, z: -13.5, w: 24, d: 26, floors: 4, color: "#c9805e", face: Math.PI, shop: "GAP MARKET", awning: "#2e8b57", roofSign: "GAP COLA" });
+  mall(487 + CITY_DX, -13.5, 24, 26, Math.PI);
+  glassTower({ x: 531 + CITY_DX, z: -13.5, w: 22, d: 22, h: 56, glass: "#3a6b7d", frame: "#eef2f4", face: Math.PI, shop: "OTEL GAP", crown: "#ffd36b", billboard: "OTEL GAP" });
 
   // ---- Otobüs durağı: bulvarın güney kaldırımı ----
   {
@@ -1073,7 +1188,7 @@ export function city(b: Builder): City {
   // ---- Villalar: güney caddesinin güneyi ----
   const accents = ["#c8102e", "#e9b44c", "#1f5fbf", "#2e8b57", "#d97a4a", "#6b8fb5", "#b0547a", "#4a7a6b"];
   let hk = 0;
-  for (const [x0, x1] of [[386, 416], [432, 458], [474, 500], [516, 546]]) {
+  for (const [x0, x1] of [[386, 416], [432, 458], [474, 500], [516, 546]].map(([a, c]) => [a + CITY_DX, c + CITY_DX])) {
     const n = 2;
     for (let k = 0; k < n; k++) {
       const x = x0 + ((k + 0.5) * (x1 - x0)) / n;

@@ -1,12 +1,13 @@
 // Mahalle: arsalar bot veritabanında; ilk girişte yüklenir, blok değişiklikleri herkese anında gider ve
 // birkaç saniyede bir toplu kaydedilir. Her üyenin tek arsası olur; yalnızca sahibi blok koyar/siler.
-// Arsası olan başka boş arsaya evini bloklarıyla taşıyabilir.
+// Arsası olan başka boş arsaya evini bloklarıyla taşıyabilir. Eski (köydeki küçük) mahallelerin arsaları
+// ilk yüklemede buradaki boş arsalara taşınır (veritabanında numarası PLOT_DB_BASE'in altında olanlar).
 //
 // Arsaların durumu Discord sunucusu başına tektir (PlotStore) ve süreç boyunca bellekte kalır: aynı sunucunun
 // bütün odaları (dünya, izleme odaları) aynı arsaları görür. Oda başına ayrı kopya olsaydı eski kopyası olan
 // oda kaydettiğinde yenisini ezerdi; oda kapanıp açılınca da kaydı yetişmemiş bloklar kaybolurdu.
 // Bot bağlı değilse (yerel geliştirme) arsalar yalnızca o odanın belleğinde, misafirler de inşa edebilir.
-import { type Block, blockDef, cellKey, decodeBlocks, encodeBlocks, inPlot, moveBlocks, PLOTS, type PlotState } from "../../../shared/build";
+import { type Block, blockDef, cellKey, decodeBlocks, encodeBlocks, inPlot, moveBlocks, PLOT_DB_BASE, plotOfDb, PLOTS, type PlotState } from "../../../shared/build";
 import type { ServerEvent } from "../../../shared/protocol";
 import type { BotPost } from "../looks";
 import type { Conn, Room } from "../room";
@@ -52,18 +53,48 @@ class PlotStore {
       .then((r) => {
         // Bot hata döndüyse arsalar boş sayılmaz (yoksa herkesin evi yok görünür)
         if (!r.ok || !Array.isArray(r.body.plots)) throw new Error(`bot ${JSON.stringify(r.body)}`);
-        for (const row of r.body.plots as { plot: number; user: string; name?: string; data: string }[]) {
-          const p = this.plots[row.plot];
-          if (!p) continue;
-          p.owner = String(row.user);
-          p.name = typeof row.name === "string" ? row.name : "Komşu";
-          p.blocks = new Map(decodeBlocks(row.plot, String(row.data ?? "")).map((b) => [cellKey(b.i, b.j, b.k), b]));
+        type Row = { plot: number; user: string; name?: string; data: string };
+        const legacy: Row[] = [];
+        for (const row of r.body.plots as Row[]) {
+          const id = plotOfDb(Number(row.plot));
+          if (id < 0) {
+            if (Number(row.plot) < PLOT_DB_BASE) legacy.push(row);
+            continue;
+          }
+          this.fill(id, row.user, row.name, decodeBlocks(id, String(row.data ?? "")));
         }
+        this.migrate(legacy);
         this.loaded = true;
         this.broadcast({ t: "plots", plots: this.states() });
       })
       .catch((err) => console.warn("[build] yüklenemedi:", (err as Error).message))
       .finally(() => (this.loading = null));
+  }
+
+  private fill(id: number, user: string, name: string | undefined, blocks: Block[]): void {
+    const p = this.plots[id];
+    p.owner = String(user);
+    p.name = typeof name === "string" ? name : "Komşu";
+    p.blocks = new Map(blocks.map((b) => [cellKey(b.i, b.j, b.k), b]));
+  }
+
+  /**
+   * Eski mahallelerin arsaları: her biri ilk boş arsanın ortasına bloklarıyla taşınır ve kaydedilir (kayıt
+   * eski satırı aynı işlemde siler). Eski arsalar bu arsalardan küçük olduğundan bloklar hep sığar.
+   */
+  private migrate(rows: { plot: number; user: string; name?: string; data: string }[]): void {
+    for (const row of rows.sort((a, b) => a.plot - b.plot)) {
+      if (this.plotOf(String(row.user)) >= 0) continue;
+      const id = this.plots.findIndex((p) => !p.owner);
+      if (id < 0) {
+        console.warn("[build] eski arsa taşınamadı (boş arsa yok):", row.plot, row.user);
+        continue;
+      }
+      this.fill(id, row.user, row.name, moveBlocks(decodeBlocks(id, String(row.data ?? "")), id));
+      this.moving.add(id);
+      console.log(`[build] eski arsa ${row.plot} (${row.user}) → ${PLOTS[id].db}: ${this.plots[id].blocks.size} blok`);
+      void this.save(id, true);
+    }
   }
 
   state(id: number): PlotState {
@@ -110,7 +141,7 @@ class PlotStore {
       if (!p.owner) return;
       const owner = p.owner;
       const move = this.moving.has(id);
-      return bot("/internal/build_save", { guild, user: owner, plot: id, data: encodeBlocks([...p.blocks.values()]), move })
+      return bot("/internal/build_save", { guild, user: owner, plot: PLOTS[id].db, data: encodeBlocks([...p.blocks.values()]), move })
         .then((r) => {
           if (r.ok && r.body.ok !== false) {
             if (move && this.plots[id].owner === owner) this.moving.delete(id);
@@ -211,9 +242,8 @@ export class Builds {
   }
 
   /**
-   * Boş arsa sahiplen: `want` boşsa o arsa (oyuncunun durduğu), değilse büyük mahallede ilk boş arsa,
-   * o da yoksa küçük mahallede. Arsası olan başka boş arsaya taşınır (evi sığıyorsa, bloklarıyla);
-   * küçük arsası olan `want` vermezse büyük mahalleye taşınır.
+   * Boş arsa sahiplen: `want` boşsa o arsa (oyuncunun durduğu), değilse ilk boş arsa. Arsası olan `want`
+   * verirse evi bloklarıyla oraya taşınır.
    */
   claim(sid: number, want?: number): void {
     const u = this.builder(sid);
@@ -228,12 +258,8 @@ export class Builds {
       if (!free(want)) return this.notice(sid, "🏠 Bu arsanın sahibi var.");
       id = want;
     } else if (old >= 0) {
-      if (PLOTS[old].big) return this.notice(sid, "🏠 Zaten bir arsan var. Taşınmak için boş bir arsanın üstüne git.");
-      id = PLOTS.findIndex((pl) => pl.big && free(pl.id));
-    } else {
-      id = PLOTS.findIndex((pl) => pl.big && free(pl.id));
-      if (id < 0) id = PLOTS.findIndex((pl) => free(pl.id));
-    }
+      return this.notice(sid, "🏠 Zaten bir arsan var. Taşınmak için boş bir arsanın üstüne git.");
+    } else id = PLOTS.findIndex((pl) => free(pl.id));
     if (id < 0) return this.notice(sid, "🏘️ Mahallede boş arsa kalmadı.");
     const moved = old >= 0 ? moveBlocks(s.plots[old].blocks.values(), id) : [];
     if (old >= 0 && moved.length < s.plots[old].blocks.size) return this.notice(sid, "🧱 Evin bu arsaya sığmıyor.");

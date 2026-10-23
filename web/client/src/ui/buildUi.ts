@@ -1,6 +1,6 @@
 // İnşa modu (N): altta blok paleti; imlecin gösterdiği yerde hayalet blok. Sol tık koyar (silgide siler),
 // 1–6 blok seçer, R döndürür, X silgi, Esc çıkar. Yalnızca kendi arsanda; arsan yoksa boş arsa alınır
-// (boş bir arsanın üstündeysen o). Arsası olan, üstünde durduğu boş arsaya evini taşıyabilir (sığıyorsa).
+// (boş bir arsanın üstündeysen o). Arsası olan, üstünde durduğu boş arsaya evini taşıyabilir.
 // İnşa modu kapalıyken de bir arsanın üstündeysen üstte kimin arsası olduğu yazar.
 import * as THREE from "three";
 import { blockDef, cellKey, inPlot, PLOTS } from "../../../shared/build";
@@ -126,7 +126,7 @@ export class BuildMode {
     const mine = this.world.plotOf(this.host.userId());
     this.info.replaceChildren();
     if (mine < 0) {
-      el("span", "", this.info, "🏘️ Henüz arsan yok. Büyük mahalle, mahallenin batısındaki geçitten dağın ardında.");
+      el("span", "", this.info, "🏘️ Henüz arsan yok. Mahalle köyün batısında, dağın ardında: otobanı batıya takip et.");
       button(this.info, "🏠 Boş arsa al", () => this.claim(), "primary");
       return;
     }
@@ -189,14 +189,12 @@ export class BuildMode {
     this.host.send(plot >= 0 && !this.world.plots[plot].owner ? { t: "bclaim", plot } : { t: "bclaim" });
   }
 
-  /** Taşın: üstünde durulan boş arsaya; küçük arsadaysan durulan yer yoksa büyük mahallede ilk boş arsaya. */
+  /** Taşın: üstünde durulan boş arsaya. */
   private move(mine: number): void {
     const at = this.standing();
-    const target = at >= 0 && at !== mine && !this.world.plots[at].owner ? at : -1;
-    if (target < 0 && PLOTS[mine].big) return this.host.toast("🚚 Taşınmak istediğin boş arsanın üstüne git, sonra tekrar bas.");
-    const where = target >= 0 ? `${plotLabel(target)} arsasına` : "büyük mahallede boş bir arsaya";
-    if (confirm(`Evin bloklarıyla birlikte ${where} taşınacak, şimdiki arsan boşalır. Taşınalım mı?`)) {
-      this.host.send(target >= 0 ? { t: "bclaim", plot: target } : { t: "bclaim" });
+    if (at < 0 || at === mine || this.world.plots[at].owner) return this.host.toast("🚚 Taşınmak istediğin boş arsanın üstüne git, sonra tekrar bas.");
+    if (confirm(`Evin bloklarıyla birlikte ${plotLabel(at)} numaralı arsaya taşınacak, şimdiki arsan boşalır. Taşınalım mı?`)) {
+      this.host.send({ t: "bclaim", plot: at });
     }
   }
 
@@ -225,9 +223,7 @@ export class BuildMode {
   }
 }
 
-/** Arsanın okunur adı: "Büyük mahalle 3" ya da "Mahalle 2" (numaralar mahalle içinde 1'den). */
+/** Arsanın okunur adı: "Arsa 3" (1'den). */
 export function plotLabel(id: number): string {
-  const p = PLOTS[id];
-  if (!p) return "";
-  return `${p.big ? "Büyük mahalle" : "Mahalle"} ${PLOTS.filter((q) => q.big === p.big && q.id <= id).length}`;
+  return PLOTS[id] ? `Arsa ${id + 1}` : "";
 }

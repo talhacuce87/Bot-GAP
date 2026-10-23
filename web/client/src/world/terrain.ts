@@ -3,7 +3,7 @@
 // (çarpışma sınırları marching squares ile), mağara tavanı, nehir suyu ve şelale hep buradan çıkar.
 import * as THREE from "three";
 import { outsideWorld, WORLD_EXTENT } from "../../../shared/constants";
-import { BRIDGE, BRIDGES, CAVE, CITY, LAKE, MOUNTAIN_EDGE, RIVER, RIVER_BANK, RIVER_HALF, TUNNEL, TUNNEL_HALF, WATERFALL } from "../../../shared/zones";
+import { BRIDGE, BRIDGES, CAVE, CITY, LAKE, MOUNTAIN_EDGE, RIVER, RIVER_BANK, RIVER_HALF, ROAD_HALF, roadDist, ROOM_FLATS, TUNNEL, TUNNEL_HALF, WATERFALL } from "../../../shared/zones";
 import type { Colliders } from "./colliders";
 import { timeUniform } from "./geo";
 import { waterEnv } from "./zones";
@@ -20,10 +20,10 @@ const FINE = 2;
 const COARSE = 8;
 const INNER = { minX: -144, maxX: 136, minZ: -96, maxZ: 168 };
 /** Doğu: vadi yolu ve GAP Şehri (ince ızgara; kenarları kaba ızgaraya oturur). */
-const EAST = { minX: 136, maxX: 568, minZ: -312, maxZ: 72 };
-/** Batı: dağın ardındaki büyük mahalle ve geçit (ince ızgara; kenarları kaba ızgaraya oturur). */
-const WEST = { minX: -544, maxX: -144, minZ: -184, maxZ: 152 };
-const OUTER = { minX: -640, maxX: 720, minZ: -400, maxZ: 296 };
+const EAST = { minX: 136, maxX: 416, minZ: -312, maxZ: 72 };
+/** Batı: dağın ardındaki mahalle ve otobanın geçidi (ince ızgara; kenarları kaba ızgaraya oturur). */
+const WEST = { minX: -576, maxX: -144, minZ: -192, maxZ: 208 };
+const OUTER = { minX: -704, maxX: 720, minZ: -400, maxZ: 560 };
 const inArea = (a: { minX: number; maxX: number; minZ: number; maxZ: number }, x: number, z: number) => x > a.minX && x < a.maxX && z > a.minZ && z < a.maxZ;
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,12 @@ export function inCave(x: number, z: number): boolean {
   return caveOutside(x, z) < 1;
 }
 
+/** Otoban köprüsünün yarı genişliği: asfalt ve iki yanda kaldırım. */
+export const ROAD_BRIDGE_HALF = ROAD_HALF + 1.4;
+
 function onBridge(x: number, z: number): boolean {
+  // Otoban nehrin üstünden köprüyle geçer (kaldırımından yayalar da)
+  if (riverDist(x, z) < RIVER_BANK + 1 && roadDist(x, z) <= ROAD_BRIDGE_HALF) return true;
   for (const br of BRIDGE_AXES) {
     const dx = x - br.x, dz = z - br.z;
     if (Math.abs(dx * br.ux + dz * br.uz) <= BRIDGE.half && Math.abs(-dx * br.uz + dz * br.ux) <= BRIDGE.w / 2) return true;
@@ -156,7 +161,9 @@ export function terrainHeight(x: number, z: number): number {
   const east = smooth(118, 150, x);
   // Şehrin çevresinde tepeler daha alçak ve yayvan: şehirden bakınca duvar gibi durmasın
   const town = smooth(CITY.minX - 50, CITY.minX - 10, x);
-  const o0 = 4 - 1.5 * east;
+  // Tepelerin başladığı çizgi düz kenar gibi değil, dalgalı: yürünür alanın kenarından 4–11 m arası (yalnızca
+  // dışarı doğru; yollara ve arsalara tepe girmez)
+  const o0 = 4 - 1.5 * east + noise(x * 0.04 + 31, z * 0.04 + 17) * 7;
   const cap = 8 + 16 * east - 9 * town, slope = 0.22 + 0.4 * east - 0.22 * town;
   if (o > o0) h = Math.max(h, Math.min(cap, (o - o0) * slope) + (noise(x * 0.08, z * 0.08) - 0.5) * (1.6 + 2.4 * east) * Math.min(1, (o - o0) / 6));
   const rd = riverDist(x, z);
@@ -165,6 +172,11 @@ export function terrainHeight(x: number, z: number): number {
   if (ld < LAKE.r + 1.2) h = Math.min(h, bowl(ld, LAKE.r - 2.5, LAKE.r + 1.2));
   const pd = Math.hypot(x - RIVER[0][0], z - RIVER[0][1]);
   if (pd < WATERFALL.poolR + 1) h = Math.min(h, bowl(pd, WATERFALL.poolR - 2.5, WATERFALL.poolR + 1));
+  // Işınlanılan odalar (stadyum, voleybol salonu): zeminleri boyunca düz, kenarda tepeye yumuşak geçiş
+  for (const f of ROOM_FLATS) {
+    const out = Math.hypot(Math.max(Math.abs(x - f.x) - f.hw, 0), Math.max(Math.abs(z - f.z) - f.hd, 0));
+    if (out < 24) h *= smooth(0, 24, out);
+  }
   return h;
 }
 

@@ -146,13 +146,15 @@ export class BuildWorld {
       const tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
       // Işıktan etkilenir: gece loş ama okunur (Basic olsa gece parlayıp yazıyı yutar)
-      // Büyük arsada tabela iki kat büyük ve yüksekte: uzaktan okunur
-      const k = p.big ? 2 : 1;
+      // Arsa büyük: tabela iki kat büyük ve yüksekte, uzaktan okunur
+      const k = 2;
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.8 * k, 0.45 * k), new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide, emissive: "#333333", emissiveMap: tex }));
-      mesh.position.set(p.x0 + p.size + 0.15, 1.6 * k, p.z0 + 0.15);
+      // Caddeye bakan kenarın doğu köşesinde
+      const sz = p.front < 0 ? p.z0 + 0.15 : p.z0 + p.size - 0.15;
+      mesh.position.set(p.x0 + p.size + 0.15, 1.6 * k, sz);
       mesh.rotation.y = Math.PI / 4;
       const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05 * k, 0.06 * k, 1.6 * k - 0.2, 6), new THREE.MeshLambertMaterial({ color: "#5b3f25" }));
-      post.position.set(p.x0 + p.size + 0.15, (1.6 * k - 0.2) / 2, p.z0 + 0.15);
+      post.position.set(p.x0 + p.size + 0.15, (1.6 * k - 0.2) / 2, sz);
       this.group.add(mesh, post);
       this.signs.push({ mesh, canvas, tex, text: "" });
     }

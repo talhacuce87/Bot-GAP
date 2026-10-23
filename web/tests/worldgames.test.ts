@@ -634,46 +634,45 @@ describe("saat ve hava (!saat, !hava)", () => {
 });
 
 describe("mahalle (inşa)", () => {
-  it("arsa sahiplenilir (önce büyük mahalle), yalnızca sahibi blok koyar, herkes görür; boşaltınca arsa açılır", async () => {
+  it("arsa sahiplenilir, yalnızca sahibi blok koyar, herkes görür; taşınılır; boşaltınca arsa açılır", async () => {
     const { Builds } = await import("../server/src/games/build");
     const { PLOTS, PLOT_H } = await import("../shared/build");
-    const big = PLOTS.findIndex((p) => p.big);
     const { games, room, a, b, sa, sb } = world();
     games.builds = new Builds(room, null);
     games.handle(sa, { t: "bclaim" });
-    expect(a.last("plot")?.plot).toMatchObject({ id: big, owner: "a" });
+    expect(a.last("plot")?.plot).toMatchObject({ id: 0, owner: "a" });
     games.handle(sa, { t: "bclaim" });
     expect(a.last("notice")?.text).toContain("Zaten");
-    // Büyük arsada 18'in ötesine ve yükseğe de konur
+    // Arsanın uzak köşesine ve en üst kata da konur
     games.handle(sa, { t: "bset", i: 40, j: PLOT_H - 1, k: 2, b: 1, r: 0 });
-    expect(b.last("bset")).toMatchObject({ plot: big, i: 40, j: PLOT_H - 1, k: 2, b: 1 });
-    // b'nin arsası yok: koyamaz; istediği boş arsayı (küçük, 1) alır ve oraya koyar
+    expect(b.last("bset")).toMatchObject({ plot: 0, i: 40, j: PLOT_H - 1, k: 2, b: 1 });
+    // b'nin arsası yok: koyamaz; istediği boş arsayı (3) alır ve oraya koyar
     const before = b.text.length;
     games.handle(sb, { t: "bset", i: 0, j: 0, k: 0, b: 2, r: 0 });
     expect(b.text.length).toBe(before);
-    games.handle(sb, { t: "bclaim", plot: 1 });
+    games.handle(sb, { t: "bclaim", plot: 3 });
     games.handle(sb, { t: "bset", i: 0, j: 0, k: 0, b: 2, r: 0 });
-    expect(a.last("bset")).toMatchObject({ plot: 1, b: 2 });
-    // Küçük arsada sınır dışı ve geçersiz blok reddedilir
-    games.handle(sb, { t: "bset", i: 20, j: 0, k: 0, b: 1, r: 0 });
+    expect(a.last("bset")).toMatchObject({ plot: 3, b: 2 });
+    // Sınır dışı ve geçersiz blok reddedilir
+    games.handle(sb, { t: "bset", i: PLOTS[3].size, j: 0, k: 0, b: 1, r: 0 });
     games.handle(sa, { t: "bset", i: 0, j: 0, k: 0, b: 999, r: 0 });
     games.handle(sa, { t: "bset", i: 0, j: PLOT_H, k: 0, b: 1, r: 0 });
-    expect(a.last("bset")).toMatchObject({ plot: 1 });
+    expect(a.last("bset")).toMatchObject({ plot: 3 });
     // Başka arsaya taşınma: ev yeni arsanın ortasına kayar, eski arsa boşalır
-    games.handle(sb, { t: "bclaim", plot: big + 1 });
-    const mid = Math.floor((PLOTS[big + 1].size - 1) / 2).toString(36);
-    expect(a.last("plot")?.plot).toMatchObject({ id: big + 1, owner: "b", data: `${mid}.0.${mid}.2.0` });
-    expect(a.text.some((e) => e.t === "plot" && e.plot.id === 1 && e.plot.owner === null)).toBe(true);
-    // Sahibi olan arsaya taşınılmaz; büyük arsadan küçüğe ev sığıyorsa taşınılır
-    games.handle(sb, { t: "bclaim", plot: big });
+    games.handle(sb, { t: "bclaim", plot: 5 });
+    const mid = Math.floor((PLOTS[5].size - 1) / 2).toString(36);
+    expect(a.last("plot")?.plot).toMatchObject({ id: 5, owner: "b", data: `${mid}.0.${mid}.2.0` });
+    expect(a.text.some((e) => e.t === "plot" && e.plot.id === 3 && e.plot.owner === null)).toBe(true);
+    // Sahibi olan arsaya taşınılmaz; arsası olan "boş arsa al" ile ikinci arsa alamaz
+    games.handle(sb, { t: "bclaim", plot: 0 });
     expect(b.last("notice")?.text).toContain("sahibi var");
-    games.handle(sb, { t: "bclaim", plot: 2 });
-    expect(a.last("plot")?.plot).toMatchObject({ id: 2, owner: "b", data: "8.0.8.2.0" });
+    games.handle(sb, { t: "bclaim" });
+    expect(b.last("notice")?.text).toContain("Zaten");
     // Çok hızlı konan blok reddedilir ve hücrenin gerçek hali (boş) koyana geri gider
     for (let n = 0; n < 25; n++) games.builds!.set(sa, n, 1, 0, 1, 0, 5000);
-    expect(a.last("bset")).toMatchObject({ plot: big, i: 24, j: 1, b: 0 });
+    expect(a.last("bset")).toMatchObject({ plot: 0, i: 24, j: 1, b: 0 });
     games.handle(sa, { t: "bfree" });
-    expect(a.last("plot")?.plot).toMatchObject({ id: big, owner: null, data: "" });
+    expect(a.last("plot")?.plot).toMatchObject({ id: 0, owner: null, data: "" });
   });
 });
 
@@ -682,15 +681,23 @@ describe("mahalle (bot bağlı)", () => {
   it("aynı sunucunun odaları aynı arsaları görür; bot hata verirse evler boş sayılmaz, sonra yüklenir", async () => {
     const { Builds, flushBuilds } = await import("../server/src/games/build");
     const { PLOTS } = await import("../shared/build");
-    const big = PLOTS.findIndex((p) => p.big);
-    const saved: { plot: number; data: string }[] = [];
+    const saved: { plot: number; data: string; move: boolean }[] = [];
     let fail = true;
     const bot = async (path: string, body: unknown) => {
       if (path === "/internal/builds") {
         if (fail) return { ok: false, body: { error: "down" } };
-        return { ok: true, body: { plots: [{ plot: big, user: "a", name: "A", data: "1.0.1.1.0" }] } };
+        return {
+          ok: true,
+          body: {
+            plots: [
+              { plot: PLOTS[0].db, user: "a", name: "A", data: "1.0.1.1.0" },
+              // Eski köy mahallesinin arsası (18×18): boş ilk arsaya, ortasına taşınır
+              { plot: 4, user: "c", name: "C", data: "0.0.0.1.0,h.0.h.2.0" },
+            ],
+          },
+        };
       }
-      if (path === "/internal/build_save") saved.push(body as { plot: number; data: string });
+      if (path === "/internal/build_save") saved.push(body as { plot: number; data: string; move: boolean });
       return { ok: true, body: { ok: true } };
     };
     const mk = (key: string, user: string) => {
@@ -711,17 +718,21 @@ describe("mahalle (bot bağlı)", () => {
     fail = false;
     r1.games.builds!.sendTo(r1.conn);
     await new Promise((r) => setTimeout(r, 0));
-    expect(r1.conn.last("plots")?.plots[big]).toMatchObject({ owner: "a", data: "1.0.1.1.0" });
+    const plots = r1.conn.last("plots")!.plots;
+    expect(plots[0]).toMatchObject({ owner: "a", data: "1.0.1.1.0" });
+    // Eski arsa: ev 18×18'lik alanıyla 50×50'nin ortasına (16 kaydırılır), eski satırı silen kayıtla
+    expect(plots[1]).toMatchObject({ owner: "c", data: "g.0.g.1.0,x.0.x.2.0" });
+    expect(saved).toEqual([{ guild: "g-shared", user: "c", plot: PLOTS[1].db, data: "g.0.g.1.0,x.0.x.2.0", move: true }]);
     // İkinci oda (izleme odası) aynı arsaları görür; birinde konan blok ötekine de gider
     const r2 = mk("w:abc", "a");
     r2.games.builds!.sendTo(r2.conn);
     r2.games.handle(r2.sid, { t: "bset", i: 2, j: 0, k: 2, b: 1, r: 0 });
-    expect(r1.conn.last("bset")).toMatchObject({ plot: big, i: 2, k: 2 });
+    expect(r1.conn.last("bset")).toMatchObject({ plot: 0, i: 2, k: 2 });
     r1.games.handle(r1.sid, { t: "bset", i: 3, j: 0, k: 3, b: 1, r: 0 });
     await flushBuilds();
-    // Son kayıt iki odanın bloklarını da içerir
+    // Son kayıt iki odanın bloklarını da içerir; veritabanına arsanın kendi numarasıyla
     const last = saved.at(-1)!;
-    expect(last.plot).toBe(big);
+    expect(last.plot).toBe(PLOTS[0].db);
     expect(last.data.split(",").sort()).toEqual(["1.0.1.1.0", "2.0.2.1.0", "3.0.3.1.0"]);
   });
 });

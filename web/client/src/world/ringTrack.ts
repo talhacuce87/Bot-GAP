@@ -4,6 +4,7 @@
 // tek tek yanar, hepsi söner, yeşil yanar), tribün, pit binası, otoparka bağlanan paddock ve iç sahada ağaçlar.
 import * as THREE from "three";
 import { BARRIER, GRID, PIT_GATE, RACE_AREA, START_S, TRACK, TRACK_HALF, TRACK_LENGTH, trackAt, trackProject } from "../../../shared/ring";
+import { CITY_DX } from "../../../shared/zones";
 import type { Builder } from "./builder";
 import { Colliders, type DynamicColliders } from "./colliders";
 import { mat, part } from "./geo";
@@ -288,7 +289,7 @@ export function ringTrack(b: Builder): RingTrack {
   for (const s of [-1, 1]) box(0.14, 0.01, padZ1 - padZ0 - 1, LINE, PIT_GATE.x + s * PIT_GATE.half, Y + 0.004, (padZ0 + padZ1) / 2, 0, 0);
   // Pit binası (batıda): beyaz gövde, üç garaj kapısı, çatı şeridi ve afiş
   {
-    const x = 432, z = -121.5, w = 26, d = 8, h = 4.2;
+    const x = 432 + CITY_DX, z = -121.5, w = 26, d = 8, h = 4.2;
     box(w, h, d, "#f2f2ee", x, h / 2, z, 0, 0.02);
     box(w + 0.4, 0.4, d + 0.4, "#1e2228", x, h + 0.2, z, 0, 0);
     box(w + 0.2, 0.25, 0.1, "#e10600", x, h - 0.4, z - d / 2 - 0.06, 0, 0);
@@ -304,7 +305,7 @@ export function ringTrack(b: Builder): RingTrack {
   }
   // Tribün (doğuda): beton basamaklar, renkli koltuk sıraları, kolonlu çatı; piste (kuzeye) bakar
   {
-    const x = 510, w = 40, z0 = -126.6;
+    const x = 510 + CITY_DX, w = 40, z0 = -126.6;
     const seats = ["#e10600", "#1f4fbf", "#f2c230", "#2e8b57"];
     for (let k = 0; k < 5; k++) {
       const z = z0 + k * 1.9, y = 0.5 + k * 0.75;
@@ -318,11 +319,11 @@ export function ringTrack(b: Builder): RingTrack {
     for (const [ax, az, bx2, bz2] of [[x - w / 2, z0, x + w / 2, z0], [x + w / 2, z0, x + w / 2, z0 + 9.5], [x - w / 2, z0, x - w / 2, z0 + 9.5]]) b.colliders.segment(ax, az, bx2, bz2, 0.2);
   }
   // Işık direkleri (gece yarışı): köşelerde, başlık parlar
-  for (const [x, z] of [[398, -134], [540, -134], [540, -286], [398, -286], [470, -246], [500, -196]] as const) {
+  for (const [x, z] of ([[398, -134], [540, -134], [540, -286], [398, -286], [470, -246], [500, -196]] as const).map(([a, c]) => [a + CITY_DX, c] as const)) {
     if (Math.abs(trackProject(x, z).d) < BARRIER + 2) continue;
     cyl(0.16, 0.24, 14, "#8a9099", x, 7, z, 8);
-    box(2.6, 1.0, 0.5, "#2b2f36", x, 14.2, z, Math.atan2(470 - x, -210 - z), 0);
-    glows.push(part(new THREE.BoxGeometry(2.3, 0.8, 0.1), "#f4f8ff", mat(x, 14.2, z, Math.atan2(470 - x, -210 - z)).multiply(new THREE.Matrix4().makeTranslation(0, 0, 0.28))));
+    box(2.6, 1.0, 0.5, "#2b2f36", x, 14.2, z, Math.atan2(470 + CITY_DX - x, -210 - z), 0);
+    glows.push(part(new THREE.BoxGeometry(2.3, 0.8, 0.1), "#f4f8ff", mat(x, 14.2, z, Math.atan2(470 + CITY_DX - x, -210 - z)).multiply(new THREE.Matrix4().makeTranslation(0, 0, 0.28))));
     b.colliders.circle(x, z, 0.3);
   }
   // İç sahada ve kenarlarda çam ağaçları (pistten uzak)

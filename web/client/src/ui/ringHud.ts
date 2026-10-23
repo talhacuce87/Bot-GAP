@@ -2,6 +2,7 @@
 // üst ortasında F1 lambaları (5 kırmızı, sonra yeşil "BAŞLA!"); sol altta hız göstergesi; gridde bekleme şeridi;
 // bitişte sonuç tablosu. Durumu sunucu gönderir (RingView); konumlar her kare dışarıdan verilir.
 import { lightsAt, type RingView, raceTime, RACE_AREA, TRACK, TRACK_HALF } from "../../../shared/ring";
+import { CITY_DX } from "../../../shared/zones";
 
 export interface RingFrame {
   race: RingView | null;
@@ -213,7 +214,7 @@ export class RingHud {
     g.lineWidth = TRACK_HALF * 0.9;
     g.stroke();
     // Start çizgisi: ilk grid kutusunun önü
-    const [sx, sy] = this.mapXY(492, -138);
+    const [sx, sy] = this.mapXY(492 + CITY_DX, -138);
     g.fillStyle = "#fff";
     g.fillRect(sx - 1.5, sy - 5, 3, 10);
   }

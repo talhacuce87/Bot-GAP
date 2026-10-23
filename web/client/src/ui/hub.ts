@@ -17,6 +17,8 @@ export interface HubActions {
   match(): void;
   /** İnşa modu (mahallede kendi arsan). */
   build(): void;
+  /** Dünya haritası. */
+  map(): void;
   pair(kind: "five" | "hug"): void;
   queue(): void;
   weather(): void;
@@ -79,6 +81,7 @@ export class Hub {
     tile(me, "🔨", "İnşa et", this.a.build, actionLabel("build"));
 
     const go = grid("Ulaşım");
+    tile(go, "🗺️", "Harita", this.a.map, actionLabel("map"));
     tile(go, "🚶", "Yürü", () => this.a.vehicle(0));
     tile(go, "🚲", "Bisiklet", () => this.a.vehicle(1), actionLabel("vehicle"));
     tile(go, "🛹", "Kaykay", () => this.a.vehicle(2));

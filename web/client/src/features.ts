@@ -31,6 +31,7 @@ import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
 import type { CarRadio } from "../../shared/car";
 import { Hub } from "./ui/hub";
+import { WorldMap } from "./ui/worldMap";
 import { button, el, Panel } from "./ui/panel";
 import { canvasToJpeg, PhotoMode } from "./ui/photo";
 import { ProfileUi } from "./ui/profile";
@@ -134,6 +135,7 @@ export class Features {
   private boards: BoardGameUi;
   private profile: ProfileUi;
   private hub: Hub;
+  private map: WorldMap;
   private whud: WorldHud;
   private stage = { dj: 0, show: 0, singer: 0 };
   /** Önceki karede sahnede miydik: inişi (F, öne yürüme, araç, ışınlanma) sunucuya bildirmek için. */
@@ -281,6 +283,16 @@ export class Features {
       toast: (t) => hud.toast(t),
       quests: (d) => this.questToast(d),
     });
+    this.map = new WorldMap(hudRoot, c.input.touch, {
+      me: () => ({ x: c.me.x, z: c.me.z, rot: c.me.rot }),
+      others: function* () {
+        for (const r of c.remotes.map.values()) if (r.hasData) yield { x: r.x, z: r.z, name: r.info.name };
+      },
+      owner: (plot) => {
+        const p = this.buildWorld.plots[plot];
+        return p?.owner ? p.name : null;
+      },
+    });
     this.hub = new Hub(hudRoot, c.input.touch, {
       quests: () => this.profile.openQuests(),
       card: () => this.profile.open(net.you, c.session.user.name),
@@ -291,6 +303,10 @@ export class Features {
       tag: (mode) => c.say(`!${mode}`),
       match: () => c.say(!this.match ? "!maç 5" : this.myTeam() === null ? "!maç katıl" : "!maç bitir"),
       build: () => this.build.toggle(),
+      map: () => {
+        this.hub.close();
+        this.map.toggle();
+      },
       pair: (kind) => this.pair(kind),
       queue: () => this.whud.openQueue(),
       weather: () => c.say("!hava"),
@@ -984,6 +1000,7 @@ export class Features {
     const { input, me } = this.c;
     if (input.consumeKey("menu")) this.hub.toggle();
     if (input.consumeKey("build")) this.build.toggle();
+    if (input.consumeKey("map")) this.map.toggle();
     if (this.build.active) {
       const e = input.consumeEmote();
       if (e >= 0) this.build.pickSlot(e);
