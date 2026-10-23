@@ -1,5 +1,7 @@
 // İnşa modu (N): altta blok paleti; imlecin gösterdiği yerde hayalet blok. Sol tık koyar (silgide siler),
-// 1–6 blok seçer, R döndürür, X silgi, Esc çıkar. Yalnızca kendi arsanda; arsan yoksa boş arsa alınır.
+// 1–6 blok seçer, R döndürür, X silgi, Esc çıkar. Yalnızca kendi arsanda; arsan yoksa boş arsa alınır
+// (boş bir arsanın üstündeysen o). Arsası olan, üstünde durduğu boş arsaya evini taşıyabilir (sığıyorsa).
+// İnşa modu kapalıyken de bir arsanın üstündeysen üstte kimin arsası olduğu yazar.
 import * as THREE from "three";
 import { blockDef, cellKey, inPlot, PLOTS } from "../../../shared/build";
 import { type BuildHit, type BuildWorld, PALETTE } from "../world/buildWorld";
@@ -8,7 +10,9 @@ import { button, el } from "./panel";
 export interface BuildHost {
   /** Kendi kimliğin (arsanın sahibi). */
   userId(): string;
-  send(ev: { t: "bclaim" } | { t: "bfree" } | { t: "bset"; i: number; j: number; k: number; b: number; r: number }): void;
+  /** Oyuncunun ayaklarının (x, z) konumu: üstünde durduğu boş arsa alınır. */
+  position(): { x: number; z: number };
+  send(ev: { t: "bclaim"; plot?: number } | { t: "bfree" } | { t: "bset"; i: number; j: number; k: number; b: number; r: number }): void;
   toast(text: string): void;
 }
 
@@ -28,6 +32,7 @@ export class BuildMode {
   private ray = new THREE.Raycaster();
   private target: { i: number; j: number; k: number; erase: boolean } | null = null;
   private down = { x: 0, y: 0, at: 0 };
+  private badge: HTMLDivElement;
 
   constructor(
     root: HTMLElement,
@@ -37,6 +42,7 @@ export class BuildMode {
     private camera: THREE.Camera,
     private host: BuildHost,
   ) {
+    this.badge = el("div", "panel plot-badge", root);
     this.bar = el("div", "panel build-bar", root);
     this.info = el("div", "build-info", this.bar);
     const row = el("div", "build-row", this.bar);
@@ -120,16 +126,18 @@ export class BuildMode {
     const mine = this.world.plotOf(this.host.userId());
     this.info.replaceChildren();
     if (mine < 0) {
-      el("span", "", this.info, "🏘️ Henüz arsan yok. Mahalle zindanın kuzeyinde (yön tabelasında ↙ MAHALLE).");
-      button(this.info, "🏠 Boş arsa al", () => this.host.send({ t: "bclaim" }), "primary");
+      el("span", "", this.info, "🏘️ Henüz arsan yok. Büyük mahalle, mahallenin batısındaki geçitten dağın ardında.");
+      button(this.info, "🏠 Boş arsa al", () => this.claim(), "primary");
       return;
     }
+    button(this.info, "🚚 Arsanı taşı", () => this.move(mine));
     const def = blockDef(this.selected);
     el("span", "", this.info, this.erase ? "🧽 Silgi: tıkladığın blok silinir" : `${def?.emoji ?? ""} ${def?.name ?? ""} · yön ${this.rot * 90}° · sol tık: koy`);
   }
 
-  /** Kare başına: imlecin altındaki hücre ve hayalet blok. */
+  /** Kare başına: üstünde durulan arsanın rozeti; inşa modunda imlecin altındaki hücre ve hayalet blok. */
   update(): void {
+    this.updateBadge();
     if (!this.active) return;
     const mine = this.world.plotOf(this.host.userId());
     if (mine >= 0 && this.info.dataset.plot !== String(mine)) {
@@ -145,8 +153,8 @@ export class BuildMode {
     const locked = !!document.pointerLockElement;
     if (mine < 0 || (!this.hasMouse && !locked)) return;
     this.ray.setFromCamera(locked ? new THREE.Vector2(0, 0) : this.mouse, this.camera);
-    const hit = this.world.raycast(this.ray);
-    if (!hit || hit.plot !== mine) return;
+    const hit = this.world.raycast(this.ray, mine);
+    if (!hit) return;
     const t = this.erase ? this.eraseCell(hit) : this.placeCell(hit, mine);
     if (!t) return;
     this.target = t;
@@ -163,10 +171,46 @@ export class BuildMode {
 
   private placeCell(hit: BuildHit, plot: number): { i: number; j: number; k: number; erase: boolean } | null {
     const i = hit.i + hit.nx, j = hit.j + hit.ny, k = hit.k + hit.nz;
-    if (!inPlot(i, j, k)) return null;
+    if (!inPlot(plot, i, j, k)) return null;
     // Arsanın dışına taşma ya da dolu hücre
     if (this.world.plots[plot].blocks.has(cellKey(i, j, k))) return null;
     return { i, j, k, erase: false };
+  }
+
+  /** Oyuncunun üstünde durduğu arsa (yoksa -1). */
+  private standing(): number {
+    const { x, z } = this.host.position();
+    return PLOTS.findIndex((p) => x >= p.x0 && x < p.x0 + p.size && z >= p.z0 && z < p.z0 + p.size);
+  }
+
+  /** Boş arsa iste: üstünde durduğun boş arsa varsa o. */
+  private claim(): void {
+    const plot = this.standing();
+    this.host.send(plot >= 0 && !this.world.plots[plot].owner ? { t: "bclaim", plot } : { t: "bclaim" });
+  }
+
+  /** Taşın: üstünde durulan boş arsaya; küçük arsadaysan durulan yer yoksa büyük mahallede ilk boş arsaya. */
+  private move(mine: number): void {
+    const at = this.standing();
+    const target = at >= 0 && at !== mine && !this.world.plots[at].owner ? at : -1;
+    if (target < 0 && PLOTS[mine].big) return this.host.toast("🚚 Taşınmak istediğin boş arsanın üstüne git, sonra tekrar bas.");
+    const where = target >= 0 ? `${plotLabel(target)} arsasına` : "büyük mahallede boş bir arsaya";
+    if (confirm(`Evin bloklarıyla birlikte ${where} taşınacak, şimdiki arsan boşalır. Taşınalım mı?`)) {
+      this.host.send(target >= 0 ? { t: "bclaim", plot: target } : { t: "bclaim" });
+    }
+  }
+
+  private updateBadge(): void {
+    const at = this.standing();
+    let text = "";
+    if (at >= 0) {
+      const p = this.world.plots[at];
+      const mine = p.owner === this.host.userId();
+      text = p.owner ? `🏠 ${mine ? "Senin arsan" : `Sahibi: ${p.name}`} · ${plotLabel(at)}` : `🔨 Boş arsa · ${plotLabel(at)} · N ile al`;
+    }
+    if (this.badge.textContent === text) return;
+    this.badge.textContent = text;
+    this.badge.classList.toggle("show", !!text);
   }
 
   private apply(): void {
@@ -179,4 +223,11 @@ export class BuildMode {
     this.world.set(plot, t.i, t.j, t.k, b, this.rot);
     this.host.send({ t: "bset", i: t.i, j: t.j, k: t.k, b, r: this.rot });
   }
+}
+
+/** Arsanın okunur adı: "Büyük mahalle 3" ya da "Mahalle 2" (numaralar mahalle içinde 1'den). */
+export function plotLabel(id: number): string {
+  const p = PLOTS[id];
+  if (!p) return "";
+  return `${p.big ? "Büyük mahalle" : "Mahalle"} ${PLOTS.filter((q) => q.big === p.big && q.id <= id).length}`;
 }

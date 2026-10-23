@@ -109,10 +109,17 @@ export class WatchPanel {
 
     this.toast = el("div", "panel toast", hud);
     this.start = el("button", "watch-start", hud, "🍿 İzlemeye başla (sesi aç)");
-    this.start.addEventListener("click", () => {
+    // Tarayıcı sesi ilk kullanıcı hareketinden sonra açtırır: oyunda herhangi bir tık ya da tuş yeter
+    // (düğmeyi görmeyen sessiz izlemesin).
+    const unlock = () => {
       this.sync.unlock();
       this.start.remove();
-    });
+      removeEventListener("pointerdown", unlock, true);
+      removeEventListener("keydown", unlock, true);
+    };
+    this.start.addEventListener("click", unlock);
+    addEventListener("pointerdown", unlock, true);
+    addEventListener("keydown", unlock, true);
   }
 
   /** Activity'de sinema yalnızca dosya/HLS oynarken görünür (YouTube vb. tarayıcıda izlenir). */

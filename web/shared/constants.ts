@@ -1,6 +1,7 @@
 // İstemci ve sunucunun ortak sabitleri.
 import { CITY, GROVE, inStadium, inVolley, KAHVEHANE, LAKE, ROAD_WALK, roadDist, STADIUM, VOLLEY_HALL } from "./zones";
 import { RACE_AREA } from "./ring";
+import { BIG_HOOD_BOX, passOutside } from "./build";
 
 /** Sunucunun anlık görüntü (snapshot) yayın hızı. */
 export const TICK_HZ = 15;
@@ -15,18 +16,30 @@ export const INTERP_DELAY_MS = 100;
 /** Köyün yürünebilir alanı (dikdörtgen, metre); kenarında ağaçlar, güneyinde dağlar. */
 export const WORLD_BOUNDS = { minX: -135, maxX: 125, minZ: -88, maxZ: 162 };
 /**
- * Bütün dünyayı (köy, doğudaki vadi yolu, GAP Şehri) kapsayan kutu. Gerçek sınır arazidedir: köyün ve
+ * Bütün dünyayı (köy, doğudaki vadi yolu, GAP Şehri, batıdaki büyük mahalle) kapsayan kutu. Gerçek sınır arazidedir: köyün ve
  * şehrin dışı ile yol koridorunun iki yanı tepe olarak yükselir (bkz. `outsideWorld`).
  */
-export const WORLD_EXTENT = { minX: WORLD_BOUNDS.minX, maxX: CITY.maxX, minZ: Math.min(WORLD_BOUNDS.minZ, CITY.minZ, RACE_AREA.minZ), maxZ: WORLD_BOUNDS.maxZ };
+export const WORLD_EXTENT = {
+  minX: BIG_HOOD_BOX.minX,
+  maxX: CITY.maxX,
+  minZ: Math.min(WORLD_BOUNDS.minZ, CITY.minZ, RACE_AREA.minZ, BIG_HOOD_BOX.minZ),
+  maxZ: Math.max(WORLD_BOUNDS.maxZ, BIG_HOOD_BOX.maxZ),
+};
 
 function outsideRect(b: { minX: number; maxX: number; minZ: number; maxZ: number }, x: number, z: number): number {
   return Math.hypot(Math.max(b.minX - x, 0, x - b.maxX), Math.max(b.minZ - z, 0, z - b.maxZ));
 }
 
-/** Yürünür alanın (köy ∪ yol koridoru ∪ şehir ∪ yarış pisti) dışına uzaklık; içinde 0. */
+/** Yürünür alanın (köy ∪ yol koridoru ∪ şehir ∪ yarış pisti ∪ büyük mahalle ve geçidi) dışına uzaklık; içinde 0. */
 export function outsideWorld(x: number, z: number): number {
-  return Math.min(outsideRect(WORLD_BOUNDS, x, z), outsideRect(CITY, x, z), outsideRect(RACE_AREA, x, z), Math.max(0, roadDist(x, z) - ROAD_WALK));
+  return Math.min(
+    outsideRect(WORLD_BOUNDS, x, z),
+    outsideRect(CITY, x, z),
+    outsideRect(RACE_AREA, x, z),
+    Math.max(0, roadDist(x, z) - ROAD_WALK),
+    outsideRect(BIG_HOOD_BOX, x, z),
+    passOutside(x, z),
+  );
 }
 
 /**

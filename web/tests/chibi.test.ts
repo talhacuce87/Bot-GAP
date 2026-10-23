@@ -107,7 +107,8 @@ describe("chibi paketi", () => {
       }
     }
     expect(bad).toBe(0);
-  });
+    // Bütün şapka × saç çiftleri tek tek kurulur: yavaş makinede 5 sn'yi geçer
+  }, 30_000);
 
   it("saç rengi değişince saç köşelerinin rengi değişir, ten değişmez", () => {
     const a = pack.build({ hair: "hair_kisa_doku" }).attributes.color.array;

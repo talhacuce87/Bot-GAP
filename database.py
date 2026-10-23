@@ -763,16 +763,21 @@ async def get_world_builds(guild_id: int) -> list[tuple[int, int, str]]:
             return [(int(r[0]), int(r[1]), str(r[2])) async for r in cur]
 
 
-async def save_world_build(guild_id: int, plot: int, user_id: int, data: str) -> bool:
-    """Arsayı kaydeder. Arsa başkasınınsa ya da üyenin başka arsası varsa False."""
+async def save_world_build(guild_id: int, plot: int, user_id: int, data: str, move: bool = False) -> bool:
+    """Arsayı kaydeder. Arsa başkasınınsa ya da üyenin başka arsası varsa False; `move` ile üyenin eski arsası
+    aynı işlemde silinir (küçük arsadan büyüğe taşınma)."""
     async with _db() as db:
         async with db.execute(
             "SELECT plot, user_id FROM world_builds WHERE guild_id = ? AND (plot = ? OR user_id = ?)",
             (guild_id, plot, user_id),
         ) as cur:
             rows = [(int(r[0]), int(r[1])) async for r in cur]
-        if any(p == plot and u != user_id for p, u in rows) or any(u == user_id and p != plot for p, u in rows):
+        if any(p == plot and u != user_id for p, u in rows):
             return False
+        if any(u == user_id and p != plot for p, u in rows):
+            if not move:
+                return False
+            await db.execute("DELETE FROM world_builds WHERE guild_id = ? AND user_id = ? AND plot != ?", (guild_id, user_id, plot))
         await db.execute(
             """
             INSERT INTO world_builds (guild_id, plot, user_id, data, updated_at) VALUES (?, ?, ?, ?, ?)

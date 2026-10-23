@@ -5,8 +5,8 @@ import { DJ_BOOTH, STAGE_STEPS } from "../../../shared/zones";
 import type { Conn, Room } from "../room";
 
 const QUEUE_MAX = 20;
-/** Yeni yüklenen video bu süreden önce "bitti" sayılmaz (başka istemcinin eski bildirimi). */
-const MIN_PLAY_MS = 15_000;
+/** Yeni yüklenen video bu süreden önce "bitti" sayılmaz (başka istemcinin eski videosundan gelen bildirim). */
+const MIN_PLAY_MS = 5_000;
 const SHOWS = 4;
 
 export interface StageHost {
@@ -23,8 +23,11 @@ export class Stage {
   show = 0;
   singer = 0;
   private queue: { url: string; title: string; by: string }[] = [];
-  /** Son video bitti, kuyruk da boştu: yeni eklenen hemen çalar. */
-  private idle = false;
+  /**
+   * Biten ve ardından kuyruğu boş kalan videonun yüklenme anı: perdede hâlâ o varsa yeni eklenen hemen
+   * çalar. Arada başka video açıldıysa (!izle) eşleşmez, eklenen sıraya girer.
+   */
+  private idleFor = 0;
 
   constructor(
     private room: Room,
@@ -52,8 +55,9 @@ export class Stage {
   /** Kuyruğa ekler; perde boşsa hemen çalar. Cevap metni (yalnızca ekleyene). */
   async enqueue(url: string, by: string): Promise<string> {
     if (this.queue.length >= QUEUE_MAX) return "🎵 Kuyruk dolu (20 şarkı).";
-    if (!this.host.loadedAt() || this.idle) {
-      this.idle = false;
+    const at = this.host.loadedAt();
+    if (!at || at === this.idleFor) {
+      this.idleFor = 0;
       const r = await this.host.play(url, by);
       return "error" in r ? `🎵 ${r.error}` : `🎵 Çalıyor: ${r.title}`;
     }
@@ -77,7 +81,7 @@ export class Stage {
   ended(now = Date.now()): void {
     const at = this.host.loadedAt();
     if (!at || now - at < MIN_PLAY_MS) return;
-    if (!this.queue.length) this.idle = true;
+    if (!this.queue.length) this.idleFor = at;
     else void this.next();
   }
 

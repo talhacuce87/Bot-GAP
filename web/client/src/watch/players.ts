@@ -16,8 +16,23 @@ export interface MediaPlayer {
   /** 0..1 */
   setVolume(v: number): void;
   setMuted(m: boolean): void;
+  /** Video sona geldi: "oynat" denirse baştan başlar, denmemeli. */
+  ended?(): boolean;
+  /** Oynatma hızı (küçük sapmayı sarmadan kapatmak için); desteklemeyen oynatıcıda yok. */
+  setRate?(r: number): void;
+  /** Video oynatılamıyor (gömme yasağı, silinmiş, ağ/format hatası): görünür mesaj. */
+  onError: (message: string) => void;
   destroy(): void;
 }
+
+/** YouTube IFrame API hata kodları. */
+const YT_ERRORS: Record<number, string> = {
+  2: "YouTube linki bozuk.",
+  5: "Bu YouTube videosu tarayıcıda oynatılamıyor.",
+  100: "Bu YouTube videosu bulunamadı (silinmiş ya da gizli).",
+  101: "Bu YouTube videosu başka sitelerde oynatılamıyor (sahibi kapatmış).",
+  150: "Bu YouTube videosu başka sitelerde oynatılamıyor (sahibi kapatmış).",
+};
 
 // ---------------------------------------------------------------------------
 // Harici betik yükleyici (her biri bir kez)
@@ -85,6 +100,7 @@ function loadYouTube(): Promise<void> {
 
 class YouTubePlayer implements MediaPlayer {
   readonly controllable = true;
+  onError: (message: string) => void = () => {};
   private p: YTPlayer | null = null;
   private volume = 100;
   private muted = true;
@@ -103,6 +119,7 @@ class YouTubePlayer implements MediaPlayer {
             this.p?.setVolume(this.volume);
             if (!this.muted) this.p?.unMute();
           },
+          onError: (e: { data: number }) => this.onError(YT_ERRORS[e.data] ?? "YouTube videosu oynatılamadı."),
         },
       });
     });
@@ -130,6 +147,10 @@ class YouTubePlayer implements MediaPlayer {
   isPlaying(): boolean {
     const s = this.ok()?.getPlayerState();
     return s === window.YT?.PlayerState.PLAYING || s === window.YT?.PlayerState.BUFFERING;
+  }
+  /** Video sona geldi (bitti durumu): oynat denirse baştan başlar, denmemeli. */
+  ended(): boolean {
+    return this.ok()?.getPlayerState() === 0;
   }
   setVolume(v: number): void {
     this.volume = Math.round(v * 100);
@@ -162,6 +183,7 @@ interface TwitchPlayer {
 
 class TwitchEmbed implements MediaPlayer {
   readonly controllable = true;
+  onError: (message: string) => void = () => {};
   private p: TwitchPlayer | null = null;
   private host: HTMLElement;
 
@@ -169,7 +191,8 @@ class TwitchEmbed implements MediaPlayer {
     this.host = document.createElement("div");
     this.host.style.cssText = "width:100%;height:100%";
     host.append(this.host);
-    void loadScript("https://player.twitch.tv/js/embed/v1.js").then(() => {
+    void loadScript("https://player.twitch.tv/js/embed/v1.js").catch(() => this.onError("Twitch oynatıcısı yüklenemedi (reklam engelleyici olabilir).")).then(() => {
+      if (!window.Twitch) return;
       this.p = new window.Twitch!.Player(this.host, {
         width: "100%",
         height: "100%",
@@ -218,6 +241,7 @@ class TwitchEmbed implements MediaPlayer {
 
 class KickEmbed implements MediaPlayer {
   readonly controllable = false;
+  onError: (message: string) => void = () => {};
   private frame: HTMLIFrameElement;
   private muted = true;
 
@@ -269,6 +293,7 @@ class KickEmbed implements MediaPlayer {
 
 class FilePlayer implements MediaPlayer {
   readonly controllable = true;
+  onError: (message: string) => void = () => {};
   private v: HTMLVideoElement;
   private hls: { destroy(): void } | null = null;
 
@@ -280,10 +305,21 @@ class FilePlayer implements MediaPlayer {
     v.preload = "auto";
     host.append(v);
     this.v = v;
+    v.addEventListener("error", () => this.onError("Video açılamadı (link bozuk ya da bu format desteklenmiyor)."));
     if (hls && !v.canPlayType("application/vnd.apple.mpegurl")) {
       void import("hls.js").then(({ default: Hls }) => {
-        if (!Hls.isSupported()) return;
+        if (!Hls.isSupported()) return this.onError("Bu tarayıcı canlı yayın (HLS) oynatamıyor.");
         const h = new Hls({ maxBufferLength: 30 });
+        // Ağ hatasında bir kez yeniden dene; düzelmezse mesaj
+        let retried = false;
+        h.on(Hls.Events.ERROR, (_e, d) => {
+          if (!d.fatal) return;
+          if (d.type === Hls.ErrorTypes.NETWORK_ERROR && !retried) {
+            retried = true;
+            h.startLoad();
+          } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) h.recoverMediaError();
+          else this.onError("Yayına bağlanılamadı (yayın kapalı ya da erişim engelli).");
+        });
         h.loadSource(url);
         h.attachMedia(v);
         this.hls = h;
@@ -316,6 +352,12 @@ class FilePlayer implements MediaPlayer {
   }
   setMuted(m: boolean): void {
     this.v.muted = m;
+  }
+  ended(): boolean {
+    return this.v.ended;
+  }
+  setRate(r: number): void {
+    if (Math.abs(this.v.playbackRate - r) > 0.001) this.v.playbackRate = r;
   }
   destroy(): void {
     this.hls?.destroy();

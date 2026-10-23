@@ -89,7 +89,7 @@ describe("komutlar", () => {
     expect(out.replies.at(-1)).toContain("Biraz bekle");
   });
 
-  it("!izle: link yoksa kullanım, açılamazsa hata, misafire izin yok", async () => {
+  it("!izle: link yoksa kullanım, açılamazsa hata; misafir de sinemayı açabilir", async () => {
     const a = ctx();
     await runCommand(a.c, "izle", "");
     expect(a.out.replies[0]).toContain("Kullanım");
@@ -97,9 +97,9 @@ describe("komutlar", () => {
     await runCommand(bad.c, "izle", "nope");
     expect(bad.out.replies[0]).toContain("açılamıyor");
     expect(bad.out.opened).toEqual([]);
-    const g = ctx({ user: guest, guild: null });
+    const g = ctx({ user: guest, guild: null, cinema: async () => ({ url: "https://gap.example/w/abc123", title: "Fragman", reused: false }) });
     await runCommand(g.c, "izle", "https://youtu.be/abc");
-    expect(g.out.replies[0]).toContain("Discord'dan");
+    expect(g.out.announced[0].text).toContain("sinemayı açtı: Fragman");
   });
 
   it("odada sinema varken !izle videoyu değiştirir; tarayıcıdaki izleyiciye yeni sekme açılmaz", async () => {

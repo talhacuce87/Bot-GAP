@@ -179,7 +179,7 @@ export class WorldGames {
         this.tables.resign(sid, num(msg.id));
         return true;
       case "bclaim":
-        this.builds?.claim(sid);
+        this.builds?.claim(sid, msg.plot === undefined ? undefined : num(msg.plot));
         return true;
       case "bset":
         this.builds?.set(sid, num(msg.i), num(msg.j), num(msg.k), num(msg.b), num(msg.r), now);

@@ -137,8 +137,12 @@ export async function detectHlsLive(url: string, get: (u: string) => Promise<str
   return !text.includes("#EXT-X-ENDLIST");
 }
 
-/** Link → kaynak + başlık. YouTube başlığı oEmbed'den alınır; alınamazsa kaynağın adı kullanılır. */
-export async function resolveMedia(url: string): Promise<{ source: Source; title: string } | null> {
+/**
+ * Link → kaynak + başlık; desteklenmiyorsa null. YouTube başlığı oEmbed'den alınır (alınamazsa kaynağın
+ * adı). oEmbed videonun gömülü oynatılamadığını (401/403: sahibi kapatmış) ya da olmadığını (404)
+ * söylerse hata döner: yoksa herkesin perdesinde boş/hatalı oynatıcı kalır.
+ */
+export async function resolveMedia(url: string): Promise<{ source: Source; title: string } | { error: string } | null> {
   const source = parseMediaUrl(url);
   if (!source) return null;
   if (source.kind === "file" && source.hls && source.live === undefined) source.live = await detectHlsLive(source.url);
@@ -148,6 +152,8 @@ export async function resolveMedia(url: string): Promise<{ source: Source; title
       const r = await fetch(`https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v=${source.id}`, {
         signal: AbortSignal.timeout(4000),
       });
+      if (r.status === 401 || r.status === 403) return { error: "Bu YouTube videosu başka sitelerde oynatılamıyor (sahibi kapatmış). Başka bir video dene." };
+      if (r.status === 404 || r.status === 400) return { error: "Bu YouTube videosu bulunamadı (silinmiş ya da gizli olabilir)." };
       if (r.ok) title = String(((await r.json()) as { title?: string }).title || title).slice(0, 120);
     } catch {
       // başlıksız da oynar

@@ -304,6 +304,7 @@ async function start(): Promise<void> {
     sync.setVolume(settings.cinemaVolume);
     life.onStop(onSettings(() => sync.setVolume(settings.cinemaVolume)));
     sync.onEnded = () => net.send({ t: "wended" });
+    sync.onError = (m) => hud.toast(`🎬 ${m}`);
     return sync;
   };
   if (session.mode === "watch") {
@@ -377,7 +378,8 @@ async function start(): Promise<void> {
     hudRoot,
     {
       send: (text) => net.send({ t: "chat", text }),
-      open: openUrl,
+      // Sohbetteki "Tarayıcıda izle": tarayıcıda video zaten perdede
+      open: (url) => (session.mode !== "discord" && url.includes("/w/") ? hud.toast("🎬 Video sinema perdesinde oynuyor.") : openUrl(url)),
       local: (text) => {
         if (/^[!/](payla[şs]|ekran)/i.test(text)) {
           void toggleShare();
@@ -399,7 +401,11 @@ async function start(): Promise<void> {
     if (line.kind === "say" && line.sid >= 0) bubbles.say(line.sid, line.text, performance.now());
   };
   net.onChatLog = (lines) => chat.setLog(lines);
-  net.onOpen = openUrl;
+  // !izle sonrası izleme linki: tarayıcıda video zaten perdede oynar (ikinci sekme aynı dünyaya ikinci kez bağlanırdı)
+  net.onOpen = (url) => {
+    if (session.mode !== "discord" && url.includes("/w/")) return;
+    openUrl(url);
+  };
   const openCinema = () => chat.focus("!izle ");
   // Activity'de video oynatılamaz: perde "Şimdi oynuyor" tabelasına döner, üstte "Tarayıcıda izle" bandı.
   // Sinema bu odaya bağlıdır; linkle gelenler de bu dünyaya girer.
@@ -417,8 +423,9 @@ async function start(): Promise<void> {
   hudRoot.append(battleBtn);
   if (session.mode !== "watch") {
     hud.cinemaButton(openCinema);
-    // Dosya/HLS (TRT, .m3u8, .mp4) sunucu üzerinden aktarılır ve perdede oynar; YouTube/Twitch/Kick
-    // Activity'de oynatılamaz: perde "Şimdi oynuyor" tabelası olur, video tarayıcıda izlenir.
+    // Dosya/HLS (TRT, .m3u8, .mp4) sunucu üzerinden aktarılır ve perdede oynar. YouTube/Twitch/Kick
+    // tarayıcıda doğrudan perdede oynar; yalnızca Activity'de oynatılamaz (Discord bu sitelere erişimi
+    // engeller): orada perde "Şimdi oynuyor" tabelası olur, video tarayıcıda izlenir.
     // ScreenVideo, CinemaSign'dan önce kurulur: ikisi de perdenin özgün malzemesini saklar.
     const sign = (cinemaSign = new CinemaSign(world.screen, session.base));
     let inWorld: { sync: WatchSync; panel: WatchPanel } | null = null;
@@ -427,7 +434,8 @@ async function start(): Promise<void> {
       const src = s.source;
       cinemaOn = !!src;
       musicOn = !!src && s.playing;
-      if (src?.kind === "file" && id) {
+      const onScreen = !!src && (src.kind === "file" ? !!id : session.mode !== "discord");
+      if (src && onScreen) {
         sign.set(null);
         if (!inWorld) {
           const sync = wireSync(new WatchSync(screen, () => net.serverNow()));
@@ -441,8 +449,8 @@ async function start(): Promise<void> {
           watch = { sync, screen, panel };
           sync.setSuppressed(viewer !== null); // paylaşım sürüyorsa sinema sessiz başlar
         }
-        const proxied = { ...src, url: `${session.base}/media/${id}/p?u=${encodeURIComponent(src.url)}` };
-        inWorld.sync.apply({ ...s, source: proxied });
+        const source = src.kind === "file" ? { ...src, url: `${session.base}/media/${id}/p?u=${encodeURIComponent(src.url)}` } : src;
+        inWorld.sync.apply({ ...s, source });
         inWorld.panel.onState(s);
         inWorld.panel.setVisible(true);
         hudRoot.classList.add("has-watch");
@@ -597,7 +605,8 @@ async function start(): Promise<void> {
     if (c.rarity === "epic" || c.rarity === "legendary") emoteFx.emit(x, 0.4, z, FX_CELL.sparkle, time + 0.3, undefined, 4);
     if (self) {
       const luck = c.luck > 0 ? ` · şans +%${c.luck.toFixed(1)}` : "";
-      hud.toast(`🐟 ${c.label}: ${c.fish}! ${c.hours} saat 2x XP · seri ${c.streak} gün${luck}`);
+      // Misafirin balığı XP vermez (hours 0)
+      hud.toast(c.hours ? `🐟 ${c.label}: ${c.fish}! ${c.hours} saat 2x XP · seri ${c.streak} gün${luck}` : `🐟 ${c.label}: ${c.fish}! (misafir: XP yok)`);
     } else if (c.rarity === "epic" || c.rarity === "legendary") {
       hud.toast(`🎣 ${name} ${c.label.toLowerCase()} bir ${c.fish} tuttu!`);
     }
