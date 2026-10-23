@@ -151,6 +151,20 @@ export class Net {
   private retry = 0;
   private clock = new ServerClock();
   private monitor = new RttMonitor();
+  /**
+   * Sekmenin son görünür olduğu an (yerel ms). Arka planda tarayıcı zamanlayıcıları kısar ve olayları
+   * bekletir: o sırada gönderilmiş ping'lerin geç gelen pong'ları "hat yavaş", seyrek pong'lar "takıldı"
+   * sanılıp geri dönünce bağlantı koparılıyordu (oyun donmuş gibi görünürdü).
+   */
+  private visibleAt = 0;
+  private onVisibility = () => {
+    const now = performance.now();
+    this.interp.paused = document.hidden;
+    if (document.hidden) return;
+    this.visibleAt = now;
+    this.monitor.reset(now);
+    this.interp.reset();
+  };
   /** Uzak oyuncuların çizim gecikmesi: hattın dalgalanmasına göre ayarlanır. */
   readonly interp = new InterpDelay();
   /** close() çağrıldı: yeniden bağlanılmaz (mod değişti). */
@@ -171,6 +185,7 @@ export class Net {
       if (r) this.interp.feed(r, this.arrival, this.arrivedAt, time, x, z, rot, flags);
     };
     this.interp.onNeed = (need, now) => this.stats.need(need, now);
+    document.addEventListener("visibilitychange", this.onVisibility);
     this.connect();
   }
 
@@ -517,9 +532,11 @@ export class Net {
         this.fast?.candidate(ev.c, ev.mid);
         break;
       case "pong": {
+        // Arka plandayken gönderilmiş ping'in pong'u bekletilmiş olabilir: ölçüme katılmaz
+        if (document.hidden || ev.c - performance.timeOrigin < this.visibleAt) break;
         const rtt = this.clock.sample(ev.c, ev.s, performance.timeOrigin + performance.now());
         this.stats.wsPong(rtt, performance.now());
-        if (this.monitor.sample(rtt, performance.now()) && !document.hidden) this.reconnect();
+        if (this.monitor.sample(rtt, performance.now())) this.reconnect();
         break;
       }
     }
@@ -528,6 +545,7 @@ export class Net {
   /** Bağlantıyı kalıcı olarak kapatır (dünya ↔ savaş geçişinde eski bağlantı). */
   close(): void {
     this.closed = true;
+    document.removeEventListener("visibilitychange", this.onVisibility);
     window.clearInterval(this.pingTimer);
     this.fast?.close();
     this.ws?.close(1000, "mode");

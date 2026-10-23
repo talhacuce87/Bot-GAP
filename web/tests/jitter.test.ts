@@ -36,6 +36,17 @@ describe("InterpDelay", () => {
     expect(e.delay).toBeLessThan(140);
   });
 
+  it("ignores bursts while the tab is in the background (alt-tab must not leave remotes lagging)", () => {
+    const d = new InterpDelay();
+    feedNeeds(d, () => 120);
+    settle(d);
+    d.paused = true;
+    feedNeeds(d, () => 900, 3000);
+    d.paused = false;
+    settle(d);
+    expect(d.delay).toBeLessThan(140);
+  });
+
   it("never drops below one broadcast interval", () => {
     const d = new InterpDelay();
     feedNeeds(d, () => 5);

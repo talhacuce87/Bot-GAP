@@ -66,6 +66,8 @@ export class Input {
 
     const signal = this.abort.signal;
     addEventListener("keydown", (e) => {
+      // Alt (alt-tab'ın yarısı): Firefox bırakılınca menü çubuğunu odaklar, sonraki tuşlar oyuna gelmez
+      if (e.key === "Alt") e.preventDefault();
       if (e.repeat) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (this.blocked) {
@@ -78,8 +80,13 @@ export class Input {
       // Atanmış tuş: Space/oklar sayfayı kaydırmasın, odaktaki düğmeyi tetiklemesin
       if (this.press(e.code)) e.preventDefault();
     }, { signal });
-    addEventListener("keyup", (e) => this.held.delete(e.code), { signal });
+    addEventListener("keyup", (e) => {
+      if (e.key === "Alt") e.preventDefault();
+      this.held.delete(e.code);
+    }, { signal });
+    // Alt-tab: bırakılan tuşların keyup'ı gelmez; basılı kalıp karakter kendi kendine yürümesin
     addEventListener("blur", () => this.reset(), { signal });
+    document.addEventListener("visibilitychange", () => document.hidden && this.reset(), { signal });
     el.addEventListener("contextmenu", (e) => e.preventDefault(), { signal });
     el.addEventListener("wheel", (e) => {
       e.preventDefault();

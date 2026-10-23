@@ -24,6 +24,8 @@ export class InterpDelay {
   /** Şu an kullanılan gecikme (ms). */
   delay = INTERP_DELAY_MS;
   target = INTERP_DELAY_MS;
+  /** Sekme arka planda: mesajlar toplu gelir, ölçümler gecikmeyi boşuna şişirmesin diye alınmaz. */
+  paused = false;
   /** Her ihtiyaç ölçümünde (ağ paneli). */
   onNeed: (need: number, now: number) => void = () => {};
   private needs: number[] = [];
@@ -41,6 +43,7 @@ export class InterpDelay {
 
   /** Hareket eden oyuncunun yeni örneği geldi: `need` bir öncekinin o anki yaşı (ms), `now` yerel saat (ms). */
   arrived(need: number, now: number): void {
+    if (this.paused) return;
     this.onNeed(need, now);
     this.needs.push(need);
     this.times.push(now);
