@@ -11,7 +11,8 @@
     "start": "node dist/server/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "bake:chibi": "node scripts/bake-chibi.mjs"
+    "bake:chibi": "node scripts/bake-chibi.mjs",
+    "lod:chibi": "node scripts/lod-chibi.mjs"
   },
   "dependencies": {
     "node-datachannel": "0.33.4",

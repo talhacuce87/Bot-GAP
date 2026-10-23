@@ -46,7 +46,7 @@ describe("NPC yayalar", () => {
     const { Pedestrians } = await import("../client/src/npcs/pedestrians");
     const { walkable } = await import("../client/src/world/terrain");
     const { onAsphalt, outsideWorld } = await import("../shared/zones").then(async (z) => ({ ...z, ...(await import("../shared/constants")) }));
-    const peds = new Pedestrians(walkways(), 10);
+    const peds = new Pedestrians(walkways(), 10, [], walkable);
     const p = { x: 0, z: 0, rot: 0, moving: false };
     let total = 0, asphalt = 0;
     const bad: string[] = [];

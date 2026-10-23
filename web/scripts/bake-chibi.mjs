@@ -1,6 +1,6 @@
 // Chibi karakter paketini (base_character.glb + parça .glb'leri) oyuna hazır tek pakete dönüştürür.
 //
-//   node scripts/bake-chibi.mjs <paket klasörü>
+//   node scripts/bake-chibi.mjs <paket klasörü>   (sonra: npm run lod:chibi — dünyanın uzak görünümü)
 //
 // Çıktı (aynısı iki yere: bot imajı web/'i, dünya imajı kök dizini görmez):
 //   ../assets/chibi/chibi.{json,bin}     → bot (!karakter resmi, chibi_render.py)

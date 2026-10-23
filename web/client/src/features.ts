@@ -208,7 +208,7 @@ export class Features {
   constructor(private c: FeatureContext) {
     const { world, net, hud, hudRoot, me } = c;
     world.scene.add(this.companions.group, this.fireworks.points);
-    this.cityLife = new CityLife(c.lowPower);
+    this.cityLife = new CityLife(c.lowPower, world.seats);
     world.scene.add(this.cityLife.group);
     net.onPedhit = (id, vx, vz, by) => {
       const line = this.cityLife.hit(id, vx, vz, performance.now() / 1000);
@@ -385,6 +385,7 @@ export class Features {
       resolve: (p, r, y) => {
         this.buildWorld.resolve(p, r, y);
         this.vehicles.colliders.resolve(p, r, y);
+        this.cityLife.traffic.colliders.resolve(p, r, y);
       },
       groundAt: (x, z, r, y) => this.buildWorld.groundAt(x, z, r, y),
     };
@@ -1429,6 +1430,11 @@ export class Features {
     for (const r of remotes.map.values()) if (r.hasData) c.push(r.info.sid, r, r.info.pet, time, dt);
     this.cityLife.pushCats(c, net.serverNow(), time, dt, this.c.camera.position);
     c.end();
+  }
+
+  /** Gece farı yanan NPC arabalar (Cars gerçek far ışığını bunlarla paylaşır). */
+  npcHeadlights(): { x: number; z: number; rot: number }[] {
+    return this.cityLife.traffic.headlights();
   }
 
   /** Konuşma balonunun yeri: NPC yayalar (oyuncular main.ts'te). */

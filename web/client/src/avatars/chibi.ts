@@ -18,6 +18,9 @@ const OUTLINE_WIDTH = 0.012;
 const OUTLINE_PUSH = 0.03;
 /** Kontur bu mesafeden uzakta çizilmez (üçgen sayısını ikiye katlıyor, uzakta fark edilmiyor). */
 const OUTLINE_RADIUS = 15;
+/** Bu mesafeden uzakta sadeleştirilmiş görünüm (LOD1) çizilir; gölge yalnızca SHADOW_RADIUS içinde. */
+const LOD_RADIUS = 12;
+const SHADOW_RADIUS = 25;
 
 /** Uzuv açıları (radyan): x ekseni öne/arkaya sallama, z ekseni yana kaldırma. */
 export interface LimbPose {
@@ -176,12 +179,13 @@ export class ChibiLayer {
     if (!this.pack || this.used >= this.max) return false;
     const d2 = (x - this.cam.x) ** 2 + (z - this.cam.z) ** 2;
     if (!always && d2 > this.radius ** 2) return false;
-    const key = lookKey(look);
+    const lod = !always && d2 > LOD_RADIUS ** 2 ? 1 : 0;
+    const key = lookKey(look) + (lod ? "|1" : "");
     let entry = this.cache.get(key);
     if (!entry) {
       if (this.builds >= BUILDS_PER_FRAME) return false;
       this.builds++;
-      entry = { geo: this.pack.build(look), usedAt: this.frame };
+      entry = { geo: this.pack.build(look, lod), usedAt: this.frame };
       this.cache.set(key, entry);
       this.evict();
     }
@@ -199,6 +203,7 @@ export class ChibiLayer {
     slot.mesh.matrixWorldNeedsUpdate = slot.outline.matrixWorldNeedsUpdate = true;
     slot.mesh.visible = true;
     slot.outline.visible = d2 <= OUTLINE_RADIUS ** 2;
+    slot.mesh.castShadow = d2 <= SHADOW_RADIUS ** 2;
     setLimbs(slot.angles, limbs);
     return true;
   }

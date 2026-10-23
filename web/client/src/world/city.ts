@@ -15,6 +15,7 @@ import { HOOD_PARK, HOOD_ROADS, HOOD_ROUNDABOUT, HOOD_SIDEWALK, HOOD_STREET_HALF
 import { ROAD_BRIDGE_HALF, riverDist } from "./terrain";
 import { furnish, type Kit, MALL_SIGNS, SHOPS } from "./interiors";
 import { mat, part } from "./geo";
+import { signalLamp, signalNow } from "./signals";
 
 const ASPHALT = "#3c3f45";
 const ASPHALT_DARK = "#34373c";
@@ -1251,13 +1252,12 @@ export function city(b: Builder): City {
       windowMat.opacity = Math.min(1, night * 1.2);
       if (windowMesh) windowMesh.visible = night > 0.02;
       beaconMat.color.setScalar(Math.sin(time * 3.2) > 0.2 ? 1 : 0.12);
-      // Trafik: 12 sn döngü; yatay cadde 0–5 yeşil, 5–6.5 sarı, sonra kırmızı (dikey tersi)
-      const t = time % 12;
-      const phase = (offset: number) => {
-        const u = (t + offset) % 12;
-        return u < 5 ? 2 : u < 6.5 ? 1 : 0;
-      };
-      [phase(0), phase(6)].forEach((on, dir) => signalMats[dir].forEach((m, k) => m.color.setScalar(k === on ? 1 : 0.1)));
+      // Trafik lambaları ortak saatle (signals.ts): herkeste aynı, NPC arabalar da buna uyar
+      const now = signalNow();
+      ([0, 1] as const).forEach((dir) => {
+        const on = signalLamp(now, dir);
+        signalMats[dir].forEach((m, k) => m.color.setScalar(k === on ? 1 : 0.1));
+      });
       for (const m of signMats) (m as THREE.MeshLambertMaterial).emissive.setScalar(0.23 + night * 0.35);
     },
   };

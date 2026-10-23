@@ -147,6 +147,12 @@ export const sfx = {
     burst(0.07, 0.3 * gain, 2500);
     tone(220, 0.08, "triangle", 0.12 * gain, 0, -80);
   },
+  /** Araba kornası (iki ton birlikte, kısa ya da uzun). */
+  horn(gain = 1, long = false): void {
+    const d = long ? 0.6 : 0.28;
+    tone(415, d, "square", 0.05 * gain);
+    tone(523, d, "square", 0.04 * gain);
+  },
   /** Nitro ateşlendi: yükselen vınlama. */
   boost(): void {
     tone(240, 0.5, "sawtooth", 0.035, 0, 520);

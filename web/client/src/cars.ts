@@ -47,6 +47,9 @@ export class Cars {
   private seated = new Map<number, AvatarView>();
   private night = 0;
   private focus = { x: 0, z: 0 };
+  /** NPC arabalar (trafik): gerçek far ışığı oyuncu arabalarıyla birlikte en yakınlara verilir. */
+  extra: { list: () => { x: number; z: number; rot: number }[]; night: number } | null = null;
+  private static readonly NPC_HEAD = new THREE.Color("#fff6dc");
 
   constructor(
     private scene: THREE.Scene,
@@ -97,12 +100,16 @@ export class Cars {
     for (const [sid, e] of this.entries) if (!e.seen) this.drop(sid);
     const lamps = this.opts.lamps;
     if (!lamps || !this.opts.headlights) return;
-    if (this.night < 0.01) return lamps.setHeadlights([]);
-    const near = [...this.entries.values()].sort((a, b) => (a.x - this.focus.x) ** 2 + (a.z - this.focus.z) ** 2 - ((b.x - this.focus.x) ** 2 + (b.z - this.focus.z) ** 2));
+    const night = Math.max(this.entries.size ? this.night : 0, this.extra?.night ?? 0);
+    if (night < 0.01) return lamps.setHeadlights([]);
+    const all: { x: number; z: number; rot: number; color: THREE.Color }[] = [...this.entries.values()].map((e) => ({ x: e.x, z: e.z, rot: e.rot, color: e.mesh.headColor }));
+    if (this.extra) for (const c of this.extra.list()) all.push({ x: c.x, z: c.z, rot: c.rot, color: Cars.NPC_HEAD });
+    const f = this.focus;
+    all.sort((a, b) => (a.x - f.x) ** 2 + (a.z - f.z) ** 2 - ((b.x - f.x) ** 2 + (b.z - f.z) ** 2));
     lamps.setHeadlights(
-      near.slice(0, MAX_CARS).map((e) => {
+      all.slice(0, MAX_CARS).map((e) => {
         const dx = Math.sin(e.rot), dz = Math.cos(e.rot);
-        return { x: e.x + dx * HEAD_AHEAD, y: HEAD_Y, z: e.z + dz * HEAD_AHEAD, dx, dz, color: e.mesh.headColor };
+        return { x: e.x + dx * HEAD_AHEAD, y: HEAD_Y, z: e.z + dz * HEAD_AHEAD, dx, dz, color: e.color };
       }),
     );
   }

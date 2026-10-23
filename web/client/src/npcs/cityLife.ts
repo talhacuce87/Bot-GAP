@@ -1,8 +1,8 @@
-// Şehrin canlıları tek yerde: NPC yayalar (örnekli kalabalık), güvercin sürüleri, sokak kedileri.
+// Şehrin canlıları tek yerde: NPC yayalar (örnekli kalabalık), NPC trafik, güvercin sürüleri, sokak kedileri.
 // Features her kare `update` çağırır; kediler evcil hayvan çizicisiyle (Companions) görünmez bir yürüyüşçünün
 // peşinden gider.
 import * as THREE from "three";
-import { FLAG_RUNNING, FLAG_WALKING, vehicleOf } from "../../../shared/constants";
+import { FLAG_RUNNING, FLAG_SEATED, FLAG_WALKING, outsideWorld, vehicleOf } from "../../../shared/constants";
 import type { ClientEvent, Look } from "../../../shared/protocol";
 import { CASINO, KAHVEHANE, PLAZA, SAKURA_SPOT } from "../../../shared/zones";
 import { HOOD_PARK } from "../../../shared/build";
@@ -14,9 +14,13 @@ import { CrowdRenderer } from "../avatars/crowd";
 import type { Remotes } from "../avatars/remotes";
 import type { Player } from "../player";
 import { settings } from "../settings";
+import type { Seat } from "../world/builder";
+import { walkable } from "../world/terrain";
 import { walkways } from "../world/walkways";
 import { type Mover, type MyCar, PED_SID_BASE, Pedestrians } from "./pedestrians";
 import { Pigeons, type Scarer } from "./pigeons";
+import { AmbientTraffic, type TrafficMover } from "./traffic";
+import { signalClock } from "../world/signals";
 
 /** NPC kıyafetleri: sabit tohumlar (herkeste aynı yaya aynı kıyafette). */
 const OUTFIT_SEEDS = [101, 102, 103, 104, 105, 106, 107, 108, 109, 110];
@@ -51,15 +55,22 @@ export class CityLife {
   private crowd = new CrowdRenderer();
   private peds: Pedestrians;
   private pigeons = new Pigeons();
+  readonly traffic: AmbientTraffic;
+  private trafficMovers: TrafficMover[] = [];
   private loading = false;
   private movers: Mover[] = [];
   private scarers: Scarer[] = [];
   private prev = new Map<number, { x: number; z: number }>();
   private cats: AvatarView[];
 
-  constructor(private lowPower: boolean) {
-    this.peds = new Pedestrians(walkways(), OUTFIT_SEEDS.length);
-    this.group.add(this.crowd.group, this.pigeons.group);
+  private taken: { x: number; z: number }[] = [];
+
+  constructor(private lowPower: boolean, seats: Seat[]) {
+    // Banklar: masa ve casino tabureleri değil; dünyanın içinde (stadyum ve salon tribünleri dışarıda)
+    const benches = seats.filter((s) => !s.table && !s.game && outsideWorld(s.x, s.z) === 0);
+    this.peds = new Pedestrians(walkways(), OUTFIT_SEEDS.length, benches, walkable);
+    this.traffic = new AmbientTraffic(lowPower);
+    this.group.add(this.crowd.group, this.pigeons.group, this.traffic.renderer.group);
     this.cats = CATS.map(([x, z], k) => ({
       x, z, rot: 0, flags: 0, alpha: 1, cell: -1, color: new THREE.Color(), phase: k * 1.7, emote: -1, emoteAt: 0, jumpY: 0, hidden: true,
     }));
@@ -88,10 +99,15 @@ export class CityLife {
       void this.crowd.load(f.pack, looks).catch((err) => console.warn("[kalabalık] kurulamadı:", err));
     }
     const { me, remotes, dt } = f;
+    signalClock.ms = f.serverMs;
     // Hareket edenler: sen ve diğer oyuncular (arabadakilerin hızı kareden kareye konum farkından)
     this.movers.length = 0;
     this.scarers.length = 0;
+    this.trafficMovers.length = 0;
+    this.taken.length = 0;
+    if (me.flags & FLAG_SEATED) this.taken.push(me);
     const waving = (v: AvatarView) => v.emote === 0 && f.time - v.emoteAt < 1.6;
+    this.trafficMovers.push({ x: me.x, z: me.z, car: me.car ? { rot: me.rot } : null });
     if (!me.hidden) {
       const v = me.car?.v ?? 0;
       this.movers.push({ x: me.x, z: me.z, speed: Math.abs(v), vx: Math.sin(me.rot) * v, vz: Math.cos(me.rot) * v, wave: waving(me) });
@@ -99,6 +115,8 @@ export class CityLife {
     }
     for (const r of remotes.map.values()) {
       if (!r.hasData || r.leaving) continue;
+      if (r.flags & FLAG_SEATED) this.taken.push(r);
+      this.trafficMovers.push({ x: r.x, z: r.z, car: r.info.car ? { rot: r.rot } : null });
       let vx = 0, vz = 0;
       const p = this.prev.get(r.info.sid);
       if (r.info.car && p && dt > 0) {
@@ -115,7 +133,13 @@ export class CityLife {
 
     const myCar: MyCar | null = me.car ? { x: me.x, z: me.z, rot: me.rot, v: me.car.v } : null;
     const cam = { x: f.camera.x, z: f.camera.z };
-    this.peds.update(this.crowd, f.serverMs, f.time, dt, cam, f.hour, this.mul, this.movers, myCar, this.lowPower, f.send);
+    this.traffic.update(f.serverMs, dt, cam, f.hour, this.mul, this.trafficMovers);
+    // Yayalar NPC arabalardan da kaçar (yakındakiler)
+    for (const c of this.traffic.cars) {
+      if (!c.shown || c.v < 4 || Math.abs(c.x - cam.x) > 60 || Math.abs(c.z - cam.z) > 60) continue;
+      this.movers.push({ x: c.x, z: c.z, speed: c.v, vx: Math.sin(c.rot) * c.v, vz: Math.cos(c.rot) * c.v, wave: false });
+    }
+    this.peds.update(this.crowd, f.serverMs, f.time, dt, cam, f.hour, this.mul, this.movers, myCar, this.lowPower, f.send, this.taken);
     this.crowd.group.visible = this.mul > 0;
     this.pigeons.update(f.time, dt, cam, this.scarers);
   }

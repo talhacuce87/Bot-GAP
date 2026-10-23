@@ -81,6 +81,11 @@ export function offsetLine(pts: P[], d: number): P[] {
 export function walkways(): Walkway[] {
   const out: Walkway[] = [];
   for (const pts of villagePaths()) out.push({ pts, zone: "village" });
+  // Yaya köprüleri: patikaların iki yakadaki uçlarını birleştirir
+  for (const a of BRIDGE_AXES) {
+    const e = BRIDGE.half + 0.6;
+    out.push({ pts: [[a.x - a.ux * e, a.z - a.uz * e], [a.x + a.ux * e, a.z + a.uz * e]], zone: "village" });
+  }
   out.push({ pts: ring(PLAZA.x, PLAZA.z, 6), zone: "village" });
   for (const s of STREETS) {
     const line: P[] = [[s.ax, s.az], [s.bx, s.bz]];
