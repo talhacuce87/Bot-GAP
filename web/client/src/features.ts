@@ -199,6 +199,7 @@ export class Features {
     world.scene.add(this.buildWorld.group);
     this.build = new BuildMode(hudRoot, this.buildWorld, world.scene, c.canvas, c.camera, {
       userId: () => c.session.user.id,
+      position: () => ({ x: c.me.x, z: c.me.z }),
       send: (ev) => net.send(ev),
       toast: (t) => hud.toast(t),
     });

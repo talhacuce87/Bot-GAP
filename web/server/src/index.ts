@@ -22,11 +22,12 @@ import { type BotPost, fetchLook, fetchWardrobe, OUTFIT_COOLDOWN_MS, sanitizeLoo
 import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
 import { type FastLink, setupRtc } from "./rtc";
 import { MediaProxy } from "./mediaProxy";
+import type { Source } from "../../shared/media";
 import { resolveMedia, type Watch, Watches } from "./watch";
 import { type Share, SHARE_MIME, Shares } from "./share";
 import { WorldGames } from "./games/world";
 import { WeatherWatch } from "./weather";
-import { Builds } from "./games/build";
+import { Builds, flushBuilds } from "./games/build";
 
 /** Sinema videosu (dosya/HLS) sunucu üzerinden: Activity'de perdede oynar. */
 const mediaProxy = new MediaProxy();
@@ -149,14 +150,17 @@ function stageHost(room: Room) {
   };
   return {
     play: async (url: string, by: string) => {
-      const r = await openCinema(url, guild(), by, room);
+      const r = await openCinema(url, guild(), by, room.key);
       if ("error" in r) return r;
       room.say({ kind: "system", sid: 0, name: "Bot GAP", text: `🎵 Sıradaki: ${r.title} (${by})`, at: Date.now() }, CHAT_HISTORY);
       return { title: r.title };
     },
-    title: async (url: string) => (await resolveMedia(url))?.title ?? null,
+    title: async (url: string) => {
+      const m = await resolveMedia(url);
+      return m && "title" in m ? m.title : null;
+    },
     loadedAt: () => {
-      const w = room.watchId ? watches.get(room.watchId) : undefined;
+      const w = cinemaOf(room.key);
       return w?.state.source ? w.loadedAt : 0;
     },
   };
@@ -493,7 +497,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     // Sunucu bilgisi olmadan girmiş Discord kullanıcıları (deploy sonrası, bot henüz bildirmeden): şimdi ata
     const g = worldGuild();
     for (const room of rooms.all()) {
-      if (g) for (const p of room.players.values()) if (!p.guild && !p.user.guest) p.guild = g;
+      if (g) for (const p of room.players.values()) if (!p.guild) p.guild = g;
       room.updateJail(isExiled);
     }
     return json(res, 200, { ok: true });
@@ -513,10 +517,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const body = await readJson(req);
     const media = typeof body.url === "string" ? await resolveMedia(body.url) : null;
     if (!media) return json(res, 400, { error: "unsupported" });
+    if ("error" in media) return json(res, 400, { error: "unsupported", reason: media.error });
     const guild = typeof body.guild === "string" && /^\d{5,20}$/.test(body.guild) ? body.guild : null;
     const by = cleanName((body.by as Record<string, unknown> | undefined)?.name, "Biri");
-    const w = watches.create(guild, by, media.source, media.title);
-    return json(res, 200, { id: w.id, url: `${PUBLIC_URL || "http://localhost:5173"}/w/${w.id}`, title: media.title, kind: media.source.kind });
+    // Discord'daki !izle de dünyanın tek sinemasına yükler: linkle gelen arkadaşlarıyla aynı dünyaya girer
+    const w = loadCinema(WORLD_ROOM, media, guild, by);
+    rooms.find(WORLD_ROOM)?.say({ kind: "system", sid: 0, name: "Bot GAP", text: `🎬 ${by} Discord'dan sinemayı açtı: ${media.title}`, at: Date.now() }, CHAT_HISTORY);
+    return json(res, 200, { id: w.id, url: watchLink(w), title: media.title, kind: media.source.kind });
   }
 
   if (path === "/api/photo" && method === "POST") return postPhoto(req, res);
@@ -541,24 +548,32 @@ async function postPhoto(req: IncomingMessage, res: ServerResponse): Promise<voi
   }
   const user = verifySession(String(body.session || "") || cookies(req)[SESSION_COOKIE] || "", SESSION_SECRET);
   const w = typeof body.watch === "string" ? watches.get(body.watch) : undefined;
-  const guild = w?.guild ?? (typeof body.guild === "string" && /^\d{5,20}$/.test(body.guild) ? body.guild : null);
-  if (!user || user.guest || !guild) return json(res, 403, { error: "Fotoğraf göndermek için dünyaya Discord'dan gir." });
+  // Tarayıcıdan gelenin (ve misafirin) sunucu bilgisi yok: dünyanın sunucusu
+  const guild = w?.guild ?? (typeof body.guild === "string" && /^\d{5,20}$/.test(body.guild) ? body.guild : null) ?? (user ? worldGuild() : null);
+  if (!user || !guild) return json(res, 403, { error: "Fotoğraf gönderilemiyor (dünyaya bağlı değilsin)." });
   if (!SHARED_SECRET) return json(res, 503, { error: "Fotoğraf gönderme şu an kapalı (bot bağlı değil)." });
   if (typeof body.image !== "string" || !body.image) return json(res, 400, { error: "Fotoğraf okunamadı." });
   const now = Date.now();
   if (now - (lastPhoto.get(user.id) ?? 0) < PHOTO_COOLDOWN_MS) return json(res, 429, { error: "Biraz bekle: 30 sn'de bir fotoğraf." });
   lastPhoto.set(user.id, now);
   try {
-    const r = await fetch(`${BOT_URL}/internal/photo`, {
+    // Misafir kanala adıyla gider (görev/XP yok)
+    const r = await fetch(`${BOT_URL}/internal/${user.guest ? "guest_photo" : "photo"}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-world-secret": SHARED_SECRET },
-      body: JSON.stringify({ guild, user: user.id, image: body.image }),
+      body: JSON.stringify(user.guest ? { guild, name: user.name, image: body.image } : { guild, user: user.id, image: body.image }),
       signal: AbortSignal.timeout(20_000),
     });
     const out = (await r.json().catch(() => ({}))) as { ok?: boolean; reason?: string; completed?: unknown };
-    if (!r.ok || !out.ok) return json(res, 400, { error: out.reason === "no_channel" ? "Fotoğraf kanalı ayarlı değil." : "Fotoğraf gönderilemedi." });
+    if (!r.ok || !out.ok) {
+      // Gönderilemeyen fotoğraf bekleme süresi doldurmasın
+      lastPhoto.delete(user.id);
+      console.warn("[photo] bot reddetti:", r.status, JSON.stringify(out));
+      return json(res, 400, { error: out.reason === "no_channel" ? "Fotoğraf kanalı ayarlı değil." : "Fotoğraf gönderilemedi." });
+    }
     return json(res, 200, { ok: true, completed: out.completed ?? [] });
   } catch (err) {
+    lastPhoto.delete(user.id);
     console.warn("[photo]", (err as Error).message);
     return json(res, 502, { error: "Bot şu an cevap vermiyor." });
   }
@@ -602,7 +617,7 @@ server.on("upgrade", (req, socket, head) => {
   if (url.searchParams.has("watch")) {
     if (!watch) return close(4004, "watch not found");
     // Activity'den açılan sinemanın linkiyle gelen, o Activity'nin odasına (aynı dünyaya) girer.
-    if (user && (!user.guest || !LOGIN_REQUIRED)) key = Watches.roomKeyOf(watch);
+    if (user && (!user.guest || ALLOW_GUESTS || !LOGIN_REQUIRED)) key = Watches.roomKeyOf(watch);
   } else if (user && (!user.guest || ALLOW_GUESTS)) key = WORLD_ROOM; // misafir girişi kapalıysa eski misafir oturumu da girmez
   if (!user || !key) {
     // HTTP 401 tarayıcıda 1006 olarak görünür; 4001 ile kapatırsak istemci yeniden denemeyi bırakır.
@@ -616,8 +631,9 @@ server.on("upgrade", (req, socket, head) => {
   }
   const guildParam = url.searchParams.get("guild") || "";
   if (/^\d{5,20}$/.test(guildParam)) lastGuild = guildParam;
-  // Tarayıcıdan Discord hesabıyla gelen (Activity değil): sunucu bilgisi yok, dünyanın sunucusu kullanılır
-  const guild = watch?.guild ?? (/^\d{5,20}$/.test(guildParam) ? guildParam : null) ?? (user.guest ? null : worldGuild());
+  // Tarayıcıdan gelenin (Activity değil) sunucu bilgisi yok: dünyanın sunucusu kullanılır. Misafir de o
+  // sunucunun verilerini (sıralama, arsalar, sezon) görür; profil, XP ve kalıcı kayıtlar ayrıca misafire kapalı.
+  const guild = watch?.guild ?? (/^\d{5,20}$/.test(guildParam) ? guildParam : null) ?? worldGuild();
   // Zindanı denemek için: yalnızca misafirler kendini zindana koyabilir.
   const forceJail = user.guest && url.searchParams.get("jail") === "1";
   const jailed = forceJail || (!user.guest && isExiled(user.id, guild));
@@ -644,8 +660,8 @@ function onWatchMessage(ws: WebSocket, room: Room, w: Watch, user: SessionUser, 
     if (now - limiter.last < 3000) return;
     limiter.last = now;
     void resolveMedia(msg.url).then((media) => {
-      if (!media) {
-        ws.send(JSON.stringify({ t: "notice", text: "Bu link açılamıyor. YouTube, Twitch, Kick ya da .mp4/.webm/.m3u8 linki dene." }));
+      if (!media || "error" in media) {
+        ws.send(JSON.stringify({ t: "notice", text: media?.error ?? "Bu link açılamıyor. YouTube, Twitch, Kick ya da .mp4/.webm/.m3u8 linki dene." }));
         return;
       }
       w.load(media.source, media.title, user.name, Date.now());
@@ -681,10 +697,41 @@ function onDevLookMessage(send: (ev: ServerEvent) => void, room: Room, sid: numb
   send({ t: "notice", text: "👕 Kaydedildi (yerel test, sunucu kapanınca silinir)." });
 }
 
-/** Gardırop: aç (kayıtlı kıyafet + kilitler) ya da kaydet. Misafirler ve sunucusuz odalar kullanamaz. */
+/** Misafirin seçtiği kıyafet: yalnızca bellekte (yeniden bağlanınca da giyili), kalıcı değil. */
+const guestLooks = new Map<string, Look>();
+
+/** Misafir gardırobu: bot seviye 1 kilitleriyle doğrular, hiçbir yere kaydedilmez. */
+async function onGuestLookMessage(send: (ev: ServerEvent) => void, room: Room, sid: number, user: SessionUser, msg: Record<string, unknown>): Promise<void> {
+  const ask = async (outfit: unknown) => {
+    const r = await botPost("/internal/guest_outfit", { outfit });
+    const clean = sanitizeLook(r.body.outfit);
+    if (!r.ok || !clean) throw new Error(`bot ${JSON.stringify(r.body)}`);
+    const locked: Record<string, number> = {};
+    for (const [k, v] of Object.entries((r.body.locked as Record<string, unknown>) || {})) if (typeof v === "number") locked[k] = v;
+    return { outfit: clean, locked, dropped: Array.isArray(r.body.dropped) ? r.body.dropped.map(String) : [] };
+  };
+  try {
+    if (msg.t === "wardrobe") {
+      const r = await ask(guestLooks.get(user.id) ?? null);
+      return send({ t: "wardrobe", outfit: r.outfit, level: 1, locked: r.locked });
+    }
+    const look = sanitizeLook(msg.outfit);
+    if (!look) return send({ t: "notice", text: "👕 Kıyafet okunamadı." });
+    const r = await ask(look);
+    guestLooks.set(user.id, r.outfit);
+    room.setLook(sid, r.outfit);
+    send({ t: "notice", text: `👕 Giyildi (misafir: çıkınca kaydedilmez${r.dropped.length ? `; kilitli parçalar çıkarıldı: ${r.dropped.join(", ")}` : ""}).` });
+  } catch (err) {
+    console.warn("[outfit] misafir:", (err as Error).message);
+    send(msg.t === "wardrobe" ? { t: "wardrobe", error: "Gardırop şu an açılamıyor, biraz sonra tekrar dene." } : { t: "notice", text: "👕 Kıyafet giyilemedi, biraz sonra tekrar dene." });
+  }
+}
+
+/** Gardırop: aç (kayıtlı kıyafet + kilitler) ya da kaydet. Misafirin kıyafeti kaydedilmez. */
 async function onLookMessage(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null, msg: Record<string, unknown>): Promise<void> {
   const send = (ev: ServerEvent) => ws.send(JSON.stringify(ev));
   if (DEV_WARDROBE && (user.guest || !guild || !SHARED_SECRET)) return onDevLookMessage(send, room, sid, user, msg);
+  if (user.guest && SHARED_SECRET) return onGuestLookMessage(send, room, sid, user, msg);
   const unavailable = user.guest || !guild ? "👕 Gardırop için dünyaya Discord'dan (ses kanalındaki Activity ile) gir." : !SHARED_SECRET ? "👕 Gardırop şu an kapalı (bot bağlı değil)." : null;
   if (msg.t === "wardrobe") {
     if (unavailable) return send({ t: "wardrobe", error: unavailable });
@@ -700,22 +747,37 @@ async function onLookMessage(ws: WebSocket, room: Room, sid: number, user: Sessi
 }
 
 /**
- * Sinemayı açar. Odada zaten bir sinema varsa videosunu herkes için değiştirir; yoksa bu odaya bağlı
- * yeni bir izleme odası kurar (linkle gelenler bu odaya, aynı dünyaya girer).
+ * Oda başına tek sinema (anahtar → izleme odası). Oda boşalıp kapansa da sinema kalır; yeniden açılan
+ * oda aynı sinemayı bulur. İzleme linkiyle gelen de o odaya (aynı dünyaya) girer.
  */
-async function openCinema(link: string, guild: string | null, by: string, room: Room): Promise<{ url: string; title: string; reused: boolean } | { error: string }> {
+const cinemas = new Map<string, string>();
+
+function cinemaOf(key: string): Watch | undefined {
+  const id = cinemas.get(key);
+  return id ? watches.get(id) : undefined;
+}
+
+/** Odanın sinemasına yükler (yoksa kurar) ve odadakilere gönderir. */
+function loadCinema(key: string, media: { source: Source; title: string }, guild: string | null, by: string): Watch {
+  let w = cinemaOf(key);
+  if (w) w.load(media.source, media.title, by, Date.now());
+  else {
+    w = watches.create(guild, by, media.source, media.title, Date.now(), key);
+    cinemas.set(key, w.id);
+  }
+  const room = rooms.find(key);
+  if (room) sendWatch(room, w);
+  return w;
+}
+
+/** Sinemayı açar ya da videosunu herkes için değiştirir. */
+async function openCinema(link: string, guild: string | null, by: string, key: string): Promise<{ url: string; title: string; reused: boolean } | { error: string }> {
   const media = await resolveMedia(link);
   if (!media) return { error: "Bu link açılamıyor. YouTube, Twitch, Kick, tabii (TRT) ya da .mp4/.webm/.m3u8 linki dene." };
-  const existing = room.watchId ? watches.get(room.watchId) : undefined;
-  if (existing) {
-    existing.load(media.source, media.title, by, Date.now());
-    sendWatch(room, existing);
-    return { url: watchLink(existing), title: media.title, reused: true };
-  }
-  const w = watches.create(guild, by, media.source, media.title, Date.now(), room.key);
-  room.watchId = w.id;
-  sendWatch(room, w);
-  return { url: watchLink(w), title: media.title, reused: false };
+  if ("error" in media) return media;
+  const reused = !!cinemaOf(key)?.state.source;
+  const w = loadCinema(key, media, guild, by);
+  return { url: watchLink(w), title: media.title, reused };
 }
 
 /** Sohbet mesajı ya da komut. Komut cevapları yalnızca sorana gider. */
@@ -736,7 +798,7 @@ async function onChat(ws: WebSocket, room: Room, sid: number, user: SessionUser,
       reply: (t, link) => ws.send(JSON.stringify({ t: "chat", line: line("reply", t, link) })),
       announce: (t, link) => room.say(line("system", t, link), CHAT_HISTORY),
       open: (url) => ws.send(JSON.stringify({ t: "open", url })),
-      cinema: (url) => openCinema(url, guild, user.name, room),
+      cinema: (url) => openCinema(url, guild, user.name, room.key),
       cinemaAllowed: () => {
         const now = Date.now();
         if (now - cinemaGate.last < CINEMA_COOLDOWN_MS) return false;
@@ -796,6 +858,41 @@ function devFish(ws: WebSocket, room: Room, sid: number, user: SessionUser, quer
   room.broadcast({ t: "fish", sid, name: user.name, catch: { rarity: "common", label: "Yaygın", fish: "Sazan", hours: 1, streak: 1, luck: 0 } });
 }
 
+/**
+ * Misafirin balığı: zar burada (botun fishing.py'deki tablosuyla aynı ihtimaller), XP boost'u, seri,
+ * görev ve Discord duyurusu yok. Günde bir (İstanbul gece yarısı yenilenir), yalnızca bellekte.
+ */
+const GUEST_FISH = [
+  { rarity: "legendary", label: "Efsanevi", fish: "Altın Sazan", chance: 0.5 },
+  { rarity: "epic", label: "Epik", fish: "Yayın Balığı", chance: 2 },
+  { rarity: "rare", label: "Nadir", fish: "Turna", chance: 7.5 },
+  { rarity: "uncommon", label: "Az Bulunur", fish: "Kızılkanat", chance: 20 },
+  { rarity: "common", label: "Yaygın", fish: "Sazan", chance: 70 },
+] as const;
+const guestFishAt = new Map<string, number>();
+
+/** Bir sonraki İstanbul gece yarısı (ms). */
+function nextIstanbulMidnight(now = Date.now()): number {
+  const tr = now + 3 * 3600_000;
+  return Math.floor(tr / 86_400_000 + 1) * 86_400_000 - 3 * 3600_000;
+}
+
+function guestFish(ws: WebSocket, room: Room, sid: number, user: SessionUser, query: boolean, rand = Math.random): void {
+  const send = (ev: object) => ws.send(JSON.stringify(ev));
+  const at = guestFishAt.get(user.id) ?? 0;
+  if (query || at > Date.now()) {
+    send({ t: "fishwait", at: at > Date.now() ? at : 0 });
+    if (!query) send({ t: "notice", text: "🎣 Bugünkü balığını tuttun, yarın tekrar gel." });
+    return;
+  }
+  const next = nextIstanbulMidnight();
+  guestFishAt.set(user.id, next);
+  send({ t: "fishwait", at: next });
+  let x = rand() * 100;
+  const r = GUEST_FISH.find((f) => (x -= f.chance) < 0) ?? GUEST_FISH[GUEST_FISH.length - 1];
+  room.broadcast({ t: "fish", sid, name: user.name, catch: { rarity: r.rarity, label: r.label, fish: r.fish, hours: 0, streak: 0, luck: 0 } });
+}
+
 const FISH_REFUSED: Record<string, string> = {
   already: "🎣 Bugünkü balığını tuttun. Yarın tekrar gel, serin bozulmasın!",
   exiled: "⛓️ Sürgündeyken balık tutamazsın.",
@@ -806,7 +903,7 @@ const FISH_REFUSED: Record<string, string> = {
 async function fish(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null): Promise<void> {
   const notice = (text: string) => ws.send(JSON.stringify({ t: "notice", text }));
   if (DEV_FISH_S && (user.guest || !guild || !SHARED_SECRET)) return devFish(ws, room, sid, user, false);
-  if (user.guest || !guild) return notice("🎣 Balık tutmak için dünyaya Discord'dan (ses kanalındaki Activity ile) gir.");
+  if (user.guest || !guild) return guestFish(ws, room, sid, user, false);
   if (!SHARED_SECRET) return notice("🎣 Göl şu an kapalı (bot bağlı değil).");
   try {
     const r = await fetch(`${BOT_URL}/internal/fish`, {
@@ -915,10 +1012,12 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   if (!user.guest && opts.guild && SHARED_SECRET) {
     void fetchLook(botPost, opts.guild, user.id).then((look) => look && room.setLook(sid, look));
   }
+  const guestLook = user.guest ? guestLooks.get(user.id) : undefined;
+  if (guestLook) room.setLook(sid, guestLook);
   sendBoard(ws, boards.for(myGuild()));
   // Sinema odaya bağlıdır: linkle gelen bağlar, Activity'den !izle ile sonradan da açılabilir.
-  if (watch && !room.watchId) room.watchId = watch.id;
-  const roomWatch = () => (room.watchId ? watches.get(room.watchId) : undefined);
+  if (watch && !cinemaOf(room.key)) cinemas.set(room.key, watch.id);
+  const roomWatch = () => cinemaOf(room.key);
   const current = roomWatch();
   if (current) sendWatch(ws, current);
   if (room.chat.length) ws.send(JSON.stringify({ t: "chatlog", lines: room.chat }));
@@ -1000,6 +1099,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (now - lastFishQ >= FISH_COOLDOWN_MS) {
           lastFishQ = now;
           if (DEV_FISH_S && (user.guest || !myGuild() || !SHARED_SECRET)) devFish(ws, room, sid, user, true);
+          else if (user.guest || !myGuild()) guestFish(ws, room, sid, user, true);
           else void fishWait(ws, user, myGuild());
         }
       } else if (msg?.t === "chat") {
@@ -1110,16 +1210,17 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
     }
     casino.leave(sid, walletKey);
     room.leave(sid);
+    if (room.size === 0) room.games?.builds?.dispose();
     rooms.release(room);
   });
 }
 
 /** Odanın tarayıcı linki: sinema varsa onun, yoksa sinemasız bir izleme odası açılır (aynı dünya). */
 function roomCinema(room: Room, guild: string | null, by: string): Watch {
-  const existing = room.watchId ? watches.get(room.watchId) : undefined;
+  const existing = cinemaOf(room.key);
   if (existing) return existing;
   const w = watches.create(guild, by, null, "", Date.now(), room.key);
-  room.watchId = w.id;
+  cinemas.set(room.key, w.id);
   return w;
 }
 
@@ -1248,6 +1349,13 @@ setInterval(() => {
   const force = ++tickCount % TICK_HZ === 0;
   for (const room of rooms.all()) room.tick(now, force);
 }, 1000 / TICK_HZ);
+
+// Coolify yeniden başlatırken: bekleyen arsa kayıtları yazılmadan çıkılmaz.
+for (const sig of ["SIGTERM", "SIGINT"] as const) {
+  process.once(sig, () => {
+    void Promise.race([flushBuilds().catch(() => {}), new Promise((r) => setTimeout(r, 4000))]).then(() => process.exit(0));
+  });
+}
 
 server.listen(PORT, () => {
   console.log(`[world] listening on :${PORT} (guests ${ALLOW_GUESTS ? "on" : "off"}, discord ${CLIENT_ID ? "on" : "off"}${DEV_WARDROBE ? ", yerel gardırop on" : ""}${DEV_FISH_S ? `, yerel göl ${DEV_FISH_S} sn` : ""})`);

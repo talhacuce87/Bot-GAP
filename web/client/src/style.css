@@ -2874,6 +2874,26 @@ canvas.shiftlock {
 }
 
 
+/* Üstünde durulan arsanın sahibi */
+.plot-badge {
+  position: absolute;
+  left: 50%;
+  top: calc(max(10px, env(safe-area-inset-top)) + 90px);
+  transform: translateX(-50%);
+  display: none;
+  max-width: calc(100vw - 32px);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.plot-badge.show {
+  display: block;
+}
+
 /* İnşa modu: altta blok paleti */
 .build-bar {
   position: absolute;

@@ -1,6 +1,7 @@
-// Mahalle: arsaların blokları (tür başına tek InstancedMesh), arsa sınırları ve sahip tabelaları, bloklarla
-// çarpışma (ızgara: duvarın içinden geçilmez, üstüne zıplanır). Değişince örnekler toptan yeniden yazılır
-// (birkaç bin blok, nadiren): kare başına maliyeti yok.
+// Mahalle: arsaların blokları (tür başına tek InstancedMesh, gerektikçe büyür), arsa sınırları ve sahip
+// tabelaları, bloklarla çarpışma (ızgara: duvarın içinden geçilmez, üstüne zıplanır). Değişince örnekler
+// toptan yeniden yazılır: kare başına maliyeti yok. İmlecin gösterdiği hücre arsanın ızgarasında yürünerek
+// bulunur (on binlerce örnekte mesh ışın testi yavaş kalır).
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { STEP_UP } from "../../../shared/constants";
@@ -14,8 +15,6 @@ import {
   decodeBlocks,
   isSolid,
   PLOT_H,
-  PLOT_MAX_BLOCKS,
-  PLOT_SIZE,
   PLOTS,
   type PlotState,
 } from "../../../shared/build";
@@ -79,10 +78,12 @@ function geometryFor(kind: BlockKind): THREE.BufferGeometry {
 }
 
 const KINDS: BlockKind[] = ["cube", "slab", "wedge", "glass", "door", "lamp", "plant", "fence"];
-/** Tür başına en çok örnek (bütün arsalar): duvar blokları çok, süs blokları az. */
+/** Tür başına başlangıç örnek sayısı; dolunca mesh daha büyüğüyle değişir. */
 const CAP: Record<BlockKind, number> = {
-  cube: PLOTS.length * PLOT_MAX_BLOCKS, slab: 8000, wedge: 8000, glass: 6000, door: 1000, lamp: 2000, plant: 2000, fence: 4000,
+  cube: 16000, slab: 4000, wedge: 4000, glass: 3000, door: 500, lamp: 1000, plant: 1000, fence: 2000,
 };
+/** Işının arsada en çok yürüyeceği hücre. */
+const RAY_STEPS = 400;
 
 export interface BuildHit {
   plot: number;
@@ -106,8 +107,8 @@ export class BuildWorld {
   private lampMat: THREE.MeshBasicMaterial;
   private ground: THREE.Mesh;
   private signs: { mesh: THREE.Mesh; canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; text: string }[] = [];
-  /** Sütun başına dolu katlar (bit maskesi) ve en üst blokların yükseklikleri: çarpışma için. */
-  private columns = new Map<number, { mask: number; tops: number[] }>();
+  /** Sütun başına dolu katların üst yükseklikleri (boş kat 0): çarpışma için. */
+  private columns = new Map<number, Float32Array>();
 
   constructor() {
     const solidMat = new THREE.MeshLambertMaterial({ flatShading: true });
@@ -119,25 +120,18 @@ export class BuildWorld {
       glass, lamp: this.lampMat, plant: colored,
     };
     for (const kind of KINDS) {
-      const m = new THREE.InstancedMesh(geometryFor(kind), mats[kind], CAP[kind]);
-      m.count = 0;
-      m.frustumCulled = false;
-      m.castShadow = kind !== "glass" && kind !== "lamp";
-      m.receiveShadow = kind !== "glass";
-      if (kind === "glass") m.renderOrder = 4;
-      this.meshes[kind] = m;
+      this.meshes[kind] = this.instanced(kind, geometryFor(kind), mats[kind], CAP[kind]);
       this.lookup[kind] = [];
-      this.group.add(m);
     }
-    // Arsa zeminleri: hafif açık toprak, kenarında taş çerçeve (ışın testinde zemin)
-    const tiles = PLOTS.map((p) => new THREE.PlaneGeometry(PLOT_SIZE, PLOT_SIZE).rotateX(-Math.PI / 2).translate(p.x0 + PLOT_SIZE / 2, 0.025, p.z0 + PLOT_SIZE / 2));
+    // Arsa zeminleri: hafif açık toprak, kenarında taş çerçeve
+    const tiles = PLOTS.map((p) => new THREE.PlaneGeometry(p.size, p.size).rotateX(-Math.PI / 2).translate(p.x0 + p.size / 2, 0.025, p.z0 + p.size / 2));
     this.ground = new THREE.Mesh(mergeGeometries(tiles), new THREE.MeshLambertMaterial({ color: "#8fa86a" }));
     this.ground.receiveShadow = true;
     this.group.add(this.ground);
     const frame: THREE.BufferGeometry[] = [];
     for (const p of PLOTS) {
-      const cx = p.x0 + PLOT_SIZE / 2, cz = p.z0 + PLOT_SIZE / 2;
-      for (const [w, d, x, z] of [[PLOT_SIZE + 0.3, 0.15, cx, p.z0], [PLOT_SIZE + 0.3, 0.15, cx, p.z0 + PLOT_SIZE], [0.15, PLOT_SIZE + 0.3, p.x0, cz], [0.15, PLOT_SIZE + 0.3, p.x0 + PLOT_SIZE, cz]]) {
+      const n = p.size, cx = p.x0 + n / 2, cz = p.z0 + n / 2;
+      for (const [w, d, x, z] of [[n + 0.3, 0.15, cx, p.z0], [n + 0.3, 0.15, cx, p.z0 + n], [0.15, n + 0.3, p.x0, cz], [0.15, n + 0.3, p.x0 + n, cz]]) {
         frame.push(part(new THREE.BoxGeometry(w, 0.08, d), "#cfc6b0", new THREE.Matrix4().makeTranslation(x, 0.04, z)));
       }
     }
@@ -152,15 +146,37 @@ export class BuildWorld {
       const tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
       // Işıktan etkilenir: gece loş ama okunur (Basic olsa gece parlayıp yazıyı yutar)
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.45), new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide, emissive: "#333333", emissiveMap: tex }));
-      mesh.position.set(p.x0 + PLOT_SIZE + 0.15, 1.6, p.z0 + 0.15);
+      // Büyük arsada tabela iki kat büyük ve yüksekte: uzaktan okunur
+      const k = p.big ? 2 : 1;
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.8 * k, 0.45 * k), new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide, emissive: "#333333", emissiveMap: tex }));
+      mesh.position.set(p.x0 + p.size + 0.15, 1.6 * k, p.z0 + 0.15);
       mesh.rotation.y = Math.PI / 4;
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 1.4, 6), new THREE.MeshLambertMaterial({ color: "#5b3f25" }));
-      post.position.set(p.x0 + PLOT_SIZE + 0.15, 0.7, p.z0 + 0.15);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05 * k, 0.06 * k, 1.6 * k - 0.2, 6), new THREE.MeshLambertMaterial({ color: "#5b3f25" }));
+      post.position.set(p.x0 + p.size + 0.15, (1.6 * k - 0.2) / 2, p.z0 + 0.15);
       this.group.add(mesh, post);
       this.signs.push({ mesh, canvas, tex, text: "" });
     }
     this.drawSigns();
+  }
+
+  private instanced(kind: BlockKind, geo: THREE.BufferGeometry, mat: THREE.Material, cap: number): THREE.InstancedMesh {
+    const m = new THREE.InstancedMesh(geo, mat, cap);
+    m.count = 0;
+    m.frustumCulled = false;
+    m.castShadow = kind !== "glass" && kind !== "lamp";
+    m.receiveShadow = kind !== "glass";
+    if (kind === "glass") m.renderOrder = 4;
+    this.group.add(m);
+    return m;
+  }
+
+  /** Tür için en az `n` örneklik mesh (yetmiyorsa geometrisi ve malzemesi aynı, daha büyüğüyle değişir). */
+  private ensureCapacity(kind: BlockKind, n: number): void {
+    const old = this.meshes[kind];
+    if (n <= old.instanceMatrix.count) return;
+    this.group.remove(old);
+    this.meshes[kind] = this.instanced(kind, old.geometry, old.material as THREE.Material, Math.ceil(n * 1.5));
+    old.dispose();
   }
 
   private drawSigns(): void {
@@ -195,7 +211,7 @@ export class BuildWorld {
     if (!p) return;
     p.owner = s.owner;
     p.name = s.name;
-    p.blocks = new Map(decodeBlocks(s.data).map((b) => [cellKey(b.i, b.j, b.k), b]));
+    p.blocks = new Map(decodeBlocks(s.id, s.data).map((b) => [cellKey(b.i, b.j, b.k), b]));
     this.dirty = true;
   }
 
@@ -221,7 +237,15 @@ export class BuildWorld {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
     const up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
     const counts = Object.fromEntries(KINDS.map((k) => [k, 0])) as Record<BlockKind, number>;
-    for (const k of KINDS) this.lookup[k].length = 0;
+    for (const p of this.plots) for (const bl of p.blocks.values()) {
+      const def = blockDef(bl.b);
+      if (def) counts[def.kind]++;
+    }
+    for (const k of KINDS) {
+      this.ensureCapacity(k, counts[k]);
+      counts[k] = 0;
+      this.lookup[k].length = 0;
+    }
     this.columns.clear();
     this.plots.forEach((p, plot) => {
       const base = PLOTS[plot];
@@ -229,7 +253,6 @@ export class BuildWorld {
         const def = blockDef(bl.b);
         if (!def) continue;
         const mesh = this.meshes[def.kind];
-        if (counts[def.kind] >= CAP[def.kind]) continue;
         const n = counts[def.kind]++;
         pos.set(base.x0 + bl.i + 0.5, bl.j, base.z0 + bl.k + 0.5);
         q.setFromAxisAngle(up, (bl.r * Math.PI) / 2);
@@ -242,9 +265,8 @@ export class BuildWorld {
         // Çarpışma sütunu
         if (isSolid(bl.b)) {
           const ck = colKey(base.x0 + bl.i, base.z0 + bl.k);
-          const col = this.columns.get(ck) ?? { mask: 0, tops: new Array(PLOT_H).fill(0) };
-          col.mask |= 1 << bl.j;
-          col.tops[bl.j] = bl.j + blockHeight(bl.b);
+          const col = this.columns.get(ck) ?? new Float32Array(PLOT_H);
+          col[bl.j] = bl.j + blockHeight(bl.b);
           this.columns.set(ck, col);
         }
       }
@@ -258,35 +280,52 @@ export class BuildWorld {
     }
   }
 
-  /** Işın: önce bloklar, sonra arsa zemini. Arsa dışında null. */
-  raycast(ray: THREE.Raycaster): BuildHit | null {
-    let best: BuildHit | null = null, bestD = Infinity;
-    for (const kind of KINDS) {
-      const mesh = this.meshes[kind];
-      if (!mesh.count) continue;
-      for (const h of ray.intersectObject(mesh, false)) {
-        if (h.distance >= bestD || h.instanceId === undefined) break;
-        const l = this.lookup[kind][h.instanceId];
-        const bl = l && this.plots[l.plot].blocks.get(l.key);
-        if (!bl || !h.face) continue;
-        // Normal dünya eksenine yuvarlanır (çatı eğiminde yukarı)
-        const n = h.face.normal.clone().transformDirection(new THREE.Matrix4().makeRotationY((bl.r * Math.PI) / 2));
-        const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
-        const [nx, ny, nz] = ay >= ax && ay >= az ? [0, Math.sign(n.y), 0] : ax >= az ? [Math.sign(n.x), 0, 0] : [0, 0, Math.sign(n.z)];
-        best = { plot: l.plot, i: bl.i, j: bl.j, k: bl.k, nx, ny, nz };
-        bestD = h.distance;
-        break;
+  /**
+   * Işın `plot` arsasında: ızgarada hücre hücre yürür (Amanatides–Woo), ilk dolu hücre ya da arsa zemini.
+   * Kapının üst yarısı da kapıya sayılır. Arsaya değmezse null.
+   */
+  raycast(ray: THREE.Raycaster, plot: number): BuildHit | null {
+    const base = PLOTS[plot], view = this.plots[plot];
+    if (!base || !view) return null;
+    const size = [base.size, PLOT_H, base.size];
+    // Arsanın yerel ızgarasında (x0, 0, z0 köşesi) başlangıç ve yön
+    const o = [ray.ray.origin.x - base.x0, ray.ray.origin.y, ray.ray.origin.z - base.z0];
+    const d = [ray.ray.direction.x, ray.ray.direction.y, ray.ray.direction.z];
+    // Kutuya giriş: en geç giren eksen girilen yüzü verir (içerideyse t0 = 0)
+    let t0 = 0, t1 = Infinity, axis = -1;
+    for (let a = 0; a < 3; a++) {
+      if (Math.abs(d[a]) < 1e-9) {
+        if (o[a] < 0 || o[a] > size[a]) return null;
+        continue;
       }
+      let lo = -o[a] / d[a], hi = (size[a] - o[a]) / d[a];
+      if (lo > hi) [lo, hi] = [hi, lo];
+      if (lo > t0) [t0, axis] = [lo, a];
+      t1 = Math.min(t1, hi);
     }
-    const g = ray.intersectObject(this.ground, false)[0];
-    if (g && g.distance < bestD) {
-      const plot = PLOTS.findIndex((p) => g.point.x >= p.x0 && g.point.x < p.x0 + PLOT_SIZE && g.point.z >= p.z0 && g.point.z < p.z0 + PLOT_SIZE);
-      if (plot >= 0) {
-        const p = PLOTS[plot];
-        best = { plot, i: Math.floor(g.point.x - p.x0), j: -1, k: Math.floor(g.point.z - p.z0), nx: 0, ny: 1, nz: 0 };
-      }
+    if (t0 > t1) return null;
+    const c = o.map((v, a) => Math.min(size[a] - 1, Math.max(0, Math.floor(v + d[a] * (t0 + 1e-6)))));
+    const step = d.map((v) => Math.sign(v));
+    const tNext = d.map((v, a) => (v > 0 ? (c[a] + 1 - o[a]) / v : v < 0 ? (c[a] - o[a]) / v : Infinity));
+    const tDelta = d.map((v) => (v ? 1 / Math.abs(v) : Infinity));
+    const normal = [0, 0, 0];
+    if (axis >= 0) normal[axis] = -step[axis];
+    const inside = axis < 0;
+    for (let n = 0; n < RAY_STEPS; n++) {
+      const [i, j, k] = c;
+      if (i < 0 || k < 0 || i >= base.size || k >= base.size || j >= PLOT_H) return null;
+      if (j < 0) return normal[1] > 0 ? { plot, i, j: -1, k, nx: 0, ny: 1, nz: 0 } : null;
+      const below = j > 0 ? view.blocks.get(cellKey(i, j - 1, k)) : undefined;
+      const hit = view.blocks.get(cellKey(i, j, k)) ?? (below && blockDef(below.b)?.kind === "door" ? below : undefined);
+      // Kamera bir bloğun içindeyse o blok atlanır
+      if (hit && !(inside && n === 0)) return { plot, i: hit.i, j: hit.j, k: hit.k, nx: normal[0], ny: normal[1], nz: normal[2] };
+      const a = tNext[0] <= tNext[1] && tNext[0] <= tNext[2] ? 0 : tNext[1] <= tNext[2] ? 1 : 2;
+      c[a] += step[a];
+      tNext[a] += tDelta[a];
+      normal.fill(0);
+      normal[a] = -step[a];
     }
-    return best;
+    return null;
   }
 
   /** Bloklarla çarpışma: gövde hizasında dolu hücrelerin dışına it (Colliders.resolve sonrası). */
@@ -327,8 +366,8 @@ export class BuildWorld {
         const nx = Math.max(ix, Math.min(x, ix + 1)), nz = Math.max(iz, Math.min(z, iz + 1));
         if (Math.hypot(x - nx, z - nz) > r) continue;
         for (let j = PLOT_H - 1; j >= 0; j--) {
-          if (!(col.mask & (1 << j))) continue;
-          const top = col.tops[j];
+          const top = col[j];
+          if (!top) continue;
           if (top <= y + STEP_UP && top > g) {
             g = top;
             break;
@@ -345,10 +384,9 @@ function colKey(ix: number, iz: number): number {
 }
 
 /** Sütunda gövde hizasına (ayaktan basamak üstü – baş) denk gelen dolu blok var mı. */
-function blocksBody(col: { mask: number; tops: number[] }, y: number): boolean {
+function blocksBody(col: Float32Array, y: number): boolean {
   for (let j = 0; j < PLOT_H; j++) {
-    if (!(col.mask & (1 << j))) continue;
-    if (col.tops[j] > y + STEP_UP && j < y + BODY_H) return true;
+    if (col[j] && col[j] > y + STEP_UP && j < y + BODY_H) return true;
   }
   return false;
 }

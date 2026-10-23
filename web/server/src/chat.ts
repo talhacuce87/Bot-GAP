@@ -131,7 +131,6 @@ export async function runCommand(ctx: ChatContext, cmd: string, args: string): P
 
   if (cmd === "izle" || cmd === "sinema" || cmd === "watch") {
     if (!args) return ctx.reply("Kullanım: !izle <YouTube/Twitch/Kick ya da .mp4/.m3u8 linki>");
-    if (!ctx.inWatch && (ctx.user.guest || !ctx.guild)) return ctx.reply("🎬 Sinema için dünyaya Discord'dan (ses kanalındaki Activity ile) gir.");
     if (!ctx.cinemaAllowed()) return ctx.reply("🎬 Biraz bekle, sinema az önce açıldı.");
     const r = await ctx.cinema(args);
     if ("error" in r) return ctx.reply(`🎬 ${r.error}`);

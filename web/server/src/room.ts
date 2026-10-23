@@ -98,8 +98,6 @@ export class Room {
   readonly players = new Map<number, Player>();
   /** Son sohbet mesajları (yalnızca bellekte); yeni gelen geçmişi görür. */
   readonly chat: ChatLine[] = [];
-  /** Bu odaya bağlı sinema (izleme odası); Activity'deki ve linkle gelenler aynı videoyu paylaşır. */
-  watchId: string | null = null;
   readonly tank: Tank = { driver: 0, x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, lastFire: 0, idleSince: 0 };
   /** Tank savaşı odası ("b:..."): dünyanın tek tankı yerine takımlı maç. */
   readonly battle: Battle | null;

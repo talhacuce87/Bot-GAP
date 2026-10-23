@@ -81,7 +81,7 @@ def can_control_world(member) -> bool:
 
 # Mahalle: arsa sayısı üst sınırı ve arsa verisinin en büyük boyu (dünya sunucusunun kısa biçimi)
 BUILD_MAX_PLOTS = 100
-BUILD_MAX_DATA = 80000
+BUILD_MAX_DATA = 400_000
 
 PUSH_SECONDS = 20
 BOARD_MINUTES = 1
@@ -180,7 +180,8 @@ class WorldCog(commands.Cog):
         self._client = httpx.AsyncClient(timeout=5, headers={"x-world-secret": self.secret})
         self.push_loop.start()
         self.board_loop.start()
-        app = web.Application(client_max_size=4096)
+        # Gövde sınırı en büyük isteğe göre: base64 fotoğraf (3 MB → ~4 MB) ve arsa kaydı (BUILD_MAX_DATA).
+        app = web.Application(client_max_size=PHOTO_MAX_BYTES * 4 // 3 + 64 * 1024)
         app.router.add_post("/internal/fish", self.handle_fish)
         app.router.add_post("/internal/fish_status", self.handle_fish_status)
         app.router.add_post("/internal/outfits", self.handle_outfits)
@@ -195,6 +196,8 @@ class WorldCog(commands.Cog):
         app.router.add_post("/internal/profile", self.handle_profile)
         app.router.add_post("/internal/season", self.handle_season)
         app.router.add_post("/internal/photo", self.handle_photo)
+        app.router.add_post("/internal/guest_photo", self.handle_guest_photo)
+        app.router.add_post("/internal/guest_outfit", self.handle_guest_outfit)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         await web.TCPSite(self._runner, "0.0.0.0", self.port).start()
@@ -313,6 +316,17 @@ class WorldCog(commands.Cog):
         activitylog.record("outfit_change", guild_id, user_id, outfit=clean)
         return web.json_response({"ok": True, "outfit": clean, "dropped": dropped})
 
+    async def handle_guest_outfit(self, request: web.Request) -> web.Response:
+        """Misafir gardırobu: {"outfit"?} → seviye 1 kilitleriyle temizlenmiş kıyafet (hiçbir yere kaydedilmez)."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            raw = (await request.json()).get("outfit")
+        except (ValueError, AttributeError):
+            return web.json_response({"error": "json required"}, status=400)
+        clean, dropped = outfit.validate(raw if isinstance(raw, dict) else None, 1)
+        return web.json_response({"ok": True, "outfit": clean, "dropped": dropped, "level": 1, "locked": outfit.LOCKED})
+
     async def handle_command(self, request: web.Request) -> web.Response:
         """Oyun içi sohbetten komut: {"guild", "user", "command"} → {"text"} (yalnızca sorana gösterilir)."""
         if not self._authorized(request):
@@ -353,12 +367,13 @@ class WorldCog(commands.Cog):
 
         def name(uid: int) -> str:
             member = guild.get_member(uid) if guild is not None else None
-            return clean_display_name(member.display_name) if member is not None and hasattr(member, "display_name") else "Komşu"
+            return clean_display_name(member, fallback="Komşu")
 
         return web.json_response({"plots": [{"plot": p, "user": str(u), "name": name(u), "data": d} for p, u, d in rows]})
 
     async def handle_build_save(self, request: web.Request) -> web.Response:
-        """Arsayı kaydet: {"guild", "user", "plot", "data"}; arsa başkasınınsa ya da üyenin başka arsası varsa reddedilir."""
+        """Arsayı kaydet: {"guild", "user", "plot", "data", "move"?}; arsa başkasınınsa ya da üyenin başka arsası varsa
+        (taşınma değilse) reddedilir."""
         got = await self._member_request(request)
         if isinstance(got, web.Response):
             return got
@@ -366,11 +381,12 @@ class WorldCog(commands.Cog):
         try:
             plot = int(body["plot"])
             data = str(body.get("data", ""))
+            move = body.get("move") is True
         except (ValueError, KeyError, TypeError):
             return web.json_response({"error": "plot required"}, status=400)
         if not 0 <= plot < BUILD_MAX_PLOTS or len(data) > BUILD_MAX_DATA:
             return web.json_response({"error": "bad plot or data"}, status=400)
-        ok = await db.save_world_build(guild.id, plot, user_id, data)
+        ok = await db.save_world_build(guild.id, plot, user_id, data, move)
         return web.json_response({"ok": ok} if ok else {"ok": False, "reason": "taken"})
 
     async def handle_build_free(self, request: web.Request) -> web.Response:
@@ -488,11 +504,35 @@ class WorldCog(commands.Cog):
         if isinstance(parsed, web.Response):
             return parsed
         guild, user_id, body = parsed
+        failed = await self._post_photo(guild, body.get("image"), f"📸 <@{user_id}> GAP Dünyası'ndan bir kare paylaştı!")
+        if failed is not None:
+            return failed
+        activitylog.record("world", guild.id, user_id, amount=1, kind="photo")
+        completed = await world_quests.record(guild.id, user_id, "photo", 1, _today())
+        return web.json_response({"ok": True, "completed": await self._grant_quests(guild, user_id, completed)})
+
+    async def handle_guest_photo(self, request: web.Request) -> web.Response:
+        """Misafirin fotoğrafı: {"guild", "name", "image"} → kanala misafir adıyla (görev/XP yok)."""
+        if not self._authorized(request):
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+            guild = self.bot.get_guild(int(body["guild"]))
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "guild required"}, status=400)
+        if guild is None:
+            return web.json_response({"ok": False, "reason": "no_guild"})
+        name = discord.utils.escape_mentions(discord.utils.escape_markdown(str(body.get("name") or "Misafir")))[:32]
+        failed = await self._post_photo(guild, body.get("image"), f"📸 Misafir **{name}** GAP Dünyası'ndan bir kare paylaştı!")
+        return failed if failed is not None else web.json_response({"ok": True, "completed": []})
+
+    async def _post_photo(self, guild: discord.Guild, image: object, text: str) -> web.Response | None:
+        """Fotoğrafı kanala gönderir; başarılıysa None, değilse hazır hata cevabı."""
         if not PHOTO_CHANNEL_ID:
             return web.json_response({"ok": False, "reason": "no_channel"})
         try:
-            data = base64.b64decode(str(body["image"]), validate=True)
-        except (KeyError, binascii.Error, ValueError):
+            data = base64.b64decode(str(image or ""), validate=True)
+        except (binascii.Error, ValueError):
             return web.json_response({"error": "image required"}, status=400)
         if not data.startswith(b"\xff\xd8") or len(data) > PHOTO_MAX_BYTES:
             return web.json_response({"error": "jpeg up to 3 MB"}, status=400)
@@ -500,17 +540,11 @@ class WorldCog(commands.Cog):
         if not isinstance(channel, discord.abc.Messageable):
             return web.json_response({"ok": False, "reason": "no_channel"})
         try:
-            await channel.send(
-                f"📸 <@{user_id}> GAP Dünyası'ndan bir kare paylaştı!",
-                file=discord.File(io.BytesIO(data), filename="gap-dunyasi.jpg"),
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
+            await channel.send(text, file=discord.File(io.BytesIO(data), filename="gap-dunyasi.jpg"), allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException as err:
             log.warning("Fotoğraf gönderilemedi: %s", err)
             return web.json_response({"ok": False, "reason": "send_failed"})
-        activitylog.record("world", guild.id, user_id, amount=1, kind="photo")
-        completed = await world_quests.record(guild.id, user_id, "photo", 1, _today())
-        return web.json_response({"ok": True, "completed": await self._grant_quests(guild, user_id, completed)})
+        return None
 
     async def _announce_fish(self, guild: discord.Guild, user_id: int, result: dict) -> None:
         channel = guild.get_channel(FISH_CHANNEL_ID)
@@ -573,7 +607,7 @@ class WorldCog(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def create_watch(self, guild_id: int, author: discord.abc.User, url: str) -> dict | None:
-        """Dünyada bir izleme odası açar. Link desteklenmiyorsa None; dünyaya ulaşılamazsa httpx hatası."""
+        """Dünyanın sinemasına linki yükler. Açılamıyorsa {"error": sebep|None}; dünyaya ulaşılamazsa httpx hatası."""
         assert self._client is not None
         r = await self._client.post(f"{self.url}/internal/watch", json={
             "guild": str(guild_id),
@@ -581,7 +615,10 @@ class WorldCog(commands.Cog):
             "url": url,
         })
         if r.status_code == 400:
-            return None
+            try:
+                return {"error": r.json().get("reason")}
+            except ValueError:
+                return {"error": None}
         r.raise_for_status()
         return r.json()
 
@@ -602,8 +639,9 @@ class WorldCog(commands.Cog):
             log.warning("İzleme odası açılamadı: %s", e)
             await ctx.send("❌ GAP Dünyası'na şu an ulaşılamıyor, biraz sonra tekrar dene.")
             return
-        if room is None:
-            await ctx.send(f"❌ Bu linki açamıyorum. Kullanım: `{WATCH_USAGE}`")
+        if room is None or "error" in room:
+            reason = (room or {}).get("error")
+            await ctx.send(f"❌ {reason}" if reason else f"❌ Bu linki açamıyorum. Kullanım: `{WATCH_USAGE}`")
             return
 
         embed = discord.Embed(
@@ -614,7 +652,7 @@ class WorldCog(commands.Cog):
             ),
             color=discord.Color.from_rgb(88, 101, 242),
         )
-        embed.set_footer(text=f"Başlatan: {ctx.author.display_name} · Odada kimse kalmazsa 6 saat sonra kapanır")
+        embed.set_footer(text=f"Başlatan: {ctx.author.display_name} · Dünyadaki sinemada oynuyor, misafirler de izleyebilir")
         view = discord.ui.View()
         view.add_item(discord.ui.Button(label="İzlemeye katıl", emoji="🍿", url=room["url"]))
         await ctx.send(embed=embed, view=view)

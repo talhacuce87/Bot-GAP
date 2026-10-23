@@ -1,10 +1,17 @@
-// Mahalle: arsalar bot veritabanında; oda açılınca yüklenir, blok değişiklikleri herkese anında gider ve
+// Mahalle: arsalar bot veritabanında; ilk girişte yüklenir, blok değişiklikleri herkese anında gider ve
 // birkaç saniyede bir toplu kaydedilir. Her üyenin tek arsası olur; yalnızca sahibi blok koyar/siler.
-// Bot bağlı değilse (yerel geliştirme) arsalar yalnızca bellekte, misafirler de inşa edebilir.
-import { type Block, cellKey, decodeBlocks, encodeBlocks, inPlot, PLOT_MAX_BLOCKS, PLOTS, type PlotState, blockDef } from "../../../shared/build";
+// Arsası olan başka boş arsaya evini bloklarıyla taşıyabilir.
+//
+// Arsaların durumu Discord sunucusu başına tektir (PlotStore) ve süreç boyunca bellekte kalır: aynı sunucunun
+// bütün odaları (dünya, izleme odaları) aynı arsaları görür. Oda başına ayrı kopya olsaydı eski kopyası olan
+// oda kaydettiğinde yenisini ezerdi; oda kapanıp açılınca da kaydı yetişmemiş bloklar kaybolurdu.
+// Bot bağlı değilse (yerel geliştirme) arsalar yalnızca o odanın belleğinde, misafirler de inşa edebilir.
+import { type Block, blockDef, cellKey, decodeBlocks, encodeBlocks, inPlot, moveBlocks, PLOTS, type PlotState } from "../../../shared/build";
+import type { ServerEvent } from "../../../shared/protocol";
 import type { BotPost } from "../looks";
 import type { Conn, Room } from "../room";
 
+/** İlk değişiklikten en geç bu kadar sonra kaydedilir (sürekli inşa ederken de ertelenmez). */
 const SAVE_DELAY_MS = 4000;
 /** Blok koyma sıklığı: saniyede en çok bu kadar. */
 const EDIT_RATE = 20;
@@ -15,60 +22,174 @@ interface PlotData {
   blocks: Map<number, Block>;
 }
 
-export class Builds {
-  private plots: PlotData[] = PLOTS.map(() => ({ owner: null, name: "", blocks: new Map() }));
-  private loaded = false;
+/** Bir Discord sunucusunun arsaları: yükleme, kayıt ve o sunucunun odalarına yayın. */
+class PlotStore {
+  plots: PlotData[] = PLOTS.map(() => ({ owner: null, name: "", blocks: new Map() }));
+  loaded = false;
   private loading: Promise<void> | null = null;
   private saveTimers = new Map<number, NodeJS.Timeout>();
-  private edits = new Map<number, { at: number; n: number }>();
+  /** Arsa başına son kayıt: kayıtlar sırayla gider (eski veri yenisinin üstüne yazılmasın). */
+  private saving = new Map<number, Promise<void>>();
+  /** Taşınılan arsalar: kayıt başarılı olana kadar sahibinin eski arsası da o kayıtta silinir. */
+  moving = new Set<number>();
+  readonly rooms = new Set<Room>();
 
   constructor(
-    private room: Room,
+    private guild: string | null,
     private bot: BotPost | null,
-  ) {}
-
-  private guild(): string | null {
-    for (const p of this.room.players.values()) if (p.guild) return p.guild;
-    return null;
+  ) {
+    if (!bot || !guild) this.loaded = true;
   }
 
-  /** İlk girişte arsalar yüklenir; o zamana kadar boş görünür, yüklenince herkese gider. */
-  private ensureLoaded(): void {
-    if (this.loaded || this.loading) return;
-    const guild = this.guild();
-    if (!this.bot || !guild) {
-      this.loaded = true;
-      return;
-    }
-    this.loading = this.bot("/internal/builds", { guild })
+  broadcast(msg: ServerEvent): void {
+    for (const room of this.rooms) room.broadcast(msg);
+  }
+
+  /** İlk girişte arsalar yüklenir; o zamana kadar boş görünür, yüklenince herkese gider. Hata olursa sonra yeniden denenir. */
+  ensureLoaded(): void {
+    if (this.loaded || this.loading || !this.bot || !this.guild) return;
+    this.loading = this.bot("/internal/builds", { guild: this.guild })
       .then((r) => {
-        const list = Array.isArray(r.body.plots) ? (r.body.plots as { plot: number; user: string; name?: string; data: string }[]) : [];
-        for (const row of list) {
+        // Bot hata döndüyse arsalar boş sayılmaz (yoksa herkesin evi yok görünür)
+        if (!r.ok || !Array.isArray(r.body.plots)) throw new Error(`bot ${JSON.stringify(r.body)}`);
+        for (const row of r.body.plots as { plot: number; user: string; name?: string; data: string }[]) {
           const p = this.plots[row.plot];
           if (!p) continue;
           p.owner = String(row.user);
           p.name = typeof row.name === "string" ? row.name : "Komşu";
-          p.blocks = new Map(decodeBlocks(String(row.data ?? "")).map((b) => [cellKey(b.i, b.j, b.k), b]));
+          p.blocks = new Map(decodeBlocks(row.plot, String(row.data ?? "")).map((b) => [cellKey(b.i, b.j, b.k), b]));
         }
         this.loaded = true;
-        this.room.broadcast({ t: "plots", plots: this.states() });
+        this.broadcast({ t: "plots", plots: this.states() });
       })
       .catch((err) => console.warn("[build] yüklenemedi:", (err as Error).message))
       .finally(() => (this.loading = null));
   }
 
-  private state(id: number): PlotState {
+  state(id: number): PlotState {
     const p = this.plots[id];
     return { id, owner: p.owner, name: p.name, data: encodeBlocks([...p.blocks.values()]) };
   }
 
-  private states(): PlotState[] {
+  states(): PlotState[] {
     return this.plots.map((_, id) => this.state(id));
   }
 
+  plotOf(userId: string): number {
+    return this.plots.findIndex((p) => p.owner === userId);
+  }
+
+  /** Bekleyen kaydı iptal et (arsa boşaldı ya da taşınıldı). */
+  cancel(id: number): void {
+    clearTimeout(this.saveTimers.get(id));
+    this.saveTimers.delete(id);
+    this.moving.delete(id);
+  }
+
+  /** Arsayı bota bildirerek boşalt. */
+  free(user: string): void {
+    if (this.bot && this.guild) void this.bot("/internal/build_free", { guild: this.guild, user }).catch((err) => console.warn("[build]", (err as Error).message));
+  }
+
+  /**
+   * Kaydet: değişiklikler birikip birkaç saniye sonra tek seferde bota gider. Zamanlayıcı yeni blokla
+   * ertelenmez; yoksa durmadan inşa eden birinin arsası hiç kaydedilmez.
+   */
+  save(id: number, now = false): Promise<void> {
+    const bot = this.bot, guild = this.guild;
+    if (!bot || !guild) return Promise.resolve();
+    if (!now) {
+      if (!this.saveTimers.has(id)) this.saveTimers.set(id, setTimeout(() => void this.save(id, true), SAVE_DELAY_MS));
+      return Promise.resolve();
+    }
+    clearTimeout(this.saveTimers.get(id));
+    this.saveTimers.delete(id);
+    const prev = this.saving.get(id) ?? Promise.resolve();
+    const next = prev.then(() => {
+      const p = this.plots[id];
+      if (!p.owner) return;
+      const owner = p.owner;
+      const move = this.moving.has(id);
+      return bot("/internal/build_save", { guild, user: owner, plot: id, data: encodeBlocks([...p.blocks.values()]), move })
+        .then((r) => {
+          if (r.ok && r.body.ok !== false) {
+            if (move && this.plots[id].owner === owner) this.moving.delete(id);
+            return;
+          }
+          console.warn("[build] kaydedilemedi:", id, owner, JSON.stringify(r.body));
+          this.tell(owner, "⚠️ Arsan kaydedilemedi, yöneticiye haber ver.");
+        })
+        .catch((err) => console.warn("[build] kaydedilemedi:", (err as Error).message));
+    });
+    this.saving.set(id, next);
+    void next.finally(() => {
+      if (this.saving.get(id) === next) this.saving.delete(id);
+    });
+    return next;
+  }
+
+  /** Üye hangi odadaysa ona bildirim. */
+  private tell(user: string, text: string): void {
+    for (const room of this.rooms) for (const p of room.players.values()) if (p.user.id === user) room.sendTo(p.conn, { t: "notice", text });
+  }
+
+  /** Bekleyen ve süren bütün kayıtlar. */
+  flush(): Promise<void> {
+    const ids = new Set([...this.saveTimers.keys(), ...this.saving.keys()]);
+    return Promise.all([...ids].map((id) => (this.saveTimers.has(id) ? this.save(id, true) : this.saving.get(id)))).then(() => {});
+  }
+}
+
+/** Sunucu başına arsalar (bot bağlıyken). */
+const stores = new Map<string, PlotStore>();
+
+/** Sunucu kapanırken bekleyen kayıtlar hemen yazılır. */
+export function flushBuilds(): Promise<void> {
+  return Promise.all([...stores.values()].map((s) => s.flush())).then(() => {});
+}
+
+/** Odanın inşa arayüzü: odadaki oyuncuların isteklerini o sunucunun arsalarına uygular. */
+export class Builds {
+  private bound: PlotStore | null = null;
+  private edits = new Map<number, { at: number; n: number }>();
+
+  constructor(
+    private room: Room,
+    private bot: BotPost | null,
+  ) {
+    // Bot yoksa odanın kendi (yalnızca bellekteki) arsaları
+    if (!bot) this.bind(new PlotStore(null, null));
+  }
+
+  private bind(store: PlotStore): PlotStore {
+    this.bound = store;
+    store.rooms.add(this.room);
+    return store;
+  }
+
+  /** Odanın sunucusunun arsaları (ilk Discord'lu oyuncu gelince bağlanır ve yüklenir). */
+  private store(): PlotStore | null {
+    if (!this.bound) {
+      let guild: string | null = null;
+      for (const p of this.room.players.values()) if (p.guild) guild = guild ?? p.guild;
+      if (!guild) return null;
+      let s = stores.get(guild);
+      if (!s) stores.set(guild, (s = new PlotStore(guild, this.bot)));
+      this.bind(s);
+    }
+    this.bound!.ensureLoaded();
+    return this.bound;
+  }
+
   sendTo(conn: Conn): void {
-    this.ensureLoaded();
-    this.room.sendTo(conn, { t: "plots", plots: this.states() });
+    const s = this.store();
+    const plots = s ? s.states() : PLOTS.map((_, id) => ({ id, owner: null, name: "", data: "" }));
+    this.room.sendTo(conn, { t: "plots", plots });
+  }
+
+  /** Oda kapanınca: arsalar sunucunun deposunda kalır, yalnızca yayın listesinden çıkar. */
+  dispose(): void {
+    this.bound?.rooms.delete(this.room);
   }
 
   private notice(sid: number, text: string): void {
@@ -77,96 +198,115 @@ export class Builds {
   }
 
   /** İnşa edebilir mi (Discord'dan gelen üye; bot yoksa herkes). */
-  private builder(sid: number): { id: string; name: string } | null {
-    this.ensureLoaded();
+  private builder(sid: number): { id: string; name: string; store: PlotStore } | null {
     const p = this.room.players.get(sid);
     if (!p || p.info.spectator) return null;
     if (this.bot && (p.user.guest || !p.guild)) return null;
-    return { id: p.user.id, name: p.user.name };
+    const store = this.store();
+    return store && { id: p.user.id, name: p.user.name, store };
   }
 
   plotOf(userId: string): number {
-    return this.plots.findIndex((p) => p.owner === userId);
+    return this.bound?.plotOf(userId) ?? -1;
   }
 
-  /** Boş arsa sahiplen (zaten varsa onu gösterir). */
-  claim(sid: number): void {
+  /**
+   * Boş arsa sahiplen: `want` boşsa o arsa (oyuncunun durduğu), değilse büyük mahallede ilk boş arsa,
+   * o da yoksa küçük mahallede. Arsası olan başka boş arsaya taşınır (evi sığıyorsa, bloklarıyla);
+   * küçük arsası olan `want` vermezse büyük mahalleye taşınır.
+   */
+  claim(sid: number, want?: number): void {
     const u = this.builder(sid);
     if (!u) return this.notice(sid, "🔨 İnşa için dünyaya Discord'dan gir.");
-    if (!this.loaded) return this.notice(sid, "🔨 Mahalle yükleniyor, birazdan tekrar dene.");
-    if (this.plotOf(u.id) >= 0) return this.notice(sid, "🏠 Zaten bir arsan var.");
-    const id = this.plots.findIndex((p) => !p.owner);
+    const s = u.store;
+    if (!s.loaded) return this.notice(sid, "🔨 Mahalle yükleniyor, birazdan tekrar dene.");
+    const old = s.plotOf(u.id);
+    const free = (id: number) => !!s.plots[id] && !s.plots[id].owner;
+    let id: number;
+    if (want !== undefined && Number.isInteger(want) && s.plots[want]) {
+      if (want === old) return this.notice(sid, "🏠 Zaten bu arsa senin.");
+      if (!free(want)) return this.notice(sid, "🏠 Bu arsanın sahibi var.");
+      id = want;
+    } else if (old >= 0) {
+      if (PLOTS[old].big) return this.notice(sid, "🏠 Zaten bir arsan var. Taşınmak için boş bir arsanın üstüne git.");
+      id = PLOTS.findIndex((pl) => pl.big && free(pl.id));
+    } else {
+      id = PLOTS.findIndex((pl) => pl.big && free(pl.id));
+      if (id < 0) id = PLOTS.findIndex((pl) => free(pl.id));
+    }
     if (id < 0) return this.notice(sid, "🏘️ Mahallede boş arsa kalmadı.");
-    const p = this.plots[id];
+    const moved = old >= 0 ? moveBlocks(s.plots[old].blocks.values(), id) : [];
+    if (old >= 0 && moved.length < s.plots[old].blocks.size) return this.notice(sid, "🧱 Evin bu arsaya sığmıyor.");
+    const p = s.plots[id];
     p.owner = u.id;
     p.name = u.name;
-    p.blocks.clear();
-    this.room.broadcast({ t: "plot", plot: this.state(id) });
-    this.save(id, true);
+    p.blocks = new Map(moved.map((b) => [cellKey(b.i, b.j, b.k), b]));
+    s.moving.delete(id);
+    if (old >= 0) {
+      const from = s.plots[old];
+      from.owner = null;
+      from.name = "";
+      from.blocks.clear();
+      s.cancel(old);
+      s.broadcast({ t: "plot", plot: s.state(old) });
+      this.notice(sid, "🚚 Evin yeni arsana taşındı.");
+      s.moving.add(id);
+    }
+    s.broadcast({ t: "plot", plot: s.state(id) });
+    void s.save(id, true);
   }
 
   /** Kendi arsasına blok koy (b > 0) ya da sil (b 0). */
   set(sid: number, i: number, j: number, k: number, b: number, r: number, now = Date.now()): void {
     const u = this.builder(sid);
-    if (!u || !this.loaded) return;
-    const id = this.plotOf(u.id);
-    if (id < 0 || !inPlot(i, j, k) || !Number.isInteger(b) || !Number.isInteger(r) || r < 0 || r > 3) return;
+    if (!u || !u.store.loaded) return;
+    const s = u.store;
+    const id = s.plotOf(u.id);
+    if (id < 0 || !inPlot(id, i, j, k) || !Number.isInteger(b) || !Number.isInteger(r) || r < 0 || r > 3) return;
     if (b !== 0 && !blockDef(b)) return;
+    const p = s.plots[id];
+    const key = cellKey(i, j, k);
+    // İstemci bloğu hemen çizer: reddedilirse hücrenin gerçek hali geri gider (yoksa görünüp kaydedilmeyen blok kalır)
+    const undo = () => {
+      const cur = p.blocks.get(key);
+      const conn = this.room.players.get(sid)?.conn;
+      if (conn) this.room.sendTo(conn, { t: "bset", plot: id, i, j, k, b: cur?.b ?? 0, r: cur?.r ?? 0 });
+    };
     const e = this.edits.get(sid);
     if (e && now - e.at < 1000) {
-      if (++e.n > EDIT_RATE) return;
+      if (++e.n > EDIT_RATE) return undo();
     } else this.edits.set(sid, { at: now, n: 1 });
-    const p = this.plots[id];
-    const key = cellKey(i, j, k);
     if (b === 0) {
       if (!p.blocks.delete(key)) return;
     } else {
-      if (!p.blocks.has(key) && p.blocks.size >= PLOT_MAX_BLOCKS) return this.notice(sid, `🧱 Arsada en çok ${PLOT_MAX_BLOCKS} blok olabilir.`);
+      if (!p.blocks.has(key) && p.blocks.size >= PLOTS[id].max) {
+        undo();
+        return this.notice(sid, `🧱 Arsada en çok ${PLOTS[id].max} blok olabilir.`);
+      }
       p.blocks.set(key, { i, j, k, b, r });
     }
-    this.room.broadcast({ t: "bset", plot: id, i, j, k, b, r });
-    this.save(id);
+    s.broadcast({ t: "bset", plot: id, i, j, k, b, r });
+    void s.save(id);
   }
 
   /** Arsayı boşalt (bütün blokları siler, arsa başkasına açılır). */
   free(sid: number): void {
     const u = this.builder(sid);
     if (!u) return;
-    const id = this.plotOf(u.id);
+    const s = u.store;
+    const id = s.plotOf(u.id);
     if (id < 0) return this.notice(sid, "🏠 Arsan yok.");
-    const p = this.plots[id];
+    const p = s.plots[id];
     p.owner = null;
     p.name = "";
     p.blocks.clear();
-    clearTimeout(this.saveTimers.get(id));
-    this.saveTimers.delete(id);
-    this.room.broadcast({ t: "plot", plot: this.state(id) });
-    const guild = this.guild();
-    if (this.bot && guild) void this.bot("/internal/build_free", { guild, user: u.id }).catch((err) => console.warn("[build]", (err as Error).message));
+    s.cancel(id);
+    s.broadcast({ t: "plot", plot: s.state(id) });
+    s.free(u.id);
   }
 
-  /** Kaydet: değişiklikler birikip birkaç saniye sonra tek seferde bota gider. */
-  private save(id: number, now = false): void {
-    const guild = this.guild();
-    if (!this.bot || !guild) return;
-    clearTimeout(this.saveTimers.get(id));
-    const run = () => {
-      this.saveTimers.delete(id);
-      const p = this.plots[id];
-      if (!p.owner) return;
-      void this.bot!("/internal/build_save", { guild, user: p.owner, plot: id, data: encodeBlocks([...p.blocks.values()]) }).catch((err) =>
-        console.warn("[build] kaydedilemedi:", (err as Error).message),
-      );
-    };
-    if (now) run();
-    else this.saveTimers.set(id, setTimeout(run, SAVE_DELAY_MS));
-  }
-
-  /** Oda kapanırken bekleyen kayıtlar hemen yazılır. */
-  flush(): void {
-    for (const [id, t] of this.saveTimers) {
-      clearTimeout(t);
-      this.save(id, true);
-    }
+  /** Bu odanın bekleyen kayıtları (bot yokken bir şey yapmaz). */
+  flush(): Promise<void> {
+    return this.bound?.flush() ?? Promise.resolve();
   }
 }

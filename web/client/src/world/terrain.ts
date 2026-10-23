@@ -21,7 +21,9 @@ const COARSE = 8;
 const INNER = { minX: -144, maxX: 136, minZ: -96, maxZ: 168 };
 /** Doğu: vadi yolu ve GAP Şehri (ince ızgara; kenarları kaba ızgaraya oturur). */
 const EAST = { minX: 136, maxX: 568, minZ: -312, maxZ: 72 };
-const OUTER = { minX: -264, maxX: 720, minZ: -400, maxZ: 296 };
+/** Batı: dağın ardındaki büyük mahalle ve geçit (ince ızgara; kenarları kaba ızgaraya oturur). */
+const WEST = { minX: -544, maxX: -144, minZ: -184, maxZ: 152 };
+const OUTER = { minX: -640, maxX: 720, minZ: -400, maxZ: 296 };
 const inArea = (a: { minX: number; maxX: number; minZ: number; maxZ: number }, x: number, z: number) => x > a.minX && x < a.maxX && z > a.minZ && z < a.maxZ;
 
 // ---------------------------------------------------------------------------
@@ -172,7 +174,7 @@ export function terrainHeight(x: number, z: number): number {
  * arasında mesh'ten yüksekte kalabilir).
  */
 export function groundY(x: number, z: number): number {
-  const fine = inArea(INNER, x, z) ? INNER : inArea(EAST, x, z) ? EAST : null;
+  const fine = inArea(INNER, x, z) ? INNER : inArea(EAST, x, z) ? EAST : inArea(WEST, x, z) ? WEST : null;
   const area = fine ?? OUTER, cell = fine ? FINE : COARSE;
   const gx = (x - area.minX) / cell, gz = (z - area.minZ) / cell;
   const i = Math.floor(gx), j = Math.floor(gz), fx = gx - i, fz = gz - j;
@@ -307,10 +309,11 @@ export function buildTerrain(grass: (x: number, z: number, out: THREE.Color) => 
   const color = (x: number, z: number, h: number, out: THREE.Color) => terrainColor(x, z, h, grass, out);
   const inner = grid(INNER, FINE, terrainHeight, color, () => false);
   const east = grid(EAST, FINE, terrainHeight, color, () => false);
-  const outer = grid(OUTER, COARSE, terrainHeight, color, (x, z) => inArea(INNER, x, z) || inArea(EAST, x, z));
+  const west = grid(WEST, FINE, terrainHeight, color, () => false);
+  const outer = grid(OUTER, COARSE, terrainHeight, color, (x, z) => inArea(INNER, x, z) || inArea(EAST, x, z) || inArea(WEST, x, z));
   const ground = new THREE.BufferGeometry();
   const merge = (name: string) => {
-    const parts = [inner, east, outer].map((g) => g.getAttribute(name).array as Float32Array);
+    const parts = [inner, east, west, outer].map((g) => g.getAttribute(name).array as Float32Array);
     const out = new Float32Array(parts.reduce((n, a) => n + a.length, 0));
     let at = 0;
     for (const a of parts) {

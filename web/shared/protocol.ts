@@ -457,7 +457,7 @@ export type ClientEvent =
   | { t: "vstart"; target: number }
   | { t: "vstop" }
   /** İnşa: boş arsa sahiplen, kendi arsana blok koy/sil (b 0), arsanı boşalt. */
-  | { t: "bclaim" }
+  | { t: "bclaim"; plot?: number }
   | { t: "bset"; i: number; j: number; k: number; b: number; r: number }
   | { t: "bfree" }
   | { t: "tagjoin" }

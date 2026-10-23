@@ -218,6 +218,7 @@ async def test_fish_catch_announced_in_fish_channel_from_rare_up(db, monkeypatch
     monkeypatch.setattr(world_cog, "FISH_ANNOUNCE_MIN_RARITY", "rare")
     channel = _FishChannel()
     guild = SimpleNamespace(
+        id=1,
         get_member=lambda uid: object(),
         get_channel=lambda cid: channel if cid == 77 else None,
     )
@@ -369,6 +370,19 @@ async def test_photo_requires_jpeg_and_channel(db, monkeypatch):
     assert bad.status == 400
     ok = json.loads((await cog.handle_photo(_member_req({"guild": "1", "user": "5", "image": base64.b64encode(b"\xff\xd8\xff\xe0jpeg").decode()}))).text)
     assert ok["ok"] and len(sent) == 1
+    # Misafir: üyelik aranmaz, adıyla gider (ping/markdown kaçırılır), görev yok
+    g = json.loads((await cog.handle_guest_photo(_member_req({"guild": "1", "name": "@everyone *x*", "image": base64.b64encode(b"\xff\xd8\xff\xe0jpeg").decode()}))).text)
+    assert g == {"ok": True, "completed": []}
+    assert "Misafir" in sent[-1][0] and "@everyone" not in sent[-1][0].replace("@\u200beveryone", "")
+
+
+async def test_guest_outfit_is_validated_at_level_one(monkeypatch):
+    monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
+    cog = world_cog.WorldCog(SimpleNamespace(get_guild=lambda gid: None))
+    locked = next(iter(world_cog.outfit.LOCKED))
+    slot = world_cog.outfit.manifest()["parts"][locked]["cat"]
+    r = json.loads((await cog.handle_guest_outfit(_member_req({"outfit": {slot: locked}}))).text)
+    assert r["ok"] and r["level"] == 1 and r["outfit"].get(slot) != locked and r["dropped"]
 
 
 async def test_can_control_by_permission_or_configured_role(monkeypatch):
@@ -399,7 +413,8 @@ async def test_can_control_by_permission_or_configured_role(monkeypatch):
 
 async def test_builds_one_plot_per_member_and_owner_only(db, monkeypatch):
     monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
-    guild = SimpleNamespace(id=1, get_member=lambda uid: object())
+    # 5 sunucuda adıyla; diğerleri (çıkmış üye gibi) adsız
+    guild = SimpleNamespace(id=1, get_member=lambda uid: SimpleNamespace(display_name="Barış", name="baris", id=uid) if uid == 5 else object())
     cog = world_cog.WorldCog(SimpleNamespace(get_guild=lambda gid: guild))
     save = lambda user, plot, data: cog.handle_build_save(_member_req({"guild": "1", "user": str(user), "plot": plot, "data": data}))
     assert json.loads((await save(5, 0, "0.0.0.1.0")).text) == {"ok": True}
@@ -408,7 +423,19 @@ async def test_builds_one_plot_per_member_and_owner_only(db, monkeypatch):
     assert json.loads((await save(5, 1, "")).text)["ok"] is False
     assert json.loads((await save(5, 0, "0.0.0.2.0")).text) == {"ok": True}
     plots = json.loads((await cog.handle_builds(_member_req({"guild": "1"}))).text)["plots"]
-    assert plots == [{"plot": 0, "user": "5", "name": "Komşu", "data": "0.0.0.2.0"}]
+    assert plots == [{"plot": 0, "user": "5", "name": "Barış", "data": "0.0.0.2.0"}]
     await cog.handle_build_free(_member_req({"guild": "1", "user": "5"}))
     assert json.loads((await save(6, 0, "")).text) == {"ok": True}
     assert (await save(6, 500, "")).status == 400
+
+
+async def test_build_save_moves_member_to_new_plot_only_when_asked(db):
+    assert await db.save_world_build(1, 2, 10, "a")
+    # Başka arsaya taşınma istenmeden kaydedilmez; istenince eski arsa aynı işlemde silinir
+    assert not await db.save_world_build(1, 8, 10, "b")
+    assert await db.save_world_build(1, 8, 10, "b", move=True)
+    assert await db.get_world_builds(1) == [(8, 10, "b")]
+    # Başkasının arsasına taşınılmaz
+    assert await db.save_world_build(1, 9, 11, "c")
+    assert not await db.save_world_build(1, 9, 10, "d", move=True)
+    assert await db.get_world_builds(1) == [(8, 10, "b"), (9, 11, "c")]
