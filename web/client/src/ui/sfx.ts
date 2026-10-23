@@ -133,6 +133,11 @@ export const sfx = {
     burst(2.6, 0.7, 400, 0.4);
     burst(0.4, 0.4, 1600, 0.3);
   },
+  /** Ezan kaydı yoksa vakit girince: yumuşak, yankılı çan. */
+  chime(gain = 1): void {
+    [392, 523, 659].forEach((f, i) => tone(f, 2.2, "sine", 0.07 * gain, i * 0.5));
+    tone(196, 3, "sine", 0.05 * gain, 1.4);
+  },
   /** Yarış geri sayımı: kısa bip, başlarken tiz. */
   beep(go = false): void {
     tone(go ? 1320 : 660, go ? 0.45 : 0.18, "square", 0.06);

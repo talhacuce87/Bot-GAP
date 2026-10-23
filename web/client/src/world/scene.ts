@@ -27,6 +27,7 @@ import { casino } from "./casino";
 import { city, type CityNpc, type Room } from "./city";
 import { type RingTrack, ringTrack } from "./ringTrack";
 import { garage, type GarageView } from "./garage";
+import { mosque } from "./mosque";
 import { hall, raceHouse, volleyHall } from "./hall";
 import { type VolleyCourt, volleyCourt } from "./volleyCourt";
 import { cave } from "./cave";
@@ -91,6 +92,8 @@ export interface World {
   ring: RingTrack;
   /** GAP Garaj (tuning atölyesi): işaret nabzı. */
   garage: GarageView;
+  /** GAP Camii: minarelerin yeri (ezan sesi). */
+  minarets: { x: number; z: number }[];
   /** (x, z) girilebilir bir dükkânın içindeyse o oda. */
   roomAt(x: number, z: number): Room | null;
 }
@@ -1110,6 +1113,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
   scene.add(cas.group);
   const town = city(b);
   scene.add(town.group);
+  const cami = mosque(b);
+  scene.add(cami.group);
   const ring = ringTrack(b);
   scene.add(ring.group);
   const shop = garage(b);
@@ -1278,6 +1283,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       vHall.update(focus, camera, hallDt);
       cas.update(time, hallDt, focus, camera, env.lights);
       town.update(time, env.lights);
+      cami.update(time, hallDt, focus, camera, env.lights);
       hallTime = time;
       terrain.cap.visible = !(focus && inCave(focus.x, focus.z));
       music += ((musicOn ? 1 : 0) - music) * 0.08;
@@ -1338,6 +1344,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     hour: () => dayNight.hour,
     pitch: field,
     stadium: arena,
+    minarets: cami.minarets,
     volley: vCourt,
     stageLights: lights,
     ripple: addRipple,

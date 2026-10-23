@@ -180,6 +180,8 @@ async function start(): Promise<void> {
 
   // Debug: `?at=x,z,yön` ile istenen noktada başla (ekran görüntüsü, bölge testi).
   const atParam = params.has("debug") ? params.get("at") : null;
+  const camParam = params.has("debug") ? params.get("kamera")?.split(",").map(Number) : undefined;
+  const freeCam = camParam?.length === 6 && camParam.every(Number.isFinite) ? camParam : null;
   // Debug: `?debug&pist=N` oyuncak pistte sunucusuz antrenman (`&botlar=3`, `&oto` arabamı da otomatik pilot sürer)
   const practiceTrack = params.has("debug") ? params.get("pist") : null;
   const at = atParam ? atParam.split(",").map(Number) : [];
@@ -728,6 +730,7 @@ async function start(): Promise<void> {
       return cinemaOn && me.x >= c.minX && me.x <= c.maxX && me.z >= c.minZ && me.z <= c.maxZ;
     },
   });
+  if (params.has("debug") && params.get("namaz")) features.mosque.debugPose(params.get("namaz")!);
   if (practiceTrack !== null) features.race.requestPractice(Number(practiceTrack) || 0, Number(params.get("botlar") ?? 3) || 0, params.has("oto"), params.has("lobi"));
 
   addEventListener("resize", () => {
@@ -851,6 +854,13 @@ async function start(): Promise<void> {
     features.pushExtras(time, dt);
     avatars.end();
     me.updateCamera(camera, dt);
+    // Debug: `?debug&kamera=x,y,z,hx,hy,hz` serbest kamera (görünüm denemesi), sis uzakta
+    if (freeCam) {
+      camera.position.set(freeCam[0], freeCam[1], freeCam[2]);
+      camera.lookAt(freeCam[3], freeCam[4], freeCam[5]);
+      const fog = world.scene.fog as THREE.Fog | null;
+      if (fog) [fog.near, fog.far] = [250, 600];
+    }
     features.update(time, dt, now);
     if (me.driving) {
       me.aimAt = aimRay(camera, aimPoint);

@@ -71,7 +71,10 @@ export class Input {
       if (e.repeat) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (this.blocked) {
-        if (actionsOf(e.code).includes("wardrobe")) this.onWardrobe?.();
+        const acts = actionsOf(e.code);
+        if (acts.includes("wardrobe")) this.onWardrobe?.();
+        // G (ikinci etkileşim) açık kalır: namazı bozmak gibi kilitliyken gereken tek eylem
+        else if (acts.includes("actG")) this.act = "g";
         return;
       }
       // Rakam emote; voleybolda bir eyleme atandıysa o eylem
