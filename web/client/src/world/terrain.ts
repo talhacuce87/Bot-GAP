@@ -269,11 +269,19 @@ function grid(
   const pos: number[] = [];
   const col: number[] = [];
   const c = new THREE.Color();
+  // Köşe altı üçgende tekrar eder: rengi bir kez hesaplanır (NaN: henüz yok)
+  const C = new Float32Array((nx + 1) * (nz + 1) * 3).fill(NaN);
   const v = (i: number, j: number) => {
-    const x = area.minX + i * cell, z = area.minZ + j * cell, h = H[j * (nx + 1) + i];
+    const k = j * (nx + 1) + i;
+    const x = area.minX + i * cell, z = area.minZ + j * cell, h = H[k];
     pos.push(x, h, z);
-    color(x, z, h, c);
-    col.push(c.r, c.g, c.b);
+    if (Number.isNaN(C[k * 3])) {
+      color(x, z, h, c);
+      C[k * 3] = c.r;
+      C[k * 3 + 1] = c.g;
+      C[k * 3 + 2] = c.b;
+    }
+    col.push(C[k * 3], C[k * 3 + 1], C[k * 3 + 2]);
   };
   for (let j = 0; j < nz; j++) {
     for (let i = 0; i < nx; i++) {

@@ -22,6 +22,9 @@ export const SEAT_H = 0.5;
 /** Tekrarlanan objeler: her biri tek InstancedMesh olarak çizilir. */
 export type PropKind = "pine" | "oak" | "sakura" | "rock" | "bush" | "stone" | "post" | "bulb" | "flame" | "log";
 
+const KEEP_CELL = 16;
+const keepKey = (i: number, j: number) => (i + 4096) * 8192 + (j + 4096);
+
 export class Builder {
   readonly rand = rng(0x6a7);
   /** Tek mesh'te birleştirilecek, vertex renkli statik geometri. */
@@ -35,10 +38,11 @@ export class Builder {
   };
   /** Zemin gölgeleri: x, z, yarıçap. */
   readonly shadows: number[] = [];
-  /** Çimen/çiçek serpilmeyecek alanlar. */
-  private keepOut: { x: number; z: number; r: number }[] = [];
-  private keepOutBoxes: { minX: number; maxX: number; minZ: number; maxZ: number }[] = [];
-  private keepOutSegs: number[] = []; // ax, az, bx, bz, r
+  /**
+   * Çimen/çiçek serpilmeyecek alanlar: her biri eklenirken kapladığı ızgara hücrelerine yazılır, `isClear`
+   * yalnızca noktanın hücresine bakar (bütün listeyi taramak açılışta ~0.6 sn tutuyordu).
+   */
+  private keepCells = new Map<number, ((x: number, z: number) => boolean)[]>();
   /** Ağaç/çimen serpilmeyecek arazi (su, dağ); scene.ts terrain.ts'ten bağlar. */
   blocked: ((x: number, z: number) => boolean) | null = null;
 
@@ -54,31 +58,40 @@ export class Builder {
     this.shadows.push(x, z, r);
   }
 
+  private keep(minX: number, maxX: number, minZ: number, maxZ: number, inside: (x: number, z: number) => boolean): void {
+    for (let i = Math.floor(minX / KEEP_CELL); i <= Math.floor(maxX / KEEP_CELL); i++) {
+      for (let j = Math.floor(minZ / KEEP_CELL); j <= Math.floor(maxZ / KEEP_CELL); j++) {
+        const key = keepKey(i, j);
+        let list = this.keepCells.get(key);
+        if (!list) this.keepCells.set(key, (list = []));
+        list.push(inside);
+      }
+    }
+  }
+
   clearCircle(x: number, z: number, r: number): void {
-    this.keepOut.push({ x, z, r });
+    this.keep(x - r, x + r, z - r, z + r, (px, pz) => (px - x) ** 2 + (pz - z) ** 2 < r * r);
   }
 
   clearBox(minX: number, maxX: number, minZ: number, maxZ: number): void {
-    this.keepOutBoxes.push({ minX, maxX, minZ, maxZ });
+    this.keep(minX, maxX, minZ, maxZ, (px, pz) => px > minX && px < maxX && pz > minZ && pz < maxZ);
   }
 
   /** Bir yol şeridini (iki nokta arası, yarıçaplı) boş tutar. */
   clearSegment(ax: number, az: number, bx: number, bz: number, r: number): void {
-    this.keepOutSegs.push(ax, az, bx, bz, r);
+    const ex = bx - ax, ez = bz - az;
+    const len2 = ex * ex + ez * ez || 1;
+    this.keep(Math.min(ax, bx) - r, Math.max(ax, bx) + r, Math.min(az, bz) - r, Math.max(az, bz) + r, (px, pz) => {
+      const t = Math.max(0, Math.min(1, ((px - ax) * ex + (pz - az) * ez) / len2));
+      const dx = px - (ax + ex * t), dz = pz - (az + ez * t);
+      return dx * dx + dz * dz < r * r;
+    });
   }
 
   isClear(x: number, z: number): boolean {
     if (this.blocked?.(x, z)) return false;
-    for (const c of this.keepOut) if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return false;
-    for (const b of this.keepOutBoxes) if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ) return false;
-    const s = this.keepOutSegs;
-    for (let i = 0; i < s.length; i += 5) {
-      const ex = s[i + 2] - s[i], ez = s[i + 3] - s[i + 1];
-      const len2 = ex * ex + ez * ez || 1;
-      const t = Math.max(0, Math.min(1, ((x - s[i]) * ex + (z - s[i + 1]) * ez) / len2));
-      const dx = x - (s[i] + ex * t), dz = z - (s[i + 1] + ez * t);
-      if (dx * dx + dz * dz < s[i + 4] * s[i + 4]) return false;
-    }
+    const list = this.keepCells.get(keepKey(Math.floor(x / KEEP_CELL), Math.floor(z / KEEP_CELL)));
+    if (list) for (const inside of list) if (inside(x, z)) return false;
     return true;
   }
 }

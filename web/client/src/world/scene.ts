@@ -263,19 +263,23 @@ function directionPost(b: Builder): SignSpec[] {
 // Parçalar
 // ---------------------------------------------------------------------------
 
+const GROUND = new THREE.Color("#6f9a4a"), GROVE_GROUND = new THREE.Color("#557c36"), SAKURA_GROUND = new THREE.Color("#5e9a3e");
+/** Mevsimin zemin tonu (buildWorld mevsimi seçince ayarlanır). */
+const SEASON_TINT = new THREE.Color();
+
 function groundColor(x: number, z: number, out: THREE.Color): THREE.Color {
-  out.set("#6f9a4a");
+  out.copy(GROUND);
   // Büyük ölçekli düzensiz lekeler: doku yerine vertex rengi
   const n = Math.sin(x * 0.21 + z * 0.13) * Math.cos(z * 0.17 - x * 0.07) + 0.5 * Math.sin(x * 0.53 - z * 0.41);
   out.offsetHSL(n * 0.012, 0, n * 0.035);
   const dg = Math.hypot(x - GROVE.x, z - GROVE.z);
-  if (dg < 14) out.lerp(tmp.set("#557c36"), (1 - dg / 14) * 0.7);
+  if (dg < 14) out.lerp(GROVE_GROUND, (1 - dg / 14) * 0.7);
   // Sakura bahçesi: daha gür, canlı yeşil
   const ds = Math.hypot(x - SAKURA.x, z - SAKURA.z);
-  if (ds < SAKURA_CONFIG.radius + 2) out.lerp(tmp.set("#5e9a3e"), Math.min(1, (SAKURA_CONFIG.radius + 2 - ds) / 3) * 0.75);
+  if (ds < SAKURA_CONFIG.radius + 2) out.lerp(SAKURA_GROUND, Math.min(1, (SAKURA_CONFIG.radius + 2 - ds) / 3) * 0.75);
   // Mevsim: sonbaharda sararır, kışın kar (lekeli), baharda canlanır
-  const [tint, k] = SEASON_LOOK[SEASON].ground;
-  if (k) out.lerp(tmp.set(tint), SEASON === "winter" ? Math.min(1, k + n * 0.08) : k);
+  const k = SEASON_LOOK[SEASON].ground[1];
+  if (k) out.lerp(SEASON_TINT, SEASON === "winter" ? Math.min(1, k + n * 0.08) : k);
   return out;
 }
 
@@ -1007,6 +1011,7 @@ function smoke(at: THREE.Vector3): THREE.InstancedMesh {
 
 export function buildWorld(opts: WorldOptions = {}): World {
   SEASON = opts.season ?? seasonOf();
+  SEASON_TINT.set(SEASON_LOOK[SEASON].ground[0]);
   const b = new Builder();
   // Su, dağ, uçurum ve mağara: ağaç/çimen serpilmez
   b.blocked = (x, z) => !walkable(x, z) || inCave(x, z);
