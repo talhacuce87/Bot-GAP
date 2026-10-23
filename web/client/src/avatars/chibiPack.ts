@@ -11,6 +11,9 @@ export interface PartMeta {
   vCount: number;
   iOff: number;
   iCount: number;
+  /** Uzak görünüm (scripts/lod-chibi.mjs): aynı köşelerin sadeleştirilmiş indeksleri. */
+  i1Off?: number;
+  i1Count?: number;
   label?: string;
   group?: string;
   full?: boolean;
@@ -119,14 +122,19 @@ export class ChibiPack {
     return out;
   }
 
-  /** Kıyafeti tek geometriye birleştirir: position, normal, color (doğrusal), aLimb, aOutline. */
-  build(look: Look | null | undefined): THREE.BufferGeometry {
+  /**
+   * Kıyafeti tek geometriye birleştirir: position, normal, color (doğrusal), aLimb, aOutline. `lod` 1: uzak
+   * görünüm (paket desteklemiyorsa tam ayrıntı).
+   */
+  build(look: Look | null | undefined, lod: 0 | 1 = 0): THREE.BufferGeometry {
     const l = look ?? DEFAULT_LOOK;
     const m = this.manifest;
     const ids = this.compose(l);
     const metas = ids.map((id) => m.parts[id]);
+    const far = lod === 1 && metas.every((p) => p.i1Count !== undefined);
+    const iOf = (p: PartMeta) => (far ? { off: p.i1Off!, count: p.i1Count! } : { off: p.iOff, count: p.iCount });
     const vTotal = metas.reduce((s, p) => s + p.vCount, 0);
-    const iTotal = metas.reduce((s, p) => s + p.iCount, 0);
+    const iTotal = metas.reduce((s, p) => s + iOf(p).count, 0);
     const pos = new Float32Array(vTotal * 3);
     const nor = new Float32Array(vTotal * 3);
     const col = new Float32Array(vTotal * 3);
@@ -204,9 +212,10 @@ export class ChibiPack {
         col[v * 3 + 2] = toLinear(b);
         limb[v] = dv.getUint8(o + 13);
       }
-      const idx = new Uint16Array(this.buf, p.iOff, p.iCount);
+      const ir = iOf(p);
+      const idx = new Uint16Array(this.buf, ir.off, ir.count);
       if (cap && p.cat === "hair") pullTriangles(pos, idx, base, m.headCenter, cap);
-      for (let k = 0; k < p.iCount; k++) index[i++] = idx[k] + base;
+      for (let k = 0; k < ir.count; k++) index[i++] = idx[k] + base;
     }
 
     const geo = new THREE.BufferGeometry();

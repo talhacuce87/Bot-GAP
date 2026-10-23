@@ -734,6 +734,8 @@ async function start(): Promise<void> {
     },
   });
   if (params.has("debug") && params.get("namaz")) features.mosque.debugPose(params.get("namaz")!);
+  // NPC trafik de gece far ışığı alır (en yakınlar, oyuncu arabalarıyla birlikte)
+  cars.extra = { list: () => features.npcHeadlights(), get night() { return world.env.lights; } };
   if (practiceTrack !== null) features.race.requestPractice(Number(practiceTrack) || 0, Number(params.get("botlar") ?? 3) || 0, params.has("oto"), params.has("lobi"));
 
   addEventListener("resize", () => {

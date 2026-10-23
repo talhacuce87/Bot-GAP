@@ -1,6 +1,6 @@
-// NPC kalabalığı: birkaç sabit kıyafet, her biri tek InstancedMesh (chibi geometrisinin sadeleştirilmişi).
-// Uzuv açıları vertex shader'da örnek başına poz niteliğinden (salınım, oturma, el sallama, telefon) bulunur;
-// kontur ve gölge haritası yok (zemin lekesi var). Böylece onlarca yaya ~10 draw call.
+// NPC kalabalığı: birkaç sabit kıyafet, her biri tek InstancedMesh (chibi paketinin uzak görünümü, LOD1) ve
+// oyuncularla aynı kontur. Uzuv açıları vertex shader'da örnek başına poz niteliğinden (salınım, oturma, el
+// sallama, telefon) bulunur; gölge haritası yok (zemin lekesi var). Onlarca yaya ~20 draw call.
 import * as THREE from "three";
 import type { Look } from "../../../shared/protocol";
 import { blobTexture } from "../world/geo";
@@ -9,12 +9,14 @@ import { type ChibiPack, LIMB_COUNT } from "./chibiPack";
 
 /** Kıyafet başına en çok bu kadar yaya çizilir. */
 const PER_OUTFIT = 48;
-/** Sadeleştirme hedefi (üçgen oranı): uzaktan bakılan NPC'ler için yeterli. */
-const LOD_RATIO = 0.18;
+/** Kontur: chibi.ts ile aynı kalınlık ve kameradan itme (oyuncularla aynı çizgi). */
+const OUTLINE_WIDTH = 0.012;
+const OUTLINE_PUSH = 0.03;
 
 const CROWD_GLSL = /* glsl */ `
   attribute vec4 aPose;
   attribute float aLimb;
+  attribute float aOutline;
   uniform vec3 uPivot[${LIMB_COUNT}];
   mat3 crowdMat(vec2 a) {
     float cx = cos(a.x), sx = sin(a.x), cz = cos(a.y), sz = sin(a.y);
@@ -52,39 +54,9 @@ export interface CrowdPose {
 
 interface Batch {
   mesh: THREE.InstancedMesh;
+  outline: THREE.InstancedMesh;
   pose: THREE.InstancedBufferAttribute;
   n: number;
-}
-
-/**
- * Kıyafet geometrisini sadeleştirir. Üçgenler uzva göre ayrılıp her uzuv kendi içinde sadeleşir (uzuvlar ayrı
- * döner, aralarında köşe birleşmesin); renk sınırları korunur, inatçı parçada kaba sadeleştirmeye geçilir.
- */
-async function simplify(geo: THREE.BufferGeometry): Promise<THREE.BufferGeometry> {
-  const { MeshoptSimplifier } = await import("meshoptimizer/simplifier");
-  await MeshoptSimplifier.ready;
-  const pos = geo.getAttribute("position").array as Float32Array;
-  const col = geo.getAttribute("color").array as Float32Array;
-  const limb = geo.getAttribute("aLimb").array as Float32Array;
-  const src = geo.index!.array as ArrayLike<number>;
-  const groups = new Map<number, number[]>();
-  for (let t = 0; t < src.length; t += 3) {
-    const l = limb[src[t]];
-    let g = groups.get(l);
-    if (!g) groups.set(l, (g = []));
-    g.push(src[t], src[t + 1], src[t + 2]);
-  }
-  const out: number[] = [];
-  for (const g of groups.values()) {
-    const idx = Uint32Array.from(g);
-    const target = Math.max(3, Math.floor((idx.length * LOD_RATIO) / 3) * 3);
-    let [r] = MeshoptSimplifier.simplifyWithAttributes(idx, pos, 3, col, 3, [0.3, 0.3, 0.3], null, target, 0.08, ["Prune"]);
-    if (r.length > target * 1.6) [r] = MeshoptSimplifier.simplifySloppy(idx, pos, 3, null, target, 0.08);
-    for (const i of r) out.push(i);
-  }
-  const lod = geo.clone();
-  lod.setIndex(new THREE.BufferAttribute(pos.length / 3 > 65535 ? Uint32Array.from(out) : Uint16Array.from(out), 1));
-  return lod;
 }
 
 export class CrowdRenderer {
@@ -113,11 +85,10 @@ export class CrowdRenderer {
     this.group.add(this.shadow);
   }
 
-  /** Kıyafetlerin geometrisi arka planda kurulur (sadeleştirme birkaç yüz ms). */
+  /** Kıyafetlerin geometrisi kare kare kurulur (açılışta takılma olmasın). */
   async load(pack: ChibiPack, looks: Look[]): Promise<void> {
     const pivots = Array.from({ length: LIMB_COUNT }, (_, l) => new THREE.Vector3().fromArray(pack.pivots, l * 3));
-    const material = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide });
-    material.onBeforeCompile = (shader) => {
+    const patch = (shader: THREE.WebGLProgramParametersWithUniforms, outline: boolean) => {
       shader.uniforms.uPivot = { value: pivots };
       shader.vertexShader = shader.vertexShader
         .replace("#include <common>", `#include <common>\n${CROWD_GLSL}`)
@@ -125,24 +96,42 @@ export class CrowdRenderer {
         .replace(
           "#include <begin_vertex>",
           `int li = int(aLimb + 0.5);
-           vec3 transformed = crowdMat(crowdLimb(li)) * (position - uPivot[li]) + uPivot[li];`,
+           mat3 lm = crowdMat(crowdLimb(li));
+           vec3 transformed = lm * (position - uPivot[li]) + uPivot[li];` +
+            (outline ? `\ntransformed += normalize(lm * normal) * (${(OUTLINE_WIDTH / CHIBI_SCALE).toFixed(4)} * aOutline);` : ""),
         );
+      if (outline) {
+        shader.vertexShader = shader.vertexShader.replace(
+          "#include <project_vertex>",
+          `#include <project_vertex>\nmvPosition.z -= ${OUTLINE_PUSH.toFixed(3)};\ngl_Position = projectionMatrix * mvPosition;`,
+        );
+      }
     };
+    const material = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    material.onBeforeCompile = (shader) => patch(shader, false);
     material.customProgramCacheKey = () => "crowd";
+    const line = new THREE.MeshBasicMaterial({ color: 0x1c1622, side: THREE.BackSide });
+    line.onBeforeCompile = (shader) => patch(shader, true);
+    line.customProgramCacheKey = () => "crowd-outline";
     for (const look of looks) {
-      // Kıyafetler arasında kareye nefes aldır (sadeleştirme ana iş parçacığında)
+      // Kıyafetler arasında kareye nefes aldır
       await new Promise((r) => setTimeout(r, 0));
-      const geo = await simplify(pack.build(look));
+      const geo = pack.build(look, 1);
       const pose = new THREE.InstancedBufferAttribute(new Float32Array(PER_OUTFIT * 4), 4);
       pose.setUsage(THREE.DynamicDrawUsage);
       geo.setAttribute("aPose", pose);
       const mesh = new THREE.InstancedMesh(geo, material, PER_OUTFIT);
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.count = 0;
-      mesh.frustumCulled = false;
       mesh.receiveShadow = true;
-      this.group.add(mesh);
-      this.batches.push({ mesh, pose, n: 0 });
+      // Kontur aynı örnek matrislerini kullanır
+      const outline = new THREE.InstancedMesh(geo, line, PER_OUTFIT);
+      outline.instanceMatrix = mesh.instanceMatrix;
+      for (const m of [mesh, outline]) {
+        m.count = 0;
+        m.frustumCulled = false;
+        this.group.add(m);
+      }
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.batches.push({ mesh, outline, pose, n: 0 });
     }
     this.ready = true;
   }
@@ -179,7 +168,7 @@ export class CrowdRenderer {
 
   end(): void {
     for (const b of this.batches) {
-      b.mesh.count = b.n;
+      b.mesh.count = b.outline.count = b.n;
       b.mesh.instanceMatrix.needsUpdate = true;
       b.pose.needsUpdate = true;
     }
