@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { outsideWorld, WORLD_BOUNDS } from "../../../shared/constants";
 import type { Weather } from "../../../shared/protocol";
-import { BRIDGE, CAVE, CITY, HALL, KAHVEHANE, LAKE, PLAZA, RACE_HOUSE, RACE_SCALE, RACE_TRACK_Y, RIVER, onAsphalt, ROAD_PATH, ROAD_RIVER, ROAD_VILLAGE_GATE, ROAD_WALK, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
+import { BRIDGE, CAVE, CITY, PLAZA, RACE_HOUSE, RACE_SCALE, RACE_TRACK_Y, RIVER, onAsphalt, ROAD_PATH, ROAD_WALK, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
 import { HOOD_BOX } from "../../../shared/build";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
@@ -31,9 +31,10 @@ import { mosque } from "./mosque";
 import { hall, raceHouse, volleyHall } from "./hall";
 import { type VolleyCourt, volleyCourt } from "./volleyCourt";
 import { cave } from "./cave";
-import { FAME } from "./fame";
 import { SAKURA, SAKURA_CONFIG, sakuraGarden, type SakuraGarden } from "./sakura";
 import { TANK_PARK } from "../../../shared/tank";
+import { villagePaths } from "./walkways";
+import { simitci } from "./simitci";
 
 export type { Seat };
 
@@ -613,47 +614,8 @@ function paths(b: Builder): void {
       b.colliders.circle(x, z, 0.15);
     }
   };
-  /** Kırık çizgi boyunca yol. */
-  const route = (...pts: [number, number][]) => {
-    for (let i = 0; i < pts.length - 1; i++) path(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
-  };
-  /** Köprünün iki ucu (meydan tarafı önce: batı yakası). */
-  const ends = (i: number): [[number, number], [number, number]] => {
-    const a = BRIDGE_AXES[i], e = BRIDGE.half + 0.6;
-    const p: [number, number] = [a.x - a.ux * e, a.z - a.uz * e], q: [number, number] = [a.x + a.ux * e, a.z + a.uz * e];
-    return p[0] < q[0] ? [p, q] : [q, p];
-  };
-  const [b2w, b2e] = ends(0);
-  const P = PLAZA, K = KAHVEHANE, H = HALL;
-  const RW = ROAD_RIVER.west, RE = ROAD_RIVER.east;
-  // Meydan → kahvehane → göl (otobanın altından geçer)
-  route([P.x, P.z - 10.9], [K.x + 1, K.z + K.hd + 1.4]);
-  // Kahvehane yolundan oyuncak pistin kapısına
-  route([P.x - 0.6, RACE_HOUSE.z], [RACE_HOUSE.x + RACE_HOUSE.hw + 1.4, RACE_HOUSE.z]);
-  route([K.x - 1, K.z - K.hd - 1.6], [LAKE.x - 4, LAKE.z + LAKE.r + 2.6]);
-  // Meydan → köy yolunun ucu (yol kahvehanenin doğusundan otobana çıkar)
-  route([P.x + 7.7, P.z - 7.7], [-88.5, 51.5]);
-  // Kahvehane → otoban köprüsünün (güney kaldırımı) batı ucu; doğu ucundan (kuzey kaldırımı) sinemaya
-  route([K.x + K.hw + 1.2, K.z - 2], [RW[0], RW[1] + 6.2]);
-  route([RE[0], RE[1] - 6.2], [-6, -12.5], [0, -15]);
-  // Meydan → 2. köprü → kapalı saha; köprüden şelaleye ve mağaraya
-  route([P.x + 10.9, P.z], [b2w[0], b2w[1]]);
-  route([b2e[0], b2e[1]], [H.x - H.hw - 1.5, H.z]);
-  route([b2e[0], b2e[1]], [WATERFALL.x + 10, RIVER[0][1] - 6]);
-  route([H.x - H.hw + 2, H.z - H.hd - 1.5], [TUNNEL[0][0], TUNNEL[0][1] - 2]);
-  route([H.x - H.hw - 1.5, H.z + 4], [TUNNEL[0][0] - 1, TUNNEL[0][1] - 1]);
-  // Meydan → kürsü, meydan → mangal
-  route([P.x + 7.9, P.z + 7.6], [FAME.x - 3.4, FAME.z - 0.6]);
-  route([P.x - 2, P.z + 10.9], [GROVE_SIGN.x, GROVE_SIGN.z - 1.5]);
-  // Sinema → sakura; sinema → tank → saha
-  route([12, -12], [SAKURA.x - 8.4, SAKURA.z + 6.6]);
-  route([22, -14], [TANK_PARK.x - 5, TANK_PARK.z]);
-  route([TANK_PARK.x, TANK_PARK.z + 5], [H.x + 4, H.z - H.hd - 1.5]);
-  // Casinonun ön meydanı → sinema–tank yolu ve tank parkı
-  // Şehre giden asfaltın köydeki başı → sinema–tank yolu ve tank parkı
-  const [roadX, roadZ] = ROAD_VILLAGE_GATE;
-  route([roadX - 4.5, roadZ + 1], [60, 4.7]);
-  route([roadX - 1, roadZ + 5.2], [TANK_PARK.x + 2, TANK_PARK.z - 5]);
+  // Kırık çizgi boyunca yol (patikalar walkways.ts'te: NPC yayalar da aynı çizgilerde yürür)
+  for (const pts of villagePaths()) for (let i = 0; i < pts.length - 1; i++) path(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
 }
 
 function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matrix4[]): void {
@@ -1115,6 +1077,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
   scene.add(town.group);
   const cami = mosque(b);
   scene.add(cami.group);
+  const vendors = simitci(b);
   const ring = ringTrack(b);
   scene.add(ring.group);
   const shop = garage(b);
@@ -1250,7 +1213,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     colliders: b.colliders,
     seats: b.seats,
     carColliders: b.carColliders,
-    npcs: [...town.npcs, ...cas.npcs],
+    npcs: [...town.npcs, ...cas.npcs, ...vendors],
     ring,
     garage: shop,
     roomAt(x: number, z: number) {

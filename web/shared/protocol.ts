@@ -392,7 +392,10 @@ export type ServerEvent =
   | { t: "quest"; completed: QuestDone[] }
   | { t: "profile"; sid: number; name: string; profile: Profile | null; error?: string }
   | ({ t: "stage" } & StageState)
-  | { t: "season"; season: string; top: { id: string; name: string; kills: number; wins: number }[] };
+  | { t: "season"; season: string; top: { id: string; name: string; kills: number; wins: number }[] }
+  // ---- NPC şehir (feat/npc-sehir) ----
+  /** Araba bir NPC yayaya çarptı: herkes savrulup düşmesini görür (`by` çarpan). */
+  | { t: "pedhit"; id: number; vx: number; vz: number; by: number };
 
 /** İstemcinin gönderdiği JSON olaylar. */
 export type ClientEvent =
@@ -500,7 +503,10 @@ export type ClientEvent =
   | { t: "ride"; m: number }
   | { t: "season" }
   | { t: "bmode"; mode: BattleMode }
-  | { t: "skin"; skin: string };
+  | { t: "skin"; skin: string }
+  // ---- NPC şehir (feat/npc-sehir) ----
+  /** Arabanla NPC yayaya çarptın (yaya kimliği ve arabanın hızı). */
+  | { t: "pedhit"; id: number; vx: number; vz: number };
 
 /** Konum mesajı: durum + konumun ait olduğu an (gönderenin sunucu saati tahmini). */
 export const STATE_BYTES = 16;
