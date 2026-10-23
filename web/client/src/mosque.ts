@@ -132,7 +132,7 @@ export class MosqueClient {
     }
     if (this.debugT !== null) {
       (me as AvatarView).namaz = { start: time - this.debugT, rekat: 4 };
-      (me as AvatarView).poseYaw = Math.PI / 2; // yandan görünsün
+      (me as AvatarView).poseYaw = Number(new URLSearchParams(location.search).get("pozaci") ?? Math.PI / 2); // yandan görünsün
     }
     else if (!views.has(net.you)) (me as AvatarView).namaz = null;
     for (const r of remotes.map.values()) {

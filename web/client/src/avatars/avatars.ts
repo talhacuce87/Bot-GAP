@@ -77,6 +77,7 @@ export const TRICK_ANIM = 0.55;
 /**
  * Namaz duruşları: gövdenin kalçadan öne yatışı (rad), kalçanın yerden yüksekliği (m), bacak ve kol açıları,
  * kolların içe dönüşü ve gövdenin yana dönüşü (selam). Kalça (paketin 0.525'i × CHIBI_SCALE) yerinde kalır.
+ * Chibi kolları dinlenirken A-pozunda (~40° dışa açık): dümdüz aşağı için içe ~0.65, önde birleşmek için ~1.5.
  */
 const HIP = 0.525 * 0.72;
 interface PrayPose {
@@ -87,19 +88,24 @@ interface PrayPose {
   roll: number;
   yaw: number;
 }
-const KADE: PrayPose = { tilt: 0.05, hip: 0.2, leg: 0.98, arm: -0.55, roll: 0.25, yaw: 0 };
+// Oturuş: diz üstü, eller dizlerde (az öne, içe)
+const KADE: PrayPose = { tilt: 0.05, hip: 0.2, leg: 0.98, arm: -0.6, roll: 0.95, yaw: 0 };
 const PRAY_POSES: Record<Posture | "abdest", PrayPose> = {
-  tekbir: { tilt: 0, hip: HIP, leg: 0, arm: -2.7, roll: 0, yaw: 0 },
-  kiyam: { tilt: 0, hip: HIP, leg: 0, arm: -0.75, roll: 0.55, yaw: 0 },
-  ruku: { tilt: 1.2, hip: HIP, leg: -1.2, arm: -1.1, roll: 0.05, yaw: 0 },
-  kavme: { tilt: 0, hip: HIP, leg: 0, arm: -0.05, roll: 0, yaw: 0 },
+  // Tekbir: eller kulak hizasında (yukarı, biraz dışa)
+  tekbir: { tilt: 0, hip: HIP, leg: 0, arm: -2.8, roll: -0.55, yaw: 0 },
+  // Kıyam: eller göbeğin altında bağlı (kollar az öne, çok içe: önden bakınca kesişir)
+  kiyam: { tilt: 0, hip: HIP, leg: 0, arm: -0.95, roll: 1.5, yaw: 0 },
+  // Rükû: sırt düz, eller dizlerde
+  ruku: { tilt: 1.3, hip: HIP, leg: -1.3, arm: -1.05, roll: 0.65, yaw: 0 },
+  kavme: { tilt: 0, hip: HIP, leg: 0, arm: -0.05, roll: 0.65, yaw: 0 },
   // Secde: kalça yukarıda (diz üstü), baş yerde; kollar başın önünde yere
-  secde: { tilt: 1.72, hip: 0.42, leg: -1.72, arm: -1.95, roll: 0.15, yaw: 0 },
+  secde: { tilt: 1.72, hip: 0.42, leg: -1.72, arm: -1.95, roll: 0.7, yaw: 0 },
   celse: KADE,
   kade: KADE,
-  selamR: { ...KADE, yaw: -0.6 },
-  selamL: { ...KADE, yaw: 0.6 },
-  abdest: { tilt: 0.45, hip: 0.22, leg: 0.98, arm: -1.3, roll: 0.35, yaw: 0 },
+  // Selam: başla birlikte omuzlar hafifçe sağa, sonra sola
+  selamR: { ...KADE, yaw: -0.35 },
+  selamL: { ...KADE, yaw: 0.35 },
+  abdest: { tilt: 0.45, hip: 0.22, leg: 0.98, arm: -1.3, roll: 1.0, yaw: 0 },
 };
 const ABDEST_ANIM = 4.5;
 const _pose: PrayPose = { tilt: 0, hip: HIP, leg: 0, arm: 0, roll: 0, yaw: 0 };

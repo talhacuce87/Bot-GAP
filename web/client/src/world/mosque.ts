@@ -118,8 +118,11 @@ function drawBoard(g: CanvasRenderingContext2D, now: number): void {
 
 export function mosque(b: Builder): Mosque {
   const group = new THREE.Group();
-  /** 0–3 harim duvarları (ön, kıble, batı, doğu), 4 çatı/kubbeler, 5 iç mekân, 6 kubbenin iç yüzü. */
-  const geos: THREE.BufferGeometry[][] = [[], [], [], [], [], [], []];
+  /**
+   * 0–3 harim duvarları (ön, kıble, batı, doğu), 4 çatı/kubbeler/cephe, 5 iç mekân, 6 kubbenin iç yüzü,
+   * 7–10 duvarların iç kaplaması (çini, krem sıva, vitray; iç ışıkla aydınlanır, duvarıyla birlikte gizlenir).
+   */
+  const geos: THREE.BufferGeometry[][] = Array.from({ length: 11 }, () => []);
   let g = 4;
   const add = (geo: THREE.BufferGeometry, color: string, m: THREE.Matrix4, jitter = 0.03) => geos[g].push(part(geo, color, m, jitter, b.rand));
   /** Dış cephe (avlu, minare, şadırvan, revak): gece projektörle aydınlanır. */
@@ -285,6 +288,7 @@ export function mosque(b: Builder): Mosque {
     g = side;
     const ry = [0, Math.PI, Math.PI / 2, -Math.PI / 2][side];
     const len = W * 2;
+    const half = len / 2;
     const P = (u: number, d: number): [number, number] => {
       // u duvar boyunca, d dışa doğru (duvarın ortasından)
       if (side === 0) return [u, -W + T / 2 - d];
@@ -294,10 +298,18 @@ export function mosque(b: Builder): Mosque {
     };
     const piece = (w: number, h: number, dep: number, color: string, u: number, y: number, d = 0, jitter = 0.03) => {
       const [x, z] = P(u, d);
-      add(new THREE.BoxGeometry(w, h, dep), color, L(x, y, z, ry), jitter);
+      // İç yüzdeki parçalar (d < 0) duvarın iç kaplamasına
+      geos[d < 0 ? side + 7 : side].push(part(new THREE.BoxGeometry(w, h, dep), color, L(x, y, z, ry), jitter, b.rand));
+    };
+    /** İç kaplama şeridi (y0–y1): kapı boşluğu açık kalır. */
+    const lining = (y0: number, y1: number, color: string, d: number, jitter = 0.02) => {
+      const inner = half - T;
+      if (door > 0 && y0 < doorH) {
+        for (const sg of [-1, 1]) piece(inner - door, y1 - y0, 0.04, color, sg * (door + (inner - door) / 2), (y0 + y1) / 2, d, jitter);
+        if (y1 > doorH) piece(door * 2, y1 - doorH, 0.04, color, 0, (doorH + y1) / 2, d, jitter);
+      } else piece(inner * 2, y1 - y0, 0.04, color, 0, (y0 + y1) / 2, d, jitter);
     };
     // Duvar gövdesi (kapı boşluğu dahil)
-    const half = len / 2;
     for (const s of [-1, 1]) {
       const w = half - door;
       piece(w, H, T, stone(), s * (door + w / 2), H / 2);
@@ -317,10 +329,14 @@ export function mosque(b: Builder): Mosque {
         piece(1.2, h, 0.08, b.rand() > 0.5 ? "#a9d6ff" : "#f5d98c", u, y, -T / 2 - 0.03, 0);
       }
     }
-    // İç yüz: alt kuşak İznik çinisi (mavi-beyaz), üstü krem
-    piece(len - T * 2, 3.2, 0.06, TILE, 0, 1.6, -T / 2 - 0.02, 0.1);
-    for (let u = -half + T + 0.6; u < half - T; u += 1.2) piece(0.5, 0.5, 0.07, "#f4f0e6", u, 1.6, -T / 2 - 0.035, 0);
-    piece(len - T * 2, 0.18, 0.08, GOLD, 0, 3.25, -T / 2 - 0.03, 0);
+    // İç yüz: alt kuşak İznik çinisi (mavi-beyaz desen), altın şerit, üstü krem sıva
+    lining(0, 3.2, TILE, -T / 2 - 0.02, 0.1);
+    for (let u = -half + T + 0.6; u < half - T; u += 1.2) {
+      if (door > 0 && Math.abs(u) < door + 0.3) continue;
+      piece(0.5, 0.5, 0.05, "#f4f0e6", u, 1.6, -T / 2 - 0.045, 0);
+    }
+    lining(3.15, 3.35, GOLD, -T / 2 - 0.03, 0);
+    lining(3.35, H, "#f3ede0", -T / 2 - 0.012);
   };
   harimWall(0, 1.8, 5.6);
   harimWall(1, 0, 0);
@@ -488,14 +504,18 @@ export function mosque(b: Builder): Mosque {
   // ------------------------------------------------------------------
   const flood = { value: 0.2 };
   const inner = { value: 0.3 };
-  const wallMats: THREE.MeshLambertMaterial[] = [];
+  /** Her duvar: dış gövde (cephe ışığı) ve iç kaplama (iç ışık); ikisi birlikte solup gizlenir. */
+  const walls: { mats: THREE.MeshLambertMaterial[]; meshes: THREE.Mesh[] }[] = [];
   for (let i = 0; i < 4; i++) {
-    const m = floodMaterial(flood, { transparent: true, opacity: 1 });
-    wallMats.push(m);
-    const mesh = new THREE.Mesh(mergeGeometries(geos[i]), m);
-    mesh.castShadow = mesh.receiveShadow = true;
-    mesh.matrixAutoUpdate = false;
-    group.add(mesh);
+    const outer = floodMaterial(flood, { transparent: true, opacity: 1 });
+    const lined = floodMaterial(inner, { transparent: true, opacity: 1 });
+    const meshes = [new THREE.Mesh(mergeGeometries(geos[i]), outer), new THREE.Mesh(mergeGeometries(geos[i + 7]), lined)];
+    for (const mesh of meshes) {
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      group.add(mesh);
+    }
+    walls.push({ mats: [outer, lined], meshes });
   }
   const roof = new THREE.Mesh(mergeGeometries(geos[4]), floodMaterial(flood, { side: THREE.DoubleSide }));
   roof.castShadow = roof.receiveShadow = true;
@@ -523,8 +543,9 @@ export function mosque(b: Builder): Mosque {
   const boardTex = new THREE.CanvasTexture(boardCanvas);
   boardTex.colorSpace = THREE.SRGBColorSpace;
   const boardMat = new THREE.MeshLambertMaterial({ map: boardTex, emissive: "#ffffff", emissiveMap: boardTex, emissiveIntensity: 0.45 });
-  for (const at of [L(-6, 3.6, -HARIM + 0.08), L(-6, 2.6, -W - 0.06, Math.PI)]) {
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3), boardMat);
+  // Ön duvarda iki pencerenin arasındaki ayakta (pencereler x −7.7 ve −4.5'te)
+  for (const at of [L(-6.1, 3.4, -HARIM + 0.08), L(-6.1, 2.6, -W - 0.06, Math.PI)]) {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.25), boardMat);
     mesh.applyMatrix4(at);
     mesh.matrixAutoUpdate = false;
     group.add(mesh);
@@ -558,11 +579,14 @@ export function mosque(b: Builder): Mosque {
       const cam = camera ? mosqueLocal(camera.x, camera.z) : null;
       const k = 1 - Math.exp(-dt * 8);
       for (let i = 0; i < 4; i++) {
-        const target = inside && cam && cameraSide[i](cam) ? 0.15 : 1;
+        // Kamera duvarın tarafındaysa duvar tamamen kaybolur (yarı saydam katmanlar havada asılı kalmasın)
+        const target = inside && cam && cameraSide[i](cam) ? 0 : 1;
         opacity[i] += (target - opacity[i]) * k;
-        const m = wallMats[i];
-        m.opacity = opacity[i];
-        m.depthWrite = opacity[i] > 0.95;
+        for (const m of walls[i].mats) {
+          m.opacity = opacity[i];
+          m.depthWrite = opacity[i] > 0.95;
+        }
+        for (const mesh of walls[i].meshes) mesh.visible = opacity[i] > 0.03;
       }
       for (const m of levhaMats) m.opacity = Math.min(opacity[2], opacity[3]) > 0.5 ? 1 : 0.3;
     },
