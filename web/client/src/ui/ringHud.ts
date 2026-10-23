@@ -164,7 +164,7 @@ export class RingHud {
     }
 
     this.drawMap(race, f);
-    this.drawSpeed(f.speed);
+    drawSpeedo(this.speedo, f.speed);
     this.wrong.classList.toggle("show", phase === "racing" && f.wrongWay && mine.total === null);
 
     // Sonuçlar
@@ -241,47 +241,48 @@ export class RingHud {
       g.stroke();
     }
   }
+}
 
-  private drawSpeed(v: number): void {
-    const g = this.speedo.getContext("2d")!;
-    const dpr = this.speedo.width / 150;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, 150, 150);
-    const kmh = Math.abs(v) * 3.6, max = 80;
-    const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
-    g.lineCap = "round";
-    g.lineWidth = 10;
-    g.strokeStyle = "rgba(255,255,255,0.14)";
+/** Hız göstergesi (km/sa): yarışta ve normal sürüşte aynı kadran. `v` m/sn. */
+export function drawSpeedo(canvas: HTMLCanvasElement, v: number): void {
+  const g = canvas.getContext("2d")!;
+  const dpr = canvas.width / 150;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, 150, 150);
+  const kmh = Math.abs(v) * 3.6, max = 80;
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+  g.lineCap = "round";
+  g.lineWidth = 10;
+  g.strokeStyle = "rgba(255,255,255,0.14)";
+  g.beginPath();
+  g.arc(75, 78, 58, a0, a1);
+  g.stroke();
+  const t = Math.min(1, kmh / max);
+  const grad = g.createLinearGradient(20, 0, 130, 0);
+  grad.addColorStop(0, "#3fa9ff");
+  grad.addColorStop(0.7, "#ffd23f");
+  grad.addColorStop(1, "#ff3b3b");
+  g.strokeStyle = grad;
+  g.beginPath();
+  g.arc(75, 78, 58, a0, a0 + (a1 - a0) * t);
+  g.stroke();
+  // Çentikler (10 km/s)
+  g.lineWidth = 2;
+  g.strokeStyle = "rgba(255,255,255,0.5)";
+  for (let k = 0; k <= max; k += 10) {
+    const a = a0 + (a1 - a0) * (k / max);
     g.beginPath();
-    g.arc(75, 78, 58, a0, a1);
+    g.moveTo(75 + Math.cos(a) * 44, 78 + Math.sin(a) * 44);
+    g.lineTo(75 + Math.cos(a) * 49, 78 + Math.sin(a) * 49);
     g.stroke();
-    const t = Math.min(1, kmh / max);
-    const grad = g.createLinearGradient(20, 0, 130, 0);
-    grad.addColorStop(0, "#3fa9ff");
-    grad.addColorStop(0.7, "#ffd23f");
-    grad.addColorStop(1, "#ff3b3b");
-    g.strokeStyle = grad;
-    g.beginPath();
-    g.arc(75, 78, 58, a0, a0 + (a1 - a0) * t);
-    g.stroke();
-    // Çentikler (10 km/s)
-    g.lineWidth = 2;
-    g.strokeStyle = "rgba(255,255,255,0.5)";
-    for (let k = 0; k <= max; k += 10) {
-      const a = a0 + (a1 - a0) * (k / max);
-      g.beginPath();
-      g.moveTo(75 + Math.cos(a) * 44, 78 + Math.sin(a) * 44);
-      g.lineTo(75 + Math.cos(a) * 49, 78 + Math.sin(a) * 49);
-      g.stroke();
-    }
-    g.fillStyle = "#fff";
-    g.textAlign = "center";
-    g.font = "900 38px system-ui, sans-serif";
-    g.fillText(String(Math.round(kmh)), 75, 86);
-    g.font = "700 12px system-ui, sans-serif";
-    g.fillStyle = "rgba(255,255,255,0.7)";
-    g.fillText("km/sa", 75, 106);
   }
+  g.fillStyle = "#fff";
+  g.textAlign = "center";
+  g.font = "900 38px system-ui, sans-serif";
+  g.fillText(String(Math.round(kmh)), 75, 86);
+  g.font = "700 12px system-ui, sans-serif";
+  g.fillStyle = "rgba(255,255,255,0.7)";
+  g.fillText("km/sa", 75, 106);
 }
 
 function esc(s: string): string {

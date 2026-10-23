@@ -24,7 +24,7 @@ import type { Player } from "./player";
 import { settings, updateSettings } from "./settings";
 import { BoardGameUi } from "./ui/boardGame";
 import { CasinoUi, fmt } from "./ui/casino/casinoUi";
-import { RingHud } from "./ui/ringHud";
+import { drawSpeedo, RingHud } from "./ui/ringHud";
 import { Vehicles } from "./vehicles";
 import { GRID, GRID_REACH, lightsAt, RACE_LAPS, type RingView, trackAt, trackProject } from "../../shared/ring";
 import type { Hud } from "./ui/hud";
@@ -215,12 +215,19 @@ export class Features {
   private smokeAt = 0;
   private lastCarV = 0;
   private hadCar = false;
+  /** Sürerken sol altta hız göstergesi (yarışta yarışın kendi göstergesi var). */
+  private speedo: HTMLCanvasElement;
+  private shownKmh = -1;
 
   constructor(private c: FeatureContext) {
     const { world, net, hud, hudRoot, me } = c;
     world.scene.add(this.companions.group, this.fireworks.points);
     this.cityLife = new CityLife(c.lowPower, world.seats);
     world.scene.add(this.smoke.mesh);
+    this.speedo = document.createElement("canvas");
+    this.speedo.className = "drive-speedo";
+    this.speedo.width = this.speedo.height = 150 * Math.min(2, devicePixelRatio || 1);
+    hudRoot.append(this.speedo);
     // Arabayla sert çarpma: ses, 💥, hasar (seviye değişince herkese)
     me.onCrash = (speed) => {
       const k = Math.min(1, speed / 14);
@@ -1473,6 +1480,17 @@ export class Features {
       this.damage = 0;
       net.send({ t: "cardmg", d: 0 });
       hud.toast("🔧 Araban onarıldı.");
+    }
+    // Hız göstergesi: arabadayken (GAP Ring yarışında yarışın göstergesi çıkar)
+    const inRing = !!this.ring && this.ring.phase !== "idle" && this.ring.racers.some((r) => r.sid === net.you);
+    const showSpeed = !!me.car && !inRing;
+    this.speedo.classList.toggle("show", showSpeed);
+    if (showSpeed) {
+      const kmh = Math.round(Math.abs(me.car!.v) * 3.6);
+      if (kmh !== this.shownKmh) {
+        this.shownKmh = kmh;
+        drawSpeedo(this.speedo, me.car!.v);
+      }
     }
     // Motorlar: sen, yakındaki oyuncu arabaları ve NPC arabalar
     const list = this.engineSources;

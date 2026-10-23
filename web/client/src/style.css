@@ -5974,3 +5974,32 @@ b.cz-num {
 .namaz-banner.show {
   display: block;
 }
+
+/* Sürerken hız göstergesi (sol alt; GAP Ring yarışında yarışın kendi göstergesi çıkar) */
+.drive-speedo {
+  position: absolute;
+  left: 14px;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 64px);
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(10, 12, 18, 0.8) 60%, rgba(10, 12, 18, 0.5));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 0.25s, transform 0.25s;
+}
+.drive-speedo.show {
+  opacity: 1;
+  transform: scale(1);
+}
+.tuning-open .drive-speedo {
+  display: none;
+}
+@media (max-width: 700px), (pointer: coarse) {
+  .drive-speedo {
+    width: 92px;
+    height: 92px;
+  }
+}
