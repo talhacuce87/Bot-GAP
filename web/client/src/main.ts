@@ -749,6 +749,7 @@ async function start(): Promise<void> {
   });
 
   const pushers: { x: number; z: number; r: number }[] = [];
+  const viewDir = new THREE.Vector3();
   let last = performance.now();
   const frame = (now: number) => {
     if (!limiter.ready(now, settings.fpsCap)) return;
@@ -759,7 +760,7 @@ async function start(): Promise<void> {
     const time = now / 1000;
     renderer.info.reset();
 
-    world.update(time, me, camera.position);
+    world.update(time, me, camera.position, camera.getWorldDirection(viewDir));
     input.poll();
     // İnşa modunda rakamlar blok seçer (features.keys tüketir)
     const emote = features.building ? -1 : input.consumeEmote();

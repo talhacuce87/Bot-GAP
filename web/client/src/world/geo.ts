@@ -68,14 +68,14 @@ export function instanced(geo: THREE.BufferGeometry, material: THREE.Material, m
 /**
  * Dünyaya serpilmiş statik örnekler bölgelere bölünür (bölge başına bir InstancedMesh): kameranın ve gölge
  * kutusunun dışındaki bölgeler hiç çizilmez. Tek mesh'te bütün dünyanın ağaçları her kare (iki kez: gölge
- * dahil) çiziliyordu. `maxDist` verilirse `cullFar` o uzaklıktan ötedeki bölgeleri gizler (sisin ya da
- * shader'daki gömülmenin arkası zaten görünmez).
+ * dahil) çiziliyordu. `maxDist` verilirse `cullFar` o uzaklıktan ötedeki bölgeleri gizler (shader'daki
+ * gömülmenin ya da `fog: true` ile sisin arkası zaten görünmez).
  */
 export function instancedRegions(
   geo: THREE.BufferGeometry,
   material: THREE.Material,
   matrices: THREE.Matrix4[],
-  opts: { cell?: number; colors?: THREE.Color[]; maxDist?: number } = {},
+  opts: { cell?: number; colors?: THREE.Color[]; maxDist?: number; fog?: boolean } = {},
 ): THREE.Group {
   const cell = opts.cell ?? 128;
   const buckets = new Map<string, number[]>();
@@ -87,6 +87,7 @@ export function instancedRegions(
   });
   const group = new THREE.Group();
   group.userData.maxDist = opts.maxDist ?? Infinity;
+  group.userData.fog = !!opts.fog;
   for (const [key, list] of [...buckets].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const mesh = instanced(geo, material, list.map((i) => matrices[i]));
     if (opts.colors) list.forEach((i, k) => mesh.setColorAt(k, opts.colors![i]));
@@ -96,13 +97,19 @@ export function instancedRegions(
   return group;
 }
 
-/** Kamera konumuna göre `maxDist` ötesindeki bölgeleri gizler (kare başına; birkaç düzine mesh). */
-export function cullFar(group: THREE.Group, x: number, z: number): void {
-  const max = group.userData.maxDist as number;
+/**
+ * `maxDist` ötesindeki bölgeleri gizler (kare başına; birkaç düzine mesh). Gömülme yatay uzaklıkla ölçülür;
+ * sis ise görüş derinliğiyle (`userData.fog`): ekranın kenarındaki nesnenin derinliği uzaklığından kısa,
+ * oradakiler daha uzaktan görünür. `view` kameranın bakış yönü (birim).
+ */
+export function cullFar(group: THREE.Group, cam: THREE.Vector3, view: THREE.Vector3): void {
+  const max = group.userData.maxDist as number, fog = group.userData.fog as boolean;
   for (const o of group.children) {
     // Örnekli mesh'te örneklerin küresi, düz mesh'te geometrininki
     const s = (o as THREE.InstancedMesh).boundingSphere ?? (o as THREE.Mesh).geometry.boundingSphere!;
-    o.visible = Math.hypot(s.center.x - x, s.center.z - z) - s.radius < max;
+    const dx = s.center.x - cam.x, dz = s.center.z - cam.z;
+    const d = fog ? dx * view.x + (s.center.y - cam.y) * view.y + dz * view.z : Math.hypot(dx, dz);
+    o.visible = d - s.radius < max;
   }
 }
 

@@ -49,7 +49,7 @@ export interface World {
   screen: THREE.Mesh;
   spawn: { x: number; z: number; rot: number };
   /** Kare başına: shader saati ve birkaç ucuz animasyon; `focus` oyuncunun konumu (gece ışıkları). */
-  update(time: number, focus?: { x: number; z: number }, camera?: THREE.Vector3): void;
+  update(time: number, focus?: { x: number; z: number }, camera?: THREE.Vector3, view?: THREE.Vector3): void;
   /** Biri şiş çevirdi: duman kabarır, köz parlar (`time`: döngü saati, sn). */
   grillBoost(time: number): void;
   sakura: SakuraGarden;
@@ -683,9 +683,6 @@ function grassAndFlowers(b: Builder, scene: THREE.Scene, extraGrass: THREE.Matri
   far.push(fm);
 }
 
-/** Ağaç, kaya, çalı ve leke bölgeleri bu uzaklıktan ötede çizilmez (açık havada sis 140 m'de tam). */
-const PROP_FAR = 150;
-
 function propMeshes(b: Builder, scene: THREE.Scene, far: THREE.Group[]): { bulbMaterial: THREE.MeshBasicMaterial } {
   const r = b.rand;
   const look = SEASON_LOOK[SEASON];
@@ -742,7 +739,7 @@ function propMeshes(b: Builder, scene: THREE.Scene, far: THREE.Group[]): { bulbM
     if (!b.props[kind].length) continue;
     // Ampul ve alevler sisten etkilenmez (gece uzaktan parlar): uzaklıkla gizlenmezler
     const glow = kind === "bulb" || kind === "flame";
-    const m = instancedRegions(geos[kind], materials[kind], b.props[kind], { cell: 160, maxDist: glow ? Infinity : PROP_FAR });
+    const m = instancedRegions(geos[kind], materials[kind], b.props[kind], { cell: 160, fog: true });
     m.traverse((o) => {
       o.castShadow = casters.includes(kind);
       o.receiveShadow = !glow;
@@ -779,7 +776,7 @@ function shadowsMesh(b: Builder, focus: { value: THREE.Vector3 }): THREE.Group {
       .replace("#include <map_fragment>", "#include <map_fragment>\ndiffuseColor.a *= vBlobFade;");
   };
   material.customProgramCacheKey = () => "blob-fade";
-  const m = instancedRegions(new THREE.PlaneGeometry(1, 1), material, mats, { cell: 160, maxDist: PROP_FAR });
+  const m = instancedRegions(new THREE.PlaneGeometry(1, 1), material, mats, { cell: 160, fog: true });
   m.traverse((o) => (o.renderOrder = 1));
   return m;
 }
@@ -1118,7 +1115,11 @@ export function buildWorld(opts: WorldOptions = {}): World {
   nature(b);
 
   // Statik dünya 96 m'lik karolarda: görünmeyen ve gölge kutusunun dışındaki karolar çizilmez (tiles.ts)
-  scene.add(tiledStatics(b.statics, withWetness(withCloudShadows(new THREE.MeshLambertMaterial({ vertexColors: true })))));
+  const staticTiles = tiledStatics(b.statics, withWetness(withCloudShadows(new THREE.MeshLambertMaterial({ vertexColors: true }))));
+  scene.add(staticTiles);
+  // Sisin tamamen yuttuğu karolar ufuk renginde düz bir leke: çizilmez (cullFar)
+  staticTiles.userData.fog = true;
+  far.push(staticTiles);
   const { bulbMaterial } = propMeshes(b, scene, far);
   grassAndFlowers(b, scene, garden.grass, far);
   scene.add(garden.petals);
@@ -1243,7 +1244,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     screen,
     lamps: lampField,
     spawn: { ...SPAWN },
-    update(time: number, focus?: { x: number; z: number }, camera?: THREE.Vector3) {
+    update(time: number, focus?: { x: number; z: number }, camera?: THREE.Vector3, view?: THREE.Vector3) {
       timeUniform.value = time;
       const dt = Math.min(0.25, Math.max(0, time - lastTime));
       lastTime = time;
@@ -1271,7 +1272,10 @@ export function buildWorld(opts: WorldOptions = {}): World {
       music += ((musicOn ? 1 : 0) - music) * 0.08;
       speakers.update(time, music);
       cloudMesh.rotation.y = time * 0.004;
-      if (camera) for (const g of far) cullFar(g, camera.x, camera.z);
+      // Sise bağlı gruplar sisin tam olduğu derinlikten ötede çizilmez (hava durumuyla değişir)
+      const fogFar = (scene.fog as THREE.Fog).far + 4;
+      for (const g of far) if (g.userData.fog) g.userData.maxDist = fogFar;
+      if (camera && view) for (const g of far) cullFar(g, camera, view);
       pd.update(time);
       const boost = Math.min(1, Math.max(0, (boostUntil - time) / 4));
       smokeBoost.value = boost;
