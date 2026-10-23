@@ -49,6 +49,9 @@ import { BuildWorld } from "./world/buildWorld";
 import type { Seat } from "./world/builder";
 import { BuildMode } from "./ui/buildUi";
 import { WeatherFx } from "./world/weather";
+import { CityLife } from "./npcs/cityLife";
+import { PED_SID_BASE } from "./npcs/pedestrians";
+import type { ChibiPack } from "./avatars/chibiPack";
 
 /** Yakındaki etkileşim (F/G düğmesi). */
 export interface FeatureAct {
@@ -86,6 +89,11 @@ export interface FeatureContext {
   cinemaOn(): boolean;
   /** Dükkân gardırobu: berberde yalnızca saç, modada yalnızca kıyafet. */
   shopWardrobe(shop: "barber" | "fashion"): void;
+  // ---- NPC şehir (feat/npc-sehir) ----
+  /** İnmiş chibi paketi (NPC kalabalığı kıyafetleri için); henüz inmediyse null. */
+  chibiPack(): ChibiPack | null;
+  /** Dünyada konuşma balonu (NPC'ler: PED_SID_BASE + kimlik). */
+  bubble(sid: number, text: string): void;
 }
 
 /** Kişisel saat ayarı → saat; sinema modu en az bu kadar karanlık. */
@@ -194,10 +202,20 @@ export class Features {
   /** Casinonun içindeyken bakiye etiketi. */
   private casinoChip: HTMLDivElement;
   private inCasino = false;
+  /** NPC yayalar, güvercinler, sokak kedileri. */
+  private cityLife: CityLife;
 
   constructor(private c: FeatureContext) {
     const { world, net, hud, hudRoot, me } = c;
     world.scene.add(this.companions.group, this.fireworks.points);
+    this.cityLife = new CityLife(c.lowPower);
+    world.scene.add(this.cityLife.group);
+    net.onPedhit = (id, vx, vz, by) => {
+      const line = this.cityLife.hit(id, vx, vz, performance.now() / 1000);
+      if (!line) return;
+      c.bubble(PED_SID_BASE + id, line);
+      if (by === net.you) sfx.bump(0.6);
+    };
     this.weatherFx = new WeatherFx(c.lowPower);
     world.scene.add(this.weatherFx.group);
     // Mahalle: bloklar sahnede, çarpışmaya da katılır
@@ -1045,6 +1063,10 @@ export class Features {
     this.updateRadios(serverNow);
     this.updateCasino(now);
     this.updateRace(serverNow);
+    this.cityLife.update({
+      pack: this.c.chibiPack(), serverMs: serverNow, time, dt, camera: camera.position, hour: world.hour(), me, remotes,
+      send: (ev) => net.send(ev),
+    });
     this.vehicles.update(dt, time);
 
     // Saat: kişisel ayar > sinema modu (gündüzse) > dünyanın saati (!saat) > gerçek saat
@@ -1405,7 +1427,13 @@ export class Features {
     c.begin();
     if (!me.driving) c.push(net.you, me, settings.pet || null, time, dt);
     for (const r of remotes.map.values()) if (r.hasData) c.push(r.info.sid, r, r.info.pet, time, dt);
+    this.cityLife.pushCats(c, net.serverNow(), time, dt, this.c.camera.position);
     c.end();
+  }
+
+  /** Konuşma balonunun yeri: NPC yayalar (oyuncular main.ts'te). */
+  anchor(sid: number): { x: number; z: number; y: number } | null {
+    return this.cityLife.anchor(sid);
   }
 
   /** Fotoğraf filtresi (0 yok): son işlem zorla açılır. */

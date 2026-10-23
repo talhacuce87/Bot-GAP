@@ -21,6 +21,10 @@ const PAIR_TTL_MS = 10_000;
 const PAIR_COOLDOWN_MS = 4000;
 const FIREWORKS_COOLDOWN_MS = 60_000;
 const RIDE_MIN_MS = 4000;
+/** NPC yayaya çarpma: kişi başı bekleme, aynı yayaya tekrar çarpılma beklemesi, yaya kimliği sınırı. */
+const PEDHIT_SID_MS = 300;
+const PEDHIT_PED_MS = 3000;
+const PED_MAX = 1024;
 
 export class WorldGames {
   readonly tables: Tables;
@@ -44,6 +48,9 @@ export class WorldGames {
   /** Bu bağlantıda Sakura Bahçesi'ne girenler (görev bir kez). */
   private sakura = new Set<number>();
   private lastScan = 0;
+  /** NPC yaya çarpmaları: oyuncunun son bildirimi ve yayanın son düşüşü (sunucu ms). */
+  private lastPedHit = new Map<number, number>();
+  private pedDown = new Map<number, number>();
 
   constructor(
     private room: Room,
@@ -92,6 +99,7 @@ export class WorldGames {
     this.sakura.delete(sid);
     this.lastPair.delete(sid);
     this.lastRide.delete(sid);
+    this.lastPedHit.delete(sid);
   }
 
   tick(now: number): void {
@@ -157,6 +165,21 @@ export class WorldGames {
     this.room.broadcast({ t: "pair", a: req.from, b: sid, kind: req.kind });
     this.report(req.from, req.kind);
     this.report(sid, req.kind);
+  }
+
+  /**
+   * Arabasıyla NPC yayaya çarptı (yayalar her istemcide sunucu saatinden aynı yerde): yalnızca araba sürerken,
+   * hız sınırlı; herkese duyurulur, herkes aynı yayanın savrulduğunu görür.
+   */
+  private pedHit(sid: number, id: number, vx: number, vz: number, now: number): void {
+    const p = this.room.players.get(sid);
+    if (!p || !p.info.car || p.info.spectator || !Number.isInteger(id) || id < 0 || id >= PED_MAX) return;
+    if (!Number.isFinite(vx) || !Number.isFinite(vz)) return;
+    if (now - (this.lastPedHit.get(sid) ?? -Infinity) < PEDHIT_SID_MS || now - (this.pedDown.get(id) ?? -Infinity) < PEDHIT_PED_MS) return;
+    this.lastPedHit.set(sid, now);
+    this.pedDown.set(id, now);
+    const clamp = (v: number) => Math.round(Math.max(-25, Math.min(25, v)) * 10) / 10;
+    this.room.broadcast({ t: "pedhit", id, vx: clamp(vx), vz: clamp(vz), by: sid });
   }
 
   /** Oyuncunun bulunduğu saha: stadyumdaysa stadyum, yoksa salon. */
@@ -315,6 +338,9 @@ export class WorldGames {
         this.report(sid, "ride", Math.min(Math.round(m), 120));
         return true;
       }
+      case "pedhit":
+        this.pedHit(sid, num(msg.id), num(msg.vx), num(msg.vz), now);
+        return true;
       default:
         return false;
     }

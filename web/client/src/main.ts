@@ -721,6 +721,9 @@ async function start(): Promise<void> {
     life, world, net, me, remotes, atlas, avatars, hud, hudRoot, input, emoteFx, session, camera, canvas, lowPower,
     renderNow: () => renderScene(0),
     shopWardrobe: (shop) => wardrobe.open(undefined, shop),
+    // ---- NPC şehir (feat/npc-sehir) ----
+    chibiPack: () => chibi.pack,
+    bubble: (sid, text) => bubbles.say(sid, text, performance.now()),
     say: (text) => net.send({ t: "chat", text }),
     battle: () => switchMode(true),
     music: () => (musicOn ? 1 : 0),
@@ -895,7 +898,7 @@ async function start(): Promise<void> {
     bubbles.update(now, camera, (sid) => {
       if (sid === net.you) return { x: me.x, z: me.z, y: bodyY(me) };
       const r = remotes.map.get(sid);
-      return r?.hasData && !r.leaving ? { x: r.x, z: r.z, y: bodyY(r) } : null;
+      return r?.hasData && !r.leaving ? { x: r.x, z: r.z, y: bodyY(r) } : features.anchor(sid);
     });
 
     hud.setPrompt(me.seated ? "stand" : me.nearSeat ? "sit" : "");

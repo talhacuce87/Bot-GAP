@@ -133,6 +133,8 @@ export class Net {
   onProfile: (sid: number, name: string, profile: Profile | null, error?: string) => void = () => {};
   onStage: (s: StageState) => void = () => {};
   onSeason: (season: string, top: { id: string; name: string; kills: number; wins: number }[]) => void = () => {};
+  /** NPC şehir: arabanın çarptığı yaya (herkese). */
+  onPedhit: (id: number, vx: number, vz: number, by: number) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -506,6 +508,9 @@ export class Net {
         break;
       case "pair":
         this.onPair(ev.a, ev.b, ev.kind);
+        break;
+      case "pedhit":
+        this.onPedhit(ev.id, ev.vx, ev.vz, ev.by);
         break;
       case "quest":
         this.onQuest(ev.completed);
