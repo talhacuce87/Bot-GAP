@@ -887,6 +887,9 @@ export class Features {
     if (this.volley.active && !this.c.input.touch) return [];
     const enter = this.vehicles.enterAct();
     if (enter) return [enter];
+    // Mahallede kapı: Minecraft gibi açılıp kapanır (herkes)
+    const door = me.seated ? null : this.buildWorld.doorNear(me.x, me.z, me.baseY);
+    if (door) return [{ key: "f", label: door.open ? "Kapıyı kapat 🚪" : "Kapıyı aç 🚪", act: `door:${door.plot}:${door.i}:${door.j}:${door.k}` }];
     // Futbol: top ayaktaysa ya da serbest top yakınsa vuruş; rakibin ayağındaysa müdahale
     const { pitch } = this.here();
     const ball = pitch.ball;
@@ -937,6 +940,11 @@ export class Features {
       // Şarj başlar: bırakınca vurulur (F'ye kısa dokunuş pas). Dokunmatikte hemen orta güçle.
       if (this.c.input.touch) this.kick(0.55, act === "lob" ? "lob" : this.finishing() ? "shot" : "pass");
       else this.charge = { key: act === "lob" ? "actG" : "actF", kind: act === "lob" ? "lob" : "shot", t: 0 };
+      return true;
+    }
+    if (act.startsWith("door:")) {
+      const [plot, i, j, k] = act.slice(5).split(":").map(Number);
+      net.send({ t: "bdoor", plot, i, j, k });
       return true;
     }
     if (act.startsWith("live:")) {
@@ -1126,6 +1134,11 @@ export class Features {
     world.setHour(hour);
 
     this.buildWorld.update(world.env.lights);
+    // İnşa lambaları gece ışığına (ızgaralı ışık; duvarlar gölge düşürür)
+    if (this.buildWorld.lightDirty && world.lamps) {
+      this.buildWorld.lightDirty = false;
+      world.lamps.setBuild(this.buildWorld.light.lamps, this.buildWorld.light.occ);
+    }
     this.build.update();
     this.race.update(dt, time, 1 - world.env.day);
     this.mosque.update(time);

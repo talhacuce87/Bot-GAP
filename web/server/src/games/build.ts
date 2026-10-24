@@ -7,7 +7,7 @@
 // bütün odaları (dünya, izleme odaları) aynı arsaları görür. Oda başına ayrı kopya olsaydı eski kopyası olan
 // oda kaydettiğinde yenisini ezerdi; oda kapanıp açılınca da kaydı yetişmemiş bloklar kaybolurdu.
 // Bot bağlı değilse (yerel geliştirme) arsalar yalnızca o odanın belleğinde, misafirler de inşa edebilir.
-import { type Block, blockDef, cellKey, decodeBlocks, encodeBlocks, inPlot, moveBlocks, PLOT_DB_BASE, plotOfDb, PLOTS, type PlotState } from "../../../shared/build";
+import { type Block, blockDef, cellKey, decodeBlocks, DOOR_OPEN, encodeBlocks, inPlot, moveBlocks, PLOT_DB_BASE, plotOfDb, PLOTS, type PlotState } from "../../../shared/build";
 import type { ServerEvent } from "../../../shared/protocol";
 import type { BotPost } from "../looks";
 import type { Conn, Room } from "../room";
@@ -313,6 +313,23 @@ export class Builds {
     }
     s.broadcast({ t: "bset", plot: id, i, j, k, b, r });
     void s.save(id);
+  }
+
+  /** Kapıyı aç / kapat: yalnızca sahibi değil, yanındaki herkes (Minecraft'taki gibi). */
+  door(sid: number, plot: number, i: number, j: number, k: number, now = Date.now()): void {
+    const pl = this.room.players.get(sid);
+    const s = this.bound, base = PLOTS[plot];
+    if (!pl || pl.info.spectator || !s?.loaded || !base || !inPlot(plot, i, j, k)) return;
+    const b = s.plots[plot].blocks.get(cellKey(i, j, k));
+    if (!b || blockDef(b.b)?.kind !== "door") return;
+    if (Math.hypot(pl.state.x - (base.x0 + i + 0.5), pl.state.z - (base.z0 + k + 0.5)) > 3.5) return;
+    const e = this.edits.get(sid);
+    if (e && now - e.at < 1000) {
+      if (++e.n > EDIT_RATE) return;
+    } else this.edits.set(sid, { at: now, n: 1 });
+    b.r ^= DOOR_OPEN;
+    s.broadcast({ t: "bset", plot, i, j, k, b: b.b, r: b.r });
+    void s.save(plot);
   }
 
   /** Arsayı boşalt (bütün blokları siler, arsa başkasına açılır). */

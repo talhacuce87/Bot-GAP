@@ -110,7 +110,8 @@ export function plotOfDb(db: number): number {
   return Number.isInteger(id) && id >= 0 && id < PLOTS.length ? id : -1;
 }
 
-export type BlockKind = "cube" | "slab" | "wedge" | "glass" | "door" | "lamp" | "plant" | "fence";
+/** glass: ince cam (Minecraft'taki glass pane gibi komşularına bağlanır); glassbox: saydam küp cam. */
+export type BlockKind = "cube" | "slab" | "wedge" | "glass" | "door" | "lamp" | "plant" | "fence" | "glassbox";
 
 export interface BlockDef {
   name: string;
@@ -139,7 +140,11 @@ export const BLOCKS: BlockDef[] = [
   { name: "Çiçek", emoji: "🌷", color: "#e85a6f", kind: "plant" },
   { name: "Çit", emoji: "🪵", color: "#d8c3a0", kind: "fence" },
   { name: "Siyah", emoji: "⬛", color: "#24262c", kind: "cube" },
+  { name: "Cam blok", emoji: "🧊", color: "#a9d8f0", kind: "glassbox" },
 ];
+
+/** Kapının yön bilgisinde açıklık biti (r & 3 yön, r & DOOR_OPEN açık): kalıcı, herkes görür. */
+export const DOOR_OPEN = 4;
 
 export function blockDef(id: number): BlockDef | undefined {
   return BLOCKS[id - 1];
@@ -187,7 +192,7 @@ export function decodeBlocks(plot: number, data: string): Block[] {
   if (!data) return out;
   for (const part of data.split(",")) {
     const [i, j, k, b, r] = part.split(".").map((s) => parseInt(s, 36));
-    if (inPlot(plot, i, j, k) && blockDef(b) && r >= 0 && r < 4) out.push({ i, j, k, b, r });
+    if (inPlot(plot, i, j, k) && blockDef(b) && r >= 0 && r < (blockDef(b)!.kind === "door" ? 8 : 4)) out.push({ i, j, k, b, r });
     if (out.length >= max) break;
   }
   return out;

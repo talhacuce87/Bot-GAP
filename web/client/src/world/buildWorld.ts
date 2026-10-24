@@ -1,4 +1,4 @@
-// Mahalle: arsaların blokları (tür başına tek InstancedMesh, gerektikçe büyür), arsa sınırları ve sahip
+// Mahalle: arsaların blokları (parça başına tek InstancedMesh, gerektikçe büyür), arsa sınırları ve sahip
 // tabelaları, bloklarla çarpışma (ızgara: duvarın içinden geçilmez, üstüne zıplanır). Değişince örnekler
 // toptan yeniden yazılır: kare başına maliyeti yok. İmlecin gösterdiği hücre arsanın ızgarasında yürünerek
 // bulunur (on binlerce örnekte mesh ışın testi yavaş kalır).
@@ -7,9 +7,9 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { STEP_UP } from "../../../shared/constants";
 import {
   type Block,
-  type BlockKind,
   BLOCKS,
   blockDef,
+  DOOR_OPEN,
   blockHeight,
   cellKey,
   decodeBlocks,
@@ -19,6 +19,7 @@ import {
   type PlotState,
 } from "../../../shared/build";
 import type { Vec2 } from "./colliders";
+import type { BuildOccupancy } from "./lamps";
 import { LEDGE } from "./colliders";
 import { part } from "./geo";
 
@@ -35,9 +36,41 @@ function centered(g: THREE.BufferGeometry, y = 0): THREE.BufferGeometry {
   return g.translate(0, y, 0);
 }
 
-/** Tür başına geometri: tabanı y=0'da, xz'de hücrenin ortasında. */
-function geometryFor(kind: BlockKind): THREE.BufferGeometry {
-  switch (kind) {
+/**
+ * Çizim parçaları: düz türler kendi geometrisiyle; ince cam direk + kollar (komşularına bağlanır), cam blok yüzleri
+ * (cam bloklar arasındaki yüz çizilmez, birleşik görünür) ve kapı (menteşesi sola ya da sağa).
+ */
+type MeshKey = "cube" | "slab" | "wedge" | "lamp" | "plant" | "fence" | "post" | "arm" | "gface" | "doorL" | "doorR";
+const MESHES: MeshKey[] = ["cube", "slab", "wedge", "lamp", "plant", "fence", "post", "arm", "gface", "doorL", "doorR"];
+/** Parça başına başlangıç örnek sayısı; dolunca mesh daha büyüğüyle değişir. */
+const CAP: Record<MeshKey, number> = {
+  cube: 16000, slab: 4000, wedge: 4000, lamp: 1000, plant: 1000, fence: 2000, post: 3000, arm: 6000, gface: 6000, doorL: 300, doorR: 300,
+};
+
+/**
+ * Minecraft tarzı ahşap kapı (iki blok boyu): çerçeve, üstte iki pencere, altta tahta çizgileri ve kol. Kol
+ * menteşenin karşısında: `handle` +1 sağda (menteşe solda), −1 solda.
+ */
+function doorGeometry(handle: 1 | -1): THREE.BufferGeometry {
+  const at = (x: number, y: number) => new THREE.Matrix4().makeTranslation(x, y, 0);
+  const wood = "#9a6a37", frame = "#6e4521", win = "#cfe9f5";
+  return mergeGeometries([
+    part(new THREE.BoxGeometry(0.92, 2, 0.1), wood, at(0, 1)),
+    part(new THREE.BoxGeometry(0.1, 2, 0.13), frame, at(-0.41, 1)),
+    part(new THREE.BoxGeometry(0.1, 2, 0.13), frame, at(0.41, 1)),
+    part(new THREE.BoxGeometry(0.92, 0.1, 0.13), frame, at(0, 1.95)),
+    part(new THREE.BoxGeometry(0.92, 0.1, 0.13), frame, at(0, 1.02)),
+    part(new THREE.BoxGeometry(0.92, 0.1, 0.13), frame, at(0, 0.05)),
+    part(new THREE.BoxGeometry(0.08, 0.86, 0.13), frame, at(0, 1.48)),
+    part(new THREE.BoxGeometry(0.29, 0.78, 0.115), win, at(-0.2, 1.48)),
+    part(new THREE.BoxGeometry(0.29, 0.78, 0.115), win, at(0.2, 1.48)),
+    ...[-0.18, 0, 0.18].map((x) => part(new THREE.BoxGeometry(0.03, 0.86, 0.12), frame, at(x, 0.53))),
+    part(new THREE.BoxGeometry(0.05, 0.16, 0.24), "#2e2e33", at(handle * 0.33, 1.0)),
+  ]);
+}
+
+function geometryFor(key: MeshKey): THREE.BufferGeometry {
+  switch (key) {
     case "cube":
       return centered(new THREE.BoxGeometry(1, 1, 1), 0.5);
     case "slab":
@@ -50,11 +83,18 @@ function geometryFor(kind: BlockKind): THREE.BufferGeometry {
       g.computeVertexNormals();
       return centered(g, 0.5);
     }
-    case "glass":
-      return centered(new THREE.BoxGeometry(1, 1, 0.12), 0.5);
-    case "door":
-      // İki blok boyunda kapı (üstündeki hücre boş bırakılır)
-      return centered(new THREE.BoxGeometry(0.92, 2, 0.12), 1);
+    case "post":
+      return centered(new THREE.BoxGeometry(0.12, 1, 0.12), 0.5);
+    case "arm":
+      // Ortadan +x kenarına uzanan ince cam (yönüne göre döner)
+      return new THREE.BoxGeometry(0.44, 1, 0.1).translate(0.28, 0.5, 0);
+    case "gface":
+      // Cam bloğun bir yüzü: +z'ye bakan, hücre ortasından yarım blok önde
+      return new THREE.PlaneGeometry(1, 1).translate(0, 0, 0.5);
+    case "doorL":
+      return doorGeometry(1);
+    case "doorR":
+      return doorGeometry(-1);
     case "lamp":
       return mergeGeometries([
         part(new THREE.CylinderGeometry(0.05, 0.07, 0.7, 6), "#2f3440", new THREE.Matrix4().makeTranslation(0, 0.35, 0)),
@@ -77,13 +117,40 @@ function geometryFor(kind: BlockKind): THREE.BufferGeometry {
   }
 }
 
-const KINDS: BlockKind[] = ["cube", "slab", "wedge", "glass", "door", "lamp", "plant", "fence"];
-/** Tür başına başlangıç örnek sayısı; dolunca mesh daha büyüğüyle değişir. */
-const CAP: Record<BlockKind, number> = {
-  cube: 16000, slab: 4000, wedge: 4000, glass: 3000, door: 500, lamp: 1000, plant: 1000, fence: 2000,
-};
+/** Yatay komşular: +x (doğu), −z (kuzey), −x (batı), +z (güney); kolun dönüş açısı yönle aynı sırada. */
+const DIRS: [number, number, number][] = [[1, 0, 0], [0, -1, Math.PI / 2], [-1, 0, Math.PI], [0, 1, -Math.PI / 2]];
+/** Cam bloğun yüzleri: komşu (di, dj, dk) ve düzlemin dönüşü (x, y). */
+const FACES: [number, number, number, number, number][] = [
+  [0, 0, 1, 0, 0], [1, 0, 0, 0, Math.PI / 2], [0, 0, -1, 0, Math.PI], [-1, 0, 0, 0, -Math.PI / 2], [0, 1, 0, -Math.PI / 2, 0], [0, -1, 0, Math.PI / 2, 0],
+];
 /** Işının arsada en çok yürüyeceği hücre. */
 const RAY_STEPS = 400;
+/** Gölge ızgarasının kapladığı alan: bütün arsalar. */
+const OCC = (() => {
+  const x0 = Math.min(...PLOTS.map((p) => p.x0)), z0 = Math.min(...PLOTS.map((p) => p.z0));
+  return { x0, z0, w: Math.max(...PLOTS.map((p) => p.x0 + p.size)) - x0, h: PLOT_H, d: Math.max(...PLOTS.map((p) => p.z0 + p.size)) - z0 };
+})();
+/** Gölge ızgarasında blok değerleri: tam dolu, cam (ışığın bir kısmını geçirir), alt yarısı dolu. */
+const OCC_SOLID = 255, OCC_GLASS = 200, OCC_HALF = 128;
+
+/** Bir örnek: konum, dönüş (y; yüzlerde x de) ve renk. */
+interface Inst {
+  x: number;
+  y: number;
+  z: number;
+  ry: number;
+  rx: number;
+  color: THREE.Color;
+}
+
+/** Kapı oyuncunun önünde mi (F ile açılır): arsa, hücre ve açık mı. */
+export interface DoorSpot {
+  plot: number;
+  i: number;
+  j: number;
+  k: number;
+  open: boolean;
+}
 
 export interface BuildHit {
   plot: number;
@@ -100,13 +167,17 @@ export interface BuildHit {
 export class BuildWorld {
   readonly group = new THREE.Group();
   plots: PlotView[] = PLOTS.map(() => ({ owner: null, name: "", blocks: new Map() }));
-  private meshes = {} as Record<BlockKind, THREE.InstancedMesh>;
-  /** Örnek → (arsa, hücre anahtarı): ışın testinde vurulan blok. */
-  private lookup = {} as Record<BlockKind, { plot: number; key: number }[]>;
+  private meshes = {} as Record<MeshKey, THREE.InstancedMesh>;
   private dirty = true;
   private lampMat: THREE.MeshBasicMaterial;
   private ground: THREE.Mesh;
   private signs: { mesh: THREE.Mesh; canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; text: string }[] = [];
+  /** İnşa lambaları ve blok ızgarası (gece ışığı ve gölgesi için): değişince `lightDirty`. */
+  light: { lamps: { x: number; y: number; z: number }[]; occ: BuildOccupancy } = {
+    lamps: [],
+    occ: { data: new Uint8Array(OCC.w * OCC.h * OCC.d), ...OCC },
+  };
+  lightDirty = false;
   /** Sütun başına dolu katların üst yükseklikleri (boş kat 0): çarpışma için. */
   private columns = new Map<number, Float32Array>();
 
@@ -115,14 +186,11 @@ export class BuildWorld {
     const colored = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
     const glass = new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.38, depthWrite: false });
     this.lampMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-    const mats: Record<BlockKind, THREE.Material> = {
-      cube: solidMat, slab: solidMat, wedge: solidMat, door: solidMat, fence: solidMat,
-      glass, lamp: this.lampMat, plant: colored,
+    const mats: Record<MeshKey, THREE.Material> = {
+      cube: solidMat, slab: solidMat, wedge: solidMat, fence: solidMat, lamp: this.lampMat, plant: colored,
+      post: glass, arm: glass, gface: glass, doorL: colored, doorR: colored,
     };
-    for (const kind of KINDS) {
-      this.meshes[kind] = this.instanced(kind, geometryFor(kind), mats[kind], CAP[kind]);
-      this.lookup[kind] = [];
-    }
+    for (const key of MESHES) this.meshes[key] = this.instanced(key, geometryFor(key), mats[key], CAP[key]);
     // Arsa zeminleri: hafif açık toprak, kenarında taş çerçeve
     const tiles = PLOTS.map((p) => new THREE.PlaneGeometry(p.size, p.size).rotateX(-Math.PI / 2).translate(p.x0 + p.size / 2, 0.025, p.z0 + p.size / 2));
     this.ground = new THREE.Mesh(mergeGeometries(tiles), new THREE.MeshLambertMaterial({ color: "#8fa86a" }));
@@ -161,23 +229,24 @@ export class BuildWorld {
     this.drawSigns();
   }
 
-  private instanced(kind: BlockKind, geo: THREE.BufferGeometry, mat: THREE.Material, cap: number): THREE.InstancedMesh {
+  private instanced(key: MeshKey, geo: THREE.BufferGeometry, mat: THREE.Material, cap: number): THREE.InstancedMesh {
     const m = new THREE.InstancedMesh(geo, mat, cap);
+    const glass = key === "post" || key === "arm" || key === "gface";
     m.count = 0;
     m.frustumCulled = false;
-    m.castShadow = kind !== "glass" && kind !== "lamp";
-    m.receiveShadow = kind !== "glass";
-    if (kind === "glass") m.renderOrder = 4;
+    m.castShadow = !glass && key !== "lamp";
+    m.receiveShadow = !glass;
+    if (glass) m.renderOrder = 4;
     this.group.add(m);
     return m;
   }
 
   /** Tür için en az `n` örneklik mesh (yetmiyorsa geometrisi ve malzemesi aynı, daha büyüğüyle değişir). */
-  private ensureCapacity(kind: BlockKind, n: number): void {
-    const old = this.meshes[kind];
+  private ensureCapacity(key: MeshKey, n: number): void {
+    const old = this.meshes[key];
     if (n <= old.instanceMatrix.count) return;
     this.group.remove(old);
-    this.meshes[kind] = this.instanced(kind, old.geometry, old.material as THREE.Material, Math.ceil(n * 1.5));
+    this.meshes[key] = this.instanced(key, old.geometry, old.material as THREE.Material, Math.ceil(n * 1.5));
     old.dispose();
   }
 
@@ -236,50 +305,118 @@ export class BuildWorld {
     if (!this.dirty) return;
     this.dirty = false;
     this.drawSigns();
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
-    const up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
-    const counts = Object.fromEntries(KINDS.map((k) => [k, 0])) as Record<BlockKind, number>;
-    for (const p of this.plots) for (const bl of p.blocks.values()) {
-      const def = blockDef(bl.b);
-      if (def) counts[def.kind]++;
-    }
-    for (const k of KINDS) {
-      this.ensureCapacity(k, counts[k]);
-      counts[k] = 0;
-      this.lookup[k].length = 0;
-    }
+    const out = Object.fromEntries(MESHES.map((k) => [k, [] as Inst[]])) as Record<MeshKey, Inst[]>;
+    const white = new THREE.Color(1, 1, 1);
     this.columns.clear();
+    const occ = this.light.occ.data, lampsLit: { x: number; y: number; z: number }[] = [];
+    occ.fill(0);
+    const mark = (wx: number, j: number, wz: number, v: number) => {
+      const x = wx - OCC.x0, z = wz - OCC.z0;
+      if (x >= 0 && z >= 0 && x < OCC.w && z < OCC.d && j >= 0 && j < OCC.h) occ[x + OCC.w * (j + OCC.h * z)] = v;
+    };
+    /** Sütuna dolu kat ekle (çarpışma). */
+    const fill = (wx: number, wz: number, j: number, top: number) => {
+      if (j >= PLOT_H) return;
+      const ck = colKey(wx, wz);
+      const col = this.columns.get(ck) ?? new Float32Array(PLOT_H);
+      col[j] = top;
+      this.columns.set(ck, col);
+    };
     this.plots.forEach((p, plot) => {
       const base = PLOTS[plot];
-      for (const [key, bl] of p.blocks) {
+      const kindAt = (i: number, j: number, k: number) => blockDef(p.blocks.get(cellKey(i, j, k))?.b ?? 0)?.kind;
+      for (const bl of p.blocks.values()) {
         const def = blockDef(bl.b);
         if (!def) continue;
-        const mesh = this.meshes[def.kind];
-        const n = counts[def.kind]++;
-        pos.set(base.x0 + bl.i + 0.5, bl.j, base.z0 + bl.k + 0.5);
-        q.setFromAxisAngle(up, (bl.r * Math.PI) / 2);
-        mesh.setMatrixAt(n, m.compose(pos, q, one));
+        const cx = base.x0 + bl.i + 0.5, cz = base.z0 + bl.k + 0.5, rot = bl.r & 3, ry = (rot * Math.PI) / 2;
+        // Işık: lamba ampulü ışık kaynağı; dolu bloklar gölge düşürür, cam az, kapalı kapı tam
+        const wx = base.x0 + bl.i, wz = base.z0 + bl.k;
+        if (def.kind === "lamp") lampsLit.push({ x: cx, y: bl.j + 0.85, z: cz });
+        else if (def.kind === "cube" || def.kind === "wedge") mark(wx, bl.j, wz, OCC_SOLID);
+        else if (def.kind === "glass" || def.kind === "glassbox") mark(wx, bl.j, wz, OCC_GLASS);
+        else if (def.kind === "slab") mark(wx, bl.j, wz, OCC_HALF);
+        else if (def.kind === "door" && !(bl.r & DOOR_OPEN)) {
+          mark(wx, bl.j, wz, OCC_SOLID);
+          mark(wx, bl.j + 1, wz, OCC_SOLID);
+        }
+        const put = (key: MeshKey, x: number, y: number, z: number, a: number, color: THREE.Color, rx = 0) => out[key].push({ x, y, z, ry: a, rx, color });
         // Aynı renk duvarlar düz görünmesin: hücreye göre çok hafif ton farkı
         const jitter = 1 + (((bl.i * 7 + bl.j * 13 + bl.k * 5) % 7) - 3) * 0.012;
-        // Saksı/çiçek kendi renklerinde (örnek rengi beyaz); diğerleri türün rengi
-        mesh.setColorAt(n, def.kind === "plant" ? c.setRGB(1, 1, 1) : c.set(def.color).multiplyScalar(def.kind === "lamp" || def.kind === "glass" ? 1 : jitter));
-        this.lookup[def.kind].push({ plot, key });
-        // Çarpışma sütunu
-        if (isSolid(bl.b)) {
-          const ck = colKey(base.x0 + bl.i, base.z0 + bl.k);
-          const col = this.columns.get(ck) ?? new Float32Array(PLOT_H);
-          col[bl.j] = bl.j + blockHeight(bl.b);
-          this.columns.set(ck, col);
+        const tint = new THREE.Color(def.color);
+        if (def.kind === "glass") {
+          // İnce cam: cam, cam blok ve dolu küplere bağlanır; tek bağlantıda düz devam eder, bağlantısızsa yönünde durur
+          const link = DIRS.map(([di, dk]) => {
+            const n = kindAt(bl.i + di, bl.j, bl.k + dk);
+            return n === "glass" || n === "glassbox" || n === "cube";
+          });
+          const n = link.filter(Boolean).length;
+          if (n === 0) link[rot % 2 ? 1 : 0] = link[rot % 2 ? 3 : 2] = true;
+          else if (n === 1) link[(link.indexOf(true) + 2) % 4] = true;
+          put("post", cx, bl.j, cz, 0, tint);
+          link.forEach((on, d) => on && put("arm", cx, bl.j, cz, DIRS[d][2], tint));
+        } else if (def.kind === "glassbox") {
+          // Cam blok: cam bloğa ya da dolu küpe bakan yüz çizilmez (yan yana bloklar tek parça görünür)
+          for (const [di, dj, dk, rx, a] of FACES) {
+            const n = kindAt(bl.i + di, bl.j + dj, bl.k + dk);
+            if (n === "glassbox" || n === "cube") continue;
+            put("gface", cx, bl.j + 0.5, cz, a, tint, rx);
+          }
+        } else if (def.kind === "door") {
+          // Menteşe solda; solunda aynı yöne bakan kapı varsa sağda (çift kapı iki yana açılır)
+          const ldx = Math.round(-Math.cos(ry)), ldz = Math.round(Math.sin(ry));
+          const left = p.blocks.get(cellKey(bl.i + ldx, bl.j, bl.k + ldz));
+          const h = left && blockDef(left.b)?.kind === "door" && (left.r & 3) === rot ? 1 : -1;
+          const open = (bl.r & DOOR_OPEN) !== 0;
+          // Açıkken menteşe çevresinde 90° döner: yerel merkez (h·0.46, 0.46)
+          const lx = open ? h * 0.46 : 0, lz = open ? 0.46 : 0;
+          const x = cx + lx * Math.cos(ry) + lz * Math.sin(ry), z = cz - lx * Math.sin(ry) + lz * Math.cos(ry);
+          put(h < 0 ? "doorL" : "doorR", x, bl.j, z, ry + (open ? (h * Math.PI) / 2 : 0), white);
+          // Kapalı kapı geçilmez (iki blok boyu)
+          if (!open) {
+            fill(base.x0 + bl.i, base.z0 + bl.k, bl.j, bl.j + 1);
+            fill(base.x0 + bl.i, base.z0 + bl.k, bl.j + 1, bl.j + 2);
+          }
+        } else {
+          // Saksı/çiçek kendi renklerinde (örnek rengi beyaz); diğerleri türün rengi
+          put(def.kind as MeshKey, cx, bl.j, cz, ry, def.kind === "plant" ? white : tint.multiplyScalar(def.kind === "lamp" ? 1 : jitter));
         }
+        // Çarpışma sütunu
+        if (isSolid(bl.b) && def.kind !== "door") fill(base.x0 + bl.i, base.z0 + bl.k, bl.j, bl.j + blockHeight(bl.b));
       }
     });
-    for (const k of KINDS) {
-      const mesh = this.meshes[k];
-      mesh.count = counts[k];
+    this.light.lamps = lampsLit;
+    this.lightDirty = true;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(0, 0, 0, "YXZ"), pos = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+    for (const key of MESHES) {
+      const list = out[key];
+      this.ensureCapacity(key, list.length);
+      const mesh = this.meshes[key];
+      list.forEach((it, n) => {
+        mesh.setMatrixAt(n, m.compose(pos.set(it.x, it.y, it.z), q.setFromEuler(e.set(it.rx, it.ry, 0)), one));
+        mesh.setColorAt(n, it.color);
+      });
+      mesh.count = list.length;
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       mesh.computeBoundingSphere();
     }
+  }
+
+  /** Yakındaki kapı (F ile açılır/kapanır): ayakların hizasında, en yakını. */
+  doorNear(x: number, z: number, y: number, reach = 2.2): DoorSpot | null {
+    let best: DoorSpot | null = null, bestD = reach;
+    PLOTS.forEach((base, plot) => {
+      if (x < base.x0 - reach || x > base.x0 + base.size + reach || z < base.z0 - reach || z > base.z0 + base.size + reach) return;
+      const view = this.plots[plot];
+      const ci = Math.floor(x - base.x0), ck = Math.floor(z - base.z0), cj = Math.floor(y + 0.1);
+      for (let i = ci - 2; i <= ci + 2; i++) for (let k = ck - 2; k <= ck + 2; k++) for (let j = cj - 1; j <= cj; j++) {
+        const b = j >= 0 ? view.blocks.get(cellKey(i, j, k)) : undefined;
+        if (!b || blockDef(b.b)?.kind !== "door") continue;
+        const d = Math.hypot(x - (base.x0 + i + 0.5), z - (base.z0 + k + 0.5));
+        if (d < bestD) [best, bestD] = [{ plot, i, j, k, open: (b.r & DOOR_OPEN) !== 0 }, d];
+      }
+    });
+    return best;
   }
 
   /**

@@ -213,6 +213,9 @@ export class WorldGames {
       case "bset":
         this.builds?.set(sid, num(msg.i), num(msg.j), num(msg.k), num(msg.b), num(msg.r), now);
         return true;
+      case "bdoor":
+        this.builds?.door(sid, num(msg.plot), num(msg.i), num(msg.j), num(msg.k), now);
+        return true;
       case "bfree":
         this.builds?.free(sid);
         return true;

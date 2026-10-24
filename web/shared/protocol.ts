@@ -489,6 +489,8 @@ export type ClientEvent =
   /** İnşa: boş arsa sahiplen, kendi arsana blok koy/sil (b 0), arsanı boşalt. */
   | { t: "bclaim"; plot?: number }
   | { t: "bset"; i: number; j: number; k: number; b: number; r: number }
+  /** Kapıyı aç / kapat (arsanın sahibi olmayan da, yanındaysa). */
+  | { t: "bdoor"; plot: number; i: number; j: number; k: number }
   | { t: "bfree" }
   | { t: "tagjoin" }
   /** Oyuncak pist: katıl/ayrıl, pist seç ve başlat (lobiyi açan), araba konumu (yarışta ~15 Hz). */
