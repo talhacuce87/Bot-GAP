@@ -6,6 +6,7 @@ import type { Conn, Room } from "../room";
 import type { Builds } from "./build";
 import { Football } from "./football";
 import { Mosque } from "./mosque";
+import { Paintball } from "./paintball";
 import { Race } from "./race";
 import { Sky } from "./sky";
 import { Stage, type StageHost } from "./stage";
@@ -36,6 +37,7 @@ export class WorldGames {
   readonly sky: Sky;
   readonly race: Race;
   readonly mosque: Mosque;
+  readonly paintball: Paintball;
   /** Voleybol salonu (menüden ışınlanılır). */
   readonly volley: Volleyball;
   /** Mahalle (bot bağlıysa kalıcı). */
@@ -68,6 +70,7 @@ export class WorldGames {
     this.sky = new Sky(room, liveWeather);
     this.race = new Race(room, r);
     this.mosque = new Mosque(room, r);
+    this.paintball = new Paintball(room, r);
     this.volley = new Volleyball(room);
   }
 
@@ -80,6 +83,7 @@ export class WorldGames {
     this.sky.sendTo(conn);
     this.race.sendTo(conn);
     this.mosque.sendTo(conn);
+    this.paintball.sendTo(conn);
     this.volley.sendTo(conn);
     this.builds?.sendTo(conn);
   }
@@ -93,6 +97,7 @@ export class WorldGames {
     this.sky.leave(sid);
     this.race.leave(sid);
     this.mosque.gone(sid);
+    this.paintball.gone(sid);
     this.volley.leave(sid);
     this.pairs.delete(sid);
     for (const [to, req] of this.pairs) if (req.from === sid) this.pairs.delete(to);
@@ -110,6 +115,7 @@ export class WorldGames {
     this.sky.tick(now);
     this.race.tick(now);
     this.mosque.tick(now);
+    this.paintball.tick(now);
     this.volley.tick(now);
     if (now - this.lastScan > 1000) {
       this.lastScan = now;
@@ -125,7 +131,7 @@ export class WorldGames {
 
   /** Saklambaçta gözü kapalı ebe yürüyemez. */
   frozen(sid: number): boolean {
-    return this.tag.frozen(sid) || this.mosque.praying(sid);
+    return this.tag.frozen(sid) || this.mosque.praying(sid) || this.paintball.frozen(sid);
   }
 
   /** Havai fişek (komut ya da özel gün): herkes aynı tohumla aynı gösteriyi görür. */
@@ -302,6 +308,27 @@ export class WorldGames {
         return true;
       case "rjoin":
         this.race.join(sid);
+        return true;
+      case "pbjoin":
+        this.paintball.join(sid, now);
+        return true;
+      case "pbleave":
+        this.paintball.leave(sid, now);
+        return true;
+      case "pbskin":
+        this.paintball.skin(sid, msg.id);
+        return true;
+      case "pbinfo":
+        this.paintball.info(sid);
+        return true;
+      case "pbpose":
+        this.paintball.pose(sid, msg.p, msg.c, msg.y);
+        return true;
+      case "pbfire":
+        this.paintball.fire(sid, msg.o, msg.d, msg.at, now);
+        return true;
+      case "pbreload":
+        this.paintball.reload(sid, now);
         return true;
       case "rleave":
         this.race.leave(sid, now);

@@ -28,6 +28,7 @@ import { city, type CityNpc, type Room } from "./city";
 import { type RingTrack, ringTrack } from "./ringTrack";
 import { garage, type GarageView } from "./garage";
 import { mosque } from "./mosque";
+import { paintballField, type PaintballField } from "./paintball";
 import { hall, raceHouse, volleyHall } from "./hall";
 import { type VolleyCourt, volleyCourt } from "./volleyCourt";
 import { cave } from "./cave";
@@ -104,6 +105,8 @@ export interface World {
   garage: GarageView;
   /** GAP Camii: minarelerin yeri (ezan sesi). */
   minarets: { x: number; z: number }[];
+  /** Paintball sahası (köyde): skor tabelası, gece ışıkları. */
+  paintball: PaintballField;
   /** (x, z) girilebilir bir dükkânın içindeyse o oda. */
   roomAt(x: number, z: number): Room | null;
 }
@@ -1112,6 +1115,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
   far.push(town.interiors);
   const cami = mosque(b);
   scene.add(cami.group);
+  const pbField = paintballField(b);
+  scene.add(pbField.group);
   const vendors = simitci(b);
   const ring = ringTrack(b);
   scene.add(ring.group);
@@ -1307,6 +1312,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
       cas.update(time, hallDt, focus, camera, env.lights);
       town.update(time, env.lights);
       cami.update(time, hallDt, focus, camera, env.lights);
+      pbField.update(env.lights);
       hallTime = time;
       terrain.cap.visible = !(focus && inCave(focus.x, focus.z));
       music += ((musicOn ? 1 : 0) - music) * 0.08;
@@ -1382,6 +1388,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     pitch: field,
     stadium: arena,
     minarets: cami.minarets,
+    paintball: pbField,
     volley: vCourt,
     stageLights: lights,
     ripple: addRipple,

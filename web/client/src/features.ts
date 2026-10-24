@@ -9,6 +9,8 @@ import { CASINO, DJ_BOOTH, DOCK, type Field, inStadium, KICK_REACH, PITCH, POND_
 import { type Action, actionLabel, onBinds, profile, setProfile } from "./input/keybinds";
 import { RaceClient } from "./race";
 import { MosqueClient } from "./mosque";
+import { PaintballClient } from "./paintball";
+import { PB_FIELD } from "../../shared/paintball";
 import { VolleyClient } from "./volley";
 import { BilekArms } from "./world/bilekArms";
 import { type AvatarRenderer, type AvatarView, colorFor } from "./avatars/avatars";
@@ -137,6 +139,8 @@ export class Features {
   readonly race: RaceClient;
   /** GAP Camii: abdest, cemaat, namaz. */
   readonly mosque: MosqueClient;
+  /** GAP Paintball: kulübe, 1v1 maç (birinci şahıs). */
+  readonly paintball: PaintballClient;
   /** Voleybol salonu. */
   readonly volley: VolleyClient;
   private mist = new Mist();
@@ -310,6 +314,25 @@ export class Features {
       toast: (t) => hud.toast(t),
     });
     c.life.onStop(() => this.mosque.dispose());
+    this.paintball = new PaintballClient({
+      scene: world.scene,
+      camera: c.camera,
+      net,
+      me,
+      remotes: c.remotes,
+      input: c.input,
+      hudRoot,
+      field: world.paintball,
+      nameOf: (sid) => this.nameOf(sid),
+      toast: (t) => hud.toast(t),
+      // Debug (?debug&pbtest): sahada duran maket rakip
+      dummy: () => ({
+        x: PB_FIELD.x + 2.5, z: PB_FIELD.z + 8, rot: Math.PI, flags: 0, alpha: 1, cell: c.atlas.alloc("Rakip"),
+        color: colorFor("rakip"), phase: 0.3, emote: -1, emoteAt: 0, jumpY: 0,
+        outfit: { hair: "hair_kisa_doku", tops: "top_tisort", bottoms: "bottom_kot", shoes: "shoes_sneaker", facial: null, hats: null, glasses: null, colors: { hair: "#3a2a1e", skin: "#d9a77e" } },
+      }),
+    });
+    c.life.onStop(() => this.paintball.dispose());
     this.volley = new VolleyClient({
       scene: world.scene,
       court: world.volley,
@@ -554,6 +577,11 @@ export class Features {
     net.onTag = (s) => this.whud.setTag(s, net.serverNow());
     net.onRace = (s) => this.race.onState(s);
     net.onNamaz = (s) => this.mosque.onSessions(s);
+    net.onPb = (s) => this.paintball.onState(s);
+    net.onPbShot = (sid, o, d, at) => this.paintball.onShot(sid, o, d, at);
+    net.onPbHit = (by, victim, x, y, z) => this.paintball.onHit(by, victim, x, y, z);
+    net.onPbPoses = (p) => this.paintball.onPoses(p);
+    net.onPbWins = (w) => this.paintball.onWins(w);
     net.onRcars = (cars) => this.race.onCars(cars);
     net.onPairReq = (from, name, kind) => {
       this.whud.pairRequest(from, name, kind);
@@ -952,13 +980,15 @@ export class Features {
 
   acts(): FeatureAct[] {
     const { me, world } = this.c;
-    if (me.jailed || me.driving || this.race.driving()) return [];
+    if (me.jailed || me.driving || this.race.driving() || this.paintball.busy()) return [];
     // Yolcuyken yalnızca inmek
     if (this.myRide) return [{ key: "f", label: `Arabadan in 🚗 (${this.nameOf(this.myRide.d)}'in arabası)`, act: "ride-off" }];
     // Camide (namazda, abdest alırken, harimde ya da şadırvanda) yalnızca cami eylemleri
     if (this.mosque.busy()) return this.mosque.acts();
     const camii = this.mosque.acts();
     if (camii.length) return camii;
+    const pb = this.paintball.acts();
+    if (pb.length) return pb;
     if (me.car) return this.raceActs();
     const near = (p: { x: number; z: number }, r: number) => Math.hypot(me.x - p.x, me.z - p.z) <= r;
     if (me.vehicle === 3) return near(DOCK, 4.5) || Math.hypot(me.x - POND_AREA.x, me.z - POND_AREA.z) > 4.6 ? [{ key: "f", label: "Kayıktan in 🛶", act: "boat-off" }] : [];
@@ -1015,6 +1045,7 @@ export class Features {
   handleAct(act: string, now: number): boolean {
     const { me, net, hud, emoteFx } = this.c;
     if (this.mosque.handleAct(act)) return true;
+    if (this.paintball.handleAct(act)) return true;
     if (act === "tackle") {
       net.send({ t: "tackle" });
       sfx.kick(0.3);
@@ -1241,6 +1272,7 @@ export class Features {
     this.build.update();
     this.race.update(dt, time, 1 - world.env.day);
     this.mosque.update(time);
+    this.paintball.update(time);
     this.bilekArms.update((id) => this.boards.table(id), dt);
     this.screenGlow.update(now, dt, this.c.cinemaOn(), document.querySelector<HTMLVideoElement>(".screen-players video"), world.env.day);
     this.ambient(time, dt, world);
@@ -1570,7 +1602,7 @@ export class Features {
     const wrestlers = this.wrestlers();
     me.grip = wrestlers.has(net.you);
     me.hideName = this.whud.hiddenName(net.you);
-    me.hidden = settings.firstPerson && !me.driving && !this.photo.active;
+    me.hidden = (settings.firstPerson || !!me.fps) && !me.driving && !this.photo.active;
     for (const r of remotes.map.values()) {
       r.lift = r.info.sid === this.stage.singer ? STAGE.h : 0;
       r.mic = r.info.sid === this.stage.singer;
@@ -1583,6 +1615,7 @@ export class Features {
   pushExtras(time: number, dt: number): void {
     const { me, remotes, avatars, net } = this.c;
     avatars.push(this.teaMaker, time);
+    for (const v of this.paintball.extras()) avatars.push(v, time);
     // Çalışanlar yalnızca yakındayken çizilir (her chibi on binlerce üçgen)
     for (const w of this.workers) if ((w.x - me.x) ** 2 + (w.z - me.z) ** 2 < 28 * 28) avatars.push(w, time);
     const c = this.companions;

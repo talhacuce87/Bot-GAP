@@ -266,7 +266,8 @@ async function start(): Promise<void> {
     if (resumable(me.x, me.z)) net.send({ t: "resume", x: me.x, z: me.z, rot: me.rot });
   };
   const savePos = () => {
-    if (!me.jailed && net.status === "online") saveLastPos({ x: me.x, z: me.z, rot: me.rot });
+    // Paintball maçında saklanmaz: yeniden girince ağın içinde kalmasın (maç öncesi yer kalır)
+    if (!me.jailed && !me.fps && net.status === "online") saveLastPos({ x: me.x, z: me.z, rot: me.rot });
   };
   const posTimer = window.setInterval(savePos, 3000);
   addEventListener("pagehide", savePos);

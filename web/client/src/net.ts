@@ -28,6 +28,7 @@ import {
   STATE_BYTES,
   type TableState,
   type NamazSession,
+  type PbState,
   type RaceState,
   TagState,
   type WardrobeInfo,
@@ -125,6 +126,11 @@ export class Net {
   onTag: (s: TagState | null) => void = () => {};
   onRace: (s: RaceState | null) => void = () => {};
   onNamaz: (s: NamazSession[]) => void = () => {};
+  onPb: (s: PbState) => void = () => {};
+  onPbShot: (sid: number, o: [number, number, number], d: [number, number, number], at: number) => void = () => {};
+  onPbHit: (by: number, victim: number, x: number, y: number, z: number) => void = () => {};
+  onPbPoses: (p: number[]) => void = () => {};
+  onPbWins: (wins: number) => void = () => {};
   /** Voleybol: top (sunucu zamanı `at`), maç durumu, dalış/blok animasyonu. */
   onVball: (b: VBall & { id?: number; at: number; hold?: number; toss?: number; w?: string; ev?: VolleyEv; by?: number }) => void = () => {};
   onVgone: (id: number) => void = () => {};
@@ -506,6 +512,21 @@ export class Net {
         break;
       case "namaz":
         this.onNamaz(ev.sessions);
+        break;
+      case "pb":
+        this.onPb(ev.state);
+        break;
+      case "pbshot":
+        this.onPbShot(ev.sid, ev.o, ev.d, ev.at);
+        break;
+      case "pbhit":
+        this.onPbHit(ev.by, ev.victim, ev.x, ev.y, ev.z);
+        break;
+      case "pbposes":
+        this.onPbPoses(ev.p);
+        break;
+      case "pbwins":
+        this.onPbWins(ev.wins);
         break;
       case "vball": {
         const { t: _t, ...ball } = ev;

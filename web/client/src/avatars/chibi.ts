@@ -48,6 +48,8 @@ export interface LimbPose {
   vstance?: "hold" | "cock";
   /** Namaz duruşu: bacaklar ve kollar (x öne/geri; `roll` kolları içe), diğer hareketlerin yerine geçer. */
   pray?: { leg: number; arm: number; roll: number };
+  /** Silah tutma (paintball): yalnızca kollar; bacaklar yürüyüşe devam eder. */
+  aim?: { arm: number; roll: number };
   time: number;
 }
 
@@ -345,6 +347,11 @@ export function setLimbs(a: THREE.Vector2[], p: LimbPose): void {
     a[2].y = -0.3;
   }
   const vw = p.vw ?? 0;
+  if (p.aim) {
+    a[2].x = a[3].x = p.aim.arm;
+    a[2].y = p.aim.roll;
+    a[3].y = -p.aim.roll;
+  }
   if (p.pray) {
     // Önce öne kaldırılır, sonra gövdenin ekseni etrafında içe (−X'teki kol + açıyla içe gelir)
     a[2].x = a[3].x = p.pray.arm;

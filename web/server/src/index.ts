@@ -172,6 +172,14 @@ rooms.onCreate = (room) => {
   if (!room.battle) {
     room.games = new WorldGames(room, room.onReport, stageHost(room), () => weather.current);
     room.games.builds = new Builds(room, SHARED_SECRET ? botPost : null);
+    // Paintball skinleri galibiyetle açılır: sayı botun oyuncu kartından
+    room.games.paintball.winsOf = async (sid) => {
+      const p = room.players.get(sid);
+      if (!p || p.user.guest || !p.guild || !SHARED_SECRET) return null;
+      const r = await botPost("/internal/profile", { guild: p.guild, user: p.user.id });
+      const stats = r.ok && r.body.ok ? (r.body.stats as Record<string, number> | undefined) : undefined;
+      return stats ? Number(stats.pb_wins) || 0 : null;
+    };
     // Yarış ödülü casino cüzdanına (test coin) gider
     room.ring = new RingHost(room, (sid, amount) => {
       const p = room.players.get(sid);

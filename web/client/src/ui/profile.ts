@@ -20,6 +20,8 @@ const STATS: [string, string, (v: number) => string][] = [
   ["tank_wins", "🪖 Kazanılan savaş", String],
   ["tag_wins", "🏃 Ebelemece/saklambaç", String],
   ["race_wins", "🏎️ Yarış galibiyeti", String],
+  ["pb_wins", "🎯 Paintball galibiyeti", String],
+  ["pb_hits", "🎨 Paintball isabeti", String],
   ["fives", "🙌 Beşlik", String],
   ["hugs", "🤗 Sarılma", String],
   ["photos", "📸 Fotoğraf", String],
