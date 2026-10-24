@@ -144,7 +144,8 @@ export function skipEmptyInstances(scene: THREE.Scene): void {
       hidden.delete(m);
     }
     for (const m of list) {
-      if (m.count !== 0 || hidden.has(m)) continue;
+      // Maskesi zaten 0 olan (örtme elemesinin bu karelik gizledikleri) saklanmaz: sonra 0'a "geri" dönmesin
+      if (m.count !== 0 || hidden.has(m) || m.layers.mask === 0) continue;
       hidden.set(m, m.layers.mask);
       m.layers.mask = 0;
     }

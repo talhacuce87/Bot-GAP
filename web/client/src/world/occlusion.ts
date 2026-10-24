@@ -173,7 +173,8 @@ export class Occlusion {
   private cullTargets(portalsOnly: boolean): void {
     const s = this.stats;
     for (const t of this.targets) {
-      if (t.skip || (portalsOnly && !t.portal) || !t.obj.visible || !t.obj.parent?.visible || !this.inCone(t.sphere)) continue;
+      // Maskesi 0 olan başka yerde gizlenmiş (boş örnekli mesh): geri açarken 1'e çevrilmesin
+      if (t.skip || (portalsOnly && !t.portal) || !t.obj.visible || !t.obj.parent?.visible || t.obj.layers.mask === 0 || !this.inCone(t.sphere)) continue;
       s.tested++;
       if (t.portal ? this.portalVisible(t.portal) : this.test(t.box) !== HIDDEN) continue;
       t.obj.layers.mask = 0;
