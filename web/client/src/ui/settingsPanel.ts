@@ -5,6 +5,7 @@ import {
   type Preset,
   PRESET_NAMES,
   PRESETS,
+  RENDER_SCALES,
   resetSettings,
   RESTART_KEYS,
   type Settings,
@@ -136,7 +137,7 @@ export class SettingsPanel {
     this.toggleRow("Kenar yumuşatma", s.antialias, (v) => this.set({ antialias: v }));
     this.slider("Gece lamba ışıkları", s.lamps, 0, 8, 1, (v) => `${v}`, (v) => this.set({ lamps: v }));
     this.slider("Çözünürlük", s.maxDpr, 0.5, 2, 0.25, (v) => `${Math.round(Math.min(v, devicePixelRatio) * 100)}%`, (v) => this.set({ maxDpr: v }));
-    this.toggleRow("Kare düşünce çözünürlüğü indir", s.adaptive, (v) => this.set({ adaptive: v }));
+    this.choice<Settings["renderScale"]>("Çözünürlük ölçeği", s.renderScale, RENDER_SCALES.map((v) => ({ value: v, label: v ? `%${Math.round(v * 100)}` : "Otomatik" })), (v) => this.set({ renderScale: v }), true);
     this.choice<Settings["fpsCap"]>("Kare sınırı", s.fpsCap, [
       { value: 0, label: "Yok" },
       { value: 60, label: "60" },
@@ -308,8 +309,10 @@ export class SettingsPanel {
     t.addEventListener("click", () => change(!on));
   }
 
-  private choice<T>(label: string, value: T, choices: Choice<T>[], change: (v: T) => void): void {
+  /** `stack`: seçenekler sığmazsa etiketin altında tam genişlik. */
+  private choice<T>(label: string, value: T, choices: Choice<T>[], change: (v: T) => void, stack = false): void {
     const r = this.row(label);
+    if (stack) r.classList.add("stack");
     const seg = el("div", "settings-seg", r);
     for (const c of choices) {
       const cb = el("button", c.value === value ? "active" : "", seg, c.label);

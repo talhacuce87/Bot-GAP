@@ -7,6 +7,8 @@ const KEY = "gap-settings";
 
 export type Preset = "low" | "medium" | "high" | "ultra";
 export type ShadowLevel = "off" | "low" | "high";
+export type RenderScale = 0 | 1 | 0.77 | 0.67 | 0.5;
+export const RENDER_SCALES: readonly RenderScale[] = [0, 1, 0.77, 0.67, 0.5];
 
 export interface Settings {
   preset: Preset | "custom";
@@ -26,8 +28,11 @@ export interface Settings {
   lamps: number;
   /** En yüksek piksel oranı (ekran dpr'ı ile sınırlı). */
   maxDpr: number;
-  /** Kare düşünce çözünürlüğü kendiliğinden indir. */
-  adaptive: boolean;
+  /**
+   * Çözünürlük ölçeği: sahne bu oranda çizilip FSR benzeri büyütmeyle tuvale taşınır.
+   * 0 = otomatik (kare düşünce kendiliğinden iner, sorunsuzsa geri çıkar).
+   */
+  renderScale: RenderScale;
   /** Kare sınırı: 0 = ekranın yenileme hızı. */
   fpsCap: 0 | 30 | 60;
   fov: number;
@@ -61,13 +66,13 @@ export interface Settings {
   cinemaDim: boolean;
 }
 
-type Graphics = Pick<Settings, "shadows" | "bloom" | "grade" | "grass" | "godrays" | "antialias" | "lamps" | "maxDpr">;
+type Graphics = Pick<Settings, "shadows" | "bloom" | "grade" | "grass" | "godrays" | "antialias" | "lamps" | "maxDpr" | "renderScale">;
 
 export const PRESETS: Record<Preset, Graphics> = {
-  low: { shadows: "off", bloom: false, grade: false, grass: false, godrays: false, antialias: false, lamps: 0, maxDpr: 1 },
-  medium: { shadows: "low", bloom: true, grade: false, grass: true, godrays: false, antialias: true, lamps: 4, maxDpr: 1.25 },
-  high: { shadows: "high", bloom: true, grade: true, grass: true, godrays: true, antialias: true, lamps: 6, maxDpr: 1.5 },
-  ultra: { shadows: "high", bloom: true, grade: true, grass: true, godrays: true, antialias: true, lamps: 8, maxDpr: 2 },
+  low: { shadows: "off", bloom: false, grade: false, grass: false, godrays: false, antialias: false, lamps: 0, maxDpr: 1, renderScale: 0 },
+  medium: { shadows: "low", bloom: true, grade: false, grass: true, godrays: false, antialias: true, lamps: 4, maxDpr: 1.25, renderScale: 0 },
+  high: { shadows: "high", bloom: true, grade: true, grass: true, godrays: true, antialias: true, lamps: 6, maxDpr: 1.5, renderScale: 0 },
+  ultra: { shadows: "high", bloom: true, grade: true, grass: true, godrays: true, antialias: true, lamps: 8, maxDpr: 2, renderScale: 1 },
 };
 
 export const PRESET_NAMES: Record<Preset, string> = { low: "Düşük", medium: "Orta", high: "Yüksek", ultra: "Ultra" };
@@ -86,7 +91,6 @@ function defaults(): Settings {
   return {
     preset,
     ...PRESETS[preset],
-    adaptive: true,
     fpsCap: 0,
     fov: 60,
     sensitivity: 1,
@@ -111,13 +115,16 @@ function defaults(): Settings {
 function load(): Settings {
   const s = defaults();
   try {
-    const saved = JSON.parse(localStorage.getItem(KEY) || "{}") as Partial<Settings>;
+    const saved = JSON.parse(localStorage.getItem(KEY) || "{}") as Partial<Settings> & { adaptive?: boolean };
     for (const k of Object.keys(s) as (keyof Settings)[]) {
       if (typeof saved[k] === typeof s[k]) (s as unknown as Record<string, unknown>)[k] = saved[k];
     }
+    // Eski kayıt: "kare düşünce çözünürlüğü indir" kapalıysa sabit %100
+    if (saved.renderScale === undefined && saved.adaptive === false) s.renderScale = 1;
   } catch {
     // depolama kapalı ya da bozuk: varsayılanlar
   }
+  if (!RENDER_SCALES.includes(s.renderScale)) s.renderScale = 0;
   s.car = validCar(s.car) ?? { ...DEFAULT_CAR };
   // Model başına tuning: eski kayıtta yalnızca tek araba vardı (o modelin ayarı olur, diğerleri onun boyasıyla)
   const cars = (s.cars ?? {}) as Partial<Record<string, unknown>>;
@@ -128,7 +135,7 @@ function load(): Settings {
   // Eski bağlantılar: ?low ve ?nobloom kayıtlı ayarı bu oturum için ezer
   if (params.has("low")) Object.assign(s, PRESETS.low, { preset: "low" });
   if (params.has("nobloom")) s.bloom = false;
-  if (params.has("noadapt")) s.adaptive = false;
+  if (params.has("noadapt") && !s.renderScale) s.renderScale = 1;
   return s;
 }
 

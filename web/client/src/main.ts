@@ -54,6 +54,7 @@ import { SEAT_H } from "./world/builder";
 import { LEDGE } from "./world/colliders";
 import { MAX_PUSHERS } from "./world/grassField";
 import { PostFx } from "./world/post";
+import { Upscaler } from "./world/upscale";
 import { buildWorld, SCREEN_W, SCREEN_Z, type Season } from "./world/scene";
 import { cacheShadows } from "./world/shadowCache";
 import { runBattle } from "./battle";
@@ -110,11 +111,13 @@ async function start(): Promise<void> {
   life.onStop(() => {
     renderer.setAnimationLoop(null);
     post?.dispose();
+    upscaler?.dispose();
     renderer.dispose();
     renderer.forceContextLoss();
   });
-  const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, settings.maxDpr), settings.adaptive);
-  perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap);
+  // Tuval hep tam çözünürlükte; ölçek < 1 iken sahne küçük çizilip FSR benzeri geçişle büyütülür
+  const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, settings.maxDpr), true);
+  perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap, settings.renderScale);
   const limiter = new FrameLimiter();
   // Kare başına elle sıfırlanır: son işlem açıkken birden çok geçişin çizimleri de sayılsın.
   renderer.info.autoReset = false;
@@ -124,12 +127,13 @@ async function start(): Promise<void> {
   // Son işlem (parıltı, renk): ayarda açıksa ilk gerektiğinde kurulur. Perdede video varken kapalı
   // (video saydam "delik"ten görünür; son işlem alfayı korumaz).
   let post: PostFx | null = null;
+  // Son işlem kapalıyken ölçek < 1: sahne kendi hedefine, oradan büyütme geçişi (ilk gerektiğinde kurulur)
+  let upscaler: Upscaler | null = null;
   const applyGraphics = () => {
     renderer.shadowMap.enabled = settings.shadows !== "off";
     renderer.shadowMap.type = THREE.PCFShadowMap;
     world.setShadows(settings.shadows);
-    perf.adaptive = settings.adaptive;
-    perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap);
+    perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap, settings.renderScale);
     camera.fov = settings.fov;
     camera.updateProjectionMatrix();
     hudRoot.classList.toggle("no-bubbles", !settings.bubbles);
@@ -715,7 +719,10 @@ async function start(): Promise<void> {
     postOpts.dof = features.photo.active && !settings.firstPerson ? Math.hypot(camera.position.x - me.x, camera.position.y - 1, camera.position.z - me.z) : 0;
     if ((postOpts.bloom || postOpts.grade || postOpts.filter || postOpts.godrays || postOpts.dof) && !screen.isActive) {
       post ??= new PostFx(renderer, world.scene, camera, settings.antialias ? 4 : 0);
-      post.render(dt, world.env, postOpts);
+      post.render(dt, world.env, postOpts, perf.scale);
+    } else if (perf.scale < 1) {
+      upscaler ??= new Upscaler(settings.antialias ? 4 : 0);
+      upscaler.renderScene(renderer, world.scene, camera, perf.scale);
     } else {
       renderer.render(world.scene, camera);
     }
@@ -741,7 +748,7 @@ async function start(): Promise<void> {
     },
   });
   if (params.has("debug") && params.get("namaz")) features.mosque.debugPose(params.get("namaz")!);
-  if (params.has("debug")) Object.assign(window, { gapFeatures: features });
+  if (params.has("debug")) Object.assign(window, { gapFeatures: features, gapRenderScene: renderScene });
   // NPC trafik de gece far ışığı alır (en yakınlar, oyuncu arabalarıyla birlikte)
   cars.extra = { list: () => features.npcHeadlights(), get night() { return world.env.lights; } };
   if (practiceTrack !== null) features.race.requestPractice(Number(practiceTrack) || 0, Number(params.get("botlar") ?? 3) || 0, params.has("oto"), params.has("lobi"));

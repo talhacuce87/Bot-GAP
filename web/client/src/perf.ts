@@ -1,5 +1,7 @@
-// Adaptif render ölçeği: kare düşmeye başlayınca çözünürlüğü indirir, uzun süre sorunsuzsa geri çıkarır.
-// Yükseltme hemen ardından tekrar düşüş getirirse o seviye tavan olarak kilitlenir (salınım olmasın).
+// Render ölçeği: ayarda sabit (%100/%77/...) ya da "Otomatik": kare düşmeye başlayınca çözünürlüğü indirir,
+// uzun süre sorunsuzsa geri çıkarır. Yükseltme hemen ardından tekrar düşüş getirirse o seviye tavan olarak
+// kilitlenir (salınım olmasın). `upscale` açıkken tuval tam çözünürlükte kalır, ölçeği çizim (FSR benzeri
+// büyütme) uygular; kapalıyken piksel oranı düşer, tarayıcı büyütür.
 import type * as THREE from "three";
 
 const WINDOW = 60;
@@ -33,25 +35,35 @@ export class PerfGovernor {
   private statCpu = 0;
   private dropMs = DROP_MS;
 
+  /** Ayardaki sabit ölçek; 0 = otomatik. */
+  private fixed = 0;
+
   constructor(
     private renderer: THREE.WebGLRenderer,
     private baseDpr: number,
-    public adaptive: boolean,
+    private upscale = false,
   ) {
     this.apply();
   }
 
-  /** Ayardan: en yüksek piksel oranı ve kare sınırı (0 = yok). Ölçek ve tavan baştan başlar. */
-  configure(baseDpr: number, fpsCap: number): void {
+  /**
+   * Ayardan: en yüksek piksel oranı, kare sınırı (0 = yok) ve render ölçeği (0 = otomatik).
+   * Piksel oranı ya da ölçek ayarı değişince ölçek ve tavan baştan başlar.
+   */
+  configure(baseDpr: number, fpsCap: number, renderScale = 0): void {
     this.dropMs = fpsCap ? Math.max(DROP_MS, (1000 / fpsCap) * 1.25) : DROP_MS;
-    if (baseDpr === this.baseDpr) return;
+    if (baseDpr === this.baseDpr && renderScale === this.fixed) return;
     this.baseDpr = baseDpr;
-    this.scale = this.ceiling = 1;
+    this.fixed = renderScale;
+    this.scale = renderScale || 1;
+    this.ceiling = 1;
+    this.frames = this.dropped = this.stable = 0;
     this.apply();
   }
 
   private apply(): void {
-    this.renderer.setPixelRatio(this.baseDpr * this.scale);
+    const pr = this.upscale ? this.baseDpr : this.baseDpr * this.scale;
+    if (this.renderer.getPixelRatio() !== pr) this.renderer.setPixelRatio(pr);
     this.stats.scale = this.scale;
   }
 
@@ -75,13 +87,7 @@ export class PerfGovernor {
       this.statCpu = 0;
     }
 
-    if (!this.adaptive) {
-      if (this.scale !== 1) {
-        this.scale = 1;
-        this.apply();
-      }
-      return;
-    }
+    if (this.fixed) return;
     this.frames++;
     if (dtMs > this.dropMs) this.dropped++;
     if (this.frames < WINDOW) return;

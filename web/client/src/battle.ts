@@ -76,11 +76,11 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   renderer.setSize(innerWidth, innerHeight, false);
   renderer.toneMapping = THREE.NeutralToneMapping;
   const camera = new THREE.PerspectiveCamera(settings.fov, innerWidth / innerHeight, 0.1, 260);
-  const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, settings.maxDpr), settings.adaptive);
+  const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, settings.maxDpr));
   const limiter = new FrameLimiter();
   const applySettings = () => {
-    perf.adaptive = settings.adaptive;
-    perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap);
+    // Savaş modu son işlemsiz ve hafif: ölçek piksel oranıyla (tarayıcı büyütür)
+    perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap, settings.renderScale);
     camera.fov = settings.fov;
     camera.updateProjectionMatrix();
   };

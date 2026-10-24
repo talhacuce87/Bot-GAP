@@ -2171,6 +2171,16 @@ body {
   flex: 0 0 auto;
 }
 
+.settings-row.stack {
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  gap: 4px 10px;
+}
+
+.settings-row.stack .settings-seg {
+  flex: 1 1 100%;
+}
+
 .settings-toggle {
   flex: 0 0 auto;
   position: relative;
