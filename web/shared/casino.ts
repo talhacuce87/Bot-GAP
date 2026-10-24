@@ -99,7 +99,7 @@ export function bjDeal(shoe: Shoe, bet: number): BjRound {
   const dealerBj = handValue(d).total === 21;
   if (dealerBj || isBlackjack(round.hands[0])) {
     round.hands[0].done = true;
-    settle(round);
+    bjSettle(round);
   }
   return round;
 }
@@ -116,15 +116,15 @@ export function canDouble(r: BjRound): boolean {
 }
 
 /** Etkin el bitti: sıradakine geç; hepsi bittiyse krupiye oynar ve sonuçlanır. */
-function advance(r: BjRound, shoe: Shoe): void {
+export function bjAdvance(r: BjRound, shoe: Shoe): void {
   while (r.active < r.hands.length && r.hands[r.active].done) r.active++;
   if (r.active < r.hands.length) return;
   // Krupiye: patlamamış el varsa yumuşak 17'de dahil 17'ye kadar çeker (S17)
   if (r.hands.some((h) => h.result !== "bust")) while (handValue(r.dealer).total < 17) r.dealer.push(shoe.draw());
-  settle(r);
+  bjSettle(r);
 }
 
-function settle(r: BjRound): void {
+export function bjSettle(r: BjRound): void {
   r.phase = "done";
   const dv = handValue(r.dealer).total, dealerBj = r.dealer.length === 2 && dv === 21;
   for (const h of r.hands) {
@@ -148,7 +148,7 @@ export function bjHit(r: BjRound, shoe: Shoe): boolean {
     h.result = "bust";
     h.done = true;
   } else if (v === 21) h.done = true;
-  if (h.done) advance(r, shoe);
+  if (h.done) bjAdvance(r, shoe);
   return true;
 }
 
@@ -156,7 +156,7 @@ export function bjStand(r: BjRound, shoe: Shoe): boolean {
   const h = activeHand(r);
   if (!h) return false;
   h.done = true;
-  advance(r, shoe);
+  bjAdvance(r, shoe);
   return true;
 }
 
@@ -169,7 +169,7 @@ export function bjDouble(r: BjRound, shoe: Shoe): boolean {
   h.cards.push(shoe.draw());
   if (handValue(h.cards).total > 21) h.result = "bust";
   h.done = true;
-  advance(r, shoe);
+  bjAdvance(r, shoe);
   return true;
 }
 
@@ -184,7 +184,7 @@ export function bjSplit(r: BjRound, shoe: Shoe): boolean {
   r.hands.splice(r.active + 1, 0, second);
   const aces = h.cards[0].r === 1;
   for (const x of [h, second]) if (aces || handValue(x.cards).total === 21) x.done = true;
-  advance(r, shoe);
+  bjAdvance(r, shoe);
   return true;
 }
 
@@ -213,6 +213,35 @@ export function bjView(r: BjRound, shuffled = false): BjView {
 }
 
 // ---------------------------------------------------------------------------
+// Blackjack yan bahisleri (Evolution ödeme tabloları); ilk iki kartla (21+3'te krupiyenin açık kartıyla) hemen sonuçlanır
+// ---------------------------------------------------------------------------
+
+export type PairKind = "perfect" | "coloured" | "mixed";
+/** Perfect Pairs: aynı rütbe ve takım 25:1, aynı renk 12:1, karışık renk 6:1. */
+export const PP_PAYS: Record<PairKind, number> = { perfect: 25, coloured: 12, mixed: 6 };
+const isRed = (c: Card) => c.s === 1 || c.s === 2;
+
+export function perfectPair(a: Card, b: Card): PairKind | null {
+  if (a.r !== b.r) return null;
+  if (a.s === b.s) return "perfect";
+  return isRed(a) === isRed(b) ? "coloured" : "mixed";
+}
+
+export type T21Kind = "suitedTrips" | "straightFlush" | "trips" | "straight" | "flush";
+/** 21+3 (iki kart + krupiyenin açık kartı, poker eli): renkli üçlü 100:1, sıralı renk 40:1, üçlü 30:1, kent 10:1, renk 5:1. */
+export const T21_PAYS: Record<T21Kind, number> = { suitedTrips: 100, straightFlush: 40, trips: 30, straight: 10, flush: 5 };
+
+export function twentyOnePlus3(cards: Card[]): T21Kind | null {
+  const [a, b, c] = cards;
+  const flush = a.s === b.s && b.s === c.s;
+  if (a.r === b.r && b.r === c.r) return flush ? "suitedTrips" : "trips";
+  const r = cards.map((x) => x.r).sort((x, y) => x - y);
+  // As hem küçük (A-2-3) hem büyük (Q-K-A) olur
+  const straight = (r[0] + 1 === r[1] && r[1] + 1 === r[2]) || (r[0] === 1 && r[1] === 12 && r[2] === 13);
+  return straight ? (flush ? "straightFlush" : "straight") : flush ? "flush" : null;
+}
+
+// ---------------------------------------------------------------------------
 // Avrupa ruleti (tek sıfır)
 // ---------------------------------------------------------------------------
 
@@ -220,17 +249,52 @@ export const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30
 export const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 export const numberColor = (n: number): "green" | "red" | "black" => (n === 0 ? "green" : RED.has(n) ? "red" : "black");
 
-/** Bahis: tek sayı, renk, tek/çift, 1–18/19–36, düzine (1–3), kolon (1–3: 1, 2, 3'ten başlayanlar). */
-export type RouletteKind = "n" | "red" | "black" | "odd" | "even" | "low" | "high" | "dozen" | "column";
+/**
+ * Bahis: tek sayı, renk, tek/çift, 1–18/19–36, düzine (1–3), kolon (1–3: 1, 2, 3'ten başlayanlar) ve masadaki
+ * çizgi/köşe bahisleri: split (iki komşu), street (sıra), corner (dört), line (iki sıra), trio (0-1-2 / 0-2-3),
+ * four (0-1-2-3).
+ */
+export type RouletteKind =
+  | "n" | "red" | "black" | "odd" | "even" | "low" | "high" | "dozen" | "column"
+  | "split" | "street" | "corner" | "line" | "trio" | "four";
 export interface RouletteBet {
   kind: RouletteKind;
-  /** Sayı (0–36), düzine ya da kolon (1–3); diğerlerinde 0. */
+  /**
+   * Sayı (0–36), düzine ya da kolon (1–3). split: küçük×100+büyük; street/line: sıranın ilk sayısı; corner: sol alt
+   * (en küçük) sayı; trio: 1 (0-1-2) ya da 2 (0-2-3); diğerlerinde 0.
+   */
   v: number;
   amount: number;
 }
 
+/** Çizgi/köşe bahsinin kapsadığı sayılar (geçersizse null); dış bahislerde de null. */
+export function betNumbers(kind: RouletteKind, v: number): number[] | null {
+  switch (kind) {
+    case "n":
+      return v >= 0 && v <= 36 ? [v] : null;
+    case "split": {
+      const a = Math.floor(v / 100), b = v % 100;
+      const ok = a === 0 ? b >= 1 && b <= 3 : a >= 1 && b <= 36 && (b === a + 3 || (b === a + 1 && a % 3 !== 0));
+      return ok ? [a, b] : null;
+    }
+    case "street":
+      return v >= 1 && v <= 34 && v % 3 === 1 ? [v, v + 1, v + 2] : null;
+    case "corner":
+      return v >= 1 && v <= 32 && v % 3 !== 0 ? [v, v + 1, v + 3, v + 4] : null;
+    case "line":
+      return v >= 1 && v <= 31 && v % 3 === 1 ? [v, v + 1, v + 2, v + 3, v + 4, v + 5] : null;
+    case "trio":
+      return v === 1 ? [0, 1, 2] : v === 2 ? [0, 2, 3] : null;
+    case "four":
+      return v === 0 ? [0, 1, 2, 3] : null;
+    default:
+      return null;
+  }
+}
+const INSIDE = new Set<RouletteKind>(["n", "split", "street", "corner", "line", "trio", "four"]);
+
 export function rouletteWins(b: RouletteBet, n: number): boolean {
-  if (b.kind === "n") return n === b.v;
+  if (INSIDE.has(b.kind)) return betNumbers(b.kind, b.v)?.includes(n) ?? false;
   if (n === 0) return false;
   switch (b.kind) {
     case "red": return RED.has(n);
@@ -241,20 +305,24 @@ export function rouletteWins(b: RouletteBet, n: number): boolean {
     case "high": return n >= 19;
     case "dozen": return Math.ceil(n / 12) === b.v;
     case "column": return ((n - 1) % 3) + 1 === b.v;
+    default: return false;
   }
 }
 
-/** Kazanan bahsin oranı (bahis başına net kazanç). */
-export const roulettePays = (k: RouletteKind) => (k === "n" ? 35 : k === "dozen" || k === "column" ? 2 : 1);
+/** Kazanan bahsin oranı (bahis başına net kazanç): 36 / kapsanan sayı − 1 (tek sayı 35, split 17, sıra 11 …). */
+export const roulettePays = (k: RouletteKind) =>
+  ({ n: 35, split: 17, street: 11, trio: 11, corner: 8, four: 8, line: 5, dozen: 2, column: 2 } as Partial<Record<RouletteKind, number>>)[k] ?? 1;
 
 export function validBet(b: unknown): RouletteBet | null {
   if (!b || typeof b !== "object") return null;
   const x = b as Record<string, unknown>;
-  const kinds: RouletteKind[] = ["n", "red", "black", "odd", "even", "low", "high", "dozen", "column"];
+  const kinds: RouletteKind[] = ["n", "red", "black", "odd", "even", "low", "high", "dozen", "column", "split", "street", "corner", "line", "trio", "four"];
   if (!kinds.includes(x.kind as RouletteKind) || !Number.isInteger(x.v) || !Number.isInteger(x.amount)) return null;
   const kind = x.kind as RouletteKind, v = x.v as number, amount = x.amount as number;
   if (amount < MIN_BET || amount > MAX_BET) return null;
-  if (kind === "n" ? v < 0 || v > 36 : kind === "dozen" || kind === "column" ? v < 1 || v > 3 : v !== 0) return null;
+  if (INSIDE.has(kind)) {
+    if (!betNumbers(kind, v)) return null;
+  } else if (kind === "dozen" || kind === "column" ? v < 1 || v > 3 : v !== 0) return null;
   return { kind, v, amount };
 }
 

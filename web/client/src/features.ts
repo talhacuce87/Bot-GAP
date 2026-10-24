@@ -27,6 +27,7 @@ import { CasinoUi, fmt } from "./ui/casino/casinoUi";
 import { drawSpeedo, RingHud } from "./ui/ringHud";
 import { Vehicles } from "./vehicles";
 import { GRID, GRID_REACH, lightsAt, RACE_LAPS, type RingView, trackAt, trackProject } from "../../shared/ring";
+import { LIVE_TABLES } from "../../shared/liveCasino";
 import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
@@ -101,6 +102,8 @@ export interface FeatureContext {
 /** Kişisel saat ayarı → saat; sinema modu en az bu kadar karanlık. */
 const CLOCK_HOURS = { day: 13, sunset: 19.5, night: 22 } as const;
 const CINEMA_HOUR = 21;
+/** Canlı casino masasını izleme eyleminin çıktığı uzaklık (masa merkezinden). */
+const LIVE_WATCH_NEAR = 3.8;
 
 const TEA_MAKER_NAME = "Ocakçı Rıza";
 const RIDE_REPORT_MS = 8000;
@@ -773,7 +776,10 @@ export class Features {
       this.casino.close();
       me.focusView = null;
     }
-    if (this.casinoSeat && !this.casino.isOpen && now - this.casinoSeat.at > 950) this.casino.open(this.casinoSeat.game.kind);
+    if (this.casinoSeat && !this.casino.isOpen && now - this.casinoSeat.at > 950) {
+      const g = this.casinoSeat.game;
+      this.casino.open(g.kind, g.table === undefined ? null : { table: g.table, seat: g.seat ?? 0 });
+    }
     // Bağlantı (yeniden) kurulunca da bakiye istensin
     const inside = net.you > 0 && Math.abs(me.x - CASINO.x) < CASINO.hw && Math.abs(me.z - CASINO.z) < CASINO.hd && !me.car;
     if (inside && !this.inCasino) net.send({ t: "casino", op: "wallet" });
@@ -901,6 +907,9 @@ export class Features {
     for (const t of TABLES) {
       if (near(t, TABLE_WATCH_R) && !me.seated) return [{ key: "f", label: "Masayı izle 👀 (oynamak için tabureye otur)", act: `table:${t.id}` }];
     }
+    for (const t of LIVE_TABLES) {
+      if (near(t, LIVE_WATCH_NEAR) && !me.seated) return [{ key: "f", label: `Canlı ${t.kind === "roulette" ? "rulet" : "blackjack"} masasını izle 👀 (oynamak için tabureye otur)`, act: `live:${t.id}` }];
+    }
     if (near(DJ_BOOTH, DJ_BOOTH.r)) {
       const mine = this.stage.dj === this.c.net.you;
       return mine
@@ -928,6 +937,11 @@ export class Features {
       // Şarj başlar: bırakınca vurulur (F'ye kısa dokunuş pas). Dokunmatikte hemen orta güçle.
       if (this.c.input.touch) this.kick(0.55, act === "lob" ? "lob" : this.finishing() ? "shot" : "pass");
       else this.charge = { key: act === "lob" ? "actG" : "actF", kind: act === "lob" ? "lob" : "shot", t: 0 };
+      return true;
+    }
+    if (act.startsWith("live:")) {
+      const t = LIVE_TABLES[Number(act.slice(5))];
+      if (t) this.casino.open(t.kind, { table: t.id, seat: null });
       return true;
     }
     if (act.startsWith("table:")) {

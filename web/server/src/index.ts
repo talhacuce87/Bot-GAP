@@ -13,8 +13,9 @@ import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FI
 import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
 import { validCar } from "../../shared/car";
 import { resolveRadio } from "./radio";
-import { Casino, type CasinoMsg, Wallets } from "./casino";
+import { Casino, type CasinoMsg, secureRng, Wallets } from "./casino";
 import { RingHost, type RingMsg } from "./ring";
+import { LiveHost, type LiveMsg } from "./liveTables";
 import { CASINO } from "../../shared/zones";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
@@ -181,6 +182,7 @@ rooms.onCreate = (room) => {
       room.sendTo(p.conn, { t: "wallet", balance: casino.wallets.get(key) });
       room.sendTo(p.conn, { t: "notice", text: `🏆 Yarış ödülü: +${amount} GAP test coin` });
     });
+    room.live = new LiveHost(room, casino.wallets, secureRng);
   }
 };
 
@@ -1054,6 +1056,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   let lastPark = 0;
   let lastRadio = 0;
   let lastCasino = 0;
+  let lastLive = 0;
   let lastRing = 0;
   /** Casino cüzdanı: Discord hesabına bağlı (misafirde oturuma). */
   const walletKey = user.guest ? `guest:${user.id}` : user.id;
@@ -1195,6 +1198,12 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const inside = !!st && Math.abs(st.x - CASINO.x) < CASINO.hw && Math.abs(st.z - CASINO.z) < CASINO.hd;
         const out = casino.handle(sid, walletKey, msg as CasinoMsg, inside);
         ws.send(JSON.stringify("error" in out ? { t: "notice", text: out.error } : out));
+      } else if (msg?.t === "live") {
+        const now = Date.now();
+        if (now - lastLive < 120) return ws.send(JSON.stringify({ t: "notice", text: "🎰 Biraz yavaş, bir an bekle." }));
+        lastLive = now;
+        const err = room.live?.handle(sid, walletKey, msg as LiveMsg, now);
+        if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
       } else if (msg?.t === "ring") {
         const now = Date.now();
         if (now - lastRing < 300) return;
