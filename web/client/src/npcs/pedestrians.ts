@@ -540,7 +540,7 @@ export class Pedestrians {
     this.order.sort((a, b) => this.dist[a] - this.dist[b]);
     if (this.order.length > maxDrawn) this.order.length = maxDrawn;
 
-    crowd.begin();
+    crowd.begin(cam.x, cam.z);
     const k = 1 - Math.exp(-dt * 4);
     for (const i of this.order) {
       const p = this.peds[i];

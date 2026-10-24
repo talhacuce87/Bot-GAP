@@ -890,6 +890,10 @@ export function casino(b: Builder, lamps: number): Casino {
     inside,
     update(time, dt, focus, camera, night) {
       const inCasino = !!focus && inside(focus.x, focus.z);
+      // İç mekân yalnızca kapıdan görünür: kamera binadan uzaksa (60 m) hiç çizilmez
+      const near = !camera || Math.hypot(Math.max(0, Math.abs(camera.x - CX) - HW), Math.max(0, Math.abs(camera.z - CZ) - HD)) < 60;
+      if (solidMeshes[INTERIOR]) solidMeshes[INTERIOR].visible = near;
+      chandelier.visible = near;
       if (solidMeshes[ROOF]) solidMeshes[ROOF].visible = !inCasino;
       if (glowMeshes[ROOF]) glowMeshes[ROOF].visible = !inCasino;
       roofSign.visible = !inCasino;

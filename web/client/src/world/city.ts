@@ -15,6 +15,7 @@ import { HOOD_PARK, HOOD_ROADS, HOOD_ROUNDABOUT, HOOD_SIDEWALK, HOOD_STREET_HALF
 import { ROAD_BRIDGE_HALF, riverDist } from "./terrain";
 import { furnish, type Kit, MALL_SIGNS, SHOPS } from "./interiors";
 import { mat, part } from "./geo";
+import { tiledStatics } from "./tiles";
 import { signalLamp, signalNow } from "./signals";
 
 const ASPHALT = "#3c3f45";
@@ -61,6 +62,8 @@ export interface City {
   group: THREE.Group;
   rooms: Room[];
   npcs: CityNpc[];
+  /** Dükkân iç mekânları (karolar): uzaktakiler kare başına gizlenir (geo.ts cullFar). */
+  interiors: THREE.Group;
   /** Kare başına: gece pencereleri, ikaz lambaları, trafik ışıkları. */
   update(time: number, night: number): void;
 }
@@ -1228,7 +1231,11 @@ export function city(b: Builder): City {
   };
   addMesh(glows, new THREE.MeshBasicMaterial({ vertexColors: true }));
   const insideFlood = { value: 0 };
-  addMesh(inside, floodMaterial(insideFlood, {}));
+  // İç mekânlar yalnızca camdan ve kapıdan, yakından görünür: karolara bölünür, uzaktakiler çizilmez
+  const interiors = tiledStatics(inside, floodMaterial(insideFlood, {}));
+  interiors.userData.maxDist = 70;
+  interiors.traverse((o) => (o.castShadow = o.receiveShadow = false));
+  group.add(interiors);
   const glassMesh = addMesh(glassGeos, new THREE.MeshPhongMaterial({ vertexColors: true, transparent: true, opacity: 0.26, shininess: 90, specular: "#ffffff", depthWrite: false }));
   if (glassMesh) glassMesh.renderOrder = 3;
   addMesh(neon, new THREE.MeshBasicMaterial({ map: atlas }));
@@ -1246,6 +1253,7 @@ export function city(b: Builder): City {
     group,
     rooms,
     npcs,
+    interiors,
     update(time, night) {
       // İç aydınlatma: gündüz de hafif (tavanlar yeşilimsi gök yansımasıyla kararmasın), gece daha çok
       insideFlood.value = 0.22 + night * 0.25;

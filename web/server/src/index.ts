@@ -1,12 +1,13 @@
 // GAP Dünyası sunucusu: statik istemci, Discord giriş API'si, avatar proxy'si ve WebSocket odaları.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import { gzipSync } from "node:zlib";
+import { promisify } from "node:util";
+import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
 import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
@@ -245,7 +246,7 @@ function routePath(url: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Statik dosyalar (bellekte gzip önbelleği)
+// Statik dosyalar (bellekte gzip + brotli önbelleği)
 // ---------------------------------------------------------------------------
 
 const MIME: Record<string, string> = {
@@ -262,34 +263,55 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
   ".map": "application/json",
 };
-// .bin: chibi karakter paketi (~4.3 MB → ~2.3 MB gzip)
+// .bin: chibi karakter paketi (~5.8 MB → ~2.9 MB gzip, ~2.4 MB brotli)
 const COMPRESSIBLE = new Set([".html", ".js", ".css", ".json", ".svg", ".map", ".bin", ".obj"]);
+// Sıkıştırma libuv iş parçacıklarında: senkron gzip büyük pakette olay döngüsünü (oyun simülasyonunu) ~200 ms kilitliyordu
+const gzipAsync = promisify(gzip);
+const brotliAsync = promisify(brotliCompress);
 
 interface CachedFile {
   raw: Buffer;
   gz: Buffer | null;
+  br: Buffer | null;
   type: string;
 }
-const fileCache = new Map<string, CachedFile>();
+/** Aynı dosyaya eşzamanlı ilk istekler tek okuma/sıkıştırmayı bekler. Bulunamayanlar saklanmaz (rastgele yol taraması belleği şişirmesin). */
+const fileCache = new Map<string, Promise<CachedFile | null>>();
 
-async function loadStatic(rel: string): Promise<CachedFile | null> {
-  const hit = fileCache.get(rel);
-  if (hit) return hit;
+function loadStatic(rel: string): Promise<CachedFile | null> {
+  let hit = fileCache.get(rel);
+  if (!hit) {
+    hit = readStatic(rel);
+    fileCache.set(rel, hit);
+    void hit.then((f) => f || fileCache.delete(rel));
+  }
+  return hit;
+}
+
+async function readStatic(rel: string): Promise<CachedFile | null> {
   const full = normalize(join(STATIC_DIR, rel));
   if (!full.startsWith(STATIC_DIR + sep)) return null;
+  let raw: Buffer;
   try {
-    const raw = await readFile(full);
-    const ext = extname(full);
-    const file: CachedFile = {
-      raw,
-      gz: COMPRESSIBLE.has(ext) && raw.length > 1024 ? gzipSync(raw) : null,
-      type: MIME[ext] || "application/octet-stream",
-    };
-    fileCache.set(rel, file);
-    return file;
+    raw = await readFile(full);
   } catch {
     return null;
   }
+  const ext = extname(full);
+  const pack = COMPRESSIBLE.has(ext) && raw.length > 1024;
+  const [gz, br] = pack
+    ? await Promise.all([
+        gzipAsync(raw),
+        brotliAsync(raw, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 9, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: raw.length } }),
+      ])
+    : [null, null];
+  return { raw, gz, br, type: MIME[ext] || "application/octet-stream" };
+}
+
+/** Açılışta paketler önceden sıkıştırılır: ilk gelen oyuncu ~1 sn beklemesin. */
+async function warmStatic(): Promise<void> {
+  const files = await readdir(join(STATIC_DIR, "assets")).catch(() => [] as string[]);
+  for (const f of ["index.html", ...files.map((f) => `assets/${f}`)]) await loadStatic(`/${f}`);
 }
 
 async function serveStatic(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
@@ -303,13 +325,15 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, path: stri
     res.writeHead(404).end();
     return;
   }
-  const useGz = file.gz && /\bgzip\b/.test(String(req.headers["accept-encoding"] || ""));
+  const accept = String(req.headers["accept-encoding"] || "");
+  const enc = file.br && /\bbr\b/.test(accept) ? "br" : file.gz && /\bgzip\b/.test(accept) ? "gzip" : null;
   res.writeHead(200, {
     "Content-Type": file.type,
     "Cache-Control": rel.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache",
-    ...(useGz ? { "Content-Encoding": "gzip", Vary: "Accept-Encoding" } : {}),
+    ...(file.gz ? { Vary: "Accept-Encoding" } : {}),
+    ...(enc ? { "Content-Encoding": enc } : {}),
   });
-  res.end(useGz ? file.gz : file.raw);
+  res.end(enc === "br" ? file.br : enc === "gzip" ? file.gz : file.raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -1365,5 +1389,6 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
 }
 
 server.listen(PORT, () => {
+  void warmStatic();
   console.log(`[world] listening on :${PORT} (guests ${ALLOW_GUESTS ? "on" : "off"}, discord ${CLIENT_ID ? "on" : "off"}${DEV_WARDROBE ? ", yerel gardırop on" : ""}${DEV_FISH_S ? `, yerel göl ${DEV_FISH_S} sn` : ""})`);
 });

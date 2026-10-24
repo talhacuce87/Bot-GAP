@@ -14,6 +14,9 @@ export interface PartMeta {
   /** Uzak görünüm (scripts/lod-chibi.mjs): aynı köşelerin sadeleştirilmiş indeksleri. */
   i1Off?: number;
   i1Count?: number;
+  /** Daha uzak görünüm (kalabalığın uzağı). */
+  i2Off?: number;
+  i2Count?: number;
   label?: string;
   group?: string;
   full?: boolean;
@@ -124,7 +127,8 @@ export class ChibiPack {
 
   /**
    * Kıyafeti tek geometriye birleştirir: position, normal, color (doğrusal), aLimb, aOutline. `lod` 1: uzak
-   * görünüm (paket desteklemiyorsa tam ayrıntı).
+   * görünüm (paket desteklemiyorsa tam ayrıntı); paket LOD2 de taşıyorsa aynı köşelerin daha kaba indeksi
+   * `userData.farIndex`'e konur.
    */
   build(look: Look | null | undefined, lod: 0 | 1 = 0): THREE.BufferGeometry {
     const l = look ?? DEFAULT_LOOK;
@@ -135,6 +139,9 @@ export class ChibiPack {
     const iOf = (p: PartMeta) => (far ? { off: p.i1Off!, count: p.i1Count! } : { off: p.iOff, count: p.iCount });
     const vTotal = metas.reduce((s, p) => s + p.vCount, 0);
     const iTotal = metas.reduce((s, p) => s + iOf(p).count, 0);
+    const far2 = far && metas.every((p) => p.i2Count !== undefined);
+    const index2 = far2 ? new (vTotal > 65535 ? Uint32Array : Uint16Array)(metas.reduce((s, p) => s + p.i2Count!, 0)) : null;
+    let i2 = 0;
     const pos = new Float32Array(vTotal * 3);
     const nor = new Float32Array(vTotal * 3);
     const col = new Float32Array(vTotal * 3);
@@ -216,6 +223,10 @@ export class ChibiPack {
       const idx = new Uint16Array(this.buf, ir.off, ir.count);
       if (cap && p.cat === "hair") pullTriangles(pos, idx, base, m.headCenter, cap);
       for (let k = 0; k < ir.count; k++) index[i++] = idx[k] + base;
+      if (index2) {
+        const idx2 = new Uint16Array(this.buf, p.i2Off!, p.i2Count!);
+        for (let k = 0; k < idx2.length; k++) index2[i2++] = idx2[k] + base;
+      }
     }
 
     const geo = new THREE.BufferGeometry();
@@ -225,6 +236,7 @@ export class ChibiPack {
     geo.setAttribute("aLimb", new THREE.BufferAttribute(limb, 1));
     geo.setAttribute("aOutline", new THREE.BufferAttribute(outl, 1));
     geo.setIndex(new THREE.BufferAttribute(index, 1));
+    if (index2) geo.userData.farIndex = new THREE.BufferAttribute(index2, 1);
     geo.computeBoundingSphere();
     return geo;
   }
