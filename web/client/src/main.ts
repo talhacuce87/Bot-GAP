@@ -55,6 +55,7 @@ import { LEDGE } from "./world/colliders";
 import { MAX_PUSHERS } from "./world/grassField";
 import { PostFx } from "./world/post";
 import { buildWorld, SCREEN_W, SCREEN_Z, type Season } from "./world/scene";
+import { cacheShadows } from "./world/shadowCache";
 import { runBattle } from "./battle";
 import { beginMode, setModeStarter, stopMode, switchMode, wantsBattle } from "./mode";
 import { Features } from "./features";
@@ -117,6 +118,9 @@ async function start(): Promise<void> {
   const limiter = new FrameLimiter();
   // Kare başına elle sıfırlanır: son işlem açıkken birden çok geçişin çizimleri de sayılsın.
   renderer.info.autoReset = false;
+  // Durağan gölge düşürenler önbellekten: her kare yalnızca hareketliler gölge haritasına çizilir (?debug&golgeOnbellek=0: kapalı)
+  const shadowCache = cacheShadows(renderer);
+  shadowCache.enabled = !(params.has("debug") && params.get("golgeOnbellek") === "0");
   // Son işlem (parıltı, renk): ayarda açıksa ilk gerektiğinde kurulur. Perdede video varken kapalı
   // (video saydam "delik"ten görünür; son işlem alfayı korumaz).
   let post: PostFx | null = null;
@@ -592,7 +596,7 @@ async function start(): Promise<void> {
   }
 
   // Debug: gardırobu bot olmadan denemek için (ekran görüntüsü testleri)
-  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe, gapNet: net, gapDust: dust, gapMe: me, gapShare: startShare, gapWorld: world, gapRenderer: renderer, gapCamera: camera });
+  if (params.has("debug")) Object.assign(window, { gapWardrobe: wardrobe, gapNet: net, gapDust: dust, gapMe: me, gapShare: startShare, gapWorld: world, gapRenderer: renderer, gapCamera: camera, gapShadowCache: shadowCache });
 
   // ---- Etkileşimler: mangalda şiş çevir, zindanda çay ver / domates at ----
   const HEART = 2; // EMOTES içindeki ❤️

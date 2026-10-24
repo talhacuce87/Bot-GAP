@@ -149,6 +149,12 @@ const SHADOW: Record<Exclude<ShadowLevel, "off">, { size: number; half: number }
   low: { size: 1024, half: 24 },
   high: { size: 2048, half: 34 },
 };
+/**
+ * Gölge kutusu oyuncu merkezden bu kadar (m) uzaklaşınca kayar; kutu bu kadar geniş tutulur ki oyuncunun
+ * çevresinde yine `half` kadar gölge olsun. Arada gölge haritası yerinde kalır: durağan gölgeler önbellekten
+ * (shadowCache.ts), her kare yalnızca hareketliler çizilir.
+ */
+const SHADOW_STEP = 3;
 /** Ay yönü: gece ışık (ve silik gölgeler) buradan gelir. */
 const MOON_DIR = new THREE.Vector3(20, 30, 12).normalize();
 
@@ -1032,7 +1038,9 @@ export function buildWorld(opts: WorldOptions = {}): World {
   /** Gerçek gölge kutusunun merkezi ve yarıçapı (0: kapalı); zemin lekeleri burada silinir. */
   const blobFocus = { value: new THREE.Vector3(0, 0, 0) };
   let shadowHalf = 0;
-  const _right = new THREE.Vector3(), _up = new THREE.Vector3(), _snap = new THREE.Vector3();
+  const _right = new THREE.Vector3(), _up = new THREE.Vector3(), _snap = new THREE.Vector3(), _lastDir = new THREE.Vector3();
+  /** Gölge kutusunun ışık uzayındaki merkezi (sağ, yukarı, ışık yönü); NaN: yeniden ortala. */
+  let boxR = NaN, boxU = 0, boxF = 0;
 
   // Gökyüzü kubbesi (tek draw call, sisten etkilenmez); su aynı renkleri yansıtır
   const sky = skyDome(240);
@@ -1298,15 +1306,21 @@ export function buildWorld(opts: WorldOptions = {}): World {
       fnt.light.value = 0.35 + 0.65 * Math.min(1, hemi.intensity / 1.6);
       if (sun.castShadow) {
         // Gölge kutusu oyuncuyu izler; ışık uzayında texel adımlarına oturtulur (kayarken titremesin)
+        // Kutu her kare değil, oyuncu merkezden SHADOW_STEP'ten fazla uzaklaşınca (ya da güneş dönünce) kayar:
+        // arada ışık matrisi aynı kalır, durağan gölge düşürenler önbellekten gelir. Derinlik yönünde pay bol.
         const dir = dayNight.lightDir;
-        const texel = (shadowHalf * 2) / sun.shadow.mapSize.x;
+        const texel = ((shadowHalf + SHADOW_STEP) * 2) / sun.shadow.mapSize.x;
         _right.crossVectors(THREE.Object3D.DEFAULT_UP, dir).normalize();
         _up.crossVectors(dir, _right);
         const fx = focus?.x ?? SPAWN.x, fz = focus?.z ?? SPAWN.z;
-        const r = Math.round((_right.x * fx + _right.z * fz) / texel) * texel;
-        const u = Math.round((_up.x * fx + _up.z * fz) / texel) * texel;
-        const f = dir.x * fx + dir.z * fz;
-        _snap.copy(_right).multiplyScalar(r).addScaledVector(_up, u).addScaledVector(dir, f);
+        const pr = _right.x * fx + _right.z * fz, pu = _up.x * fx + _up.z * fz, pf = dir.x * fx + dir.z * fz;
+        if (!_lastDir.equals(dir) || !(Math.abs(pr - boxR) <= SHADOW_STEP) || Math.abs(pu - boxU) > SHADOW_STEP || Math.abs(pf - boxF) > 10) {
+          _lastDir.copy(dir);
+          boxR = Math.round(pr / texel) * texel;
+          boxU = Math.round(pu / texel) * texel;
+          boxF = Math.round(pf);
+        }
+        _snap.copy(_right).multiplyScalar(boxR).addScaledVector(_up, boxU).addScaledVector(dir, boxF);
         sun.target.position.copy(_snap);
         sun.position.copy(_snap).addScaledVector(dir, 100);
         sun.target.updateMatrixWorld();
@@ -1355,8 +1369,9 @@ export function buildWorld(opts: WorldOptions = {}): World {
         sun.shadow.map = null;
       }
       const cam = sun.shadow.camera;
-      cam.left = cam.bottom = -cfg.half;
-      cam.right = cam.top = cfg.half;
+      cam.left = cam.bottom = -(cfg.half + SHADOW_STEP);
+      cam.right = cam.top = cfg.half + SHADOW_STEP;
+      boxR = NaN;
       cam.updateProjectionMatrix();
     },
     sakura: garden,
