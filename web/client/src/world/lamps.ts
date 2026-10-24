@@ -27,10 +27,21 @@ const HEAD_POWER = 120;
 const SODIUM = new THREE.Color("#ffb46e");
 const LED = new THREE.Color("#fff0dc");
 const FIRE = new THREE.Color("#ff8a3a");
-/** İnşa lambası: sıcak, loş, kısa menzilli (gölgesi blok ızgarasından). */
+/** İnşa lambası: sıcak, loş, kısa menzilli (gölgesi blok ızgarasından); ışık taşı daha güçlü ve sarı. */
 const BUILD_LAMP = new THREE.Color("#ffc98a");
 const BUILD_RANGE = 9;
 const BUILD_POWER = 3.2;
+const GLOW_COLOR = new THREE.Color("#ffd98a");
+const GLOW_RANGE = 11;
+const GLOW_POWER = 4.6;
+
+/** İnşa ışığı: konum ve ışık taşı mı. */
+export interface BuildLight {
+  x: number;
+  y: number;
+  z: number;
+  glow?: boolean;
+}
 
 /** Mahallenin blok ızgarası (gölge için): 1 m hücre, değer 255 dolu, 200 cam, 128 yarım blok (alt yarı). */
 export interface BuildOccupancy {
@@ -203,7 +214,7 @@ export class LampField {
   private area: { minX: number; minZ: number; cols: number; rows: number };
   private fixedHits: [number, number][][] = [];
   /** İnşa lambaları (mahallede, değiştikçe). */
-  private built: { x: number; y: number; z: number }[] = [];
+  private built: BuildLight[] = [];
 
   constructor(lamps: Lamp[]) {
     this.fixed = lamps;
@@ -251,16 +262,16 @@ export class LampField {
       data.set([color.r, color.g, color.b, power], (n + i) * 4);
     });
     built.forEach((l, k) => {
-      const i = lamps.length + k;
-      data.set([l.x, l.y, l.z, BUILD_RANGE], i * 4);
-      data.set([BUILD_LAMP.r, BUILD_LAMP.g, BUILD_LAMP.b, -BUILD_POWER], (n + i) * 4);
+      const i = lamps.length + k, c = l.glow ? GLOW_COLOR : BUILD_LAMP;
+      data.set([l.x, l.y, l.z, l.glow ? GLOW_RANGE : BUILD_RANGE], i * 4);
+      data.set([c.r, c.g, c.b, -(l.glow ? GLOW_POWER : BUILD_POWER)], (n + i) * 4);
     });
     this.uniforms.uLampData.value?.dispose();
     const dataTex = new THREE.DataTexture(data, n, 2, THREE.RGBAFormat, THREE.FloatType);
     dataTex.needsUpdate = true;
     // Izgara: her hücreye menzili değen lambalar (doluysa hücre merkezine en yakınları)
     const { cols, rows } = this.area;
-    const ranges = built.map(() => BUILD_RANGE);
+    const ranges = built.map((l) => (l.glow ? GLOW_RANGE : BUILD_RANGE));
     const grid = new Float32Array(cols * PER_CELL * rows * 4);
     for (let cy = 0; cy < rows; cy++) {
       for (let cx = 0; cx < cols; cx++) {
@@ -278,8 +289,8 @@ export class LampField {
   }
 
   /** İnşa lambaları ve mahallenin blok ızgarası değişti (gölgeler için). */
-  setBuild(lamps: { x: number; y: number; z: number }[], occ: BuildOccupancy): void {
-    const same = lamps.length === this.built.length && lamps.every((l, i) => l.x === this.built[i].x && l.y === this.built[i].y && l.z === this.built[i].z);
+  setBuild(lamps: BuildLight[], occ: BuildOccupancy): void {
+    const same = lamps.length === this.built.length && lamps.every((l, i) => l.x === this.built[i].x && l.y === this.built[i].y && l.z === this.built[i].z && !!l.glow === !!this.built[i].glow);
     if (!same) {
       this.built = lamps;
       this.write();

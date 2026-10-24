@@ -9,8 +9,9 @@ import {
   type T21Kind, twentyOnePlus3, validBet,
 } from "./casino";
 import { CASINO, CASINO_MEZZ_Z } from "./zones";
+import { LivePoker, type PokerTableView } from "./poker";
 
-export type LiveKind = "roulette" | "blackjack";
+export type LiveKind = "roulette" | "blackjack" | "poker";
 export interface LiveSeatPos {
   x: number;
   z: number;
@@ -44,11 +45,25 @@ function blackjackDef(id: number, x: number, z: number): LiveTableDef {
   return { id, kind: "blackjack", x, z, seats };
 }
 
+/** Poker masası: VIP katındaki oval masa; 7 koltuk masanın etrafında, krupiye kuzeyde (duvar tarafı). */
+export const POKER_SEATS = 7;
+/** Koltuğun oval üzerindeki açısı (0: güney, saat yönünde). */
+export const pokerSeatAngle = (i: number) => -2.55 + (i * 5.1) / (POKER_SEATS - 1);
+function pokerDef(id: number): LiveTableDef {
+  const x = CASINO.x, z = (CASINO.z - CASINO.hd + 0.25 + CASINO_MEZZ_Z) / 2 - 0.2;
+  const seats = Array.from({ length: POKER_SEATS }, (_, i) => {
+    const a = pokerSeatAngle(i), sx = x + Math.sin(a) * 3.1, sz = z + Math.cos(a) * 2.05;
+    return { x: sx, z: sz, rot: Math.atan2(x - sx, z - sz) };
+  });
+  return { id, kind: "poker", x, z, seats };
+}
+
 export const LIVE_TABLES: LiveTableDef[] = [
   rouletteDef(0, CASINO.x - 8, MED_Z - 3.5),
   rouletteDef(1, CASINO.x + 8, MED_Z - 3.5),
   blackjackDef(2, CASINO.x - 8, MED_Z + 3),
   blackjackDef(3, CASINO.x + 8, MED_Z + 3),
+  pokerDef(4),
 ];
 /** Masayı izlemek için masa merkezine bu kadar yakın olmalı (oturmak için tabure yanında). */
 export const WATCH_R = 6;
@@ -517,9 +532,10 @@ export class LiveBlackjack {
   }
 }
 
-export type LiveTableView = RouletteTableView | BlackjackTableView;
-export type LiveTable = LiveRoulette | LiveBlackjack;
+export type LiveTableView = RouletteTableView | BlackjackTableView | PokerTableView;
+export type LiveTable = LiveRoulette | LiveBlackjack | LivePoker;
 
 export function makeTable(def: LiveTableDef, wallet: LiveWallet, rng: Rng): LiveTable {
+  if (def.kind === "poker") return new LivePoker(def, wallet, rng);
   return def.kind === "roulette" ? new LiveRoulette(def, wallet, rng) : new LiveBlackjack(def, wallet, rng);
 }

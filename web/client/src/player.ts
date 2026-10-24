@@ -154,6 +154,8 @@ export class Player implements AvatarView, PlayerState {
   carLock = false;
   /** Kendi avatarını gizle (tuning ekranında araba vitrinde, sürücü görünmez). */
   hideAvatar = false;
+  /** Başkasının arabasında yolcu: konum ve yön sürücünün arabası (her kare dışarıdan verilir); yürünmez. */
+  riding: { x: number; z: number; rot: number } | null = null;
   /** İçinde bulunduğu dükkân (kamera odanın içinde kalır); main.ts her kare günceller. */
   room: Room | null = null;
   /** Sürerken Space'e basıldı (main.ts sunucuya ateş yollar). */
@@ -251,8 +253,20 @@ export class Player implements AvatarView, PlayerState {
       return;
     }
 
+    if (this.riding) {
+      input.consumeAction();
+      input.consumeJump();
+      this.x = this.riding.x;
+      this.z = this.riding.z;
+      this.rot = this.riding.rot;
+      this.vx = this.vz = 0;
+      this.flags = FLAG_SEATED;
+      return;
+    }
+
     // Paintball: geri sayımda ve vurulmuşken yerinden kıpırdamaz (yalnızca bakar)
     if (this.fps?.frozen) input.moveX = input.moveY = 0;
+
     const action = input.consumeAction();
     let jump = input.consumeJump() && !this.fps?.frozen;
     const moving = Math.abs(input.moveX) > 0.15 || Math.abs(input.moveY) > 0.15;

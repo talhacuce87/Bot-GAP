@@ -12,7 +12,6 @@ import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
 import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
 import { validCar } from "../../shared/car";
-import { resolveRadio } from "./radio";
 import { Casino, type CasinoMsg, secureRng, Wallets } from "./casino";
 import { RingHost, type RingMsg } from "./ring";
 import { LiveHost, type LiveMsg } from "./liveTables";
@@ -1063,6 +1062,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   let lastCar = 0;
   let lastPark = 0;
   let lastRadio = 0;
+  let lastRadioOp = 0;
+  let lastRide = 0;
   let lastCasino = 0;
   let lastLive = 0;
   let lastRing = 0;
@@ -1208,8 +1209,11 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         ws.send(JSON.stringify("error" in out ? { t: "notice", text: out.error } : out));
       } else if (msg?.t === "live") {
         const now = Date.now();
-        if (now - lastLive < 120) return ws.send(JSON.stringify({ t: "notice", text: "🎰 Biraz yavaş, bir an bekle." }));
-        lastLive = now;
+        // Oturma, izleme ve kalkma sınırsız (masa ekranı açılırken art arda gider); bahis ve hamleler sınırlı
+        if (msg.op === "bet" || msg.op === "act" || msg.op === "rebuy") {
+          if (now - lastLive < 120) return ws.send(JSON.stringify({ t: "notice", text: "🎰 Biraz yavaş, bir an bekle." }));
+          lastLive = now;
+        }
         const err = room.live?.handle(sid, walletKey, msg as LiveMsg, now);
         if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
       } else if (msg?.t === "ring") {
@@ -1219,15 +1223,32 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const err = room.ring?.handle(sid, msg as RingMsg, now);
         if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
       } else if (msg?.t === "radio") {
+        // Link sıraya eklenir (çalma listesi bütün şarkılarıyla); kontrol yalnızca arabada
         const now = Date.now();
-        if (now - lastRadio < 2000) return;
+        if (now - lastRadio < 1500) return ws.send(JSON.stringify({ t: "notice", text: "📻 Biraz yavaş, bir an bekle." }));
         lastRadio = now;
-        if (typeof msg.url !== "string" || !msg.url.trim()) return room.setRadio(sid, null);
-        if (!room.players.get(sid)?.info.car) return;
-        void resolveRadio(msg.url.slice(0, 300)).then((r) => {
-          if ("error" in r) ws.send(JSON.stringify({ t: "notice", text: r.error }));
-          else room.setRadio(sid, { id: r.id, title: r.title, at: Date.now() });
-        });
+        if (typeof msg.url !== "string" || !msg.url.trim()) return void room.radioQ.op(sid, "stop");
+        if (!room.players.get(sid)?.info.car) return ws.send(JSON.stringify({ t: "notice", text: "📻 Radyoyu arabadan kontrol edebilirsin." }));
+        void room.radioQ.add(sid, msg.url).then((text) => text && ws.send(JSON.stringify({ t: "notice", text })));
+      } else if (msg?.t === "radioq" && typeof msg.op === "string") {
+        // Şarkı bitti bildirimi her yerden; diğerleri yalnızca arabada
+        const now = Date.now();
+        if (msg.op !== "ended") {
+          if (now - lastRadioOp < 250) return;
+          lastRadioOp = now;
+          if (!room.players.get(sid)?.info.car) return ws.send(JSON.stringify({ t: "notice", text: "📻 Radyoyu arabadan kontrol edebilirsin." }));
+        }
+        const ops = ["next", "prev", "shuffle", "repeat", "jump", "remove", "clear", "stop", "play", "ended"] as const;
+        const op = ops.find((o) => o === msg.op);
+        if (op) void room.radioQ.op(sid, op, typeof msg.i === "number" ? msg.i : undefined, typeof msg.id === "string" ? msg.id : undefined);
+      } else if (msg?.t === "carlights") {
+        room.setLights(sid, msg.on);
+      } else if (msg?.t === "ride") {
+        const now = Date.now();
+        if (now - lastRide < 500) return;
+        lastRide = now;
+        const err = room.ride(sid, typeof msg.d === "number" ? msg.d : null);
+        if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
       } else if (msg?.t === "profile" && typeof msg.sid === "number") {
         const now = Date.now();
         if (now - lastProfile < 1000) return;
