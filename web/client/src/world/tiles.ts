@@ -52,6 +52,16 @@ function splitByTile(geo: THREE.BufferGeometry, into: Map<string, THREE.BufferGe
   }
 }
 
+/** Parçaları tek, sıkıştırılmış statik mesh'te birleştirir. */
+export function staticMesh(list: THREE.BufferGeometry[], material: THREE.Material, name: string): THREE.Mesh {
+  const geo = compact(mergeGeometries(list.map((g) => (g.index ? g.toNonIndexed() : g))));
+  geo.computeBoundingSphere();
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.name = name;
+  mesh.matrixAutoUpdate = false;
+  return mesh;
+}
+
 /** Statik parçalardan karo mesh'leri (aynı malzeme). */
 export function tiledStatics(geos: THREE.BufferGeometry[], material: THREE.Material): THREE.Group {
   const buckets = new Map<string, THREE.BufferGeometry[]>();
@@ -72,13 +82,7 @@ export function tiledStatics(geos: THREE.BufferGeometry[], material: THREE.Mater
   }
   const group = new THREE.Group();
   for (const [key, list] of [...buckets].sort(([a], [b]) => (a < b ? -1 : 1))) {
-    const merged = mergeGeometries(list);
-    if (!merged) continue;
-    const geo = compact(merged);
-    geo.computeBoundingSphere();
-    const mesh = new THREE.Mesh(geo, material);
-    mesh.name = `karo ${key}`;
-    mesh.matrixAutoUpdate = false;
+    const mesh = staticMesh(list, material, `karo ${key}`);
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
   }

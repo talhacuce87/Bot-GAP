@@ -9,6 +9,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { CASINO, CASINO_MEZZ_Z } from "../../../shared/zones";
 import type { Builder, Seat } from "./builder";
+import type { Portal } from "./occlusion";
 import type { CityNpc } from "./city";
 import { mat, part } from "./geo";
 
@@ -64,6 +65,9 @@ export interface Casino {
   /** Krupiyeler (masaların arkasında). */
   npcs: CityNpc[];
   inside(x: number, z: number): boolean;
+  /** İç mekân (gölge atmaz): yalnızca ön kapıdan görünür, `portal` (occlusion.ts). */
+  interior: THREE.Object3D | null;
+  portal: Portal;
   /** Kare başına: çatı/duvar solması, kayan ampuller, dönen hale, avize ve gece ışıkları. */
   update(time: number, dt: number, focus: { x: number; z: number } | undefined, camera: THREE.Vector3 | undefined, night: number): void;
 }
@@ -883,11 +887,25 @@ export function casino(b: Builder, lamps: number): Casino {
     (c: THREE.Vector3) => c.x > X1 - 2.5,
   ];
   const opacity = [1, 1, 1, 1];
+  // Örtücü: duvarlar ve çatı opakken bütün bina (içerisi yalnızca kapıdan görünür, içi boş kat gibi)
+  const opaque = () => opacity.every((o) => o > 0.99) && !!solidMeshes[ROOF]?.visible;
+  b.occluder(CX, CZ, HW * 2, HD * 2, 0, H, { hull: true, active: opaque });
+  const portal: Portal = {
+    room: new THREE.Box3(new THREE.Vector3(X0 - T / 2, -1, Z0 - T / 2), new THREE.Vector3(X1 + T / 2, H + 1, Z1 + T / 2)),
+    face: new THREE.Box3(new THREE.Vector3(X0, 0, Z1 + T / 2), new THREE.Vector3(X1, H, Z1 + T / 2 + 0.1)),
+    nx: 0,
+    nz: 1,
+    px: CX,
+    pz: Z1 + T / 2,
+    open: () => !opaque(),
+  };
 
     return {
     group,
     npcs,
     inside,
+    interior: solidMeshes[INTERIOR] ?? null,
+    portal,
     update(time, dt, focus, camera, night) {
       const inCasino = !!focus && inside(focus.x, focus.z);
       // İç mekân yalnızca kapıdan görünür: kamera binadan uzaksa (60 m) hiç çizilmez

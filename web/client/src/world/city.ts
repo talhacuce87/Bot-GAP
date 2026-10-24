@@ -15,7 +15,8 @@ import { HOOD_PARK, HOOD_ROADS, HOOD_ROUNDABOUT, HOOD_SIDEWALK, HOOD_STREET_HALF
 import { ROAD_BRIDGE_HALF, riverDist } from "./terrain";
 import { furnish, type Kit, MALL_SIGNS, SHOPS } from "./interiors";
 import { mat, part } from "./geo";
-import { tiledStatics } from "./tiles";
+import { staticMesh, tiledStatics } from "./tiles";
+import type { OccluderBox, Portal } from "./occlusion";
 import { signalLamp, signalNow } from "./signals";
 
 const ASPHALT = "#3c3f45";
@@ -62,8 +63,14 @@ export interface City {
   group: THREE.Group;
   rooms: Room[];
   npcs: CityNpc[];
-  /** Dükkân iç mekânları (karolar): uzaktakiler kare başına gizlenir (geo.ts cullFar). */
+  /**
+   * Dükkân iç mekânları (dükkân başına bir mesh): uzaktakiler kare başına gizlenir (geo.ts cullFar), yalnızca
+   * ön cepheden görünürler (`portals`, occlusion.ts).
+   */
   interiors: THREE.Group;
+  portals: Map<THREE.Object3D, Portal>;
+  /** Dükkân katlarının duvarları ve tavanları (karolar; dışarıdan da görünür). */
+  walls: THREE.Group;
   /** Kare başına: gece pencereleri, ikaz lambaları, trafik ışıkları. */
   update(time: number, night: number): void;
 }
@@ -261,8 +268,10 @@ export function city(b: Builder): City {
   /** Trafik ışıkları: [yatay cadde | dikey cadde][kırmızı, sarı, yeşil]. */
   const signals: THREE.BufferGeometry[][][] = [[[], [], []], [[], [], []]];
   const neon: THREE.BufferGeometry[] = [];
-  /** Dükkânların içi (gölge almaz: kulenin gölgesi içeriyi karartmasın; gece kendi ışığıyla aydınlık). */
-  const inside: THREE.BufferGeometry[] = [];
+  /** Dükkân katlarının duvarları (gölge almaz: kulenin gölgesi içeriyi karartmasın; gece kendi ışığıyla aydınlık). */
+  const walls: THREE.BufferGeometry[] = [];
+  /** Dükkânların içi (dükkân başına): yalnızca kapıdan ve vitrinden görünür. */
+  const shops: { geos: THREE.BufferGeometry[]; name: string; portal: Portal }[] = [];
   const rooms: Room[] = [];
   const npcs: CityNpc[] = [];
   const atlas = neonAtlas();
@@ -272,7 +281,7 @@ export function city(b: Builder): City {
   const box = (w: number, h: number, d: number, color: THREE.ColorRepresentation, x: number, y: number, z: number, ry = 0, jitter = 0.04) =>
     solid(new THREE.BoxGeometry(w, h, d), color, mat(x, y, z, ry), jitter);
   const ibox = (w: number, h: number, d: number, color: THREE.ColorRepresentation, x: number, y: number, z: number, ry = 0, jitter = 0.03) =>
-    inside.push(part(new THREE.BoxGeometry(w, h, d), color, mat(x, y, z, ry), jitter, rand));
+    walls.push(part(new THREE.BoxGeometry(w, h, d), color, mat(x, y, z, ry), jitter, rand));
   const gbox = (w: number, h: number, d: number, color: string, x: number, y: number, z: number, ry = 0, into = glows) =>
     into.push(part(new THREE.BoxGeometry(w, h, d), color, mat(x, y, z, ry)));
   const cyl = (r0: number, r1: number, h: number, color: string, x: number, y: number, z: number, seg = 10) =>
@@ -784,7 +793,7 @@ export function city(b: Builder): City {
   const glassGeos: THREE.BufferGeometry[] = [];
   const kit: Kit = {
     rand,
-    geo: (g, color, m, jitter = 0.02) => inside.push(part(g, color, m, jitter, rand)),
+    geo: (g, color, m, jitter = 0.02) => shops[shops.length - 1].geos.push(part(g, color, m, jitter, rand)),
     glowGeo: (g, color, m) => glows.push(part(g, color, m)),
     glassGeo: (g, m) => glassGeos.push(part(g, "#c4dce8", m)),
     sign: (text, w, h, m) => sign(text, w, h, m),
@@ -799,8 +808,11 @@ export function city(b: Builder): City {
     if (r) Object.assign(rooms[rooms.length - 1], r);
   };
 
-  /** Giriş katı: vitrin camı, beyaz lento, kapı saçağı ve dükkân tabelası (`face` yüzünde). Tabelası bir dükkânsa içi girilebilir. */
-  const podium = (x: number, z: number, w: number, d: number, h: number, color: string, face: number, shop?: string, canopy = true) => {
+  /**
+   * Giriş katı: vitrin camı, beyaz lento, kapı saçağı ve dükkân tabelası (`face` yüzünde). Tabelası bir dükkânsa içi
+   * girilebilir: o zaman katın kutusunu döndürür (üstündeki kütlenin örtücüsü içeriden bakınca örtmez).
+   */
+  const podium = (x: number, z: number, w: number, d: number, h: number, color: string, face: number, shop?: string, canopy = true): OccluderBox["room"] => {
     const side = Math.abs(Math.sin(face)) > 0.5;
     const fw = side ? d : w, off = side ? w / 2 : d / 2;
     if (canopy) {
@@ -817,18 +829,40 @@ export function city(b: Builder): City {
       sign(shop, sh * 4, sh, mat(sx, y, sz, face));
     }
     if (shop && SHOPS[shop]) {
-      shell(x, z, w, d, h, color, face);
+      const room = shell(x, z, w, d, h, color, face, shop);
       fit(shop, x, z, w, d, h, face);
-      return;
+      return room;
     }
     box(w, h, d, color, x, h / 2, z, 0, 0.03);
+    b.occluder(x, z, w, d, 0, h);
     box(w + 0.06, h * 0.62, d + 0.06, "#2b3a48", x, h * 0.36, z, 0, 0.02);
     box(w + 0.1, 0.35, d + 0.1, "#eeece6", x, h * 0.72, z, 0, 0.02);
     rectCollider(x, z, w, d);
+    return undefined;
   };
 
-  /** İçi boş giriş katı: dört duvar (önde kapı boşluğu), dışta vitrin camı, tavan ve tavan ışıkları. */
-  const shell = (x: number, z: number, w: number, d: number, h: number, color: string, face: number) => {
+  /**
+   * İçi boş giriş katı: dört duvar (önde kapı boşluğu), dışta vitrin camı, tavan ve tavan ışıkları. Duvarlar
+   * opak, içerisi yalnızca ön cepheden görünür: kat, kendisiyle kesişmeyenler için örtücü; iç mekânın portalı ön yüz.
+   */
+  const shell = (x: number, z: number, w: number, d: number, h: number, color: string, face: number, name: string) => {
+    const nx = Math.round(Math.sin(face)), nz = Math.round(Math.cos(face));
+    const fo = nx ? w / 2 : d / 2;
+    const fx = x + nx * (fo + 0.05), fz = z + nz * (fo + 0.05);
+    shops.push({
+      geos: [],
+      name,
+      portal: {
+        room: new THREE.Box3(new THREE.Vector3(x - w / 2, -1, z - d / 2), new THREE.Vector3(x + w / 2, h, z + d / 2)),
+        face: new THREE.Box3(new THREE.Vector3(fx - (nx ? 0.05 : w / 2), 0, fz - (nz ? 0.05 : d / 2)), new THREE.Vector3(fx + (nx ? 0.05 : w / 2), h, fz + (nz ? 0.05 : d / 2))),
+        nx,
+        nz,
+        px: x + nx * fo,
+        pz: z + nz * fo,
+      },
+    });
+    const room: OccluderBox["room"] = { min: [x - w / 2, 0, z - d / 2], max: [x + w / 2, h, z + d / 2] };
+    b.occluder(x, z, w, d, 0, h, { hull: true });
     for (const [ry, fw, off] of faces(w, d)) {
       const front = Math.abs(Math.sin(ry - face)) < 0.01 && Math.cos(ry - face) > 0;
       const segs: [number, number][] = front ? [[-fw / 2, -DOOR_W / 2], [DOOR_W / 2, fw / 2]] : [[-fw / 2, fw / 2]];
@@ -887,6 +921,7 @@ export function city(b: Builder): City {
       for (let lz = -d / 2 + 2.5; lz < d / 2 - 1; lz += 4) gbox(1.0, 0.03, 0.35, "#d9d2c2", x + lx, h - 0.31, z + lz);
     }
     rooms.push({ minX: x - w / 2 + WALL_T, maxX: x + w / 2 - WALL_T, minZ: z - d / 2 + WALL_T, maxZ: z + d / 2 - WALL_T, ceil: h - 0.3 });
+    return room;
   };
 
   /** Kırmızı ikaz lambalı anten. */
@@ -897,12 +932,14 @@ export function city(b: Builder): City {
   /** Cam gökdelen: kademeli kütleler, dikey çıtalar, kat bantları, gece pencereleri; tepede LED taç. */
   const glassTower = (o: { x: number; z: number; w: number; d: number; h: number; glass: string; frame: string; face: number; shop?: string; helipad?: boolean; crown?: string; billboard?: string }) => {
     const base = 5.5;
-    podium(o.x, o.z, o.w + 2, o.d + 2, base, "#d9d6cf", o.face, o.shop);
+    const room = podium(o.x, o.z, o.w + 2, o.d + 2, base, "#d9d6cf", o.face, o.shop);
     const tiers: [number, number, number][] = [[o.w, o.d, o.h * 0.62], [o.w * 0.82, o.d * 0.82, o.h * 0.88], [o.w * 0.6, o.d * 0.6, o.h]];
     let y0 = base;
     for (const [tw, td, top] of tiers) {
       const th = top - y0;
       box(tw, th, td, o.glass, o.x, y0 + th / 2, o.z, 0, 0.05);
+      // Örtücü yere kadar: kademeler ve giriş katı iç içe (birleşim çizgisinde boşluk kalmaz)
+      b.occluder(o.x, o.z, tw, td, 0, top, { room });
       for (const [ry, fw, off] of faces(tw, td)) {
         const n = Math.max(2, Math.round(fw / 2.2));
         for (let k = 0; k <= n; k++) {
@@ -942,9 +979,10 @@ export function city(b: Builder): City {
   /** Rezidans: beyaz gövde, kat kat şerit pencereler ve ön/arka balkonlar. */
   const residence = (o: { x: number; z: number; w: number; d: number; h: number; face: number; shop?: string; accent: string }) => {
     const base = 4.5;
-    podium(o.x, o.z, o.w + 1.4, o.d + 1.4, base, "#e2ded6", o.face, o.shop);
+    const room = podium(o.x, o.z, o.w + 1.4, o.d + 1.4, base, "#e2ded6", o.face, o.shop);
     const th = o.h - base;
     box(o.w, th, o.d, "#f2efe8", o.x, base + th / 2, o.z, 0, 0.03);
+    b.occluder(o.x, o.z, o.w, o.d, 0, o.h, { room });
     const fh = 3.2;
     for (let y = base; y < o.h - 1; y += fh) {
       box(o.w + 0.06, 1.7, o.d + 0.06, "#33475a", o.x, y + 1.55, o.z, 0, 0.02);
@@ -966,8 +1004,9 @@ export function city(b: Builder): City {
   /** Orta katlı: renkli cephe, pencere ızgarası, zemin katta dükkânlar ve tenteler, çatıda klima. */
   const midrise = (o: { x: number; z: number; w: number; d: number; floors: number; color: string; face: number; shop?: string; awning: string; roofSign?: string }) => {
     const fh = 3.3, base = 5.0, h = base + o.floors * fh;
-    podium(o.x, o.z, o.w, o.d, base, o.color, o.face, o.shop, false);
+    const room = podium(o.x, o.z, o.w, o.d, base, o.color, o.face, o.shop, false);
     box(o.w, h - base, o.d, o.color, o.x, base + (h - base) / 2, o.z, 0, 0.05);
+    b.occluder(o.x, o.z, o.w, o.d, 0, h, { room });
     for (const [ry, fw, off] of faces(o.w, o.d)) {
       const cols = Math.floor(fw / 3);
       for (let f = 0; f < o.floors; f++) {
@@ -1006,9 +1045,10 @@ export function city(b: Builder): City {
   const mall = (x: number, z: number, w: number, d: number, face: number) => {
     const h = 11, g = 5;
     // Zemin kat girilebilir yemek katı; üstte AVM'nin iki katı
-    shell(x, z, w, d, g, "#ece9e2", face);
+    const room = shell(x, z, w, d, g, "#ece9e2", face, "GAP AVM");
     fit("GAP AVM", x, z, w, d, g, face);
     box(w, h - g, d, "#ece9e2", x, g + (h - g) / 2, z, 0, 0.03);
+    b.occluder(x, z, w, d, 0, h, { room });
     for (const [ry, fw, off] of faces(w, d)) {
       const [px, pz] = facePt(x, z, ry, 0, off + 0.04);
       box(fw - 2, 2.6, 0.1, "#3a5266", px, 6.6, pz, ry, 0.02);
@@ -1054,6 +1094,8 @@ export function city(b: Builder): City {
     if (style === 0) {
       box(9, 3.2, 7, "#f5f3ee", x, 1.6, hz, 0, 0.02);
       box(7, 3, 6, "#f5f3ee", x + 1.2, 4.7, hz + 0.4, 0, 0.02);
+      b.occluder(x, hz, 9, 7, 0, 3.2);
+      b.occluder(x + 1.1, hz + 0.4, 6.8, 6, 0, 6.2);
       box(3.2, 3, 6.06, "#9a6b43", x - 1.1, 4.7, hz + 0.4, 0, 0.05);
       box(5, 2.2, 0.08, "#2d3a46", x + 1.4, 1.5, hz - 3.52, 0, 0.02);
       box(3.5, 1.8, 0.08, "#2d3a46", x + 2.2, 4.8, hz - 2.62, 0, 0.02);
@@ -1063,6 +1105,7 @@ export function city(b: Builder): City {
       windows.push(part(new THREE.PlaneGeometry(4.6, 1.8), "#ffe1ad", mat(x + 1.4, 1.5, hz - 3.58, Math.PI)));
     } else {
       box(8.5, 3.4, 7, accent, x, 1.7, hz, 0, 0.03);
+      b.occluder(x, hz, 8.5, 7, 0, 3.4);
       for (const s of [-1, 1]) {
         solid(new THREE.BoxGeometry(9.4, 0.25, 4.6), "#5d4a42", mat(x, 4.35, hz + s * 1.8).multiply(new THREE.Matrix4().makeRotationX(s * 0.62)), 0.04);
       }
@@ -1231,10 +1274,21 @@ export function city(b: Builder): City {
   };
   addMesh(glows, new THREE.MeshBasicMaterial({ vertexColors: true }));
   const insideFlood = { value: 0 };
-  // İç mekânlar yalnızca camdan ve kapıdan, yakından görünür: karolara bölünür, uzaktakiler çizilmez
-  const interiors = tiledStatics(inside, floodMaterial(insideFlood, {}));
+  const flood = floodMaterial(insideFlood, {});
+  const wallTiles = tiledStatics(walls, flood);
+  wallTiles.traverse((o) => (o.castShadow = o.receiveShadow = false));
+  group.add(wallTiles);
+  // İç mekânlar yalnızca camdan ve kapıdan, yakından görünür: dükkân başına mesh, uzaktakiler çizilmez
+  const interiors = new THREE.Group();
   interiors.userData.maxDist = 70;
-  interiors.traverse((o) => (o.castShadow = o.receiveShadow = false));
+  const portals = new Map<THREE.Object3D, Portal>();
+  for (const shop of shops) {
+    if (!shop.geos.length) continue;
+    const m = staticMesh(shop.geos, flood, `iç ${shop.name}`);
+    m.castShadow = m.receiveShadow = false;
+    interiors.add(m);
+    portals.set(m, shop.portal);
+  }
   group.add(interiors);
   const glassMesh = addMesh(glassGeos, new THREE.MeshPhongMaterial({ vertexColors: true, transparent: true, opacity: 0.26, shininess: 90, specular: "#ffffff", depthWrite: false }));
   if (glassMesh) glassMesh.renderOrder = 3;
@@ -1254,6 +1308,8 @@ export function city(b: Builder): City {
     rooms,
     npcs,
     interiors,
+    portals,
+    walls: wallTiles,
     update(time, night) {
       // İç aydınlatma: gündüz de hafif (tavanlar yeşilimsi gök yansımasıyla kararmasın), gece daha çok
       insideFlood.value = 0.22 + night * 0.25;

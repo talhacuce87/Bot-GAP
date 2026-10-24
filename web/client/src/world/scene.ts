@@ -36,6 +36,7 @@ import { TANK_PARK } from "../../../shared/tank";
 import { villagePaths } from "./walkways";
 import { simitci } from "./simitci";
 import { tiledStatics } from "./tiles";
+import { Occlusion } from "./occlusion";
 
 export type { Seat };
 
@@ -50,6 +51,13 @@ export interface World {
   spawn: { x: number; z: number; rot: number };
   /** Kare başına: shader saati ve birkaç ucuz animasyon; `focus` oyuncunun konumu (gece ışıkları). */
   update(time: number, focus?: { x: number; z: number }, camera?: THREE.Vector3, view?: THREE.Vector3): void;
+  /**
+   * Kare başına, çizimden hemen önce (kamera son konumunda): binaların örttüğü karoları, propları ve dükkân
+   * içlerini bu karelik gizler (occlusion.ts; gölgeye yine girerler).
+   */
+  cull(camera: THREE.PerspectiveCamera): void;
+  /** Örtme elemesi (debug: `enabled`, `stats`). */
+  occlusion: Occlusion;
   /** Biri şiş çevirdi: duman kabarır, köz parlar (`time`: döngü saati, sn). */
   grillBoost(time: number): void;
   sakura: SakuraGarden;
@@ -1137,6 +1145,23 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const blobs = shadowsMesh(b, blobFocus);
   scene.add(blobs);
   far.push(blobs);
+  town.walls.userData.fog = true;
+  far.push(town.walls);
+  // Örtme elemesi: bina kutularının arkasında kalan karolar ve prop bölgeleri; dükkân ve casino içleri portalla
+  const occlusion = new Occlusion(b.occluders);
+  for (const g of far) {
+    if (g === town.interiors) continue;
+    for (const o of g.children) occlusion.add(o);
+  }
+  for (const [o, portal] of town.portals) occlusion.add(o, portal);
+  if (cas.interior) occlusion.add(cas.interior, cas.portal);
+  // Gölge haritası ana kameranın render listesinden sonra çizilir: gizlenenler o geçiş başlarken geri açılır
+  // (ekranda örtülü binanın gölgesi görünen yere düşebilir)
+  const shadowMatrices = sun.shadow.updateMatrices.bind(sun.shadow);
+  sun.shadow.updateMatrices = (light) => {
+    occlusion.restore();
+    shadowMatrices(light);
+  };
   const mountainMesh = mountains(b);
   scene.add(mountainMesh);
   const cloudMesh = clouds(b);
@@ -1255,6 +1280,10 @@ export function buildWorld(opts: WorldOptions = {}): World {
     screen,
     lamps: lampField,
     spawn: { ...SPAWN },
+    occlusion,
+    cull(camera: THREE.PerspectiveCamera) {
+      occlusion.cull(camera, (scene.fog as THREE.Fog).far + 4);
+    },
     update(time: number, focus?: { x: number; z: number }, camera?: THREE.Vector3, view?: THREE.Vector3) {
       timeUniform.value = time;
       const dt = Math.min(0.25, Math.max(0, time - lastTime));

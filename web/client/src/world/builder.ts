@@ -3,6 +3,7 @@
 import * as THREE from "three";
 import { Colliders } from "./colliders";
 import { rng } from "./geo";
+import type { OccluderBox } from "./occlusion";
 
 export interface Seat {
   x: number;
@@ -36,6 +37,8 @@ export class Builder {
   readonly props: Record<PropKind, THREE.Matrix4[]> = {
     pine: [], oak: [], sakura: [], rock: [], bush: [], stone: [], post: [], bulb: [], flame: [], log: [],
   };
+  /** Örtme elemesinin bina kutuları (occlusion.ts): binanın içine sığan, opak kutular. */
+  readonly occluders: OccluderBox[] = [];
   /** Zemin gölgeleri: x, z, yarıçap. */
   readonly shadows: number[] = [];
   /**
@@ -48,6 +51,11 @@ export class Builder {
 
   add(geo: THREE.BufferGeometry): void {
     this.statics.push(geo);
+  }
+
+  /** Merkezi (x, z), tabanı y0, tepesi y1 olan w × d örtücü kutu. */
+  occluder(x: number, z: number, w: number, d: number, y0: number, y1: number, opts: Omit<OccluderBox, "min" | "max"> = {}): void {
+    this.occluders.push({ min: [x - w / 2, y0, z - d / 2], max: [x + w / 2, y1, z + d / 2], ...opts });
   }
 
   prop(kind: PropKind, m: THREE.Matrix4): void {
