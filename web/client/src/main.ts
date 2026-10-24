@@ -937,8 +937,16 @@ async function start(): Promise<void> {
   });
   // Sahnedeki shader'lar yükleme ekranı açıkken ve paralel derlenir; yoksa ilk karede ~70 program sırayla
   // derlenir ve ekran saniyelerce donar
-  await renderer.compileAsync(world.scene, camera).catch(() => undefined);
+  // Son işlem açıksa sahne onun hedefine çizilir: shader'lar o hedefe göre derlenmeli
+  if ((settings.bloom || settings.grade || settings.godrays) && !screen.isActive) {
+    post ??= new PostFx(renderer, world.scene, camera, settings.antialias ? 4 : 0);
+    await post.compile().catch(() => undefined);
+  } else {
+    await renderer.compileAsync(world.scene, camera).catch(() => undefined);
+  }
   if (!life.active) return;
+  // Gölge derinliği ve son işlem geçişlerinin programları ilk çizimde bağlanır: yükleme ekranı açıkken olsun
+  renderScene(0);
   run();
   loading.remove();
 }

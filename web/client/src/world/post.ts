@@ -255,6 +255,21 @@ export class PostFx {
   }
 
   /**
+   * Sahne shader'larını son işlemin hedefine göre derler: render target'a çizen program ton eşlemesiz ve
+   * doğrusal çıkışlıdır, canvas için derlenenler burada kullanılamaz (ilk karede hepsi yeniden derlenirdi).
+   */
+  async compile(): Promise<void> {
+    const r = this.renderer;
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(this.composer.readBuffer);
+    try {
+      await r.compileAsync(this.scene, this.camera);
+    } finally {
+      r.setRenderTarget(prev);
+    }
+  }
+
+  /**
    * Bir kare çizer. `env`: gün ışığı, gece lambaları, gün batımı (DayNight).
    * Gündüz parıltı yalnızca HDR parlaklıkta (güneş diski) çalışır; gece lambalar ve ateş saçar.
    */
