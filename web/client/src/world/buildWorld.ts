@@ -19,7 +19,7 @@ import {
   type PlotState,
 } from "../../../shared/build";
 import type { Vec2 } from "./colliders";
-import type { BuildOccupancy } from "./lamps";
+import type { BuildLight, BuildOccupancy } from "./lamps";
 import { LEDGE } from "./colliders";
 import { part } from "./geo";
 
@@ -40,12 +40,33 @@ function centered(g: THREE.BufferGeometry, y = 0): THREE.BufferGeometry {
  * Çizim parçaları: düz türler kendi geometrisiyle; ince cam direk + kollar (komşularına bağlanır), cam blok yüzleri
  * (cam bloklar arasındaki yüz çizilmez, birleşik görünür) ve kapı (menteşesi sola ya da sağa).
  */
-type MeshKey = "cube" | "slab" | "wedge" | "lamp" | "plant" | "fence" | "post" | "arm" | "gface" | "doorL" | "doorR";
-const MESHES: MeshKey[] = ["cube", "slab", "wedge", "lamp", "plant", "fence", "post", "arm", "gface", "doorL", "doorR"];
+type MeshKey = "cube" | "slab" | "wedge" | "lamp" | "plant" | "fence" | "post" | "arm" | "gface" | "doorL" | "doorR" | "glow";
+const MESHES: MeshKey[] = ["cube", "slab", "wedge", "lamp", "plant", "fence", "post", "arm", "gface", "doorL", "doorR", "glow"];
 /** Parça başına başlangıç örnek sayısı; dolunca mesh daha büyüğüyle değişir. */
 const CAP: Record<MeshKey, number> = {
   cube: 16000, slab: 4000, wedge: 4000, lamp: 1000, plant: 1000, fence: 2000, post: 3000, arm: 6000, gface: 6000, doorL: 300, doorR: 300,
+  glow: 1000,
 };
+
+/** Işık taşı dokusu (Minecraft glowstone gibi): koyu kehribar zeminde parlak sarı lekeler, piksel piksel. */
+function glowTexture(): THREE.CanvasTexture {
+  const n = 16, c = document.createElement("canvas");
+  c.width = c.height = n;
+  const g = c.getContext("2d")!;
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const tones = ["#b8772a", "#d9973a", "#f2c45a", "#ffe08a", "#fff4c2"];
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const v = rnd();
+    g.fillStyle = tones[v < 0.18 ? 0 : v < 0.42 ? 1 : v < 0.7 ? 2 : v < 0.9 ? 3 : 4];
+    g.fillRect(x, y, 1, 1);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
 
 /**
  * Minecraft tarzı ahşap kapı (iki blok boyu): çerçeve, üstte iki pencere, altta tahta çizgileri ve kol. Kol
@@ -72,6 +93,7 @@ function doorGeometry(handle: 1 | -1): THREE.BufferGeometry {
 function geometryFor(key: MeshKey): THREE.BufferGeometry {
   switch (key) {
     case "cube":
+    case "glow":
       return centered(new THREE.BoxGeometry(1, 1, 1), 0.5);
     case "slab":
       return centered(new THREE.BoxGeometry(1, 0.5, 1), 0.25);
@@ -170,10 +192,12 @@ export class BuildWorld {
   private meshes = {} as Record<MeshKey, THREE.InstancedMesh>;
   private dirty = true;
   private lampMat: THREE.MeshBasicMaterial;
+  /** Işık taşı: gündüz de parlak (gölge ve güneşten etkilenmez), gece daha da. */
+  private glowMat: THREE.MeshBasicMaterial;
   private ground: THREE.Mesh;
   private signs: { mesh: THREE.Mesh; canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; text: string }[] = [];
   /** İnşa lambaları ve blok ızgarası (gece ışığı ve gölgesi için): değişince `lightDirty`. */
-  light: { lamps: { x: number; y: number; z: number }[]; occ: BuildOccupancy } = {
+  light: { lamps: BuildLight[]; occ: BuildOccupancy } = {
     lamps: [],
     occ: { data: new Uint8Array(OCC.w * OCC.h * OCC.d), ...OCC },
   };
@@ -186,9 +210,10 @@ export class BuildWorld {
     const colored = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
     const glass = new THREE.MeshLambertMaterial({ color: "#ffffff", transparent: true, opacity: 0.38, depthWrite: false });
     this.lampMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+    this.glowMat = new THREE.MeshBasicMaterial({ map: glowTexture() });
     const mats: Record<MeshKey, THREE.Material> = {
       cube: solidMat, slab: solidMat, wedge: solidMat, fence: solidMat, lamp: this.lampMat, plant: colored,
-      post: glass, arm: glass, gface: glass, doorL: colored, doorR: colored,
+      post: glass, arm: glass, gface: glass, doorL: colored, doorR: colored, glow: this.glowMat,
     };
     for (const key of MESHES) this.meshes[key] = this.instanced(key, geometryFor(key), mats[key], CAP[key]);
     // Arsa zeminleri: hafif açık toprak, kenarında taş çerçeve
@@ -234,7 +259,7 @@ export class BuildWorld {
     const glass = key === "post" || key === "arm" || key === "gface";
     m.count = 0;
     m.frustumCulled = false;
-    m.castShadow = !glass && key !== "lamp";
+    m.castShadow = !glass && key !== "lamp" && key !== "glow";
     m.receiveShadow = !glass;
     if (glass) m.renderOrder = 4;
     this.group.add(m);
@@ -302,13 +327,14 @@ export class BuildWorld {
   /** Kare başına: değiştiyse örnekleri yeniden yaz; gece lambalar parlar. */
   update(lights: number): void {
     this.lampMat.color.setScalar(0.75 + lights * 1.6);
+    this.glowMat.color.setScalar(0.95 + lights * 0.45);
     if (!this.dirty) return;
     this.dirty = false;
     this.drawSigns();
     const out = Object.fromEntries(MESHES.map((k) => [k, [] as Inst[]])) as Record<MeshKey, Inst[]>;
     const white = new THREE.Color(1, 1, 1);
     this.columns.clear();
-    const occ = this.light.occ.data, lampsLit: { x: number; y: number; z: number }[] = [];
+    const occ = this.light.occ.data, lampsLit: BuildLight[] = [];
     occ.fill(0);
     const mark = (wx: number, j: number, wz: number, v: number) => {
       const x = wx - OCC.x0, z = wz - OCC.z0;
@@ -332,6 +358,8 @@ export class BuildWorld {
         // Işık: lamba ampulü ışık kaynağı; dolu bloklar gölge düşürür, cam az, kapalı kapı tam
         const wx = base.x0 + bl.i, wz = base.z0 + bl.k;
         if (def.kind === "lamp") lampsLit.push({ x: cx, y: bl.j + 0.85, z: cz });
+        // Işık taşı kendi ışığını kesmesin: gölge ızgarasına yazılmaz
+        else if (def.kind === "glow") lampsLit.push({ x: cx, y: bl.j + 0.5, z: cz, glow: true });
         else if (def.kind === "cube" || def.kind === "wedge") mark(wx, bl.j, wz, OCC_SOLID);
         else if (def.kind === "glass" || def.kind === "glassbox") mark(wx, bl.j, wz, OCC_GLASS);
         else if (def.kind === "slab") mark(wx, bl.j, wz, OCC_HALF);
@@ -378,7 +406,7 @@ export class BuildWorld {
           }
         } else {
           // Saksı/çiçek kendi renklerinde (örnek rengi beyaz); diğerleri türün rengi
-          put(def.kind as MeshKey, cx, bl.j, cz, ry, def.kind === "plant" ? white : tint.multiplyScalar(def.kind === "lamp" ? 1 : jitter));
+          put(def.kind as MeshKey, cx, bl.j, cz, ry, def.kind === "plant" || def.kind === "glow" ? white : tint.multiplyScalar(def.kind === "lamp" ? 1 : jitter));
         }
         // Çarpışma sütunu
         if (isSolid(bl.b) && def.kind !== "door") fill(base.x0 + bl.i, base.z0 + bl.k, bl.j, bl.j + blockHeight(bl.b));

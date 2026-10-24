@@ -110,8 +110,8 @@ export function plotOfDb(db: number): number {
   return Number.isInteger(id) && id >= 0 && id < PLOTS.length ? id : -1;
 }
 
-/** glass: ince cam (Minecraft'taki glass pane gibi komşularına bağlanır); glassbox: saydam küp cam. */
-export type BlockKind = "cube" | "slab" | "wedge" | "glass" | "door" | "lamp" | "plant" | "fence" | "glassbox";
+/** glass: ince cam (Minecraft'taki glass pane gibi komşularına bağlanır); glassbox: saydam küp cam; glow: ışık taşı. */
+export type BlockKind = "cube" | "slab" | "wedge" | "glass" | "door" | "lamp" | "plant" | "fence" | "glassbox" | "glow";
 
 export interface BlockDef {
   name: string;
@@ -141,6 +141,7 @@ export const BLOCKS: BlockDef[] = [
   { name: "Çit", emoji: "🪵", color: "#d8c3a0", kind: "fence" },
   { name: "Siyah", emoji: "⬛", color: "#24262c", kind: "cube" },
   { name: "Cam blok", emoji: "🧊", color: "#a9d8f0", kind: "glassbox" },
+  { name: "Işık taşı", emoji: "✨", color: "#f2c45a", kind: "glow" },
 ];
 
 /** Kapının yön bilgisinde açıklık biti (r & 3 yön, r & DOOR_OPEN açık): kalıcı, herkes görür. */
