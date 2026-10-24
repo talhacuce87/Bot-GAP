@@ -1200,8 +1200,11 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         ws.send(JSON.stringify("error" in out ? { t: "notice", text: out.error } : out));
       } else if (msg?.t === "live") {
         const now = Date.now();
-        if (now - lastLive < 120) return ws.send(JSON.stringify({ t: "notice", text: "🎰 Biraz yavaş, bir an bekle." }));
-        lastLive = now;
+        // Oturma, izleme ve kalkma sınırsız (masa ekranı açılırken art arda gider); bahis ve hamleler sınırlı
+        if (msg.op === "bet" || msg.op === "act" || msg.op === "rebuy") {
+          if (now - lastLive < 120) return ws.send(JSON.stringify({ t: "notice", text: "🎰 Biraz yavaş, bir an bekle." }));
+          lastLive = now;
+        }
         const err = room.live?.handle(sid, walletKey, msg as LiveMsg, now);
         if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
       } else if (msg?.t === "ring") {

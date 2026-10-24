@@ -2,14 +2,16 @@
 // al" ve "Kalk". Açıkken klavye oyuna değil bu ekrana gider (yanlışlıkla kalkılmaz); kısayolları oyun işler.
 // Rulet ve blackjack canlı masalardır: oturan oynar, yakında duran izler (sunucuda ortak, süreli turlar).
 import { MIN_BET } from "../../../../shared/casino";
+import { POKER } from "../../../../shared/poker";
 import type { ClientEvent, ServerEvent } from "../../../../shared/protocol";
 import { BlackjackView } from "./blackjackView";
 import type { LiveCtx } from "./liveBar";
 import { LiveBlackjackView } from "./liveBlackjackView";
+import { LivePokerView } from "./livePokerView";
 import { RouletteView } from "./rouletteView";
 import { SlotView } from "./slotView";
 
-export type GameKind = "blackjack" | "roulette" | "slot";
+export type GameKind = "blackjack" | "roulette" | "slot" | "poker";
 export type CasinoEvent = Extract<ServerEvent, { t: "wallet" | "bj" | "roulette" | "slot" | "live" }>;
 
 export interface GameView {
@@ -33,7 +35,7 @@ export interface CasinoCtx {
   toast(text: string): void;
 }
 
-const TITLES: Record<GameKind, string> = { blackjack: "♠ BLACKJACK", roulette: "🎡 RULET", slot: "🎰 GAP SLOT" };
+const TITLES: Record<GameKind, string> = { blackjack: "♠ BLACKJACK", roulette: "🎡 RULET", slot: "🎰 GAP SLOT", poker: "♣ TEXAS HOLD'EM" };
 
 /** Canlı masa: masa numarası ve oturulan koltuk (null: izleyici). */
 export interface LiveSeat {
@@ -140,10 +142,14 @@ export class CasinoUi {
     this.closeBtn.title = live?.seat === null ? "İzlemeyi bırak (Esc)" : "Masadan kalk (Esc)";
     const lc: LiveCtx | null = live && { ...live, me: () => this.net.you, now: () => this.net.serverNow() };
     this.view =
-      kind === "blackjack"
+      kind === "poker" && lc
+        ? new LivePokerView(this.ctx, lc)
+        : kind === "blackjack"
         ? lc ? new LiveBlackjackView(this.ctx, lc) : new BlackjackView(this.ctx)
         : kind === "roulette" ? new RouletteView(this.ctx, lc) : new SlotView(this.ctx);
-    if (live) this.net.send(live.seat === null ? { t: "live", op: "watch", table: live.table } : { t: "live", op: "sit", table: live.table, seat: live.seat });
+    // Pokerde masaya bakiyeden para alınır (bakiye azsa elindeki kadar)
+    const buyIn = kind === "poker" ? Math.max(POKER.minBuyIn, Math.min(POKER.buyIn, Math.floor(this.target))) : undefined;
+    if (live) this.net.send(live.seat === null ? { t: "live", op: "watch", table: live.table } : { t: "live", op: "sit", table: live.table, seat: live.seat, buyIn });
     this.body.replaceChildren(this.view.el);
     this.root.className = `cz-overlay cz-${kind}`;
     this.opened = true;
@@ -167,7 +173,8 @@ export class CasinoUi {
     clearTimeout(this.watchdog);
     if (ev.t === "live") {
       if (!this.isOpen || ev.table.id !== this.live?.table) return;
-      this.liveSeen = true;
+      // Oturduysak masa koltuğu bize gösterene kadar kabul edilmiş sayılmaz (reddedilirse kalkılır)
+      if (this.live.seat === null || ev.table.seats[this.live.seat]?.sid === this.net.you) this.liveSeen = true;
     }
     if (ev.t === "wallet") {
       this.setBalance(ev.balance);

@@ -5521,6 +5521,271 @@ button.cz-bjspot {
   border-color: #2fd27a;
 }
 
+/* Canlı poker: oval masa, koltuklar çevrede (kendi koltuğun altta), ortada ortak kartlar ve pot */
+.cz-pkfelt {
+  position: relative;
+  height: 400px;
+  margin: 4px 30px 0;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 40%, #1f7a4f, #0f4d31 62%, #0a3a24);
+  border: 14px solid #4a2c15;
+  box-shadow: 0 0 0 3px #d9b45a, inset 0 0 50px rgba(0, 0, 0, 0.5), 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+.cz-pkfelt::before {
+  content: "";
+  position: absolute;
+  inset: 16%;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 233, 170, 0.18);
+  pointer-events: none;
+}
+.cz-pkmid {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transform: translate(-50%, -50%);
+}
+.cz-pkpot {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffe7a8;
+}
+.cz-pkpot small {
+  font: 800 10px system-ui, sans-serif;
+  letter-spacing: 2px;
+  color: #c9bb98;
+}
+.cz-pkpot b {
+  font: 900 16px system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.cz-pkboard {
+  gap: 5px;
+  min-height: 0;
+}
+.cz-pkboard .cz-card + .cz-card {
+  margin-left: 0;
+}
+.cz-pkboard .cz-card {
+  width: 50px;
+  height: 72px;
+}
+.cz-card.cz-pkslot {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  box-shadow: none;
+}
+.cz-pkseats {
+  position: absolute;
+  inset: 0;
+}
+.cz-pkseat {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 116px;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+}
+.cz-pkseat.empty .cz-pkname {
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.5);
+  font: italic 500 11px system-ui, sans-serif;
+}
+.cz-pkcards {
+  min-height: 0;
+  gap: 0;
+}
+.cz-pkcards .cz-card {
+  width: 36px;
+  height: 52px;
+}
+.cz-pkcards .cz-card + .cz-card {
+  margin-left: -14px;
+}
+.cz-pkcards.own .cz-card {
+  width: 46px;
+  height: 66px;
+}
+.cz-pkcards.own .cz-card + .cz-card {
+  margin-left: -10px;
+}
+.cz-pkinfo {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 96px;
+  padding: 3px 10px 4px;
+  border-radius: 12px;
+  background: rgba(10, 10, 14, 0.85);
+  border: 1px solid rgba(217, 180, 90, 0.45);
+  color: #f3ead2;
+}
+.cz-pkname {
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 11px system-ui, sans-serif;
+}
+.cz-pkinfo b {
+  color: #ffd36b;
+  font: 900 13px system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.cz-pktag {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #2f6fdc;
+  color: #fff;
+  font: 900 9px system-ui, sans-serif;
+  font-style: normal;
+}
+.cz-pktag + .cz-pktag {
+  right: 16px;
+}
+.cz-pktag.dealer {
+  background: #fff;
+  color: #111;
+  left: -8px;
+  right: auto;
+}
+.cz-pkact {
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font: 800 10px system-ui, sans-serif;
+  font-style: normal;
+  white-space: nowrap;
+}
+.cz-pkact.win {
+  background: #0b2d1c;
+  border: 1px solid #6cffb0;
+  color: #8dffbf;
+  animation: czPop 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.4);
+}
+.cz-pkseat.me .cz-pkinfo {
+  border-color: #ffe08a;
+  box-shadow: 0 0 14px rgba(255, 224, 138, 0.4);
+}
+.cz-pkseat.active .cz-pkinfo {
+  border-color: #2fd27a;
+  box-shadow: 0 0 0 2px #2fd27a, 0 0 16px rgba(47, 210, 122, 0.6);
+}
+.cz-pkseat.folded {
+  opacity: 0.45;
+}
+.cz-pkseat.won .cz-pkinfo {
+  border-color: #6cffb0;
+  box-shadow: 0 0 18px rgba(108, 255, 176, 0.7);
+}
+/* Sıra süresi: bilginin altında yeşilden kırmızıya kısalan çizgi */
+.cz-pkturn {
+  --p: 1;
+  width: 96px;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #2fd27a, #ffd36b 60%, #ff4d5e);
+  background-size: 96px 4px;
+  clip-path: inset(0 calc((1 - var(--p)) * 100%) 0 0);
+  transition: clip-path 1s linear;
+}
+.cz-pkbet {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  font-size: 9px;
+  border-width: 2px;
+}
+.cz-pkctrl {
+  min-height: 84px;
+}
+.cz-pkhand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #ffe7a8;
+}
+.cz-pkhand small {
+  font: 800 9px system-ui, sans-serif;
+  letter-spacing: 2px;
+  color: #c9bb98;
+}
+.cz-pkhand b {
+  font: 800 13px system-ui, sans-serif;
+}
+.cz-pkraise {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+}
+.cz-pkraise input {
+  width: 100%;
+  accent-color: #ffd36b;
+}
+.cz-pkpresets {
+  display: flex;
+  gap: 4px;
+}
+.cz-pkpresets .cz-mini {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+@media (max-width: 760px) {
+  .cz-pkfelt {
+    height: 330px;
+    margin: 4px 4px 0;
+    border-width: 8px;
+  }
+  .cz-pkseat {
+    width: 86px;
+  }
+  .cz-pkinfo {
+    min-width: 74px;
+    padding: 2px 6px 3px;
+  }
+  .cz-pkboard .cz-card {
+    width: 38px;
+    height: 56px;
+  }
+  .cz-pkcards .cz-card {
+    width: 28px;
+    height: 40px;
+  }
+  .cz-pkcards.own .cz-card {
+    width: 36px;
+    height: 52px;
+  }
+}
+
 /* Kısa ekran (dizüstü, Discord penceresi): her şey bir ekrana sığsın */
 @media (max-height: 780px) {
   .cz-overlay {

@@ -769,7 +769,7 @@ export class Features {
       this.casinoSeat = { game, at: now };
       // Oturanın arkasından ve biraz yukarıdan masaya bakış
       const dx = game.x - me.x, dz = game.z - me.z, d = Math.hypot(dx, dz) || 1;
-      const back = game.kind === "slot" ? 0.3 : 0.55, y = game.kind === "slot" ? 1.68 : 2.1;
+      const back = game.kind === "slot" ? 0.3 : 0.55, y = game.y + (game.kind === "slot" ? 0.18 : 1.2);
       me.focusView = { pos: new THREE.Vector3(me.x - (dx / d) * back, y, me.z - (dz / d) * back), look: new THREE.Vector3(game.x, game.y, game.z) };
     } else if (!game && this.casinoSeat) {
       this.casinoSeat = null;
@@ -911,7 +911,7 @@ export class Features {
       if (near(t, TABLE_WATCH_R) && !me.seated) return [{ key: "f", label: "Masayı izle 👀 (oynamak için tabureye otur)", act: `table:${t.id}` }];
     }
     for (const t of LIVE_TABLES) {
-      if (near(t, LIVE_WATCH_NEAR) && !me.seated) return [{ key: "f", label: `Canlı ${t.kind === "roulette" ? "rulet" : "blackjack"} masasını izle 👀 (oynamak için tabureye otur)`, act: `live:${t.id}` }];
+      if (near(t, LIVE_WATCH_NEAR) && !me.seated) return [{ key: "f", label: `Canlı ${{ roulette: "rulet", blackjack: "blackjack", poker: "poker" }[t.kind]} masasını izle 👀 (oynamak için tabureye otur)`, act: `live:${t.id}` }];
     }
     if (near(DJ_BOOTH, DJ_BOOTH.r)) {
       const mine = this.stage.dj === this.c.net.you;

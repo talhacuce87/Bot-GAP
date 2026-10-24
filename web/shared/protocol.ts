@@ -444,11 +444,12 @@ export type ClientEvent =
   | { t: "ring"; op: "start"; laps: number }
   | { t: "casino"; op: "wallet" | "refill" }
   /** Canlı masa: otur / izle / kalk / bahis / hamle. */
-  | { t: "live"; op: "sit"; table: number; seat: number }
+  | { t: "live"; op: "sit"; table: number; seat: number; buyIn?: number }
   | { t: "live"; op: "watch"; table: number }
   | { t: "live"; op: "leave" }
   | { t: "live"; op: "bet"; bets?: RouletteBet[]; bj?: BjBets; ready?: boolean }
-  | { t: "live"; op: "act"; a: "hit" | "stand" | "double" | "split" | "insure" }
+  | { t: "live"; op: "act"; a: "hit" | "stand" | "double" | "split" | "insure" | "fold" | "check" | "call" | "raise" | "allin"; amount?: number }
+  | { t: "live"; op: "rebuy"; amount?: number }
   | { t: "bj"; op: "deal"; bet: number }
   | { t: "bj"; op: "hit" | "stand" | "double" | "split" }
   | { t: "roulette"; bets: RouletteBet[] }

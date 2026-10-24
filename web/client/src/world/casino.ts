@@ -1,6 +1,6 @@
 // Casino: beyaz mermer gövde, altın varak detaylar, LED şeritler ve neon tabelalar. Zemin kat çift
 // yükseklikte oyun salonu (rulet, blackjack, slot makineleri, kasa); kuzey şeridinde dolu bir kaidenin
-// üstünde VIP katı (bakara masası, lounge, bar). Kaidenin altına girilmez: çarpışmalar "üstüne çıkılır"
+// üstünde VIP katı (canlı poker masası, lounge, bar). Kaidenin altına girilmez: çarpışmalar "üstüne çıkılır"
 // engellerle kurulur, iki yan duvardaki merdivenlerle kata çıkılır.
 //
 // Salon gibi: içerideyken çatı gizlenir, kameranın tarafındaki duvar yarı saydam olur. Parlayan parçalar
@@ -733,7 +733,7 @@ export function casino(b: Builder, lamps: number): Casino {
   }
 
   // ------------------------------------------------------------------
-  // VIP katı: bordo halı, ön korkuluk, bakara masası, lounge, bar ve neon tabela
+  // VIP katı: bordo halı, ön korkuluk, poker masası, lounge, bar ve neon tabela
   // ------------------------------------------------------------------
   const vx0 = IX0 + STAIR_W, vx1 = IX1 - STAIR_W, vz0 = Z0 + IN;
   box(vx1 - vx0, 0.03, MZ - vz0 - 0.3, VIP_CARPET, CX, F2 + 0.015, (vz0 + MZ - 0.3) / 2, 0, 0.02);
@@ -749,19 +749,18 @@ export function casino(b: Builder, lamps: number): Casino {
   gbox(vx1 - vx0, 0.02, 0.03, LED_GOLD, CX, F2 + 0.94, railZ + 0.05);
   b.colliders.segment(vx0, railZ, vx1, railZ, 0.08);
 
-  // Bakara masası
-  const bz = (vz0 + MZ) / 2 - 0.2;
+  // Poker masası (canlı, oyuncular birbirine karşı): oval, yeşil çuha, ahşap kenar; 7 tabure, kuzey tarafı boş
+  const pk = LIVE_TABLES.find((t) => t.kind === "poker")!;
+  const bz = pk.z;
   solid(new THREE.CylinderGeometry(1, 1, 0.72, 40), MARBLE[0], mat(CX, F2 + 0.36, bz, 0, 2.3, 1, 1.25), 0.02);
-  solid(new THREE.CylinderGeometry(1, 1, 0.1, 40), GOLD, mat(CX, F2 + 0.77, bz, 0, 2.45, 1, 1.38), 0.02);
-  solid(new THREE.CylinderGeometry(1, 1, 0.03, 40), "#2b1650", mat(CX, F2 + 0.835, bz, 0, 2.3, 1, 1.25), 0.02);
+  solid(new THREE.CylinderGeometry(1, 1, 0.1, 40), "#3a2414", mat(CX, F2 + 0.77, bz, 0, 2.45, 1, 1.38), 0.02);
+  solid(new THREE.CylinderGeometry(1, 1, 0.03, 40), "#14593a", mat(CX, F2 + 0.835, bz, 0, 2.15, 1, 1.12), 0.02);
   glow(new THREE.CylinderGeometry(1, 1, 0.03, 40), LED_GOLD, mat(CX, F2 + 0.68, bz, 0, 2.2, 1, 1.15));
-  ring(0.4, 0.02, GOLD_LIGHT, CX, F2 + 0.856, bz);
-  chips(CX - 1, bz + 0.3, F2 + 0.85, 6);
-  chips(CX + 1, bz + 0.3, F2 + 0.85, 6);
-  for (const a of [-1.9, -1.15, -0.4, 0.4, 1.15, 1.9]) {
-    const sx = CX + Math.sin(a) * 3.1, sz = bz + Math.cos(a) * 2.05;
-    stool(sx, sz, Math.atan2(CX - sx, bz - sz), F2);
-  }
+  // Çuhada ortak kart yeri ve bahis çizgisi
+  for (let k = -2; k <= 2; k++) box(0.17, 0.006, 0.24, "#f6f2e8", CX + k * 0.21, F2 + 0.853, bz + 0.05, 0, 0);
+  ring(0.95, 0.012, GOLD_LIGHT, CX, F2 + 0.852, bz);
+  chips(CX - 0.35, bz - 0.55, F2 + 0.85, 5);
+  pk.seats.forEach((s, seat) => stool(s.x, s.z, s.rot, F2, { kind: "poker", x: CX, y: F2 + 0.9, z: bz, table: pk.id, seat }));
   b.colliders.segment(CX - 1.1, bz, CX + 1.1, bz, 1.2);
   // Masanın üstünde altın halka avize
   ring(1.0, 0.05, GOLD, CX, F2 + 3.3, bz);

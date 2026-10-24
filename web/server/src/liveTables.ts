@@ -1,5 +1,6 @@
 // Odanın canlı casino masaları (shared/liveCasino): oturma, izleme, bahis ve hamle istekleri; zamanlayıcı;
 // masa değişince oturan ve izleyenlere görünüm, parası değişene bakiye gönderir.
+import { LivePoker } from "../../shared/poker";
 import { type BjBets, LIVE_TABLES, type LiveTable, LiveRoulette, type LiveTableView, makeTable, SEAT_R, WATCH_R } from "../../shared/liveCasino";
 import type { RouletteBet } from "../../shared/casino";
 import type { ServerEvent } from "../../shared/protocol";
@@ -17,11 +18,12 @@ export interface LiveWallets {
 }
 
 export type LiveMsg =
-  | { t: "live"; op: "sit"; table: number; seat: number }
+  | { t: "live"; op: "sit"; table: number; seat: number; buyIn?: number }
   | { t: "live"; op: "watch"; table: number }
   | { t: "live"; op: "leave" }
   | { t: "live"; op: "bet"; bets?: RouletteBet[]; bj?: BjBets; ready?: boolean }
-  | { t: "live"; op: "act"; a: "hit" | "stand" | "double" | "split" | "insure" };
+  | { t: "live"; op: "act"; a: string; amount?: number }
+  | { t: "live"; op: "rebuy"; amount?: number };
 
 export class LiveHost {
   readonly tables: LiveTable[];
@@ -65,7 +67,9 @@ export class LiveHost {
         if (!seat || Math.hypot(x - seat.x, z - seat.z) > SEAT_R) return "🎰 Tabureye yaklaş.";
         if (table.seats[Number(msg.seat)]?.sid === sid) return null;
         this.unseat(sid, now);
-        err = table.sit(Number(msg.seat), sid, p.info.name, key);
+        err = table instanceof LivePoker
+          ? table.sit(Number(msg.seat), sid, p.info.name, key, msg.buyIn === undefined ? undefined : Number(msg.buyIn))
+          : table.sit(Number(msg.seat), sid, p.info.name, key);
         if (!err) this.keys.set(sid, key);
       }
       if (!err) this.watching.set(sid, table.def.id);
@@ -76,8 +80,11 @@ export class LiveHost {
     } else {
       table = this.seatOf(sid)?.table;
       if (!table) return "🎰 Önce masaya otur.";
-      if (msg.op === "bet") err = table instanceof LiveRoulette ? table.bet(sid, msg.bets) : table.bet(sid, msg.bj, msg.ready === true);
+      if (msg.op === "bet" && table instanceof LiveRoulette) err = table.bet(sid, msg.bets);
+      else if (msg.op === "bet" && !(table instanceof LivePoker)) err = table.bet(sid, msg.bj, msg.ready === true);
+      else if (msg.op === "act" && table instanceof LivePoker) err = table.act(sid, String(msg.a), now, Number(msg.amount));
       else if (msg.op === "act" && !(table instanceof LiveRoulette)) err = table.act(sid, String(msg.a), now);
+      else if (msg.op === "rebuy" && table instanceof LivePoker) err = table.rebuy(sid, msg.amount === undefined ? undefined : Number(msg.amount));
       else return null;
     }
     if (table) {
@@ -133,7 +140,8 @@ export class LiveHost {
     for (const [sid, id] of this.watching) {
       if (id !== t.def.id) continue;
       const p = this.room.players.get(sid);
-      if (p) this.room.sendTo(p.conn, ev);
+      // Pokerde herkes yalnızca kendi kartlarını görür
+      if (p) this.room.sendTo(p.conn, t instanceof LivePoker ? { t: "live", table: t.view(sid) } : ev);
     }
   }
 
