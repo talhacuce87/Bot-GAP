@@ -16,7 +16,7 @@ import { GrassField } from "./grassField";
 import { LampField, lampsFrom } from "./lamps";
 import { NightFx } from "./night";
 import { FameBoard, fameStatics } from "./fame";
-import { blobTexture, cullFar, flatMat, flickerMaterial, instanced, instancedRegions, mat, part, timeUniform, wetEnv, wetUniform, windMaterial, withCloudShadows, withWetness } from "./geo";
+import { blobTexture, cullFar, flatMat, flickerMaterial, instanced, instancedRegions, mat, part, skipEmptyInstances, timeUniform, wetEnv, wetUniform, windMaterial, withCloudShadows, withWetness } from "./geo";
 import { kahvehane } from "./kahvehane";
 import { type Pitch, pitch } from "./pitch";
 import { type Stadium, stadium } from "./stadium";
@@ -721,10 +721,12 @@ function propMeshes(b: Builder, scene: THREE.Scene, far: THREE.Group[]): { bulbM
   };
   const lambert = new THREE.MeshLambertMaterial({ vertexColors: true });
   const flat = withWetness(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
+  // Meşe ve sakura aynı rüzgârda: tek malzeme
+  const broadleaf = withCloudShadows(windMaterial(0.04, { side: THREE.DoubleSide }));
   const materials: Record<PropKind, THREE.Material> = {
     pine: withCloudShadows(windMaterial(0.03, { side: THREE.DoubleSide })),
-    oak: withCloudShadows(windMaterial(0.04, { side: THREE.DoubleSide })),
-    sakura: withCloudShadows(windMaterial(0.04, { side: THREE.DoubleSide })),
+    oak: broadleaf,
+    sakura: broadleaf,
     rock: flat,
     bush: withCloudShadows(windMaterial(0.05)),
     stone: flat,
@@ -1015,6 +1017,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const scene = new THREE.Scene();
   scene.background = SKY.clone();
   scene.fog = new THREE.Fog(SKY, 55, 140);
+  skipEmptyInstances(scene);
 
   const hemi = new THREE.HemisphereLight("#dcefff", "#56683a", 1.6);
   scene.add(hemi);

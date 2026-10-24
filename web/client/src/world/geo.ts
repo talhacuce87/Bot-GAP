@@ -113,6 +113,44 @@ export function cullFar(group: THREE.Group, cam: THREE.Vector3, view: THREE.Vect
   }
 }
 
+/**
+ * Örneği kalmamış (count 0) InstancedMesh'ler çizilmez. three onları yine listeye alır; program, uniform ve
+ * köşe durumu kurup 0 örnekli çizim çağırır (kalabalık, araba ve efekt havuzları çoğu zaman boş: kare başına
+ * ~20 boş çağrı, gölge geçişinde bir o kadar). Kodun kendi `visible` kararlarıyla çakışmasın diye katman maskesi
+ * kapatılır (kamera da gölge de katmana bakar). Liste ara ara tazelenir, gizlenenler her karede denetlenir.
+ */
+export function skipEmptyInstances(scene: THREE.Scene): void {
+  let list: THREE.InstancedMesh[] = [];
+  let age = Infinity;
+  const hidden = new Map<THREE.InstancedMesh, number>();
+  scene.onBeforeRender = () => {
+    if (++age > 120) {
+      age = 0;
+      list = [];
+      scene.traverse((o) => {
+        if ((o as THREE.InstancedMesh).isInstancedMesh) list.push(o as THREE.InstancedMesh);
+      });
+      // Sahneden çıkarılanlar bırakılır (maskeleri geri verilir; geri eklenirse yeniden denetlenir)
+      const inScene = new Set(list);
+      for (const [m, mask] of hidden) {
+        if (inScene.has(m)) continue;
+        m.layers.mask = mask;
+        hidden.delete(m);
+      }
+    }
+    for (const [m, mask] of hidden) {
+      if (m.count === 0) continue;
+      m.layers.mask = mask;
+      hidden.delete(m);
+    }
+    for (const m of list) {
+      if (m.count !== 0 || hidden.has(m)) continue;
+      hidden.set(m, m.layers.mask);
+      m.layers.mask = 0;
+    }
+  };
+}
+
 /** Örneklerin kapsayan küresi (InstancedMesh.computeBoundingSphere gibi ama küre nesnesini korur), `pad` kadar pay. */
 export function boundInstances(mesh: THREE.InstancedMesh, pad: number): void {
   const geo = mesh.geometry.boundingSphere!, out = mesh.boundingSphere!;
@@ -144,10 +182,17 @@ export function windMaterial(
   fade?: [number, number],
 ): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, ...params });
+  // Güç ve gömülme uzaklığı uniform'da: ağaç, çalı ve çimen aynı programı paylaşır (eskiden güç başına bir program).
+  // Değerler eskiden shader'a yazıldığı gibi yuvarlanır; gömülme yoksa y = 0.
+  const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
+  const wind = { value: new THREE.Vector3(r4(strength * 0.35), r4(strength), r4(strength * 0.6)) };
+  const windFade = { value: new THREE.Vector2(fade ? Math.round(fade[0] * 10) / 10 : 0, fade ? Math.round(fade[1] * 10) / 10 : 0) };
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = timeUniform;
+    shader.uniforms.uWind = wind;
+    shader.uniforms.uWindFade = windFade;
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nuniform float uTime;")
+      .replace("#include <common>", "#include <common>\nuniform float uTime;\nuniform vec3 uWind;\nuniform vec2 uWindFade;")
       .replace(
         "#include <begin_vertex>",
         `#include <begin_vertex>
@@ -161,18 +206,19 @@ export function windMaterial(
         float sway = gust * (sin(uTime * 1.6 + ip.x * 0.31 + ip.y * 0.23) + 0.4 * sin(uTime * 3.1 + ip.x * 0.7));
         float h = max(position.y, 0.0);
         // Yaprak hışırtısı: yerel konuma bağlı, ortak köşeler aynı yer değiştirir, yüzeyler kopmaz.
-        float flutter = sin(uTime * 6.0 + position.x * 4.0 + position.z * 3.0 + ip.x) * gust * ${(strength * 0.35).toFixed(4)} * h;
-        transformed.x += sway * ${strength.toFixed(4)} * h + flutter;
+        float flutter = sin(uTime * 6.0 + position.x * 4.0 + position.z * 3.0 + ip.x) * gust * uWind.x * h;
+        transformed.x += sway * uWind.y * h + flutter;
         transformed.y += flutter * 0.5;
-        transformed.z += sway * ${(strength * 0.6).toFixed(4)} * h - flutter;
-        ${fade ? `
+        transformed.z += sway * uWind.z * h - flutter;
         #ifdef USE_INSTANCING
-          vec4 wp = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-          transformed *= 1.0 - smoothstep(${fade[0].toFixed(1)}, ${fade[1].toFixed(1)}, distance(wp.xz, cameraPosition.xz));
-        #endif` : ""}`,
+          if (uWindFade.y > 0.0) {
+            vec4 wp = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+            transformed *= 1.0 - smoothstep(uWindFade.x, uWindFade.y, distance(wp.xz, cameraPosition.xz));
+          }
+        #endif`,
       );
   };
-  m.customProgramCacheKey = () => `wind-${strength}-${fade ?? ""}`;
+  m.customProgramCacheKey = () => "wind";
   return m;
 }
 

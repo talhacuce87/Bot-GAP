@@ -1,6 +1,7 @@
 // Futbol sahası: çizgili çim, beyaz çizgiler, kaleler ve fileler, kenar panoları, skor tabelası ve top.
 // Top sunucudan gelir (konum + hız, `at` anında); burada ileri tahmin edilip yumuşatılarak çizilir.
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { BallState } from "../../../shared/protocol";
 import { BALL_R, type Field, PITCH } from "../../../shared/zones";
 import { TRICK_ANIM } from "../avatars/avatars";
@@ -91,37 +92,37 @@ export interface Pitch {
   netHit(x: number, y: number, z: number, time: number): void;
 }
 
-/** Kaleci: alçak poli gövde; batı yeşil, doğu turuncu forma, beyaz eldiven. Bacaklar yürürken sallanır. */
+/** Kalecilerin ortak malzemesi: renkler köşe renginde (parça başına malzeme ve çizim yok). */
+let keeperMat: THREE.MeshLambertMaterial | null = null;
+
+/**
+ * Kaleci: alçak poli gövde; batı yeşil, doğu turuncu forma, beyaz eldiven. Bacaklar yürürken sallanır.
+ * Parçalar köşe renkli tek geometride birleşir: gövde, baş ve iki bacak (12 yerine 4 çizim).
+ */
 function keeperMesh(kit: string): { root: THREE.Group; body: THREE.Group; legs: THREE.Mesh[] } {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
-  const m = (c: string) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
-  const box = (w: number, h: number, d: number, c: string, x: number, y: number, z: number, parent: THREE.Object3D = body) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m(c));
-    mesh.position.set(x, y, z);
-    mesh.castShadow = true;
+  keeperMat ??= new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const box = (w: number, h: number, d: number, c: string, x: number, y: number, z: number) => part(new THREE.BoxGeometry(w, h, d), c, mat(x, y, z));
+  const add = (geos: THREE.BufferGeometry[], parent: THREE.Object3D, shadow: boolean) => {
+    const mesh = new THREE.Mesh(geos.length > 1 ? mergeGeometries(geos) : geos[0], keeperMat!);
+    mesh.castShadow = shadow;
     parent.add(mesh);
-    return mesh;
   };
   const legs = [-0.12, 0.12].map((x) => {
     const pivot = new THREE.Group();
     pivot.position.set(x, 0.72, 0);
     body.add(pivot);
-    box(0.17, 0.7, 0.2, "#1d1f26", 0, -0.35, 0, pivot);
-    box(0.19, 0.1, 0.28, "#f2f2f2", 0, -0.68, 0.04, pivot);
+    add([box(0.17, 0.7, 0.2, "#1d1f26", 0, -0.35, 0), box(0.19, 0.1, 0.28, "#f2f2f2", 0, -0.68, 0.04)], pivot, true);
     return pivot as unknown as THREE.Mesh;
   });
-  box(0.48, 0.62, 0.3, kit, 0, 1.03, 0);
-  box(0.5, 0.06, 0.32, "#14161c", 0, 0.74, 0);
-  for (const x of [-0.33, 0.33]) {
-    box(0.13, 0.5, 0.15, kit, x, 1.02, 0.04);
-    box(0.17, 0.17, 0.17, "#f7f7f2", x, 0.72, 0.08);
-  }
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), m("#e0b48a"));
-  head.position.set(0, 1.55, 0);
-  body.add(head);
-  box(0.42, 0.1, 0.42, kit, 0, 1.72, 0).scale.set(1, 1, 1);
+  const torso = [box(0.48, 0.62, 0.3, kit, 0, 1.03, 0), box(0.5, 0.06, 0.32, "#14161c", 0, 0.74, 0)];
+  for (const x of [-0.33, 0.33]) torso.push(box(0.13, 0.5, 0.15, kit, x, 1.02, 0.04), box(0.17, 0.17, 0.17, "#f7f7f2", x, 0.72, 0.08));
+  torso.push(box(0.42, 0.1, 0.42, kit, 0, 1.72, 0));
+  add(torso, body, true);
+  // Baş gölge düşürmez (eskisi gibi): ayrı mesh
+  add([part(new THREE.SphereGeometry(0.2, 10, 8), "#e0b48a", mat(0, 1.55, 0))], body, false);
   return { root, body, legs };
 }
 

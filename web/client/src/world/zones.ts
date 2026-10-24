@@ -303,9 +303,15 @@ export function waterMaterial(
   hole = 0.25,
 ): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial();
+  // Göle/havuza özgü sayılar uniform'da (shader'a gömülse her su ayrı program olurdu); eskisi gibi 2 basamak
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  const shape = { value: new THREE.Vector4(r2(cx), r2(cz), r2(r), r2(ringR)) };
+  const holeAt = { value: new THREE.Vector2(r2(hole), r2(hole + 0.2)) };
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = timeUniform;
     shader.uniforms.uDuck = ring;
+    shader.uniforms.uWaterShape = shape;
+    shader.uniforms.uWaterHole = holeAt;
     shader.uniforms.uDeep = { value: new THREE.Color("#3a7fba") };
     shader.uniforms.uShallow = { value: new THREE.Color("#5ea8db") };
     Object.assign(shader.uniforms, waterEnv);
@@ -318,6 +324,8 @@ export function waterMaterial(
         `#include <common>
         uniform float uTime;
         uniform vec2 uDuck;
+        uniform vec4 uWaterShape;
+        uniform vec2 uWaterHole;
         uniform vec3 uDeep;
         uniform vec3 uShallow;
         uniform vec3 uSkyH;
@@ -334,14 +342,14 @@ export function waterMaterial(
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
-        vec2 q = vWater - vec2(${cx.toFixed(2)}, ${cz.toFixed(2)});
-        float d = length(q) / ${r.toFixed(2)};
+        vec2 q = vWater - uWaterShape.xy;
+        float d = length(q) / uWaterShape.z;
         diffuseColor.rgb = mix(uDeep, uShallow, smoothstep(0.15, 1.0, d));
         float w = sin(vWater.x * 1.9 + uTime * 1.2) * sin(vWater.y * 2.3 - uTime * 0.9)
                 + 0.5 * sin((vWater.x - vWater.y) * 3.7 + uTime * 1.8);
         diffuseColor.rgb += w * 0.03 + smoothstep(1.1, 1.45, w) * 0.22;
-        float dd = abs(distance(vWater, uDuck) - ${ringR.toFixed(2)});
-        diffuseColor.rgb += max(sin(dd * 10.0 - uTime * 5.0), 0.0) * exp(-dd * 1.5) * smoothstep(${hole.toFixed(2)}, ${(hole + 0.2).toFixed(2)}, dd) * 0.16;
+        float dd = abs(distance(vWater, uDuck) - uWaterShape.w);
+        diffuseColor.rgb += max(sin(dd * 10.0 - uTime * 5.0), 0.0) * exp(-dd * 1.5) * smoothstep(uWaterHole.x, uWaterHole.y, dd) * 0.16;
         float shore = smoothstep(0.88, 1.0, d + 0.03 * sin(atan(q.y, q.x) * 7.0 + uTime * 1.5));
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.9, 0.95), shore * 0.5);
         vWave = w;
@@ -391,7 +399,7 @@ export function waterMaterial(
         }`,
       );
   };
-  m.customProgramCacheKey = () => `water-${cx}-${cz}-${r}-${ringR}-${hole}`;
+  m.customProgramCacheKey = () => "water";
   return m;
 }
 
