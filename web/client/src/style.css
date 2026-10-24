@@ -3166,6 +3166,149 @@ canvas.shiftlock {
 .radio-volume {
   width: 100%;
 }
+/* Radyo: kontroller, sıra ve çalan radyolar */
+.radio-ctrl {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.radio-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 17px;
+  cursor: pointer;
+}
+.radio-btn.main {
+  width: 50px;
+  height: 50px;
+  background: #ff4fd8;
+  border-color: #ff4fd8;
+}
+.radio-btn.on {
+  border-color: #ff4fd8;
+  box-shadow: 0 0 10px rgba(255, 79, 216, 0.6);
+}
+.radio-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.radio-eq:not(.on) {
+  animation: none;
+}
+.radio-lock {
+  margin: 4px 0 6px;
+}
+.radio-queue {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 3px;
+  min-height: 130px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+.radio-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.radio-item.cur {
+  background: rgba(255, 79, 216, 0.22);
+  box-shadow: inset 3px 0 0 #ff4fd8;
+}
+.radio-item.past {
+  opacity: 0.55;
+}
+.radio-itemtitle {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
+  background: none;
+  color: #f2e9ff;
+  text-align: left;
+  font: 600 12px system-ui, sans-serif;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.radio-itemx {
+  padding: 4px 8px;
+  border: 0;
+  background: none;
+  color: #aaa;
+  cursor: pointer;
+}
+.radio-itemtitle:disabled,
+.radio-itemx:disabled {
+  cursor: default;
+}
+.radio-clear {
+  margin-top: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: none;
+  color: #ccc;
+  cursor: pointer;
+}
+.radio-list {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.radio-member {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.radio-member.heard {
+  border-color: rgba(255, 79, 216, 0.45);
+}
+.radio-member.muted {
+  opacity: 0.55;
+}
+.radio-memberhead {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 4px;
+}
+.radio-memberhead b {
+  color: #fff;
+  font-size: 13px;
+}
+.radio-membersong {
+  color: #d8c8ef;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.radio-memberctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.radio-mute {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 15px;
+  cursor: pointer;
+}
+
 .radio-chip {
   position: absolute;
   left: 50%;

@@ -31,7 +31,7 @@ import { LIVE_TABLES } from "../../shared/liveCasino";
 import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
-import type { CarRadio } from "../../shared/car";
+import { type CarRadio, carCircles, ENTER_REACH, RADIO_RANGE } from "../../shared/car";
 import { Hub } from "./ui/hub";
 import { WorldMap } from "./ui/worldMap";
 import { button, el, Panel } from "./ui/panel";
@@ -189,8 +189,15 @@ export class Features {
   private vehicles: Vehicles;
   private radio = new RadioMixer();
   private radioPanel: RadioPanel;
-  /** Kendi arabanın radyosu (sunucudan). */
+  /** Kendi radyon (sunucudan; arabadan inince de çalar). */
   private myRadio: CarRadio | null = null;
+  /** Radyoların ayrı sesleri (sid → ses, kapalı). */
+  private radioMix = new Map<number, { vol: number; muted: boolean }>();
+  private radioRowsAt = 0;
+  /** Arabanın farları: açık, kapalı ya da (null) gece kendiliğinden. */
+  myLights: boolean | null = null;
+  /** Başkasının arabasında yolcuysan sürücü ve koltuk. */
+  myRide: { d: number; s: number } | null = null;
   /** Yakında çalan şarkının etiketi. */
   private radioChip: HTMLDivElement;
   private down = { x: 0, y: 0, at: 0 };
@@ -385,9 +392,17 @@ export class Features {
       radio: () => this.toggleRadio(),
     });
     this.radioPanel = new RadioPanel(hudRoot, {
-      play: (url) => net.send({ t: "radio", url }),
-      stop: () => net.send({ t: "radio", url: null }),
+      add: (url) => net.send({ t: "radio", url }),
+      op: (op, i) => net.send({ t: "radioq", op, i }),
+      mix: (sid, vol, muted) => {
+        this.radioMix.set(sid, { vol, muted });
+        this.radioRowsAt = 0;
+      },
     });
+    // Kendi şarkın bitti: sıradaki çalsın
+    this.radio.onEnded = (id) => net.send({ t: "radioq", op: "ended", id });
+    net.onRadioQueue = (q) => this.radioPanel.setQueue(q);
+    net.onRide = (sid, ride) => this.onRide(sid, ride);
     this.radioChip = document.createElement("div");
     this.radioChip.className = "radio-chip";
     hudRoot.append(this.radioChip);
@@ -555,9 +570,7 @@ export class Features {
     };
     net.onCosm = () => {};
     net.onRadio = (sid, radio) => {
-      if (sid !== net.you) return;
-      this.myRadio = radio;
-      this.radioPanel.set(radio);
+      if (sid === net.you) this.myRadio = radio;
     };
     const prevWelcome = net.onStatus;
     net.onStatus = (s) => {
@@ -644,25 +657,83 @@ export class Features {
     if (v) this.c.hud.toast(v === 1 ? "🚲 Bisiklete bindin (B: değiştir)" : v === 2 ? "🛹 Kaykaydasın (B: değiştir)" : "🛶 Kayıktasın: iskelede F ile in");
   }
 
-  /** Radyo paneli: yalnızca arabadayken. */
+  /** Radyo paneli: sıra ve çalan radyolar her yerden görülür; kontrol arabadayken. */
   private toggleRadio(): void {
-    if (!this.c.me.car && !this.radioPanel.isOpen) return this.c.hud.toast(`📻 Radyo için önce Tofaşa bin (${actionLabel("car")}).`);
     this.radioPanel.toggle();
+    this.radioRowsAt = 0;
   }
 
-  /** Radyolar: kendi arabanın ve yakındaki arabaların şarkıları, uzaklığa göre sesle; etiket. */
+  /** Biri yolcu olarak bindi/indi. Sen indiysen (ya da sürücü indiyse) arabanın sağ kapısından çıkarsın. */
+  private onRide(sid: number, ride: { d: number; s: number } | null): void {
+    const { me, net, hud } = this.c;
+    if (sid === net.you) {
+      const was = this.myRide;
+      this.myRide = ride;
+      if (ride) hud.toast(`🚗 ${this.nameOf(ride.d)}'in arabasına bindin · F: in`);
+      else if (was && me.riding && !me.car) {
+        const { x, z, rot } = me.riding;
+        me.riding = null;
+        me.teleport(x - Math.cos(rot) * 1.8, z + Math.sin(rot) * 1.8, rot);
+      }
+      return;
+    }
+    if (ride?.d === net.you) hud.toast(`👥 ${this.nameOf(sid)} arabana bindi`);
+  }
+
+  /** Yolcuysan konumun her kare sürücünün arabası; arabadan inince farlar kendiliğine döner. */
+  private updateRide(): void {
+    const { me, remotes } = this.c;
+    if (!me.car) this.myLights = null;
+    this.radioPanel.setInCar(!!me.car);
+    if (!this.myRide) {
+      me.riding = null;
+      return;
+    }
+    const d = remotes.map.get(this.myRide.d);
+    if (d?.hasData && d.info.car) me.riding = { x: d.x, z: d.z, rot: d.rot };
+  }
+
+  /** Yanındaki (sürücüsü olan) başka arabaya yolcu olarak binme. */
+  private rideAct(): FeatureAct | null {
+    const { me, remotes } = this.c;
+    if (me.car || me.seated || me.vehicle || this.myRide) return null;
+    for (const r of remotes.map.values()) {
+      if (!r.hasData || !r.info.car) continue;
+      const [fx, fz, bx, bz] = carCircles(r.x, r.z, r.rot);
+      const ex = bx - fx, ez = bz - fz, l2 = ex * ex + ez * ez || 1;
+      const t = Math.max(0, Math.min(1, ((me.x - fx) * ex + (me.z - fz) * ez) / l2));
+      if (Math.hypot(me.x - fx - ex * t, me.z - fz - ez * t) <= ENTER_REACH) {
+        return { key: "f", label: `${this.nameOf(r.info.sid)}'in arabasına yolcu olarak bin 🚗`, act: `ride:${r.info.sid}` };
+      }
+    }
+    return null;
+  }
+
+  /** Radyolar: kendi radyon (arabadan inince de çalar), bindiğin arabanınki ve yakındakiler; etiket ve panel. */
   private updateRadios(serverNow: number): void {
     const { me, remotes, net } = this.c;
-    if (!me.car) {
-      this.myRadio = null;
-      if (this.radioPanel.isOpen) this.radioPanel.close();
-    }
     const sources: RadioSource[] = [];
-    if (me.car && this.myRadio) sources.push({ sid: net.you, radio: this.myRadio, x: me.x, z: me.z, own: true });
+    if (this.myRadio) sources.push({ sid: net.you, radio: this.myRadio, x: me.x, z: me.z, own: true });
     for (const r of remotes.map.values()) {
-      if (r.hasData && r.info.car && r.info.radio) sources.push({ sid: r.info.sid, radio: r.info.radio, x: r.x, z: r.z, own: false });
+      if (r.hasData && r.info.radio) sources.push({ sid: r.info.sid, radio: r.info.radio, x: r.x, z: r.z, own: this.myRide?.d === r.info.sid });
     }
-    const top = this.radio.update(sources, me.x, me.z, serverNow, settings.radioVolume);
+    const mix = (sid: number) => {
+      const m = this.radioMix.get(sid);
+      return m ? (m.muted ? 0 : m.vol) : 1;
+    };
+    const top = this.radio.update(sources, me.x, me.z, serverNow, settings.radioVolume, mix, net.you);
+    // Panel: radyo açan bütün üyeler (saniyede bir)
+    const now = performance.now();
+    if (this.radioPanel.isOpen && now - this.radioRowsAt > 1000) {
+      this.radioRowsAt = now;
+      this.radioPanel.setRadios(sources.map((s) => {
+        const m = this.radioMix.get(s.sid);
+        return {
+          sid: s.sid, name: s.sid === net.you ? this.nameOf(s.sid) : this.nameOf(s.sid), title: s.radio.title, own: s.sid === net.you,
+          heard: s.own || Math.hypot(s.x - me.x, s.z - me.z) < RADIO_RANGE, vol: m?.vol ?? 1, muted: m?.muted ?? false,
+        };
+      }));
+    }
     if (top) {
       const who = top.sid === net.you ? "Radyon" : `${this.nameOf(top.sid)}'in Tofaşı`;
       this.radioChip.textContent = `🎵 ${top.title} · ${who}`;
@@ -696,7 +767,16 @@ export class Features {
       });
       if (best >= 0) return [off, { key: "g", label: `Grid ${best + 1}'e geç 🏁`, act: `ring-join:${best}` }];
     }
-    return [off];
+    return [off, this.lightsAct()];
+  }
+
+  /** G: farları aç/kapat (gece kendiliğinden yanar; elle seçilen kalıcı, arabadan inince sıfırlanır). */
+  private lightsAct(): FeatureAct {
+    return { key: "g", label: this.lightsOn() ? "Farları kapat 💡" : "Farları aç 💡", act: "lights" };
+  }
+
+  private lightsOn(): boolean {
+    return this.myLights ?? this.c.world.env.lights > 0.3;
   }
 
   private onRace(r: RingView): void {
@@ -873,6 +953,8 @@ export class Features {
   acts(): FeatureAct[] {
     const { me, world } = this.c;
     if (me.jailed || me.driving || this.race.driving()) return [];
+    // Yolcuyken yalnızca inmek
+    if (this.myRide) return [{ key: "f", label: `Arabadan in 🚗 (${this.nameOf(this.myRide.d)}'in arabası)`, act: "ride-off" }];
     // Camide (namazda, abdest alırken, harimde ya da şadırvanda) yalnızca cami eylemleri
     if (this.mosque.busy()) return this.mosque.acts();
     const camii = this.mosque.acts();
@@ -887,6 +969,8 @@ export class Features {
     if (this.volley.active && !this.c.input.touch) return [];
     const enter = this.vehicles.enterAct();
     if (enter) return [enter];
+    const ride = this.rideAct();
+    if (ride) return [ride];
     // Mahallede kapı: Minecraft gibi açılıp kapanır (herkes)
     const door = me.seated ? null : this.buildWorld.doorNear(me.x, me.z, me.baseY);
     if (door) return [{ key: "f", label: door.open ? "Kapıyı kapat 🚪" : "Kapıyı aç 🚪", act: `door:${door.plot}:${door.i}:${door.j}:${door.k}` }];
@@ -978,6 +1062,20 @@ export class Features {
         this.raceLaps = RACE_LAPS[(RACE_LAPS.indexOf(this.raceLaps as (typeof RACE_LAPS)[number]) + 1) % RACE_LAPS.length];
         this.c.hud.toast(`🏁 Tur sayısı: ${this.raceLaps}`);
       } else if (act === "ring-leave") net.send({ t: "ring", op: "leave" });
+      return true;
+    }
+    if (act === "lights") {
+      this.myLights = !this.lightsOn();
+      net.send({ t: "carlights", on: this.myLights });
+      sfx.chip();
+      return true;
+    }
+    if (act.startsWith("ride:")) {
+      net.send({ t: "ride", d: Number(act.slice(5)) });
+      return true;
+    }
+    if (act === "ride-off") {
+      net.send({ t: "ride", d: null });
       return true;
     }
     if (act === "car-enter") {
@@ -1117,6 +1215,7 @@ export class Features {
   update(time: number, dt: number, now: number): void {
     const { me, net, world, remotes, input, emoteFx, camera } = this.c;
     const serverNow = net.serverNow();
+    this.updateRide();
     this.updateRadios(serverNow);
     this.updateCasino(now);
     this.updateRace(serverNow);

@@ -107,3 +107,118 @@ export async function resolveRadio(raw: string, fetcher: RadioFetch = fetch as u
   cache.set(key, out);
   return out;
 }
+
+// ---- Çalma listeleri: Spotify çalma listesi/albümü ve YouTube çalma listesi bütün şarkılarıyla sıraya ----
+
+/** Sıradaki şarkı: YouTube kimliği belli ya da çalınca aranacak ad (Spotify). */
+export interface RadioItem {
+  title: string;
+  id?: string;
+  /** YouTube'da aranacak (Spotify şarkısı: "Sanatçı - Şarkı"). */
+  q?: string;
+}
+
+/** Çalma listesi linki mi: Spotify çalma listesi/albümü ya da YouTube listesi (izleme linkindeki liste değil). */
+export function parseListUrl(raw: string): { kind: "spotify"; type: "playlist" | "album"; id: string } | { kind: "youtube"; id: string } | null {
+  const text = raw.trim();
+  const sp = /^spotify:(playlist|album):([A-Za-z0-9]{22})$/.exec(text);
+  if (sp) return { kind: "spotify", type: sp[1] as "playlist" | "album", id: sp[2] };
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase().replace(/^(www|m|music)\./, "");
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (host === "open.spotify.com") {
+    const i = parts.findIndex((p) => p === "playlist" || p === "album");
+    const id = i >= 0 ? parts[i + 1] : null;
+    return id && /^[A-Za-z0-9]{22}$/.test(id) ? { kind: "spotify", type: parts[i] as "playlist" | "album", id } : null;
+  }
+  if ((host === "youtube.com" || host === "youtu.be") && parts[0] === "playlist") {
+    const list = url.searchParams.get("list");
+    return list && /^[\w-]{10,64}$/.test(list) ? { kind: "youtube", id: list } : null;
+  }
+  return null;
+}
+
+/** JSON ağacında anahtar adıyla dizileri bul (sayfa yapısı değişse de iş görsün). */
+function findArrays(o: unknown, key: string, out: unknown[][] = [], depth = 0): unknown[][] {
+  if (!o || typeof o !== "object" || depth > 40) return out;
+  for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+    if (k === key && Array.isArray(v)) out.push(v);
+    else findArrays(v, key, out, depth + 1);
+  }
+  return out;
+}
+function findObjects(o: unknown, key: string, out: Record<string, unknown>[] = [], depth = 0): Record<string, unknown>[] {
+  if (!o || typeof o !== "object" || depth > 60) return out;
+  for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+    if (k === key && v && typeof v === "object") out.push(v as Record<string, unknown>);
+    else findObjects(v, key, out, depth + 1);
+  }
+  return out;
+}
+
+/** Spotify gömme sayfasının şarkı listesi (başlık + sanatçılar). */
+export function spotifyTracks(html: string): RadioItem[] {
+  const json = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/.exec(html)?.[1];
+  let list: unknown[] = [];
+  if (json) {
+    try {
+      list = findArrays(JSON.parse(json), "trackList")[0] ?? [];
+    } catch {
+      list = [];
+    }
+  }
+  const out: RadioItem[] = [];
+  for (const t of list) {
+    const o = t as { title?: string; subtitle?: string };
+    if (!o?.title) continue;
+    const artist = (o.subtitle ?? "").split(",").slice(0, 2).join(",").trim();
+    const title = artist ? `${artist} - ${o.title}` : o.title;
+    out.push({ title: title.slice(0, 90), q: `${title} audio` });
+  }
+  return out;
+}
+
+/** YouTube çalma listesi sayfasındaki videolar. */
+export function youtubeListItems(html: string): RadioItem[] {
+  const raw = /var ytInitialData = (\{[\s\S]*?\});<\/script>/.exec(html)?.[1];
+  if (!raw) return [];
+  try {
+    return findObjects(JSON.parse(raw), "playlistVideoRenderer")
+      .map((r) => ({ id: r.videoId as string, title: ((r.title as { runs?: { text: string }[] })?.runs?.[0]?.text ?? "YouTube").slice(0, 90) }))
+      .filter((x) => typeof x.id === "string" && /^[\w-]{11}$/.test(x.id));
+  } catch {
+    return [];
+  }
+}
+
+/** Link: tek şarkı ya da çalma listesinin bütün şarkıları (sıraya eklenecek). */
+export async function resolveRadioList(raw: string, fetcher: RadioFetch = fetch as unknown as RadioFetch): Promise<RadioItem[] | { error: string }> {
+  const list = parseListUrl(raw);
+  if (!list) {
+    const one = await resolveRadio(raw, fetcher);
+    return "error" in one ? one : [one];
+  }
+  if (list.kind === "spotify") {
+    const html = await get(fetcher, `https://open.spotify.com/embed/${list.type}/${list.id}`);
+    const items = html ? spotifyTracks(html) : [];
+    return items.length ? items : { error: "📻 Spotify listesi okunamadı (gizli olabilir)." };
+  }
+  const html = await get(fetcher, `https://www.youtube.com/playlist?list=${list.id}`);
+  const items = html ? youtubeListItems(html) : [];
+  return items.length ? items : { error: "📻 YouTube listesi okunamadı (gizli olabilir)." };
+}
+
+/** Aranacak şarkının YouTube kimliği (sırada çalma anı gelince). */
+export async function searchVideo(q: string, fetcher: RadioFetch = fetch as unknown as RadioFetch): Promise<string | null> {
+  const hit = cache.get(`q:${q}`);
+  if (hit) return hit.id;
+  const results = await get(fetcher, `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`);
+  const id = results ? firstVideoId(results) : null;
+  if (id) cache.set(`q:${q}`, { id, title: q });
+  return id;
+}

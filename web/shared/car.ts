@@ -149,6 +149,20 @@ export interface CarRadio {
   title: string;
   at: number;
 }
+/** Radyo sırası (sahibine gider): şarkılar, çalan, karıştırma ve tekrar. */
+export interface RadioQueueView {
+  items: { title: string }[];
+  /** Çalan şarkının sıradaki yeri (yoksa −1); çalıyor mu. */
+  index: number;
+  playing: boolean;
+  shuffle: boolean;
+  repeat: "off" | "all" | "one";
+}
+/** Sırada en çok bu kadar şarkı. */
+export const RADIO_QUEUE_MAX = 200;
+/** Yolcu koltukları (sürücü hariç). */
+export const RIDE_SEATS = 3;
+
 /** Bu uzaklıkta radyo susar; yakınlaştıkça ses artar. */
 export const RADIO_RANGE = 55;
 

@@ -4,6 +4,7 @@ import {
   clampToWorld,
   FLAG_DRIVING,
   FLAG_MASK,
+  FLAG_SEATED,
   JAIL_SPAWN,
   maxSpeed,
   outsideWorld,
@@ -23,13 +24,14 @@ import {
   writeSnapshotHeader,
 } from "../../shared/protocol";
 import { inStadium, inVolley, SPAWN } from "../../shared/zones";
-import { CAR_MAX_SPEED, type CarRadio, type CarSpec, type ParkedCar, PARK_REACH, validCar } from "../../shared/car";
+import { CAR_MAX_SPEED, type CarRadio, type CarSpec, ENTER_REACH, type ParkedCar, PARK_REACH, RIDE_SEATS, validCar } from "../../shared/car";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
 import type { WorldGames } from "./games/world";
 import type { RingHost } from "./ring";
 import type { LiveHost } from "./liveTables";
+import { RadioQueues } from "./radioQueue";
 
 const PET_IDS = new Set<string>(PETS.map((p) => p.id));
 const SKIN_IDS = new Set<string>(SKINS.map((s) => s.id));
@@ -114,6 +116,8 @@ export class Room {
   ring: RingHost | null = null;
   /** Canlı casino masaları (savaş odasında yok). */
   live: LiveHost | null = null;
+  /** Oyuncuların radyo sıraları. */
+  readonly radioQ = new RadioQueues(this);
   /** Görev/sayaç olayı (botta): sunucu bağlar; tank isabeti, savaşta vuruş ve galibiyet buradan. */
   onReport: (sid: number, event: string, amount?: number) => void = () => {};
   private nextSid = 1;
@@ -181,6 +185,8 @@ export class Room {
     const p = this.players.get(sid);
     if (!p) return;
     if (this.tank.driver === sid) this.exitTank(sid);
+    this.ejectRiders(sid);
+    this.radioQ.leave(sid);
     this.players.delete(sid);
     this.battle?.leave(sid);
     this.games?.leave(sid);
@@ -214,6 +220,18 @@ export class Room {
     }
     if (sentAt > 0 && sentAt <= p.sentAt && sentAt > p.sentAt - REORDER_MS) return;
     if (sentAt > 0) p.sentAt = sentAt;
+    // Yolcu: konumu sürücünün arabası (istemcinin söylediği yok sayılır)
+    const driver = p.info.ride ? this.players.get(p.info.ride.d) : undefined;
+    if (driver) {
+      p.state.x = driver.state.x;
+      p.state.z = driver.state.z;
+      p.state.rot = driver.state.rot;
+      p.state.flags = FLAG_SEATED;
+      p.sampledAt = driver.sampledAt;
+      p.lastUpdate = now;
+      this.dirty = TRAIL_TICKS;
+      return;
+    }
     const dt = Math.min(1, Math.max(0, (now - p.lastUpdate) / 1000));
     // Araçtan inip binerken iki durumun hızlısı (bisikletten inen bir an daha hızlı gidebilir)
     const maxStep = (p.info.car ? CAR_MAX_SPEED : Math.max(maxSpeed(s.flags), maxSpeed(p.state.flags))) * dt * 1.3 + 0.5;
@@ -265,7 +283,12 @@ export class Room {
     this.broadcast({ t: "car", sid, car });
     // Park halindeki arabasına bindi: park yeri boşalır
     if (car && p.info.parked) this.setParked(sid, null);
-    if (!car && p.info.radio) this.setRadio(sid, null);
+    // Yolcuyken kendi arabasına binerse yolculuk biter; sürücü inerse yolcuları da iner. Radyo inince de çalar.
+    if (car && p.info.ride) this.ride(sid, null);
+    if (!car) {
+      this.ejectRiders(sid);
+      p.info.lights = null;
+    }
     // Arabadan inen yarıştan çıkar (yarış sürüyorsa DNF)
     if (!car) this.ring?.leave(sid);
   }
@@ -299,9 +322,46 @@ export class Room {
     this.broadcast({ t: "parked", sid, parked });
   }
 
+  /** Arabanın farları (yalnızca arabadayken). */
+  setLights(sid: number, on: unknown): void {
+    const p = this.players.get(sid);
+    if (!p || !p.info.car || typeof on !== "boolean") return;
+    p.info.lights = on;
+    this.broadcast({ t: "carlights", sid, on });
+  }
+
+  /**
+   * Yolcu olarak bin (`driver`ın arabasına, yanındaysa ve boş koltuk varsa) ya da in (null). Hata metni döner.
+   */
+  ride(sid: number, driver: number | null): string | null {
+    const p = this.players.get(sid);
+    if (!p || p.info.spectator) return null;
+    if (driver === null) {
+      if (!p.info.ride) return null;
+      p.info.ride = null;
+      this.broadcast({ t: "ride", sid, ride: null });
+      return null;
+    }
+    const d = this.players.get(driver);
+    if (!d || !d.info.car || driver === sid) return "🚗 Bu arabanın sürücüsü yok.";
+    if (p.info.car || p.info.jailed || this.tank.driver === sid) return "🚗 Önce arabandan in.";
+    if (Math.hypot(p.state.x - d.state.x, p.state.z - d.state.z) > ENTER_REACH + 2) return "🚗 Arabaya yaklaş.";
+    const taken = new Set([...this.players.values()].filter((q) => q.info.ride?.d === driver).map((q) => q.info.ride!.s));
+    const seat = [1, 2, 3].find((s) => s <= RIDE_SEATS && !taken.has(s));
+    if (!seat) return "🚗 Arabada boş koltuk yok.";
+    p.info.ride = { d: driver, s: seat };
+    this.broadcast({ t: "ride", sid, ride: p.info.ride });
+    return null;
+  }
+
+  /** Sürücü indi ya da ayrıldı: yolcuları iner. */
+  private ejectRiders(driver: number): void {
+    for (const [sid, q] of this.players) if (q.info.ride?.d === driver) this.ride(sid, null);
+  }
+
   setRadio(sid: number, radio: CarRadio | null): void {
     const p = this.players.get(sid);
-    if (!p || (radio && !p.info.car)) return;
+    if (!p) return;
     p.info.radio = radio;
     this.broadcast({ t: "radio", sid, radio });
   }

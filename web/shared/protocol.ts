@@ -9,7 +9,7 @@ import type { ChessMove, ChessState } from "./games/chess";
 import type { OkeyMove, OkeyState } from "./games/okey";
 import type { TavlaMove, TavlaState } from "./games/tavla";
 import type { TableKind } from "./zones";
-import type { CarRadio, CarSpec, ParkedCar } from "./car";
+import type { CarRadio, CarSpec, ParkedCar, RadioQueueView } from "./car";
 import type { BjView, RouletteBet } from "./casino";
 import type { RingView } from "./ring";
 import type { BjBets, LiveTableView } from "./liveCasino";
@@ -53,8 +53,12 @@ export interface PlayerInfo {
   car?: CarSpec | null;
   /** Park halindeki arabası (indiği yerde kalır). */
   parked?: ParkedCar | null;
-  /** Arabasının radyosunda çalan şarkı. */
+  /** Radyosunda çalan şarkı (arabadan inse de çalar; kontrol yalnızca arabada). */
   radio?: CarRadio | null;
+  /** Arabasının farları: açık, kapalı ya da (yoksa) gece kendiliğinden. */
+  lights?: boolean | null;
+  /** Başkasının arabasında yolcu: sürücü ve koltuk (1 ön sağ, 2 arka sol, 3 arka sağ). */
+  ride?: { d: number; s: number } | null;
   /** Arabasının hasarı (0 yok – 3 ağır): duman ve kararmış boya. */
   dmg?: number;
 }
@@ -353,6 +357,10 @@ export type ServerEvent =
   | { t: "cosm"; sid: number; pet: string | null; skin: string | null }
   | { t: "car"; sid: number; car: CarSpec | null }
   | { t: "radio"; sid: number; radio: CarRadio | null }
+  /** Kendi radyo sıran (yalnızca sahibine). */
+  | { t: "radioq"; q: RadioQueueView }
+  | { t: "carlights"; sid: number; on: boolean }
+  | { t: "ride"; sid: number; ride: { d: number; s: number } | null }
   | { t: "parked"; sid: number; parked: ParkedCar | null }
   /** GAP Ring yarışı: grid, lambalar, sıralama ve sonuçlar (faz değişince ve yarışta sık). */
   | { t: "ring"; ring: RingView }
@@ -437,6 +445,11 @@ export type ClientEvent =
   | { t: "cosm"; pet: string | null; skin: string | null }
   | { t: "car"; car: CarSpec | null }
   | { t: "radio"; url: string | null }
+  /** Radyo sırası: sonraki, önceki, karıştır, tekrar, sıradaki şarkıya geç, sil, temizle, durdur, çal, bitti. */
+  | { t: "radioq"; op: "next" | "prev" | "shuffle" | "repeat" | "jump" | "remove" | "clear" | "stop" | "play" | "ended"; i?: number; id?: string }
+  | { t: "carlights"; on: boolean }
+  /** Yolcu olarak bin (sürücünün sid'i) ya da in (null). */
+  | { t: "ride"; d: number | null }
   /** Arabayı bir yere bırak (inince ya da çağırınca); null: kaldır. */
   | { t: "park"; parked: ParkedCar | null }
   | { t: "ring"; op: "join"; slot: number }

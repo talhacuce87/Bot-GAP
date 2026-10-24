@@ -2,7 +2,7 @@
 // Konum ve snapshot'lar sunucu açtıysa hızlı yoldan (WebRTC/UDP, rtc.ts), olaylar her zaman WebSocket'ten.
 import { type Act, SEND_HZ } from "../../shared/constants";
 import type { Shot } from "../../shared/tank";
-import type { CarRadio, ParkedCar } from "../../shared/car";
+import type { CarRadio, ParkedCar, RadioQueueView } from "../../shared/car";
 import type { RingView } from "../../shared/ring";
 import type { BattleState } from "../../shared/protocol";
 import type { PlotState } from "../../shared/build";
@@ -97,6 +97,10 @@ export class Net {
   onCasino: (ev: Extract<ServerEvent, { t: "wallet" | "bj" | "roulette" | "slot" | "live" }>) => void = () => {};
   /** Bir arabanın radyosu değişti (kendininki dahil). */
   onRadio: (sid: number, radio: CarRadio | null) => void = () => {};
+  /** Kendi radyo sıran. */
+  onRadioQueue: (q: RadioQueueView) => void = () => {};
+  /** Biri yolcu olarak bindi ya da indi (sen de olabilirsin). */
+  onRide: (sid: number, ride: { d: number; s: number } | null) => void = () => {};
   /** Park halindeki araba (sid kendin de olabilir). */
   onParked: (sid: number, parked: ParkedCar | null) => void = () => {};
   /** GAP Ring yarış durumu. */
@@ -432,6 +436,20 @@ export class Net {
         this.remotes.setRadio(ev.sid, ev.radio);
         this.onRadio(ev.sid, ev.radio);
         break;
+      case "radioq":
+        this.onRadioQueue(ev.q);
+        break;
+      case "carlights": {
+        const r = this.remotes.map.get(ev.sid);
+        if (r) r.info.lights = ev.on;
+        break;
+      }
+      case "ride": {
+        const r = this.remotes.map.get(ev.sid);
+        if (r) r.info.ride = ev.ride;
+        this.onRide(ev.sid, ev.ride);
+        break;
+      }
       case "ring":
         this.onRing(ev.ring);
         break;

@@ -1,5 +1,5 @@
 // Tofaşlar: Tofaşla gezen her oyuncunun (sen ve uzaktakiler) arabası, konumunda ve yönünde çizilir.
-// Sürücü avatarı sol öndeki koltukta oturur. Aynı görünümdeki arabalar ayrı ayrı kurulur (az sayıda).
+// Sürücü avatarı sol öndeki koltukta, yolcular sağ önde ve arkada oturur. Aynı görünümdeki arabalar ayrı ayrı kurulur (az sayıda).
 // Gece sürülen arabaların farları yanar: en yakın birkaçının ışığı yolu, duvarları ve insanları gerçekten
 // aydınlatır (lamps.ts'in ızgaralı gece ışığı); havada huzme yalnızca yağmurda görünür. Düşük grafikte gerçek
 // ışık yok: yolda ışık lekesi taklit eder.
@@ -11,9 +11,8 @@ import { wetEnv } from "./world/geo";
 import { type LampField, MAX_CARS } from "./world/lamps";
 import { buildTofas, type TofasMesh } from "./world/tofas";
 
-/** Sürücü koltuğu: arabanın merkezinden sola ve biraz arkaya; oturma yüzeyi alçak. */
-const SEAT_SIDE = 0.33;
-const SEAT_BACK = -0.25;
+/** Koltuklar (0 sürücü sol ön, 1 sağ ön, 2 sol arka, 3 sağ arka): merkezden yana ve arkaya; oturma yüzeyi alçak. */
+const SEATS: [number, number][] = [[0.33, -0.25], [-0.33, -0.25], [0.33, -1.0], [-0.33, -1.0]];
 const SEAT_DROP = -0.58;
 
 interface Entry {
@@ -25,6 +24,8 @@ interface Entry {
   z: number;
   rot: number;
   steer: number;
+  /** Farlar yanıyor mu (gerçek far ışığı yalnızca bunlara). */
+  lit: boolean;
 }
 
 export interface CarsOptions {
@@ -67,14 +68,17 @@ export class Cars {
     for (const e of this.entries.values()) e.seen = false;
   }
 
-  /** Bu kare `sid`in arabası (x, z, rot) — yoksa çağırma. */
-  push(sid: number, spec: CarSpec, x: number, z: number, rot: number, night: number, dmg = 0): void {
+  /**
+   * Bu kare `sid`in arabası (x, z, rot) — yoksa çağırma. `lights`: farlar açık / kapalı; verilmezse gece
+   * kendiliğinden yanar.
+   */
+  push(sid: number, spec: CarSpec, x: number, z: number, rot: number, night: number, dmg = 0, lights: boolean | null = null): void {
     const key = JSON.stringify(spec);
     let e = this.entries.get(sid);
     if (!e || e.key !== key) {
       if (e) this.drop(sid);
       const mesh = this.take(key, spec);
-      e = { key, mesh, seen: true, x, z, rot, steer: 0 };
+      e = { key, mesh, seen: true, x, z, rot, steer: 0, lit: false };
       this.entries.set(sid, e);
     }
     e.seen = true;
@@ -95,7 +99,10 @@ export class Cars {
     e.mesh.group.rotation.y = rot;
     e.mesh.setNight(night);
     e.mesh.setDamage(dmg);
-    e.mesh.setHeadlights(this.opts.headlights ? night : 0, { decal: !this.opts.lamps, haze: wetEnv.uWetRain.value });
+    // Açık farlar gündüz de yanar (camlar parlar); gerçek ışık yalnızca gece görünür
+    const head = !this.opts.headlights || lights === false ? 0 : lights ? Math.max(night, 0.45) : night;
+    e.lit = head > 0.01;
+    e.mesh.setHeadlights(head, { decal: !this.opts.lamps, haze: wetEnv.uWetRain.value });
     this.night = night;
   }
 
@@ -106,7 +113,7 @@ export class Cars {
     if (!lamps || !this.opts.headlights) return;
     const night = Math.max(this.entries.size ? this.night : 0, this.extra?.night ?? 0);
     if (night < 0.01) return lamps.setHeadlights([]);
-    const all: { x: number; z: number; rot: number; color: THREE.Color }[] = [...this.entries.values()].map((e) => ({ x: e.x, z: e.z, rot: e.rot, color: e.mesh.headColor }));
+    const all: { x: number; z: number; rot: number; color: THREE.Color }[] = [...this.entries.values()].filter((e) => e.lit).map((e) => ({ x: e.x, z: e.z, rot: e.rot, color: e.mesh.headColor }));
     if (this.extra) for (const c of this.extra.list()) all.push({ x: c.x, z: c.z, rot: c.rot, color: Cars.NPC_HEAD });
     const f = this.focus;
     all.sort((a, b) => (a.x - f.x) ** 2 + (a.z - f.z) ** 2 - ((b.x - f.x) ** 2 + (b.z - f.z) ** 2));
@@ -163,13 +170,15 @@ export class Cars {
    * Arabadaki oyuncunun avatarı: sürücü koltuğunda. Çizgi karakter oturunca bile Tofaşın tavanından yüksek
    * (kabine sığdırınca bacakları arabanın altından sarkıyordu); gövde çizilmez, isim etiketi tavanın üstünde kalır.
    */
-  seat(sid: number, v: AvatarView): AvatarView {
+  seat(sid: number, v: AvatarView, seat = 0, car: { x: number; z: number; rot: number } = v): AvatarView {
     let s = this.seated.get(sid);
     if (!s) this.seated.set(sid, (s = { ...v }));
     Object.assign(s, v);
-    const c = Math.cos(v.rot), sn = Math.sin(v.rot);
-    s.x = v.x + c * SEAT_SIDE + sn * SEAT_BACK;
-    s.z = v.z - sn * SEAT_SIDE + c * SEAT_BACK;
+    const [side, back] = SEATS[seat] ?? SEATS[0];
+    const c = Math.cos(car.rot), sn = Math.sin(car.rot);
+    s.x = car.x + c * side + sn * back;
+    s.z = car.z - sn * side + c * back;
+    s.rot = car.rot;
     s.flags = FLAG_SEATED;
     s.bodyHidden = true;
     s.baseY = SEAT_DROP;

@@ -1,6 +1,8 @@
-// Araba radyoları: yakındaki her çalan Tofaş için gizli bir YouTube oynatıcısı. Herkes şarkıyı sunucunun
-// verdiği başlangıç anından dinler (kayarsa düzeltilir); ses arabaya uzaklıkla kısılır, menzil dışında
-// oynatıcı kapatılır. Kendi arabandaysan tam sesle.
+// Radyolar: duyulan her radyo için gizli bir YouTube oynatıcısı (her biri ayrı gizli kutuda; üst üste binen
+// çerçeveler YouTube'u durdurabiliyordu). Herkes şarkıyı sunucunun verdiği başlangıç anından dinler; kayma
+// büyükse ve seyrek düzeltilir (sık sarmak iki radyo birlikteyken sürekli tamponlamaya sokuyordu). Ses arabaya
+// uzaklıkla kısılır, menzil dışında oynatıcı kapatılır; kendi radyon ve bindiğin arabanınki tam sesle. Her
+// radyonun sesi ayrıca ayarlanır ya da kapatılır. Kendi şarkın bitince sunucuya bildirilir (sıradaki çalar).
 import { type CarRadio, RADIO_RANGE } from "../../shared/car";
 import { createPlayer, type MediaPlayer } from "./watch/players";
 
@@ -9,16 +11,23 @@ export interface RadioSource {
   radio: CarRadio;
   x: number;
   z: number;
-  /** Bu arabanın içindesin. */
+  /** Kendi radyon ya da bindiğin arabanınki: uzaklıktan bağımsız tam ses. */
   own: boolean;
 }
 
 interface Live {
   key: string;
+  host: HTMLDivElement;
   player: MediaPlayer;
-  at: number;
   checked: number;
+  /** Son sarma (ms): sarmalar arasında en az SEEK_GAP. */
+  seeked: number;
+  ended: boolean;
 }
+
+/** Bu kadar kayınca düzeltilir; aynı oynatıcı en sık bu aralıkla sarılır. */
+const DRIFT = 6;
+const SEEK_GAP = 20_000;
 
 /** Uzaklığa göre ses (0–1): yakında tam, menzilin sonunda sessiz. */
 export function radioGain(d: number, own: boolean): number {
@@ -28,62 +37,79 @@ export function radioGain(d: number, own: boolean): number {
 }
 
 export class RadioMixer {
-  private host: HTMLDivElement;
   private live = new Map<number, Live>();
+  /** Kendi radyonun şarkısı bitti (ya da çalınamadı): sunucuya bildirilir. */
+  onEnded: (id: string) => void = () => {};
 
-  constructor() {
-    // Oynatıcılar görünmez ama sayfada: YouTube küçük/gizli çerçevede çalmayı reddedebiliyor
-    this.host = document.createElement("div");
-    Object.assign(this.host.style, { position: "fixed", left: "0", bottom: "0", width: "240px", height: "136px", opacity: "0.001", pointerEvents: "none", zIndex: "-1", overflow: "hidden" });
-    document.body.append(this.host);
-  }
-
-  /** Kare başına: duyulan en yüksek sesli radyoyu döndürür (etiket için). */
-  update(sources: RadioSource[], lx: number, lz: number, serverNow: number, volume: number): { sid: number; title: string; gain: number } | null {
+  /**
+   * Kare başına. `mix(sid)`: o radyonun ayrıca ayarlanan sesi (0 kapalı). Duyulan en yüksek sesli radyoyu
+   * döndürür (etiket için).
+   */
+  update(sources: RadioSource[], lx: number, lz: number, serverNow: number, volume: number, mix: (sid: number) => number, me: number): { sid: number; title: string; gain: number } | null {
     const seen = new Set<number>();
     let loudest: { sid: number; title: string; gain: number } | null = null;
     for (const s of sources) {
       const d = Math.hypot(s.x - lx, s.z - lz);
+      // Kendi radyon hep çalar (sesini kıssan da bitişi bilinsin)
       if (!s.own && d > RADIO_RANGE + 8) continue;
       seen.add(s.sid);
       const key = `${s.radio.id}@${s.radio.at}`;
       let l = this.live.get(s.sid);
       if (l && l.key !== key) {
-        l.player.destroy();
+        this.drop(s.sid);
         l = undefined;
       }
       const elapsed = Math.max(0, (serverNow - s.radio.at) / 1000);
       if (!l) {
-        const player = createPlayer(this.host, { kind: "youtube", id: s.radio.id, start: elapsed });
+        const host = document.createElement("div");
+        Object.assign(host.style, { position: "fixed", left: "0", bottom: "0", width: "240px", height: "136px", opacity: "0.001", pointerEvents: "none", zIndex: "-1", overflow: "hidden" });
+        document.body.append(host);
+        const player = createPlayer(host, { kind: "youtube", id: s.radio.id, start: elapsed });
         player.setMuted(false);
-        l = { key, player, at: s.radio.at, checked: performance.now() };
+        const live: Live = { key, host, player, checked: performance.now(), seeked: performance.now(), ended: false };
+        // Çalınamayan şarkı da biter (sıradakine geçilsin)
+        if (s.sid === me) player.onError = () => this.finish(live, s.radio.id);
+        l = live;
         this.live.set(s.sid, l);
       }
-      const gain = radioGain(d, s.own);
+      const gain = radioGain(d, s.own) * mix(s.sid);
       l.player.setVolume(Math.min(1, gain * volume));
-      // Ara ara: kaydıysa doğru saniyeye sar, durduysa yeniden başlat (şarkı bittiyse dokunma)
       const now = performance.now();
       if (now - l.checked > 3000) {
         l.checked = now;
         const t = l.player.time(), dur = l.player.duration();
-        if (Number.isFinite(t) && (!Number.isFinite(dur) || elapsed < dur - 1)) {
-          if (Math.abs(t - elapsed) > 2.5) l.player.seek(elapsed);
+        // Şarkı bitti: kendi radyonsa sıradakine geçilsin
+        if (s.sid === me && (l.player.ended?.() || (Number.isFinite(dur) && elapsed > dur + 4))) this.finish(l, s.radio.id);
+        else if (Number.isFinite(t) && (!Number.isFinite(dur) || elapsed < dur - 1)) {
+          // Çok kaydıysa (seyrek) doğru saniyeye sar; durduysa yalnızca devam ettir
+          if (Math.abs(t - elapsed) > DRIFT && now - l.seeked > SEEK_GAP) {
+            l.seeked = now;
+            l.player.seek(elapsed);
+          }
           if (!l.player.isPlaying()) l.player.play();
         }
       }
       if (gain > 0.03 && (!loudest || gain > loudest.gain)) loudest = { sid: s.sid, title: s.radio.title, gain };
     }
-    for (const [sid, l] of this.live) {
-      if (seen.has(sid)) continue;
-      l.player.destroy();
-      this.live.delete(sid);
-    }
+    for (const sid of [...this.live.keys()]) if (!seen.has(sid)) this.drop(sid);
     return loudest;
   }
 
+  private finish(l: Live, id: string): void {
+    if (l.ended) return;
+    l.ended = true;
+    this.onEnded(id);
+  }
+
+  private drop(sid: number): void {
+    const l = this.live.get(sid);
+    if (!l) return;
+    l.player.destroy();
+    l.host.remove();
+    this.live.delete(sid);
+  }
+
   dispose(): void {
-    for (const l of this.live.values()) l.player.destroy();
-    this.live.clear();
-    this.host.remove();
+    for (const sid of [...this.live.keys()]) this.drop(sid);
   }
 }

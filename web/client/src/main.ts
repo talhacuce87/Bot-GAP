@@ -21,7 +21,7 @@ import { DEFAULT_ELEV, FIRE_COOLDOWN_MS, hullCircles, TANK_PARK, TANK_REACH, tan
 import chibiBinUrl from "../chibi/chibi.bin?url";
 import chibiManifest from "../chibi/chibi.json";
 import { AvatarAtlas } from "./avatars/atlas";
-import { AvatarRenderer, bodyY, colorFor, MAX_AVATARS } from "./avatars/avatars";
+import { AvatarRenderer, type AvatarView, bodyY, colorFor, MAX_AVATARS } from "./avatars/avatars";
 import { ChibiLayer } from "./avatars/chibi";
 import type { ChibiManifest } from "./avatars/chibiPack";
 import { Bots } from "./avatars/bots";
@@ -864,14 +864,24 @@ async function start(): Promise<void> {
 
     features.decorate();
     me.room = world.roomAt(me.x, me.z);
-    // Tofaşlar: arabadaki oyuncu sürücü koltuğunda oturur
+    // Tofaşlar: arabadaki oyuncu sürücü koltuğunda, yolcular sağ önde ve arkada oturur; farlar açık/kapalı
     cars.begin(me.x, me.z);
-    if (me.car) cars.push(net.you, settings.car, me.x, me.z, me.rot, world.env.lights, features.carDamage);
-    for (const r of remotes.map.values()) if (r.hasData && r.info.car) cars.push(r.info.sid, r.info.car, r.x, r.z, r.rot, world.env.lights, r.info.dmg ?? 0);
+    if (me.car) cars.push(net.you, settings.car, me.x, me.z, me.rot, world.env.lights, features.carDamage, features.myLights);
+    for (const r of remotes.map.values()) if (r.hasData && r.info.car) cars.push(r.info.sid, r.info.car, r.x, r.z, r.rot, world.env.lights, r.info.dmg ?? 0, r.info.lights ?? null);
     cars.end();
+    /** Yolcunun bindiği araba (sürücü sen ya da başkası; araba yoksa null). */
+    const carOf = (d: number) => {
+      if (d === net.you) return me.car ? me : null;
+      const x = remotes.map.get(d);
+      return x?.hasData && x.info.car ? x : null;
+    };
+    const rider = (sid: number, v: AvatarView, ride: { d: number; s: number } | null | undefined): AvatarView => {
+      const car = ride ? carOf(ride.d) : null;
+      return car ? cars.seat(sid, v, ride!.s, car) : v;
+    };
     avatars.begin(camera.position);
-    if (!me.driving && !me.hideAvatar) avatars.push(me.car ? cars.seat(net.you, me) : me, time, true);
-    for (const r of remotes.map.values()) if (r.hasData && r.info.sid !== tank.driver) avatars.push(r.info.car ? cars.seat(r.info.sid, r) : r, time);
+    if (!me.driving && !me.hideAvatar) avatars.push(me.car ? cars.seat(net.you, me) : rider(net.you, me, features.myRide), time, true);
+    for (const r of remotes.map.values()) if (r.hasData && r.info.sid !== tank.driver) avatars.push(r.info.car ? cars.seat(r.info.sid, r) : rider(r.info.sid, r, r.info.ride), time);
     features.pushExtras(time, dt);
     avatars.end();
     me.updateCamera(camera, dt);
