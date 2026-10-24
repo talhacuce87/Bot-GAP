@@ -23,6 +23,7 @@ import {
   writeSnapshotHeader,
 } from "../../shared/protocol";
 import { inStadium, inVolley, SPAWN } from "../../shared/zones";
+import { inPbField } from "../../shared/paintball";
 import { CAR_MAX_SPEED, type CarRadio, type CarSpec, type ParkedCar, PARK_REACH, validCar } from "../../shared/car";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
@@ -357,7 +358,7 @@ export class Room {
   resume(sid: number, x: number, z: number, rot: number, now = Date.now()): boolean {
     const p = this.players.get(sid);
     if (!p || p.resumed || now - p.joinedAt > RESUME_MS || p.info.jailed || p.info.spectator || this.battle) return false;
-    if (![x, z, rot].every(Number.isFinite) || outsideWorld(x, z) > 0 || inStadium(x, z) || inVolley(x, z)) return false;
+    if (![x, z, rot].every(Number.isFinite) || outsideWorld(x, z) > 0 || inStadium(x, z) || inVolley(x, z) || inPbField(x, z)) return false;
     p.resumed = true;
     this.moveTo(sid, x, z, rot, now);
     return true;

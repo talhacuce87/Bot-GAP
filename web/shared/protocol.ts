@@ -169,6 +169,30 @@ export interface NamazSession {
   endsAt: number;
 }
 
+/** Paintball maçındaki oyuncu: slot (0 kuzey üssü, 1 güney), skor, ölüyse yeniden doğacağı an, skin. */
+export interface PbPlayer {
+  sid: number;
+  slot: 0 | 1;
+  kills: number;
+  deaths: number;
+  alive: boolean;
+  respawnAt: number;
+  /** Doğduktan sonra bu ana kadar vurulmaz. */
+  safeUntil: number;
+  skin: string;
+}
+
+/** Paintball: boşta, geri sayım, maç, sonuç. Sıradakiler (kulübede sıraya girenler) maç bitince oynar. */
+export interface PbState {
+  phase: "idle" | "count" | "play" | "end";
+  players: PbPlayer[];
+  queue: number[];
+  startAt: number;
+  endsAt: number;
+  /** Sonuç: kazanan (0 berabere). */
+  winner?: number;
+}
+
 /** Oyuncak pist yarışçısı: `lap` 1'den başlar (0: çizgiye gelmedi); bitirdiyse `place` ve `time` (ms). */
 export interface RacePlayer {
   sid: number;
@@ -380,6 +404,13 @@ export type ServerEvent =
   | { t: "tag"; state: TagState | null }
   | { t: "race"; state: RaceState | null }
   | { t: "namaz"; sessions: NamazSession[] }
+  /** Paintball: maç durumu, atış (herkes aynı yolu çizer; `at` sunucunun kabul anı), isabet, duruşlar, galibiyetlerin. */
+  | { t: "pb"; state: PbState }
+  | { t: "pbshot"; sid: number; o: [number, number, number]; d: [number, number, number]; at: number }
+  | { t: "pbhit"; by: number; victim: number; x: number; y: number; z: number }
+  /** [sid, bakış açısı×100, çömelmiş (0/1), ayak yüksekliği×100] tekrarlı. */
+  | { t: "pbposes"; p: number[] }
+  | { t: "pbwins"; wins: number }
   /**
    * Voleybol: top (id: yoksa maç topu, varsa antrenmanda çağıranın topu; hold: servisçinin elinde, toss: servis
    * için havaya atan; sv: servis atıldı, henüz karşılanmadı; w: sert vuruşun rüzgar rengi), kaybolan antrenman topu, maç/rally durumu, animasyon (dalış,
@@ -500,6 +531,15 @@ export type ClientEvent =
   | { t: "munferit" }
   | { t: "saf" }
   | { t: "nleave" }
+  /** Paintball: sıraya gir/çık (maçtaysan çekil), skin seç, bakış ve çömelme (~15 Hz), atış, haznede doldurma. */
+  | { t: "pbjoin" }
+  | { t: "pbleave" }
+  | { t: "pbskin"; id: string }
+  | { t: "pbpose"; p: number; c: number; y: number }
+  | { t: "pbfire"; o: [number, number, number]; d: [number, number, number]; at: number }
+  | { t: "pbreload" }
+  /** Kulübede: galibiyet sayımı (skin kilitleri) iste. */
+  | { t: "pbinfo" }
   | { t: "rjoin" }
   | { t: "rleave" }
   | { t: "rtrack"; i: number }

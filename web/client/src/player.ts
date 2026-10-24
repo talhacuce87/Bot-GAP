@@ -177,6 +177,13 @@ export class Player implements AvatarView, PlayerState {
   onStage = false;
   /** Fotoğraf modunda kamera daha uzağa açılır. */
   photo = false;
+  /**
+   * Paintball maçı: kamera hep birinci şahıs, karakter baktığı yöne döner, koşu yok; çömelince göz hizası
+   * iner ve yavaşlar; sahanın (fence) içinde kalır.
+   */
+  fps: { fence: { minX: number; maxX: number; minZ: number; maxZ: number }; crouch: boolean; speed: number; crouchSpeed: number; eye: number; crouchEye: number; frozen?: boolean } | null = null;
+  /** Çömelme: 0 ayakta, 1 çömelmiş (yumuşak geçiş). */
+  crouchK = 0;
 
   get lift(): number {
     return this.onStage ? STAGE.h : 0;
@@ -225,7 +232,7 @@ export class Player implements AvatarView, PlayerState {
     const sens = settings.sensitivity;
     const lookY = this.look.y * 0.004 * sens * (settings.invertY ? -1 : 1);
     this.yaw -= this.look.x * 0.006 * sens;
-    const fp = settings.firstPerson && !this.driving && !this.car && !this.photo;
+    const fp = (settings.firstPerson || !!this.fps) && !this.driving && !this.car && !this.photo;
     this.pitch = this.driving
       ? THREE.MathUtils.clamp(this.pitch + lookY, TANK_PITCH_MIN, TANK_PITCH_MAX)
       : this.car
@@ -244,8 +251,10 @@ export class Player implements AvatarView, PlayerState {
       return;
     }
 
+    // Paintball: geri sayımda ve vurulmuşken yerinden kıpırdamaz (yalnızca bakar)
+    if (this.fps?.frozen) input.moveX = input.moveY = 0;
     const action = input.consumeAction();
-    let jump = input.consumeJump();
+    let jump = input.consumeJump() && !this.fps?.frozen;
     const moving = Math.abs(input.moveX) > 0.15 || Math.abs(input.moveY) > 0.15;
 
     if (this.seat) {
@@ -282,7 +291,10 @@ export class Player implements AvatarView, PlayerState {
     } else {
       // Araçta koşma yok: hız aracın; bisiklet ve kaykay yavaş hızlanır, kayık ağır
       const accel = 1 - Math.exp(-dt * (this.vehicle ? (this.vehicle === 3 ? 1.5 : 3.5) : 12));
-      const speedMax = WALK_SPEED * (this.vehicle ? VEHICLES[this.vehicle].speed : input.run ? RUN_MULTIPLIER : 1) * this.speedMul;
+      const f = this.fps;
+      const speedMax = f
+        ? WALK_SPEED * (f.speed + (f.crouchSpeed - f.speed) * this.crouchK)
+        : WALK_SPEED * (this.vehicle ? VEHICLES[this.vehicle].speed : input.run ? RUN_MULTIPLIER : 1) * this.speedMul;
       this.vx += (mx * speedMax - this.vx) * accel;
       this.vz += (mz * speedMax - this.vz) * accel;
     }
@@ -310,11 +322,19 @@ export class Player implements AvatarView, PlayerState {
       pushOut(this, (o[0] + o[2]) / 2, (o[1] + o[3]) / 2, TURRET_R + PLAYER_RADIUS);
     }
     if (this.jailed) clampToJail(this);
+    const fence = this.fps?.fence;
+    // Sahanın biraz dışındaysa sunucu ışınlamıştır (maç bitti): geri çekilmez
+    if (fence && this.x > fence.minX - 2 && this.x < fence.maxX + 2 && this.z > fence.minZ - 2 && this.z < fence.maxZ + 2) {
+      this.x = THREE.MathUtils.clamp(this.x, fence.minX, fence.maxX);
+      this.z = THREE.MathUtils.clamp(this.z, fence.minZ, fence.maxZ);
+    }
+    this.crouchK += ((this.fps?.crouch ? 1 : 0) - this.crouchK) * (1 - Math.exp(-dt * 14));
     this.land();
 
     const speed = Math.hypot(this.vx, this.vz);
     // Shift lock: karakter hep kameranın baktığı yöne döner (yana/geri yürürken de)
-    if (lockOn) this.rot = dampAngle(this.rot, this.yaw + Math.PI, 1 - Math.exp(-dt * 20));
+    if (this.fps) this.rot = this.yaw + Math.PI;
+    else if (lockOn) this.rot = dampAngle(this.rot, this.yaw + Math.PI, 1 - Math.exp(-dt * 20));
     else if (speed > 0.3) this.rot = dampAngle(this.rot, Math.atan2(this.vx, this.vz), 1 - Math.exp(-dt * (this.vehicle ? 5 : 12)));
     if (this.vehicle === 1 || this.vehicle === 2) this.rideMeters += speed * dt;
     this.flags =
@@ -667,6 +687,17 @@ export class Player implements AvatarView, PlayerState {
     this.flags = this.jumpBits();
   }
 
+  /** Bakışı bir yöne çevirir (paintballda doğunca sahanın ortasına bakar). */
+  lookToward(rot: number): void {
+    this.yaw = rot + Math.PI;
+    this.pitch = 0;
+  }
+
+  /** Birinci şahıs bakış açıları (yaw: kameranın yönü, pitch: + aşağı). */
+  get view(): { yaw: number; pitch: number } {
+    return { yaw: this.yaw, pitch: this.pitch };
+  }
+
   /** Gardırop: kamera karakterin önüne, biraz yakına (kıyafet görünsün). */
   faceCamera(): void {
     this.yaw = this.rot;
@@ -676,9 +707,11 @@ export class Player implements AvatarView, PlayerState {
 
   updateCamera(camera: THREE.PerspectiveCamera, dt: number): void {
     const k = 1 - Math.exp(-dt * 14);
-    if (settings.firstPerson && !this.driving && !this.car && !this.photo) {
-      // Birinci şahıs: göz hizasından, bakış yönü kameranın açısı
-      const eye = (this.seat ? 1.0 : 1.32) + this.baseY + this.jumpY + this.lift + (this.vehicle === 1 ? 0.3 : this.vehicle === 2 ? 0.14 : 0);
+    if ((settings.firstPerson || this.fps) && !this.driving && !this.car && !this.photo) {
+      // Birinci şahıs: göz hizasından, bakış yönü kameranın açısı (paintballda çömelince göz iner)
+      const f = this.fps;
+      const stand = f ? f.eye + (f.crouchEye - f.eye) * this.crouchK : this.seat ? 1.0 : 1.32;
+      const eye = stand + this.baseY + this.jumpY + this.lift + (this.vehicle === 1 ? 0.3 : this.vehicle === 2 ? 0.14 : 0);
       this.target.set(this.x, eye, this.z);
       camera.position.copy(this.target);
       const cp = Math.cos(this.pitch);

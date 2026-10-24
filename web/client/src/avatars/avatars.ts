@@ -59,6 +59,8 @@ export interface AvatarView {
   abdestAt?: number;
   /** Duruşun ek yan dönüşü (yalnızca debug görünüm denemesi: yandan bakmak için). */
   poseYaw?: number;
+  /** Paintball maçında: silah iki elde önde, bakışla kalkar (`pitch` + aşağı); `crouch` 0–1 diz çöker. */
+  pb?: { pitch: number; crouch: number } | null;
   /** Yalnızca gövde çizilmez, isim etiketi kalır (Tofaştaki sürücü: kabine sığmaz, etiket tavanın üstünde). */
   bodyHidden?: boolean;
 }
@@ -110,7 +112,15 @@ const PRAY_POSES: Record<Posture | "abdest", PrayPose> = {
 const ABDEST_ANIM = 4.5;
 const _pose: PrayPose = { tilt: 0, hip: HIP, leg: 0, arm: 0, roll: 0, yaw: 0 };
 
-/** O anki namaz (ya da abdest) duruşu; yoksa null. Geçişler yumuşak. */
+/**
+ * Paintball: silah iki elde önde, bakışla kalkar/iner. Kollar dinlenirken dışa açık durur: öne yataya kaldırılıp
+ * ileri eksen etrafında ~155° döndürülünce eller göğsün önünde buluşur (dönüş yukarı-aşağıyı da çevirdiği için
+ * bakış aşağıdaysa kol daha çok kalkar: −π/2 − pitch).
+ */
+const PB_ROLL = 2.7;
+const pbArm = (pitch: number) => Math.max(-2.6, Math.min(-0.6, -1.57 - pitch * 0.8));
+
+/** O anki namaz (ya da abdest) duruşu ya da paintballda çömelme; yoksa null. Geçişler yumuşak. */
 function prayPose(v: AvatarView, time: number): PrayPose | null {
   let cur: PrayPose | null = null, prev: PrayPose | null = null, k = 1;
   if (v.namaz) {
@@ -124,6 +134,12 @@ function prayPose(v: AvatarView, time: number): PrayPose | null {
     cur = PRAY_POSES.abdest;
     prev = PRAY_POSES.kavme;
     k = Math.min(1, t * 3, (ABDEST_ANIM - t) * 3);
+  }
+  else if (v.pb && v.pb.crouch > 0.02) {
+    // Paintball: diz çöker (topukların üstüne), kollar silahta
+    const c = v.pb.crouch;
+    Object.assign(_pose, { tilt: 0.1 * c, hip: HIP + (0.27 - HIP) * c, leg: 0.98 * c, arm: pbArm(v.pb.pitch), roll: PB_ROLL, yaw: 0 });
+    return _pose;
   }
   if (!cur || !prev) return null;
   for (const key of ["tilt", "hip", "leg", "arm", "roll", "yaw"] as const) _pose[key] = prev[key] + (cur[key] - prev[key]) * k;
@@ -399,6 +415,7 @@ export class AvatarRenderer {
     l.vu = vd ? Math.min(1, vt / vd) : 0;
     l.vstance = v.vstance ?? undefined;
     l.pray = pray ? { leg: pray.leg, arm: pray.arm, roll: pray.roll } : undefined;
+    l.aim = v.pb && !pray ? { arm: pbArm(v.pb.pitch), roll: PB_ROLL } : undefined;
     if (pray) l.seated = false;
     l.time = time;
     const asChibi = !v.hidden && !v.bodyHidden && (this.chibi?.place(v.outfit, px, pz, this.m, l, self) ?? false);

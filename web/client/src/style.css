@@ -7379,3 +7379,319 @@ button.cz-bjspot {
     height: 92px;
   }
 }
+
+/* ---- GAP Paintball ---- */
+/* Maçta dünyanın arayüzü sade: emote, ipucu, oyuncu listesi, etkileşim düğmeleri gizli */
+#hud.paintball .hint,
+#hud.paintball .emotes,
+#hud.paintball .players,
+#hud.paintball .acts,
+#hud.paintball .prompt {
+  display: none;
+}
+
+.pb-hud {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.pb-hud.show {
+  display: block;
+}
+
+.pb-score {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 16px;
+  border-radius: 14px;
+  background: rgba(10, 12, 18, 0.72);
+  font: 800 20px system-ui, sans-serif;
+  color: #fff;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.pb-score i {
+  font-style: normal;
+  font-size: 15px;
+  color: #d8dee8;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pb-cross {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.pb-cross::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: #ff7a1a;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+/* İsabet: nişangâhın çevresinde X */
+.pb-hitmark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  opacity: 0;
+  background:
+    linear-gradient(45deg, transparent 46%, #fff 46%, #fff 54%, transparent 54%) center / 100% 100%,
+    linear-gradient(-45deg, transparent 46%, #fff 46%, #fff 54%, transparent 54%) center / 100% 100%;
+  mask: radial-gradient(circle, transparent 9px, #000 10px);
+  -webkit-mask: radial-gradient(circle, transparent 9px, #000 10px);
+}
+
+.pb-ammo {
+  position: absolute;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  width: 170px;
+  padding: 8px 12px 10px;
+  border-radius: 12px;
+  background: rgba(10, 12, 18, 0.7);
+  color: #fff;
+}
+
+.pb-ammo-n {
+  font: 800 22px system-ui, sans-serif;
+  text-align: right;
+}
+
+.pb-ammo-track {
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.pb-ammo-bar {
+  height: 100%;
+  border-radius: 3px;
+  background: #ff9a3c;
+  transition: width 0.08s linear;
+}
+
+.pb-ammo-bar.low {
+  background: #ff4d3d;
+}
+
+.pb-center {
+  position: absolute;
+  left: 50%;
+  top: 36%;
+  display: none;
+  padding: 10px 22px;
+  border-radius: 16px;
+  background: rgba(10, 12, 18, 0.66);
+  color: #fff;
+  font: 800 28px system-ui, sans-serif;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+}
+
+.pb-center.show {
+  display: block;
+}
+
+.pb-center.big {
+  font-size: 64px;
+  background: none;
+  text-shadow: 0 3px 10px rgba(0, 0, 0, 0.7);
+}
+
+.pb-center.good {
+  color: #ffd25a;
+}
+
+/* Vurulunca ekrana rakibin boyası sıçrar, yavaşça akıp kaybolur */
+.pb-splat {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 5;
+  background:
+    radial-gradient(circle at 30% 38%, var(--pb-paint, #ff7a1a) 0 9%, transparent 9.5%),
+    radial-gradient(circle at 37% 30%, var(--pb-paint, #ff7a1a) 0 4%, transparent 4.5%),
+    radial-gradient(circle at 24% 47%, var(--pb-paint, #ff7a1a) 0 3%, transparent 3.5%),
+    radial-gradient(circle at 42% 44%, var(--pb-paint, #ff7a1a) 0 2%, transparent 2.5%),
+    radial-gradient(circle at 68% 62%, var(--pb-paint, #ff7a1a) 0 6%, transparent 6.5%),
+    radial-gradient(circle at 74% 55%, var(--pb-paint, #ff7a1a) 0 2.5%, transparent 3%),
+    radial-gradient(ellipse at 50% 50%, transparent 55%, color-mix(in srgb, var(--pb-paint, #ff7a1a) 45%, transparent) 100%);
+}
+
+.pb-splat.show {
+  animation: pb-splat 3s ease-out forwards;
+}
+
+@keyframes pb-splat {
+  0% {
+    opacity: 0.95;
+    transform: scale(1.04);
+  }
+  40% {
+    opacity: 0.8;
+    transform: scale(1) translateY(1.5%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(5%);
+  }
+}
+
+.pb-feed {
+  position: absolute;
+  right: max(18px, env(safe-area-inset-right));
+  top: max(64px, calc(env(safe-area-inset-top) + 54px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font: 700 13px system-ui, sans-serif;
+  color: #fff;
+}
+
+.pb-feed-line {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(10, 12, 18, 0.62);
+}
+
+.pb-help {
+  position: absolute;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  display: none;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(10, 12, 18, 0.66);
+  color: #e6ebf2;
+  font: 600 13px system-ui, sans-serif;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.pb-help.show {
+  display: block;
+}
+
+.pb-touch {
+  position: absolute;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.pb-tbtn {
+  width: 58px;
+  height: 58px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+  background: rgba(10, 12, 18, 0.55);
+  color: #fff;
+  font-size: 24px;
+  touch-action: none;
+}
+
+.pb-tfire {
+  width: 76px;
+  height: 76px;
+  background: rgba(255, 122, 26, 0.55);
+}
+
+.pb-panel .pb-status {
+  margin-bottom: 10px;
+  font-weight: 700;
+}
+
+.pb-join-btn {
+  width: 100%;
+  padding: 11px;
+  margin-bottom: 8px;
+  border: 0;
+  border-radius: 12px;
+  background: #ff7a1a;
+  color: #fff;
+  font: 800 16px system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.pb-skins-head {
+  margin: 14px 0 8px;
+  font-size: 15px;
+}
+
+.pb-skins {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.pb-skin {
+  padding: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.pb-skin.active {
+  border-color: #ff9a3c;
+  background: rgba(255, 154, 60, 0.14);
+}
+
+.pb-skin.locked {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pb-swatch {
+  height: 36px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+}
+
+.pb-skin-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.pb-skin-req {
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.75;
+}

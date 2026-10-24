@@ -118,6 +118,26 @@ export const sfx = {
     burst(0.08, 0.45, 4000);
     burst(0.1, 0.3, 3000, 0.02);
   },
+  /** Paintball: havalı "tup" atış sesi. */
+  pbShot(gain = 1, pan = 0): void {
+    burst(0.07, 0.35 * gain, 2600, 0, pan);
+    tone(240, 0.07, "sine", 0.14 * gain, 0, -140);
+  },
+  /** Boya topu bir yere patladı. */
+  pbSplat(gain = 1, pan = 0): void {
+    burst(0.14, 0.32 * gain, 1300, 0, pan);
+    tone(130, 0.09, "sine", 0.1 * gain, 0, -60);
+  },
+  /** İsabet: kısa tiz onay (atana). */
+  pbHitMark(): void {
+    tone(1650, 0.06, "square", 0.05);
+    tone(2200, 0.08, "square", 0.04, 0.05);
+  },
+  /** Hazne dolduruluyor: toplar tıkır tıkır. */
+  pbReload(): void {
+    for (let i = 0; i < 6; i++) burst(0.03, 0.18, 4200, i * 0.11 + Math.random() * 0.03);
+    tone(520, 0.08, "triangle", 0.06, 0.75);
+  },
   pop(): void {
     tone(660, 0.12, "sine", 0.12, 0, 300);
   },

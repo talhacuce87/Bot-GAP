@@ -48,6 +48,8 @@ QUESTS: tuple[Quest, ...] = (
     Quest("race_win", "Oyuncak pistte bir yarış kazan", "race_win", 1, 12),
     # Dünya sunucusu bir vakti kişi başı bir kez sayar (vakit girmeden kılınmaz)
     Quest("namaz", "GAP Camii'nde bir vakit namazı kıl", "namaz", 1, 6),
+    Quest("pb_play", "Paintball sahasında bir maç oyna", "pb_play", 1, 6),
+    Quest("pb_win", "Paintball maçı kazan", "pb_win", 1, 12),
 )
 BY_KEY = {q.key: q for q in QUESTS}
 EVENTS = {q.event for q in QUESTS}
@@ -65,12 +67,14 @@ STAT_KEYS = {
     "hug": "hugs",
     "tag_win": "tag_wins",
     "race_win": "race_wins",
+    "pb_win": "pb_wins",
+    "pb_hit": "pb_hits",
     "ride": "ride_m",
 }
 # Aylık sezona da yazılan sayaçlar
 SEASON_KEYS = {"tank_kill": "tank_kills", "tank_win": "tank_wins", "goal": "goals"}
 # Görev dışı ama kabul edilen olaylar
-EXTRA_EVENTS = {"tank_kill", "tank_win", "tag_win"}
+EXTRA_EVENTS = {"tank_kill", "tank_win", "tag_win", "pb_hit"}
 
 
 def season_key(when: datetime.date) -> str:

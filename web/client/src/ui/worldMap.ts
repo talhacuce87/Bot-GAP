@@ -2,6 +2,8 @@
 // yollar ya da arsalar değişince harita da kendiliğinden güncel kalır. Zemin katmanı ilk açılışta bir kez
 // çizilir; üstünde her karede arsa sahipleri, oyuncular ve senin yerin (ok, baktığın yöne). Sürükle: kaydır,
 // tekerlek ya da iki parmak: yakınlaştır. Işınlanılan odalar (stadyum, voleybol) haritada yok.
+import { MOSQUE } from "../../../shared/mosque";
+import { PB_FIELD } from "../../../shared/paintball";
 import { CASINO, CAVE, CITY, FAME, GARAGE, GROVE, HALL, KAHVEHANE, LAKE, LINK_ROADS, PLAZA, RACE_HOUSE, ROAD_HALF, ROAD_PATH, SAKURA_SPOT, STAGE, STREETS, VILLAGE_ROAD_HALF, VILLAGE_ROADS, WATERFALL } from "../../../shared/zones";
 import { HOOD_BOX, HOOD_PARK, HOOD_ROADS, HOOD_ROUNDABOUT, HOOD_SIDEWALK, HOOD_STREET_HALF, PLOTS } from "../../../shared/build";
 import { WORLD_BOUNDS } from "../../../shared/constants";
@@ -48,6 +50,7 @@ const PLACES: [string, number, number][] = [
   ["Sakura", SAKURA_SPOT.x, SAKURA_SPOT.z],
   ["Tank", TANK_PARK.x, TANK_PARK.z],
   ["Oyuncak pist", RACE_HOUSE.x, RACE_HOUSE.z],
+  ["Paintball", PB_FIELD.x, PB_FIELD.z],
   ["Mangal", GROVE.x, GROVE.z],
   ["Şöhret kürsüsü", FAME.x, FAME.z],
   ["Şelale", WATERFALL.x, WATERFALL.z],
@@ -58,6 +61,7 @@ const PLACES: [string, number, number][] = [
   ["GAP Ring", (RACE_AREA.minX + RACE_AREA.maxX) / 2, (RACE_AREA.minZ + RACE_AREA.maxZ) / 2],
   ["Mahalle", (HOOD_BOX.minX + HOOD_BOX.maxX) / 2, HOOD_BOX.minZ + 4],
   ["Park", HOOD_PARK.x, HOOD_PARK.z - 32],
+  ["GAP Camii", MOSQUE.x, MOSQUE.z],
 ];
 
 export interface MapPlayer {

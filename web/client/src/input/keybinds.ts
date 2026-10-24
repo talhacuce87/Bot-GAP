@@ -4,10 +4,10 @@
 // (Q pas, F şut, H power şut, G aşırtma, E çalım, R rainbow, C müdahale, B takım); ayarlar paneli o an geçerli takımı gösterir.
 // Voleybol salonunda da kendi takımı var (Volleyball 4.2 düzeni): sol tık manşet/smaç, 1 smaç↔blok, 2 dump,
 // 3 dalış, F/R pas, B pas türü, Q/E güç (Z/X/C: 1/8/15), V servis, T sprint, G antrenman topu, P pozisyon.
-// Orada sol tık ve 1–6 da atanabilir.
+// Orada sol tık ve 1–6 da atanabilir. Paintball maçında da (birinci şahıs): sol tık ateş, Ctrl/C çömel, R doldur.
 
-export type Profile = "world" | "stadium" | "volley";
-const KEYS: Record<Profile, string> = { world: "gap-keys", stadium: "gap-keys-stadium", volley: "gap-keys-volley2" };
+export type Profile = "world" | "stadium" | "volley" | "paintball";
+const KEYS: Record<Profile, string> = { world: "gap-keys", stadium: "gap-keys-stadium", volley: "gap-keys-volley2", paintball: "gap-keys-paintball" };
 
 export type Action =
   | "forward"
@@ -60,9 +60,14 @@ export type Action =
   | "vSetType"
   | "vServe"
   | "vToss"
-  | "vTeam";
+  | "vTeam"
+  | "pbFire"
+  | "pbCrouch"
+  | "pbReload"
+  | "pbLeave";
 
 const FOOTBALL: readonly Action[] = ["fbPass", "fbShoot", "fbPower", "fbLob", "fbSkill", "fbRainbow", "fbTackle", "fbTeam"];
+const PAINTBALL: readonly Action[] = ["pbFire", "pbCrouch", "pbReload", "pbLeave"];
 const VOLLEY: readonly Action[] = [
   "vHit", "vMode", "vDump", "vDive", "vSetF", "vSetB", "vSetType", "vPowDown", "vPowUp", "vPow1", "vPow8", "vPow15", "vServe", "vToss", "vTeam",
 ];
@@ -70,7 +75,7 @@ const VOLLEY: readonly Action[] = [
 /** Tek seferlik kısayollar (menü, fotoğraf, araç, stadyumda futbol, voleybol…): Input bunları sıraya alır, oyun tüketir. */
 export const HOTKEYS: readonly Action[] = [
   "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "map", "car", "radio", "net",
-  ...FOOTBALL, ...VOLLEY,
+  ...FOOTBALL, ...VOLLEY, "pbReload", "pbLeave",
 ];
 
 /** Her takımda ayarlanabilen eylemler (sırasıyla panelde). */
@@ -81,6 +86,7 @@ export const PROFILE_ACTIONS: Record<Profile, readonly Action[]> = {
   ],
   stadium: [...FOOTBALL, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
   volley: [...VOLLEY, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
+  paintball: [...PAINTBALL, "forward", "back", "left", "right", "jump", "menu", "net"],
 };
 
 /** Tuş adı: KeyboardEvent.code, "Mouse1" (orta), "Mouse3"/"Mouse4" (yan), "WheelUp"/"WheelDown". */
@@ -138,6 +144,10 @@ export const ACTION_NAMES: Record<Action, string> = {
   vServe: "Servis",
   vToss: "Antrenman topu",
   vTeam: "Voleybol menüsü",
+  pbFire: "Ateş (basılı tut: seri)",
+  pbCrouch: "Çömel (basılı tut)",
+  pbReload: "Hazneyi doldur",
+  pbLeave: "Maçtan çekil",
 };
 
 export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
@@ -192,6 +202,10 @@ export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
   vServe: ["", ""],
   vToss: ["", ""],
   vTeam: ["", ""],
+  pbFire: ["", ""],
+  pbCrouch: ["", ""],
+  pbReload: ["", ""],
+  pbLeave: ["", ""],
 };
 
 const NONE = Object.fromEntries(Object.keys(DEFAULT_BINDS).map((a) => [a, ["", ""]])) as Record<Action, [Bind, Bind]>;
@@ -257,16 +271,35 @@ export const VOLLEY_BINDS: Record<Action, [Bind, Bind]> = {
   vTeam: ["KeyP", ""],
 };
 
-const DEFAULTS: Record<Profile, Record<Action, [Bind, Bind]>> = { world: DEFAULT_BINDS, stadium: STADIUM_BINDS, volley: VOLLEY_BINDS };
+/**
+ * Paintball maçı (birinci şahıs): yürü, zıpla, sol tık ateş (basılı: seri), Ctrl ya da C çömel, R doldur, G çekil.
+ * Koşu yok; dünyanın kısayolları (gardırop, görevler…) maçta kapalı.
+ */
+export const PAINTBALL_BINDS: Record<Action, [Bind, Bind]> = {
+  ...NONE,
+  forward: ["KeyW", "ArrowUp"],
+  back: ["KeyS", "ArrowDown"],
+  left: ["KeyA", "ArrowLeft"],
+  right: ["KeyD", "ArrowRight"],
+  jump: ["Space", ""],
+  menu: ["KeyM", ""],
+  net: ["F3", ""],
+  pbFire: ["Mouse0", ""],
+  pbCrouch: ["ControlLeft", "KeyC"],
+  pbReload: ["KeyR", ""],
+  pbLeave: ["KeyG", ""],
+};
+
+const DEFAULTS: Record<Profile, Record<Action, [Bind, Bind]>> = { world: DEFAULT_BINDS, stadium: STADIUM_BINDS, volley: VOLLEY_BINDS, paintball: PAINTBALL_BINDS };
 
 /** Atanamaz tuşlar: sohbet, menü kapatma, emote ve sol/sağ tık (seçim ve kamera). */
 export const RESERVED = new Set(["Enter", "NumpadEnter", "Escape", "Mouse0", "Mouse2", ...[1, 2, 3, 4, 5, 6].map((n) => `Digit${n}`)]);
-/** Voleybol salonunda sol tık ve rakamlar da atanabilir (emote yok, sol tık manşet). */
+/** Voleybol salonunda ve paintball maçında sol tık ve rakamlar da atanabilir (emote yok, sol tık vuruş/ateş). */
 const VOLLEY_FREE = new Set(["Mouse0", ...[1, 2, 3, 4, 5, 6].map((n) => `Digit${n}`)]);
 
 /** Bu takımda atanamaz mı. */
 export function reserved(bind: Bind, p: Profile = profile): boolean {
-  return RESERVED.has(bind) && !(p === "volley" && VOLLEY_FREE.has(bind));
+  return RESERVED.has(bind) && !((p === "volley" || p === "paintball") && VOLLEY_FREE.has(bind));
 }
 
 function load(p: Profile): Record<Action, [Bind, Bind]> {
@@ -283,7 +316,7 @@ function load(p: Profile): Record<Action, [Bind, Bind]> {
   return b;
 }
 
-const sets: Record<Profile, Record<Action, [Bind, Bind]>> = { world: load("world"), stadium: load("stadium"), volley: load("volley") };
+const sets: Record<Profile, Record<Action, [Bind, Bind]>> = { world: load("world"), stadium: load("stadium"), volley: load("volley"), paintball: load("paintball") };
 /** Geçerli takım ve atamaları (canlı bağ: setProfile ile değişir). */
 export let profile: Profile = "world";
 export let binds: Record<Action, [Bind, Bind]> = sets.world;

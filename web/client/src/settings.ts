@@ -60,6 +60,8 @@ export interface Settings {
   /** Araba radyolarının sesi (0–1). */
   radioVolume: number;
   skin: string;
+  /** Paintball silahının skini (shared/paintball GUN_SKINS; galibiyetle açılır, sunucu doğrular). */
+  pbSkin: string;
   /** Kendi ekranında saat: "auto" dünyanın saati (gerçek ya da !saat), diğerleri yalnızca sende sabit. */
   clock: "auto" | "day" | "sunset" | "night";
   /** Sinemada video açıkken perdenin önü akşama döner. */
@@ -107,6 +109,7 @@ function defaults(): Settings {
     cars: Object.fromEntries(CAR_MODELS.map((m) => [m.id, { ...DEFAULT_CAR, model: m.id }])) as Settings["cars"],
     radioVolume: 0.8,
     skin: "std",
+    pbSkin: "klasik",
     clock: "auto",
     cinemaDim: true,
   };

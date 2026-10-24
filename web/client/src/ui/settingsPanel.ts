@@ -185,8 +185,8 @@ export class SettingsPanel {
 
   /** Tuş atamaları: her eyleme iki tuş; tıklanan kutu bir sonraki tuşu/fare düğmesini/tekerleği alır. */
   private keys(): void {
-    const stadium = profile === "stadium", volley = profile === "volley";
-    this.section(stadium ? "⚽ Stadyum tuşları" : volley ? "🏐 Voleybol tuşları" : "Tuşlar");
+    const stadium = profile === "stadium", volley = profile === "volley", pb = profile === "paintball";
+    this.section(stadium ? "⚽ Stadyum tuşları" : volley ? "🏐 Voleybol tuşları" : pb ? "🎯 Paintball tuşları" : "Tuşlar");
     this.body.lastElementChild?.classList.add("settings-keys-head");
     el(
       "div",
@@ -194,6 +194,8 @@ export class SettingsPanel {
       this.body,
       volley
         ? "Voleybol salonundayken geçerli. Sol tık atamak için bekleyen kutuya sol tıkla. Shift lock ile kamera nişan alır."
+        : pb
+        ? "Paintball maçındayken geçerli. Sol tık atamak için bekleyen kutuya sol tıkla."
         : stadium
         ? "Stadyumdayken geçerli; dünyaya dönünce dünya tuşları geri gelir. Koş tuşu basılıyken müdahale: kayarak müdahale."
         : "Sağ tık basılı: kamera (imleç yerinde kalır) • 1–6: emote • Enter: sohbet",
@@ -245,7 +247,7 @@ export class SettingsPanel {
     };
     const onMouse = (e: MouseEvent) => {
       // Voleybolda bekleyen kutuya sol tık: sol tık atanır
-      if (e.button === 0 && profile === "volley" && e.target instanceof Element && e.target.closest(".settings-key.waiting")) {
+      if (e.button === 0 && (profile === "volley" || profile === "paintball") && e.target instanceof Element && e.target.closest(".settings-key.waiting")) {
         swallow(e);
         return done("Mouse0");
       }

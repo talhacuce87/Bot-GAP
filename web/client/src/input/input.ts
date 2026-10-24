@@ -50,6 +50,9 @@ export class Input {
   private wantLock = false;
   /** Sağ tık basılıyken: imleç tıklanan yerde kalır, fare kamerayı çevirir. */
   private dragLock = false;
+  /** Çerçeve tıklamayla istenen fare kilidine bile izin vermedi: tıklamalar kilit istemek için yutulmaz. */
+  private lockDenied = false;
+  private clickLockAt = -Infinity;
   private pinchDist = 0;
   private abort = new AbortController();
 
@@ -102,7 +105,11 @@ export class Input {
     // Yan tuşlar tarayıcıda geri/ileri gitmesin
     el.addEventListener("auxclick", (e) => e.preventDefault(), { signal });
     document.addEventListener("pointerlockchange", () => this.onLockChange(), { signal });
-    document.addEventListener("pointerlockerror", () => this.onLockChange(), { signal });
+    document.addEventListener("pointerlockerror", () => {
+      // Tıklamasız istek (maç başı) reddedilebilir; tıklamayla istenen de reddedildiyse çerçeve izin vermiyor
+      if (performance.now() - this.clickLockAt < 1500) this.lockDenied = true;
+      this.onLockChange();
+    }, { signal });
 
     el.addEventListener("pointerdown", (e) => this.onDown(e), { signal });
     el.addEventListener("pointermove", (e) => this.onMove(e), { signal });
@@ -229,6 +236,12 @@ export class Input {
   private onMouseDown(e: MouseEvent): void {
     if (performance.now() - this.lastTouch < TOUCH_MOUSE_MS) return;
     const bind = `Mouse${e.button}`;
+    // Kilit isteniyor ama yok (Esc ile bırakıldı): atanmış tık (paintballda ateş) önce yalnızca yeniden kilitler
+    if (this.wantLock && !this.locked && !this.lockDenied && !reserved(bind)) {
+      this.clickLockAt = performance.now();
+      this.requestLock();
+      return;
+    }
     if (!reserved(bind)) {
       e.preventDefault(); // orta tık otomatik kaydırma açmasın
       this.press(bind);
