@@ -331,6 +331,13 @@ export class Room {
     this.broadcast({ t: "carlights", sid, on });
   }
 
+  /** Korna ya da selektör (yalnızca arabadayken): yakındakiler duyar/görür (gönderene geri gitmez). */
+  carFx(sid: number, k: unknown, on: unknown): void {
+    const p = this.players.get(sid);
+    if (!p || !p.info.car || (k !== "horn" && k !== "flash") || typeof on !== "boolean") return;
+    this.broadcast({ t: "carfx", sid, k, on }, sid);
+  }
+
   /**
    * Yolcu olarak bin (`driver`ın arabasına, yanındaysa ve boş koltuk varsa) ya da in (null). Hata metni döner.
    */

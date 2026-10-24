@@ -147,6 +147,7 @@ export class Net {
   onPedhit: (id: number, vx: number, vz: number, by: number) => void = () => {};
   /** Bir arabanın hasar seviyesi değişti. */
   onCarDamage: (sid: number, d: number) => void = () => {};
+  onCarFx: (sid: number, k: "horn" | "flash", on: boolean) => void = () => {};
 
   private ws: WebSocket | null = null;
   private sendBuf = new ArrayBuffer(STATE_BYTES);
@@ -553,6 +554,9 @@ export class Net {
         break;
       case "pedhit":
         this.onPedhit(ev.id, ev.vx, ev.vz, ev.by);
+        break;
+      case "carfx":
+        this.onCarFx(ev.sid, ev.k, ev.on);
         break;
       case "cardmg": {
         const r = this.remotes.map.get(ev.sid);

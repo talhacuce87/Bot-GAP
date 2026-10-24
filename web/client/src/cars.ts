@@ -9,6 +9,7 @@ import type { CarSpec } from "../../shared/car";
 import type { AvatarView } from "./avatars/avatars";
 import { wetEnv } from "./world/geo";
 import { type LampField, MAX_CARS } from "./world/lamps";
+import type { Skids } from "./world/skids";
 import { buildTofas, type TofasMesh } from "./world/tofas";
 
 /** Koltuklar (0 sürücü sol ön, 1 sağ ön, 2 sol arka, 3 sağ arka): merkezden yana ve arkaya; oturma yüzeyi alçak. */
@@ -26,11 +27,29 @@ interface Entry {
   steer: number;
   /** Farlar yanıyor mu (gerçek far ışığı yalnızca bunlara). */
   lit: boolean;
+  /** Hareketten bulunan (yumuşatılmış) ileri hız, ivme ve dönüş hızı: gövde yatışı, fren lambası, patinaj. */
+  vel: number;
+  acc: number;
+  yr: number;
+  /** Kayarken arka lastiklerin son izi (sol x, z, sağ x, z); kaymıyorsa null. */
+  skid: [number, number, number, number] | null;
+  smokeAt: number;
+}
+
+/** Arabanın kendi verdiği sürüş bilgisi (yalnızca kendi araban): fren, el freni, uzun far. */
+export interface CarFx {
+  brake?: boolean;
+  hand?: boolean;
+  high?: boolean;
 }
 
 export interface CarsOptions {
   /** Farlar gece yansın mı (sürülen arabalar evet, park halindekiler hayır). */
   headlights?: boolean;
+  /** Kayan arabaların patinaj izleri (yoksa iz kalmaz). */
+  skids?: Skids;
+  /** Kayan arabanın arka lastiğinden duman (x, z). */
+  onSmoke?: (x: number, z: number) => void;
   /** Gerçek gece ışığı (yoksa düşük grafik: farlar yolda ışık lekesiyle taklit edilir). */
   lamps?: LampField | null;
 }
@@ -52,6 +71,9 @@ export class Cars {
   private seated = new Map<number, AvatarView>();
   private night = 0;
   private focus = { x: 0, z: 0 };
+  /** Son iki kare arası (sn): hareketten hız ve ivme bulunur. */
+  private dt = 0;
+  private lastBegin = 0;
   /** NPC arabalar (trafik): gerçek far ışığı oyuncu arabalarıyla birlikte en yakınlara verilir. */
   extra: { list: () => { x: number; z: number; rot: number }[]; night: number } | null = null;
   private static readonly NPC_HEAD = new THREE.Color("#fff6dc");
@@ -63,6 +85,9 @@ export class Cars {
 
   /** Kare başı; `fx/fz`: gerçek far ışığının hangi arabalara verileceği (en yakınlar). */
   begin(fx = 0, fz = 0): void {
+    const now = performance.now() / 1000;
+    this.dt = this.lastBegin ? Math.min(0.1, now - this.lastBegin) : 0;
+    this.lastBegin = now;
     this.focus.x = fx;
     this.focus.z = fz;
     for (const e of this.entries.values()) e.seen = false;
@@ -72,13 +97,13 @@ export class Cars {
    * Bu kare `sid`in arabası (x, z, rot) — yoksa çağırma. `lights`: farlar açık / kapalı; verilmezse gece
    * kendiliğinden yanar.
    */
-  push(sid: number, spec: CarSpec, x: number, z: number, rot: number, night: number, dmg = 0, lights: boolean | null = null): void {
+  push(sid: number, spec: CarSpec, x: number, z: number, rot: number, night: number, dmg = 0, lights: boolean | null = null, fx: CarFx = {}): void {
     const key = JSON.stringify(spec);
     let e = this.entries.get(sid);
     if (!e || e.key !== key) {
       if (e) this.drop(sid);
       const mesh = this.take(key, spec);
-      e = { key, mesh, seen: true, x, z, rot, steer: 0, lit: false };
+      e = { key, mesh, seen: true, x, z, rot, steer: 0, lit: false, vel: 0, acc: 0, yr: 0, skid: null, smokeAt: 0 };
       this.entries.set(sid, e);
     }
     e.seen = true;
@@ -91,7 +116,8 @@ export class Cars {
       const want = Math.abs(d) > 0.004 ? Math.max(-MAX_STEER, Math.min(MAX_STEER, Math.atan((dr * WHEELBASE) / d))) : e.steer * 0.9;
       e.steer += (want - e.steer) * 0.25;
       e.mesh.roll(d, e.steer);
-    }
+      this.motion(e, d, dx * -Math.cos(rot) + dz * Math.sin(rot), dr, x, z, rot, spec, fx);
+    } else e.skid = null;
     e.x = x;
     e.z = z;
     e.rot = rot;
@@ -101,9 +127,47 @@ export class Cars {
     e.mesh.setDamage(dmg);
     // Açık farlar gündüz de yanar (camlar parlar); gerçek ışık yalnızca gece görünür
     const head = !this.opts.headlights || lights === false ? 0 : lights ? Math.max(night, 0.45) : night;
-    e.lit = head > 0.01;
-    e.mesh.setHeadlights(head, { decal: !this.opts.lamps, haze: wetEnv.uWetRain.value });
+    e.lit = head > 0.01 || !!fx.high;
+    e.mesh.setHeadlights(head, { decal: !this.opts.lamps, haze: wetEnv.uWetRain.value, high: fx.high });
     this.night = night;
+  }
+
+  /**
+   * Hareketten sürüş: gövde virajda dışa, frende öne yatar; sert yavaşlarken stoplar yanar; yana kayan
+   * (drift, el freni) arabanın arka lastikleri yola iz bırakır ve dumanlar. `d` ileri, `lat` sağa gidilen yol.
+   */
+  private motion(e: Entry, d: number, lat: number, dr: number, x: number, z: number, rot: number, spec: CarSpec, fx: CarFx): void {
+    const dt = this.dt;
+    if (dt <= 0) return;
+    const vel = d / dt, acc = (vel - e.vel) / dt;
+    e.vel += (vel - e.vel) * Math.min(1, dt * 12);
+    e.acc += (acc - e.acc) * Math.min(1, dt * 5);
+    e.yr += (dr / dt - e.yr) * Math.min(1, dt * 8);
+    const soft = spec.model === "doblo" ? 1.7 : spec.model === "kartal" ? 1.2 : spec.low ? 0.6 : 1;
+    const roll = Math.max(-0.075, Math.min(0.075, e.vel * e.yr * 0.0024 * soft));
+    const pitch = Math.max(-0.045, Math.min(0.045, -e.acc * 0.0035 * soft));
+    e.mesh.setLean(roll, pitch);
+    e.mesh.setBrake(fx.brake ?? (e.acc < -5 && Math.abs(e.vel) > 1));
+    // Patinaj: yana kayma hızı ya da el freni
+    const skids = this.opts.skids;
+    const sliding = Math.abs(e.vel) > 3 && (Math.abs(lat / dt) > 2.6 || !!fx.hand);
+    if (!skids || !sliding) {
+      e.skid = null;
+      return;
+    }
+    const c = Math.cos(rot), s = Math.sin(rot), back = -1.28, side = 0.7;
+    const lx = x + c * side + s * back, lz = z - s * side + c * back;
+    const rx = x - c * side + s * back, rz = z + s * side + c * back;
+    if (e.skid) {
+      skids.add(e.skid[0], e.skid[1], lx, lz);
+      skids.add(e.skid[2], e.skid[3], rx, rz);
+    }
+    e.skid = [lx, lz, rx, rz];
+    const t = this.lastBegin;
+    if (this.opts.onSmoke && t - e.smokeAt > 0.07) {
+      e.smokeAt = t;
+      this.opts.onSmoke(Math.random() < 0.5 ? lx : rx, Math.random() < 0.5 ? lz : rz);
+    }
   }
 
   /** Bu kare görünmeyen arabaları kaldırır; gerçek far ışığını en yakın arabalara verir. */

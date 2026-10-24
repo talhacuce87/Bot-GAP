@@ -1,4 +1,4 @@
-// 🚗 Araçlarım (GTA'daki kişisel araçlar gibi): Şahin, Doğan SLX ve Kartal herkeste var. Karta tıkla (ya da 1-3)
+// 🚗 Araçlarım (GTA'daki kişisel araçlar gibi): Tofaşlar, Linea, Doblo, Passat ve E30 herkeste var. Karta tıkla (ya da 1-7)
 // → o araba kendi tuning'iyle yanına gelir (park halinde); F ile binersin. Park edilen araba görünür, kaldırılabilir.
 import * as THREE from "three";
 import { CAR_COLORS, CAR_MODELS, type CarSpec } from "../../../shared/car";
@@ -19,6 +19,10 @@ const TAGLINE: Record<CarSpec["model"], string> = {
   sahin: "Efsane sedan · ikiz far, kromlu ızgara",
   dogan: "Doğan SLX · tek parça far, sis farları",
   kartal: "Station · geniş bagaj, dikey stoplar",
+  linea: "Yakmaz abi, 100'de 4 · kaldırmaz da",
+  doblo: "Esnafın gözdesi · koltuk sökülür, kasa olur",
+  passat: "Sakal Passat · chip'le uçak olur",
+  e30: "Arkadan itiş · el freniyle drift kralı",
 };
 
 /** Kart görselleri: tek bir gizli WebGL sahnesinde çizilir, resme dönüştürülür (menü açıkken). */
@@ -93,7 +97,7 @@ export class CarMenu {
     });
     addEventListener("keydown", (e) => {
       if (!this.isOpen || e.target instanceof HTMLInputElement) return;
-      const i = ["Digit1", "Digit2", "Digit3"].indexOf(e.code);
+      const i = CAR_MODELS.findIndex((_, k) => e.code === `Digit${k + 1}`);
       if (e.code === "Escape") this.close();
       else if (i >= 0) this.pick(CAR_MODELS[i].id);
       else return;

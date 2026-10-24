@@ -33,7 +33,7 @@ import { LIVE_TABLES } from "../../shared/liveCasino";
 import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
-import { type CarRadio, carCircles, ENTER_REACH, RADIO_RANGE } from "../../shared/car";
+import { type CarRadio, carCircles, CAR_ENGINES, CAR_STATS, type CarSpec, ENTER_REACH, RADIO_RANGE } from "../../shared/car";
 import { Hub } from "./ui/hub";
 import { WorldMap } from "./ui/worldMap";
 import { button, el, Panel } from "./ui/panel";
@@ -56,6 +56,7 @@ import { CityLife } from "./npcs/cityLife";
 import { PED_SID_BASE } from "./npcs/pedestrians";
 import type { ChibiLayer } from "./avatars/chibi";
 import { EngineSounds, type EngineSource } from "./ui/engine";
+import { Horns } from "./ui/horn";
 import { CarSmoke } from "./world/carSmoke";
 
 /** Yakındaki etkileşim (F/G düğmesi). */
@@ -225,6 +226,16 @@ export class Features {
   private engines = new EngineSounds();
   private engineSources: EngineSource[] = [];
   private prevCars = new Map<number, { x: number; z: number }>();
+  /** Kornalar (sid başına) ve senin korna/selektör tuşun; başkalarının yanan selektörü (sid → yandığı an). */
+  private horns = new Horns();
+  private hornDown = false;
+  private flashDown = false;
+  private remoteFlash = new Map<number, number>();
+  private remoteHorn = new Map<number, number>();
+  /** Gazın bir önceki karesi (bırakınca turbo ve egzoz patlaması) ve son patlama. */
+  private lastGas = 0;
+  private popAt = 0;
+  private fxTime = 0;
   private smoke = new CarSmoke();
   private smokeAt = 0;
   private lastCarV = 0;
@@ -254,7 +265,23 @@ export class Features {
         if (this.carDamage === 3) hud.toast("💨 Araban ağır hasarlı! GAP Garaj'da onarılır.");
       }
     };
-    c.life.onStop(() => this.engines.silence());
+    c.life.onStop(() => {
+      this.engines.silence();
+      this.horns.silence();
+    });
+    // Başkasının kornası ve selektörü
+    net.onCarFx = (sid, k, on) => {
+      const r = c.remotes.map.get(sid);
+      if (k === "flash") {
+        if (on) this.remoteFlash.set(sid, performance.now());
+        else this.remoteFlash.delete(sid);
+        return;
+      }
+      if (!on) return this.horns.release(sid);
+      if (!r?.info.car) return;
+      this.remoteHorn.set(sid, performance.now());
+      this.horns.start(sid, r.info.car.horn, this.hornLevel(sid)?.level ?? 0);
+    };
     world.scene.add(this.cityLife.group);
     // Binaların arkasındaki ve kameranın görmediği yayalar o kare çizilmez
     world.occlusion.dynamic.push(() => this.cityLife.cull((x, y, z, r) => world.occlusion.sphereVisible(x, y, z, r)));
@@ -1250,6 +1277,7 @@ export class Features {
     this.updateRadios(serverNow);
     this.updateCasino(now);
     this.updateRace(serverNow);
+    this.updateCarControls();
     this.updateCarFx(time, dt);
     this.cityLife.update({
       chibi: this.c.chibi, serverMs: serverNow, time, dt, camera: camera.position, hour: world.hour(), me, remotes,
@@ -1626,6 +1654,64 @@ export class Features {
     c.end();
   }
 
+  /**
+   * Arabada korna (E, basılı tut) ve selektör (X, basılı tut): herkese gider. Arabadan inince ya da bir menü
+   * açılınca susar.
+   */
+  private updateCarControls(): void {
+    const { me, net, input } = this.c;
+    this.c.hud.setDriving(!!me.car);
+    const can = !!me.car && !this.vehicles.modalOpen;
+    const horn = can && input.heldAction("horn"), flash = can && input.heldAction("flash");
+    if (horn !== this.hornDown) {
+      this.hornDown = horn;
+      if (horn) this.horns.start(net.you, settings.car.horn);
+      else this.horns.release(net.you);
+      net.send({ t: "carfx", k: "horn", on: horn });
+    }
+    if (flash !== this.flashDown) {
+      this.flashDown = flash;
+      if (flash) sfx.tick(1.5);
+      net.send({ t: "carfx", k: "flash", on: flash });
+    }
+    // Kornası/selektörü takılı kalanlar (mesajı kaybolan) bir süre sonra kendiliğinden söner; arabadan inenler hemen
+    const now = performance.now();
+    for (const [sid, at] of this.remoteFlash) if (now - at > 8000 || !this.c.remotes.map.get(sid)?.info.car) this.remoteFlash.delete(sid);
+    for (const [sid, at] of this.remoteHorn) {
+      if (now - at > 10000 || !this.c.remotes.map.get(sid)?.info.car) {
+        this.remoteHorn.delete(sid);
+        this.horns.kill(sid);
+      }
+    }
+    this.horns.update((sid) => (sid === net.you ? { level: 1, pan: 0 } : this.hornLevel(sid)));
+  }
+
+  /** Başkasının kornasının sana göre sesi (uzaklık) ve yanı. */
+  private hornLevel(sid: number): { level: number; pan: number } | null {
+    const r = this.c.remotes.map.get(sid);
+    if (!r) return null;
+    const cam = this.c.camera, e = cam.matrixWorld.elements;
+    const dx = r.x - cam.position.x, dz = r.z - cam.position.z, d = Math.hypot(dx, dz);
+    const near = Math.max(0, 1 - d / 80);
+    return { level: near * near, pan: (dx * e[0] + dz * e[2]) / Math.max(1, d) };
+  }
+
+  /** Kendi arabanın fren lambası, el freni ve selektörü (çizim için). */
+  myCarFx(): { brake: boolean; hand: boolean; high: boolean } {
+    const c = this.c.me.car;
+    return { brake: !!c && (c.hand || (c.throttle < -0.1 && c.v > 0.3) || (c.throttle > 0.1 && c.v < -0.3)), hand: !!c?.hand, high: this.flashDown };
+  }
+
+  /** Başkasının arabası: selektör yanıyor mu. */
+  carFxOf(sid: number): { high: boolean } {
+    return { high: this.remoteFlash.has(sid) };
+  }
+
+  /** Kayan lastikten beyaz duman. */
+  tireSmoke(x: number, z: number): void {
+    this.smoke.emit(x, 0.25, z, this.fxTime, 0);
+  }
+
   /** Kendi arabanın hasar seviyesi (0–3). */
   get carDamage(): number {
     return Math.floor(this.damage);
@@ -1634,6 +1720,7 @@ export class Features {
   /** Motor sesleri, hasar dumanı, garajda onarım. */
   private updateCarFx(time: number, dt: number): void {
     const { me, net, remotes, camera, hud } = this.c;
+    this.fxTime = time;
     // Arabaya binince hasarı herkese bildir; garajda onar
     if (me.car && !this.hadCar && this.carDamage) net.send({ t: "cardmg", d: this.carDamage });
     this.hadCar = !!me.car;
@@ -1647,10 +1734,10 @@ export class Features {
     const showSpeed = !!me.car && !inRing;
     this.speedo.classList.toggle("show", showSpeed);
     if (showSpeed) {
-      const kmh = Math.round(Math.abs(me.car!.v) * 3.6);
-      if (kmh !== this.shownKmh) {
-        this.shownKmh = kmh;
-        drawSpeedo(this.speedo, me.car!.v);
+      const kmh = Math.round(Math.abs(me.car!.v) * 3.6), key = kmh * 4 + (me.car!.hand ? 1 : 0) + (me.car!.v < -0.3 ? 2 : 0);
+      if (key !== this.shownKmh) {
+        this.shownKmh = key;
+        drawSpeedo(this.speedo, me.car!.v, me.car!.hand);
       }
     }
     // Motorlar: sen, yakındaki oyuncu arabaları ve NPC arabalar
@@ -1659,22 +1746,34 @@ export class Features {
     const cam = camera.position;
     // Kameranın sağ yönü (ses sağdan/soldan gelsin)
     const rx = camera.matrixWorld.elements[0], rz = camera.matrixWorld.elements[2];
-    const add = (x: number, z: number, speed: number, throttle: number, own = false) => {
+    const add = (x: number, z: number, speed: number, throttle: number, own = false, car?: CarSpec) => {
       const dx = x - cam.x, dz = z - cam.z, dist = Math.hypot(dx, dz);
-      list.push({ speed, throttle, dist: own ? 0 : dist, pan: own ? 0 : (dx * rx + dz * rz) / Math.max(1, dist), own });
+      const st = car ? CAR_STATS[car.model] : null;
+      list.push({
+        speed, throttle, dist: own ? 0 : dist, pan: own ? 0 : (dx * rx + dz * rz) / Math.max(1, dist), own,
+        pitch: st?.pitch, diesel: st?.diesel, stage: car ? CAR_ENGINES.findIndex((e) => e.id === car.engine) : 0,
+      });
     };
     if (me.car) {
       const acc = (me.car.v - this.lastCarV) / Math.max(dt, 1e-3);
       this.lastCarV = me.car.v;
-      add(me.x, me.z, me.car.v, Math.max(0, Math.min(1, acc / 4 + 0.15)), true);
-    }
+      add(me.x, me.z, me.car.v, Math.max(0, Math.min(1, acc / 4 + 0.15)), true, settings.car);
+      // Gazı birden bırakınca: turbo "pıssst", spor egzozdan ya da güçlü motordan patlamalar
+      const gas = Math.max(0, me.car.throttle), car = settings.car;
+      if (this.lastGas > 0.6 && gas < 0.2 && me.car.v > 9 && time - this.popAt > 0.8) {
+        this.popAt = time;
+        if (car.engine === "turbo" || car.engine === "yaris") sfx.turbo();
+        if (car.exhaust === "spor" || car.engine === "yaris" || (car.engine !== "stok" && Math.random() < 0.5)) sfx.backfire(0.7);
+      }
+      this.lastGas = gas;
+    } else this.lastGas = 0;
     for (const r of remotes.map.values()) {
       if (!r.hasData || !r.info.car) continue;
       const p = this.prevCars.get(r.info.sid);
       const sp = p && dt > 0 ? Math.hypot(r.x - p.x, r.z - p.z) / dt : 0;
       if (p) [p.x, p.z] = [r.x, r.z];
       else this.prevCars.set(r.info.sid, { x: r.x, z: r.z });
-      add(r.x, r.z, sp, 0.4);
+      add(r.x, r.z, sp, 0.4, false, r.info.car);
     }
     for (const car of this.cityLife.traffic.cars) if (car.shown) add(car.x, car.z, car.v, car.v > 1 ? 0.35 : 0.05);
     this.engines.update(list);

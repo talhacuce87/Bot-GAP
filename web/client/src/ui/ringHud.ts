@@ -244,12 +244,12 @@ export class RingHud {
 }
 
 /** Hız göstergesi (km/sa): yarışta ve normal sürüşte aynı kadran. `v` m/sn. */
-export function drawSpeedo(canvas: HTMLCanvasElement, v: number): void {
+export function drawSpeedo(canvas: HTMLCanvasElement, v: number, hand = false): void {
   const g = canvas.getContext("2d")!;
   const dpr = canvas.width / 150;
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, 150, 150);
-  const kmh = Math.abs(v) * 3.6, max = 80;
+  const kmh = Math.abs(v) * 3.6, max = 160;
   const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
   g.lineCap = "round";
   g.lineWidth = 10;
@@ -266,10 +266,10 @@ export function drawSpeedo(canvas: HTMLCanvasElement, v: number): void {
   g.beginPath();
   g.arc(75, 78, 58, a0, a0 + (a1 - a0) * t);
   g.stroke();
-  // Çentikler (10 km/s)
+  // Çentikler (20 km/s)
   g.lineWidth = 2;
   g.strokeStyle = "rgba(255,255,255,0.5)";
-  for (let k = 0; k <= max; k += 10) {
+  for (let k = 0; k <= max; k += 20) {
     const a = a0 + (a1 - a0) * (k / max);
     g.beginPath();
     g.moveTo(75 + Math.cos(a) * 44, 78 + Math.sin(a) * 44);
@@ -282,7 +282,13 @@ export function drawSpeedo(canvas: HTMLCanvasElement, v: number): void {
   g.fillText(String(Math.round(kmh)), 75, 86);
   g.font = "700 12px system-ui, sans-serif";
   g.fillStyle = "rgba(255,255,255,0.7)";
-  g.fillText("km/sa", 75, 106);
+  g.fillText(v < -0.3 ? "R · km/sa" : "km/sa", 75, 106);
+  // El freni lambası
+  if (hand) {
+    g.fillStyle = "#ff3b3b";
+    g.font = "900 12px system-ui, sans-serif";
+    g.fillText("(P) EL FRENİ", 75, 128);
+  }
 }
 
 function esc(s: string): string {

@@ -384,6 +384,8 @@ export type ServerEvent =
   /** Kendi radyo sıran (yalnızca sahibine). */
   | { t: "radioq"; q: RadioQueueView }
   | { t: "carlights"; sid: number; on: boolean }
+  /** Korna çalıyor / sustu, selektör (uzun far) yandı / söndü. */
+  | { t: "carfx"; sid: number; k: "horn" | "flash"; on: boolean }
   | { t: "ride"; sid: number; ride: { d: number; s: number } | null }
   | { t: "parked"; sid: number; parked: ParkedCar | null }
   /** GAP Ring yarışı: grid, lambalar, sıralama ve sonuçlar (faz değişince ve yarışta sık). */
@@ -479,6 +481,8 @@ export type ClientEvent =
   /** Radyo sırası: sonraki, önceki, karıştır, tekrar, sıradaki şarkıya geç, sil, temizle, durdur, çal, bitti. */
   | { t: "radioq"; op: "next" | "prev" | "shuffle" | "repeat" | "jump" | "remove" | "clear" | "stop" | "play" | "ended"; i?: number; id?: string }
   | { t: "carlights"; on: boolean }
+  /** Korna ya da selektör (basılı tutulduğu sürece). */
+  | { t: "carfx"; k: "horn" | "flash"; on: boolean }
   /** Yolcu olarak bin (sürücünün sid'i) ya da in (null). */
   | { t: "ride"; d: number | null }
   /** Arabayı bir yere bırak (inince ya da çağırınca); null: kaldır. */

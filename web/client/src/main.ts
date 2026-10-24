@@ -26,6 +26,7 @@ import { ChibiLayer } from "./avatars/chibi";
 import type { ChibiManifest } from "./avatars/chibiPack";
 import { Bots } from "./avatars/bots";
 import { Cars } from "./cars";
+import { Skids } from "./world/skids";
 import { DustFx } from "./avatars/dust";
 import { EmoteFx, FX_CELL, ThrowFx } from "./avatars/emotes";
 import { Remotes } from "./avatars/remotes";
@@ -731,7 +732,10 @@ async function start(): Promise<void> {
   };
 
   // ---- Yeni özellikler: hava, futbol, kahvehane, DJ, mini oyunlar, araçlar, görevler, fotoğraf ----
-  const cars = new Cars(world.scene, { headlights: true, lamps: world.lamps });
+  // Kayan arabalar yola iz bırakır, lastikten duman çıkar
+  const skids = new Skids();
+  world.scene.add(skids.mesh);
+  const cars = new Cars(world.scene, { headlights: true, lamps: world.lamps, skids, onSmoke: (x, z) => features.tireSmoke(x, z) });
   const features = new Features({
     life, world, net, me, remotes, atlas, avatars, hud, hudRoot, input, emoteFx, session, camera, canvas, lowPower,
     renderNow: () => renderScene(0),
@@ -867,8 +871,8 @@ async function start(): Promise<void> {
     me.room = world.roomAt(me.x, me.z);
     // Tofaşlar: arabadaki oyuncu sürücü koltuğunda, yolcular sağ önde ve arkada oturur; farlar açık/kapalı
     cars.begin(me.x, me.z);
-    if (me.car) cars.push(net.you, settings.car, me.x, me.z, me.rot, world.env.lights, features.carDamage, features.myLights);
-    for (const r of remotes.map.values()) if (r.hasData && r.info.car) cars.push(r.info.sid, r.info.car, r.x, r.z, r.rot, world.env.lights, r.info.dmg ?? 0, r.info.lights ?? null);
+    if (me.car) cars.push(net.you, settings.car, me.x, me.z, me.rot, world.env.lights, features.carDamage, features.myLights, features.myCarFx());
+    for (const r of remotes.map.values()) if (r.hasData && r.info.car) cars.push(r.info.sid, r.info.car, r.x, r.z, r.rot, world.env.lights, r.info.dmg ?? 0, r.info.lights ?? null, features.carFxOf(r.info.sid));
     cars.end();
     /** Yolcunun bindiği araba (sürücü sen ya da başkası; araba yoksa null). */
     const carOf = (d: number) => {

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { CAR_HULL_R, CAR_MAX_SPEED, CAR_SPEED, DEFAULT_CAR, validCar } from "../shared/car";
+import { CAR_BOOST, CAR_ENGINES, CAR_HULL_R, CAR_MAX_SPEED, CAR_MODELS, CAR_SPEED, carPerf, DEFAULT_CAR, validCar } from "../shared/car";
 import { PLAYER_RADIUS } from "../shared/constants";
 import type { ServerEvent } from "../shared/protocol";
 import { type Conn, Room } from "../server/src/room";
@@ -35,8 +35,12 @@ function setup(x: number, z: number) {
       out.y = 0;
     },
     consumeZoom: () => 0,
+    hand: false,
     consumeAction: () => false,
     consumeJump: () => false,
+    heldAction(a: string) {
+      return a === "jump" && this.hand;
+    },
   };
   const me = new Player(world, new THREE.Color());
   me.rot = Math.PI; // kuzeye (−z) bakar
@@ -67,12 +71,12 @@ describe("Tofaş", () => {
   });
 
   it("gazla hızlanır ama sınırı aşmaz, duvara çarpınca durur", () => {
-    const { me, run } = setup(10, 40);
+    const { me, run } = setup(10, 160);
     me.enterCar();
-    const top = run(8, 1, 0, true);
+    const top = run(14, 1, 0, true);
     expect(top).toBeGreaterThan(CAR_SPEED * 0.9);
     expect(top).toBeLessThan(CAR_MAX_SPEED);
-    // 60 m ileride duvar: içinden geçmez
+    // 180 m ileride duvar: tam hızda bile içinden geçmez
     expect(me.z).toBeGreaterThan(-20 + CAR_HULL_R - 0.05);
     expect(me.car!.v).toBeLessThan(2);
   });
@@ -117,6 +121,44 @@ describe("Tofaş", () => {
     (me as unknown as { yaw: number }).yaw = 0;
     run(6, 1);
     expect(me.z).toBeLessThan(-20 - PLAYER_RADIUS);
+  });
+});
+
+describe("Araba · sürüş", () => {
+  it("motor yükseltmesi ve model tepe hızı değiştirir; en hızlısı bile sunucu sınırının altında", () => {
+    const stock = carPerf({ model: "sahin", engine: "stok" });
+    const race = carPerf({ model: "sahin", engine: "yaris" });
+    expect(race.top).toBeGreaterThan(stock.top * 1.3);
+    expect(race.accel).toBeGreaterThan(stock.accel * 1.5);
+    for (const m of CAR_MODELS) for (const e of CAR_ENGINES) expect(carPerf({ model: m.id, engine: e.id }).top * CAR_BOOST).toBeLessThan(CAR_MAX_SPEED);
+    expect(validCar({ model: "linea", engine: "yaris", horn: "cucaracha" })).toMatchObject({ model: "linea", engine: "yaris", horn: "cucaracha" });
+    expect(validCar({ engine: "v12", horn: "siren" })).toMatchObject({ engine: "stok", horn: "standart" });
+  });
+
+  it("el freni arabayı kaydırır (drift) ve yavaşlatır; bırakınca lastikler toparlar", () => {
+    const { me, run, input } = setup(0, 200);
+    me.enterCar();
+    run(4, 1);
+    const v0 = me.car!.v;
+    input.hand = true;
+    run(0.6, 1, 1);
+    expect(Math.abs(me.car!.slip)).toBeGreaterThan(2);
+    expect(me.car!.v).toBeLessThan(v0);
+    input.hand = false;
+    run(1.5, 1);
+    expect(Math.abs(me.car!.slip)).toBeLessThan(0.5);
+  });
+
+  it("normal virajda yol tutar (kayma küçük)", () => {
+    const { me, run } = setup(0, 200);
+    me.enterCar();
+    run(3, 1);
+    let worst = 0;
+    for (let i = 0; i < 30; i++) {
+      run(1 / 30, 1, 0.5);
+      worst = Math.max(worst, Math.abs(me.car!.slip));
+    }
+    expect(worst).toBeLessThan(1.5);
   });
 });
 

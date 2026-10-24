@@ -24,6 +24,10 @@ export interface EngineSource {
   pan: number;
   /** Kendi araban: daha yüksek ve dolgun. */
   own?: boolean;
+  /** Modelin sesi: devir çarpanı, dizel (kalın, takırtılı), motor aşaması (0 stok – 3 yarış: daha gür). */
+  pitch?: number;
+  diesel?: boolean;
+  stage?: number;
 }
 
 export class EngineSounds {
@@ -68,14 +72,16 @@ export class EngineSounds {
         continue;
       }
       const sp = Math.abs(s.speed);
-      // Vites hissi: hız arttıkça devir yükselip her ~6 m/sn'de biraz düşer
-      const gear = (sp % 6) / 6;
-      const rpm = 32 + sp * 2.2 + gear * 18 + s.throttle * 10;
+      // Vites hissi: hız arttıkça devir yükselip her ~7 m/sn'de biraz düşer (dizel daha erken vites atar)
+      const step = s.diesel ? 6 : 7.5, stage = s.stage ?? 0;
+      const gear = (sp % step) / step;
+      const rpm = (32 + Math.min(sp, 30) * 1.7 + gear * 22 + s.throttle * 10) * (s.pitch ?? 1);
       v.osc.frequency.setTargetAtTime(rpm, t, k);
       v.sub.frequency.setTargetAtTime(rpm / 2, t, k);
-      v.filter.frequency.setTargetAtTime(260 + sp * 40 + s.throttle * 500, t, k);
+      v.filter.frequency.setTargetAtTime((s.diesel ? 200 : 260) + sp * 32 + s.throttle * (500 + stage * 220), t, k);
+      v.filter.Q.setTargetAtTime(2 + stage * 1.2, t, k);
       const near = Math.max(0, 1 - s.dist / RANGE);
-      const level = (s.own ? 0.05 : 0.035) * (0.45 + 0.35 * s.throttle + Math.min(0.4, sp / 40)) * near * near * settings.sfxVolume;
+      const level = (s.own ? 0.05 : 0.035) * (1 + stage * 0.18) * (0.45 + 0.35 * s.throttle + Math.min(0.4, sp / 40)) * near * near * settings.sfxVolume;
       v.gain.gain.setTargetAtTime(level, t, k);
       v.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, s.pan)), t, k);
     }

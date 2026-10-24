@@ -37,6 +37,8 @@ export type Action =
   | "map"
   | "car"
   | "radio"
+  | "horn"
+  | "flash"
   | "net"
   | "fbPass"
   | "fbShoot"
@@ -82,7 +84,7 @@ export const HOTKEYS: readonly Action[] = [
 export const PROFILE_ACTIONS: Record<Profile, readonly Action[]> = {
   world: [
     "forward", "back", "left", "right", "run", "jump", "shiftlock", "sit", "actF", "actG", "wardrobe", "zoomIn", "zoomOut",
-    "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "map", "car", "radio", "net",
+    "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "map", "car", "radio", "horn", "flash", "net",
   ],
   stadium: [...FOOTBALL, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
   volley: [...VOLLEY, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
@@ -98,7 +100,7 @@ export const ACTION_NAMES: Record<Action, string> = {
   left: "Sol",
   right: "Sağ",
   run: "Koş (basılı tut)",
-  jump: "Zıpla",
+  jump: "Zıpla (arabada: el freni)",
   shiftlock: "Shift lock",
   sit: "Otur / kalk",
   actF: "Etkileşim 1",
@@ -120,6 +122,8 @@ export const ACTION_NAMES: Record<Action, string> = {
   map: "Harita",
   car: "Araçlarım (araba çağır)",
   radio: "Araba radyosu",
+  horn: "Korna (arabada, basılı tut)",
+  flash: "Selektör / uzun far (arabada)",
   net: "Ağ paneli",
   fbPass: "Pas",
   fbShoot: "Şut (basılı tut: sert)",
@@ -178,6 +182,9 @@ export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
   map: ["KeyU", ""],
   car: ["KeyT", ""],
   radio: ["KeyR", ""],
+  // Arabada E boşta: GTA'daki gibi korna (yürürken otur/kalk)
+  horn: ["KeyE", ""],
+  flash: ["KeyX", ""],
   net: ["F3", ""],
   fbPass: ["", ""],
   fbShoot: ["", ""],

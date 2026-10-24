@@ -185,6 +185,20 @@ export const sfx = {
     tone(415, d, "square", 0.05 * gain);
     tone(523, d, "square", 0.04 * gain);
   },
+  /** Turbo: gaz bırakılınca blow-off valfinin "pıssst"u. */
+  turbo(gain = 1): void {
+    burst(0.32, 0.16 * gain, 7500);
+    burst(0.18, 0.1 * gain, 3200, 0.05);
+  },
+  /** Egzoz patlaması (geri tepme): art arda birkaç pat. */
+  backfire(gain = 1): void {
+    const n = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      const at = i * (0.06 + Math.random() * 0.07);
+      burst(0.09, 0.4 * gain, 900, at);
+      tone(70 + Math.random() * 30, 0.07, "square", 0.08 * gain, at, -30);
+    }
+  },
   /** Nitro ateşlendi: yükselen vınlama. */
   boost(): void {
     tone(240, 0.5, "sawtooth", 0.035, 0, 520);

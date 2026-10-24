@@ -1060,6 +1060,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   const limiter = { last: 0 };
   let lastEmote = 0;
   let lastCar = 0;
+  let lastCarFx = 0;
   let lastPark = 0;
   let lastRadio = 0;
   let lastRadioOp = 0;
@@ -1243,6 +1244,14 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (op) void room.radioQ.op(sid, op, typeof msg.i === "number" ? msg.i : undefined, typeof msg.id === "string" ? msg.id : undefined);
       } else if (msg?.t === "carlights") {
         room.setLights(sid, msg.on);
+      } else if (msg?.t === "carfx") {
+        // Susturma hep geçer (korna takılı kalmasın); çalma en çok saniyede ~12 kez
+        const now = Date.now();
+        if (msg.on !== false) {
+          if (now - lastCarFx < 80) return;
+          lastCarFx = now;
+        }
+        room.carFx(sid, msg.k, msg.on);
       } else if (msg?.t === "ride") {
         const now = Date.now();
         if (now - lastRide < 500) return;

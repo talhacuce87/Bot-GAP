@@ -63,6 +63,15 @@ export class Hud {
     this.refreshHint();
   }
 
+  /** Arabadayken alttaki ipucu sürüş tuşlarını gösterir. */
+  private driving = false;
+
+  setDriving(on: boolean): void {
+    if (on === this.driving) return;
+    this.driving = on;
+    this.refreshHint();
+  }
+
   /** Alttaki tuş ipucu; tuş atamaları değişince yeniden yazılır. */
   refreshHint(): void {
     if (this.touch) {
@@ -71,6 +80,12 @@ export class Hud {
     }
     const k = actionLabel;
     const move = [k("forward"), k("left"), k("back"), k("right")];
+    if (this.driving) {
+      this.hint.textContent =
+        `${k("forward")}/${k("back")}: gaz-fren • ${k("left")}/${k("right")}: direksiyon • ${k("jump")}: el freni • ${k("run")}: güç • ` +
+        `${k("horn")}: korna • ${k("flash")}: selektör • ${k("actG")}: far • ${k("radio")}: radyo • ${k("actF")}: in`;
+      return;
+    }
     this.hint.textContent =
       `${move.every((m) => m.length === 1) ? move.join("") : move.join("/")}: yürü • ${k("run")}: koş • ${k("jump")}: zıpla • ` +
       `${k("sit")}: otur • ${k("actF")}/${k("actG")}: etkileşim • 1–6: emote • ${k("wardrobe")}: gardırop • ` +

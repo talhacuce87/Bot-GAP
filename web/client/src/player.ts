@@ -40,7 +40,7 @@ import {
   TURRET_TOP,
   TURRET_TURN,
 } from "../../shared/tank";
-import { CAR_ACCEL, CAR_BRAKE, CAR_HULL_R, CAR_REVERSE, CAR_SPEED, CAR_TURN, carCircles } from "../../shared/car";
+import { CAR_BOOST, CAR_BRAKE, CAR_HANDBRAKE, CAR_HULL_R, CAR_REVERSE, carCircles, carPerf, type CarStats } from "../../shared/car";
 import type { AvatarView } from "./avatars/avatars";
 import type { Input } from "./input/input";
 import { LEDGE } from "./world/colliders";
@@ -76,6 +76,23 @@ const KNOCK_TIME = 0.8;
 const SHOULDER = 0.7;
 /** Kenardan düşerken yerçekimi (zıplama eğrisinin inişi kadar yumuşak). */
 const FALL_G = 12;
+
+/** Araba: aks aralığı (direksiyon geometrisi), lastiklerin yana tutuşu (m/sn²; el freninde) ve çarpışma adımı (m). */
+const WHEELBASE = 2.5;
+const TIRE_GRIP = 22;
+const HAND_GRIP = 4.5;
+const CAR_STEP = 0.25;
+
+/** Arabanın anlık hâli: ileri hız ve yana kayma (m/sn, + sağa), yumuşatılmış direksiyon, el freni, gaz. */
+export interface CarState {
+  v: number;
+  slip: number;
+  steer: number;
+  hand: boolean;
+  throttle: number;
+  /** Direksiyon girişi (−1 sol … 1 sağ). */
+  wheel: number;
+}
 
 /** `p`yi (x, z) merkezli r yarıçaplı dairenin dışına iter. */
 function pushOut(p: { x: number; z: number }, x: number, z: number, r: number): void {
@@ -148,8 +165,8 @@ export class Player implements AvatarView, PlayerState {
   private lookIdle = 0;
   /** Arabayla bir yere sertçe çarptı: çarpma anındaki hız (m/sn). */
   onCrash: ((speed: number) => void) | null = null;
-  /** Tofaşla gidiyorsa hızı (m/sn, geri vitesteyse eksi); konumu x/z, yönü rot. */
-  car: { v: number } | null = null;
+  /** Arabayla gidiyorsa hızı (m/sn, geri vitesteyse eksi), kayması ve direksiyonu; konumu x/z, yönü rot. */
+  car: CarState | null = null;
   /** Yarış gridinde (yeşil yanana kadar): gaz/geri tutmaz, araba yerinde durur. */
   carLock = false;
   /** Kendi avatarını gizle (tuning ekranında araba vitrinde, sürücü görünmez). */
@@ -485,7 +502,7 @@ export class Player implements AvatarView, PlayerState {
     this.knockT = 0;
     this.resetHeight();
     this.vx = this.vz = 0;
-    this.car = { v: 0 };
+    this.car = { v: 0, slip: 0, steer: 0, hand: false, throttle: 0, wheel: 0 };
     this.flags = (this.flags & ~(3 << VEHICLE_SHIFT)) & ~(FLAG_WALKING | FLAG_RUNNING);
     this.yaw = this.rot + Math.PI;
   }
@@ -504,7 +521,7 @@ export class Player implements AvatarView, PlayerState {
     this.x = x;
     this.z = z;
     this.rot = rot;
-    this.car.v = 0;
+    this.car.v = this.car.slip = 0;
     this.yaw = rot + Math.PI;
   }
 
@@ -519,35 +536,24 @@ export class Player implements AvatarView, PlayerState {
     this.flags = this.jumpBits();
   }
 
-  /** Sürüş: W gaz, S fren/geri, A/D direksiyon (hızla artar), Shift biraz daha hızlı; duvara çarpınca yavaşlar. */
+  /**
+   * Sürüş (GTA gibi): W gaz, S fren/geri, A/D direksiyon (hızlandıkça incelir), Shift fazladan güç, Space el
+   * freni (arka kayar: drift). Araba hız vektörünü taşır: direksiyon gövdeyi çevirir, lastikler yana kaymayı
+   * tutuşları kadar söndürür; tutuşu aşan dönüşte ve el freninde araba kayar. Hızlıyken duvardan geçmesin diye
+   * hareket küçük adımlara bölünür.
+   */
   private driveCar(dt: number, input: Input): void {
     const c = this.car!;
     input.consumeAction();
     input.consumeJump();
-    const top = CAR_SPEED * (input.run ? 1.15 : 1);
-    if (this.carLock) c.v = 0;
-    else if (input.moveY > 0.1) c.v += (c.v < -0.2 ? CAR_BRAKE : CAR_ACCEL * Math.max(0.15, 1 - c.v / top)) * input.moveY * dt;
-    else if (input.moveY < -0.1) c.v -= (c.v > 0.2 ? CAR_BRAKE : CAR_ACCEL * 0.6) * -input.moveY * dt;
-    else c.v *= Math.exp(-dt * 0.45);
-    c.v = THREE.MathUtils.clamp(c.v, -CAR_REVERSE, top);
-    if (Math.abs(c.v) < 0.03 && Math.abs(input.moveY) < 0.1) c.v = 0;
-    const grip = Math.min(1, Math.abs(c.v) / 4) * (1 - Math.min(0.35, Math.abs(c.v) / 60));
-    this.rot -= input.moveX * CAR_TURN * grip * Math.sign(c.v) * dt;
-    this.x += Math.sin(this.rot) * c.v * dt;
-    this.z += Math.cos(this.rot) * c.v * dt;
-    // Gövdenin ön ve arka dairesini engellerden (ve yalnızca arabayı durduran kapılardan) çıkar
-    const [fx, fz, bx, bz] = carCircles(this.x, this.z, this.rot);
-    const f = { x: fx, z: fz }, b = { x: bx, z: bz };
-    for (const p of [f, b]) {
-      this.world.colliders.resolve(p, CAR_HULL_R);
-      this.world.carColliders.resolve(p, CAR_HULL_R);
-    }
-    const ox = (f.x - fx + b.x - bx) / 2, oz = (f.z - fz + b.z - bz) / 2;
-    this.x += ox;
-    this.z += oz;
-    const hit = Math.hypot(ox, oz);
-    if (hit > 0.08 && Math.abs(c.v) > 2.5) this.onCrash?.(Math.abs(c.v));
-    if (hit > 0.01) c.v *= hit > 0.08 ? 0.35 : 0.85;
+    const perf = carPerf(settings.car);
+    c.hand = !this.carLock && input.heldAction("jump");
+    // Klavyede çapraz (W+D) vektör kısaltılır: arabada gaz ve direksiyon tam kalsın
+    const diag = Math.abs(input.moveX) > 0.7 && Math.abs(Math.abs(input.moveX) - Math.abs(input.moveY)) < 1e-3 ? Math.SQRT2 : 1;
+    c.throttle = this.carLock ? 0 : input.moveY * diag;
+    c.wheel = input.moveX * diag;
+    const steps = Math.min(8, Math.max(1, Math.ceil((Math.hypot(c.v, c.slip) * dt) / CAR_STEP)));
+    for (let i = 0; i < steps; i++) this.carStep(dt / steps, input, perf);
     // Kamera serbest: fareyle çevrilir; fare 1,5 sn bırakılınca ve araba giderken yavaşça arkaya döner
     if (this.lookIdle > 1.5 && Math.abs(c.v) > 1) {
       const ease = Math.min(1, (this.lookIdle - 1.5) / 1.2);
@@ -556,6 +562,63 @@ export class Player implements AvatarView, PlayerState {
     this.elev = this.baseY = this.jumpY = 0;
     this.flags = this.jumpBits();
     this.nearSeat = null;
+  }
+
+  /** Arabanın bir fizik adımı: hız, direksiyon, kayma, hareket ve çarpışma. */
+  private carStep(dt: number, input: Input, perf: CarStats): void {
+    const c = this.car!;
+    const top = perf.top * (input.run ? CAR_BOOST : 1);
+    const gas = c.throttle;
+    if (this.carLock) c.v = c.slip = 0;
+    else if (gas > 0.1) {
+      // Hıza yaklaştıkça ivme söner (kare: ortada güçlü, tepeye yakın yumuşak)
+      if (c.v < -0.3) c.v += CAR_BRAKE * gas * dt;
+      else c.v += perf.accel * Math.max(0.08, 1 - (Math.max(0, c.v) / top) ** 2) * gas * dt;
+    } else if (gas < -0.1) c.v -= (c.v > 0.3 ? CAR_BRAKE : perf.accel * 0.7) * -gas * dt;
+    else c.v *= Math.exp(-dt * 0.32);
+    // Shift bırakılınca ya da motor küçülünce tepe hızın üstünden yumuşakça iner
+    if (c.v > top) c.v += (top - c.v) * (1 - Math.exp(-dt * 1.2));
+    c.v = Math.max(-CAR_REVERSE, c.v);
+    if (c.hand) c.v -= Math.sign(c.v) * Math.min(Math.abs(c.v), CAR_HANDBRAKE * dt);
+    if (Math.abs(c.v) < 0.03 && Math.abs(gas) < 0.1) c.v = 0;
+    // Direksiyon: yumuşakça döner; tekerlek açısı hızla küçülür, dönüş tutuşun kaldırabildiğiyle sınırlı
+    // (el freninde ve gaz verilen arkadan itişli arabada sınır yok: arka kayar)
+    c.steer += (c.wheel - c.steer) * (1 - Math.exp(-dt * 9));
+    const sp = Math.abs(c.v);
+    const grip = TIRE_GRIP * perf.grip;
+    let yaw = (c.v * Math.tan(c.steer * 0.6 * perf.turn / (1 + sp / 22))) / WHEELBASE;
+    const power = gas > 0.5 && sp > 6 && Math.abs(c.steer) > 0.5 ? perf.drift : 0;
+    const cap = c.hand ? Infinity : (grip * (1.05 + power * 0.25)) / Math.max(sp, 1);
+    yaw = THREE.MathUtils.clamp(yaw, -cap, cap) * (c.hand ? 1.35 : 1);
+    const d = -yaw * dt;
+    this.rot += d;
+    // Gövde döndü ama hız vektörü dönmedi: ileri hız ve kayma yeni yöne göre
+    const cs = Math.cos(d), sn = Math.sin(d);
+    [c.v, c.slip] = [c.v * cs - c.slip * sn, c.v * sn + c.slip * cs];
+    // Lastikler yana kaymayı tutuşları kadar söndürür (el freninde ve gazla kayan arkada az)
+    const hold = c.hand ? HAND_GRIP : grip * (1 - Math.min(0.6, power * 0.3));
+    c.slip -= Math.sign(c.slip) * Math.min(Math.abs(c.slip), hold * dt);
+    const fx = Math.sin(this.rot), fz = Math.cos(this.rot);
+    this.x += (fx * c.v - fz * c.slip) * dt;
+    this.z += (fz * c.v + fx * c.slip) * dt;
+    // Gövdenin ön ve arka dairesini engellerden (ve yalnızca arabayı durduran kapılardan) çıkar
+    const [ax, az, bx, bz] = carCircles(this.x, this.z, this.rot);
+    const f = { x: ax, z: az }, b = { x: bx, z: bz };
+    for (const p of [f, b]) {
+      this.world.colliders.resolve(p, CAR_HULL_R);
+      this.world.carColliders.resolve(p, CAR_HULL_R);
+    }
+    const ox = (f.x - ax + b.x - bx) / 2, oz = (f.z - az + b.z - bz) / 2;
+    this.x += ox;
+    this.z += oz;
+    const hit = Math.hypot(ox, oz);
+    const speed = Math.hypot(c.v, c.slip);
+    if (hit > 0.08 && speed > 2.5) this.onCrash?.(speed);
+    if (hit > 0.01) {
+      const k = hit > 0.08 ? 0.35 : 0.85;
+      c.v *= k;
+      c.slip *= k;
+    }
   }
 
   /** Tanktan in: gövdenin soluna çıkar (orası kapalıysa çarpışma iter). */
@@ -721,6 +784,13 @@ export class Player implements AvatarView, PlayerState {
 
   updateCamera(camera: THREE.PerspectiveCamera, dt: number): void {
     const k = 1 - Math.exp(-dt * 14);
+    // Arabada hızlandıkça kamera biraz geri çekilir ve görüş açısı genişler (hız hissi)
+    const fast = this.car ? THREE.MathUtils.clamp((Math.abs(this.car.v) - 8) / 26, 0, 1) : 0;
+    const fov = settings.fov + fast * 12;
+    if (Math.abs(camera.fov - fov) > 0.05) {
+      camera.fov += (fov - camera.fov) * (1 - Math.exp(-dt * 3));
+      camera.updateProjectionMatrix();
+    }
     if ((settings.firstPerson || this.fps) && !this.driving && !this.car && !this.photo) {
       // Birinci şahıs: göz hizasından, bakış yönü kameranın açısı (paintballda çömelince göz iner)
       const f = this.fps;
@@ -739,7 +809,8 @@ export class Player implements AvatarView, PlayerState {
     this.target.z += (this.z - this.target.z) * k;
     const cp = Math.cos(this.pitch);
     // Zindanda kamera duvarların ötesine çıkmasın: parmaklıklardan dışarı bakılır.
-    const dist = this.jailed ? Math.min(this.dist, 3.4) : this.driving ? Math.max(this.dist, TANK_CAM_DIST) : this.car ? Math.max(this.dist, 7) : this.dist;
+    const dist = this.jailed ? Math.min(this.dist, 3.4) : this.driving ? Math.max(this.dist, TANK_CAM_DIST) : this.car ? Math.max(this.dist, 7) + fast * 2.2 : this.dist;
+
     // Shift lock'ta kamera sağ omza kayar: karakter ekranın ortasını kapatmaz
     const side = this.shoulder * SHOULDER;
     this.lookAt.set(this.target.x + Math.cos(this.yaw) * side, this.target.y, this.target.z - Math.sin(this.yaw) * side);

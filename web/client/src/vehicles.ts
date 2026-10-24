@@ -1,5 +1,5 @@
 // Araçlar (GTA gibi): arabadan inince araba indiğin yerde park halinde kalır, herkes görür ve çarpar; yanına gelip
-// F ile binersin. "Araçlarım" menüsünden (T) Şahin, Doğan SLX ya da Kartal'ı çağırırsın: kendi tuning'iyle yanına
+// F ile binersin. "Araçlarım" menüsünden (T) Tofaşları, Linea'yı, Doblo'yu, Passat'ı ya da E30'u çağırırsın: kendi tuning'iyle yanına
 // gelir. GAP Garaj'daki parlayan işarete arabayla gelince tuning ekranı açılır; kamera araba etrafında döner ve
 // seçili parçaya bakar (oda duvarlarının içinde kalır).
 import * as THREE from "three";
@@ -35,6 +35,11 @@ export interface VehicleContext {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** "…'e bin" (yönelme hâli, okunuşa göre). */
+const TO: Record<CarSpec["model"], string> = {
+  sahin: "Şahin'e", dogan: "Doğan SLX'e", kartal: "Kartal'a", linea: "Linea'ya", doblo: "Doblo'ya", passat: "Passat'a", e30: "E30'a",
+};
+
 /** Park halindeki arabaların çizildiği en uzak mesafe. */
 const DRAW_R = 150;
 
@@ -122,8 +127,7 @@ export class Vehicles {
     if (!p || me.car || me.driving || me.jailed) return null;
     const [fx, fz, bx, bz] = carCircles(p.x, p.z, p.rot);
     if (segDist(me.x, me.z, fx, fz, bx, bz) > ENTER_REACH) return null;
-    const name = CAR_MODELS.find((m) => m.id === p.car.model)?.name ?? "Tofaş";
-    return { key: "f", label: `${name}'a bin 🚗`, act: "car-enter" };
+    return { key: "f", label: `${TO[p.car.model] ?? "Arabana"} bin 🚗`, act: "car-enter" };
   }
 
   enter(): void {
@@ -136,7 +140,11 @@ export class Vehicles {
     updateSettings({ car: p.car });
     this.myParked = null;
     net.send({ t: "car", car: p.car });
-    hud.toast(`🚗 ${p.car.plate} · W/S gaz-fren, A/D direksiyon · F: in · R: radyo`);
+    hud.toast(`🚗 ${p.car.plate} · W/S gaz-fren · Space el freni · Shift güç · E korna · X selektör · G far · F in · R radyo`);
+    if (p.car.model === "linea") window.setTimeout(() => hud.toast("⛽ Yakıt göstergesi kıpırdamıyor. Multijet işte abi."), 2500);
+    else if (p.car.model === "passat") window.setTimeout(() => hud.toast("🧔 Sakal Passat: sol şeritte selektör yapmak serbest (X)."), 2500);
+    else if (p.car.model === "e30") window.setTimeout(() => hud.toast("🌀 E30: Space ile el freni, gazla arkayı süpür."), 2500);
+    else if (p.car.model === "doblo") window.setTimeout(() => hud.toast("📦 Doblo: virajlara yavaş gir, yalpalar."), 2500);
   }
 
   /** Arabadan in: araba indiğin yerde park halinde kalır. */
