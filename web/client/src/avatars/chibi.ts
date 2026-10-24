@@ -3,12 +3,13 @@
 // aynı kıyafeti giyenler aynı geometriyi paylaşır. Kol/bacak dönüşü vertex shader'da (aLimb).
 import * as THREE from "three";
 import type { Look } from "../../../shared/protocol";
+import { ChibiBaker } from "./chibiBaker";
 import { type ChibiManifest, ChibiPack, LIMB_COUNT, lookKey } from "./chibiPack";
 
 /** Paket ~2.2 m boyunda; dünya kapsül avatarlara göre ölçekli (oturaklar, kapılar). */
 export const CHIBI_SCALE = 0.72;
-/** Kare başına en fazla bu kadar yeni kıyafet geometrisi kurulur (takılma olmasın). */
-const BUILDS_PER_FRAME = 2;
+/** Görünme yarıçapının bu kadar dışındaki avatarın uzak görünümü önceden kurdurulur (yaklaşınca hazır olsun). */
+const PREFETCH_MARGIN = 20;
 const CACHE_MAX = 64;
 const OUTLINE_WIDTH = 0.012;
 /**
@@ -96,16 +97,17 @@ interface Slot {
 }
 
 interface CacheEntry {
-  geo: THREE.BufferGeometry;
+  /** İşçide kurulurken null. */
+  geo: THREE.BufferGeometry | null;
   usedAt: number;
 }
 
 export class ChibiLayer {
   readonly group = new THREE.Group();
   pack: ChibiPack | null = null;
+  private baker: ChibiBaker | null = null;
   private slots: Slot[] = [];
   private used = 0;
-  private builds = 0;
   private frame = 0;
   private cache = new Map<string, CacheEntry>();
   private cam = new THREE.Vector3();
@@ -122,7 +124,47 @@ export class ChibiLayer {
   async load(manifest: ChibiManifest, binUrl: string): Promise<void> {
     const res = await fetch(binUrl);
     if (!res.ok) throw new Error(`chibi paketi: ${res.status}`);
-    this.usePack(new ChibiPack(manifest, await res.arrayBuffer()));
+    const buf = await res.arrayBuffer();
+    const pack = new ChibiPack(manifest, buf);
+    this.baker = new ChibiBaker(pack, manifest, buf);
+    this.usePack(pack);
+  }
+
+  /** Kıyafet geometrisi işçide kurulur (kalabalık da bunu kullanır); paket yoksa null. */
+  bake(look: Look | null | undefined, lod: 0 | 1): Promise<THREE.BufferGeometry> | null {
+    if (!this.pack) return null;
+    return this.baker ? this.baker.geometry(look, lod) : Promise.resolve(this.pack.build(look, lod));
+  }
+
+  /**
+   * Bu kıyafetleri önbelleğe kurdurur (yükleme ekranında: kendi avatarın, ocakçı, çalışanlar); hepsi gelince
+   * biter. Yuva da (malzemeler) şimdi kurulur: programları ön derlemede derlensin.
+   */
+  warm(looks: { look: Look | null | undefined; lod: 0 | 1 }[]): Promise<unknown> {
+    if (!this.slots.length) this.makeSlot();
+    return Promise.all(looks.map((l) => this.request(l.look, l.lod)));
+  }
+
+  /** Önbellekte yoksa kurdurur; geometri gelince çözülür. */
+  private request(look: Look | null | undefined, lod: 0 | 1, key = lookKey(look) + (lod ? "|1" : "")): Promise<void> {
+    const have = this.cache.get(key);
+    if (have) return Promise.resolve();
+    const job = this.bake(look, lod);
+    if (!job) return Promise.resolve();
+    const entry: CacheEntry = { geo: null, usedAt: this.frame };
+    this.cache.set(key, entry);
+    return job.then((geo) => {
+      // Beklerken atıldıysa (önbellek doldu) geometri de atılır
+      if (this.cache.get(key) === entry) {
+        entry.geo = geo;
+        this.evict();
+      } else geo.dispose();
+    });
+  }
+
+  dispose(): void {
+    this.baker?.dispose();
+    this.baker = null;
   }
 
   /** İnmiş paketi paylaşır (gardırop önizlemesi aynı paketi yeniden indirmesin). */
@@ -143,7 +185,9 @@ export class ChibiLayer {
     const line = new THREE.MeshBasicMaterial({ color: 0x1c1622, side: THREE.BackSide });
     line.onBeforeCompile = (s) => patch(s, uniforms, true);
     line.customProgramCacheKey = () => "chibi-outline";
+    // Boş ama konum/normal nitelikli: ön derlemede program anahtarı gerçek kıyafetle aynı çıksın
     const empty = new THREE.BufferGeometry();
+    for (const name of ["position", "normal"]) empty.setAttribute(name, new THREE.BufferAttribute(new Float32Array(0), 3));
     const mesh = new THREE.Mesh(empty, body);
     // Güneş gölgesi de pozdaki uzuvlarla düşsün (varsayılan derinlik malzemesi uzuvları döndürmez)
     const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
@@ -166,7 +210,6 @@ export class ChibiLayer {
   /** Kare başı: kamera konumu (uzaklık için). */
   begin(camera: THREE.Vector3): void {
     this.used = 0;
-    this.builds = 0;
     this.frame++;
     this.cam.copy(camera);
   }
@@ -178,24 +221,27 @@ export class ChibiLayer {
   place(look: Look | null | undefined, x: number, z: number, pose: THREE.Matrix4, limbs: LimbPose, always = false): boolean {
     if (!this.pack || this.used >= this.max) return false;
     const d2 = (x - this.cam.x) ** 2 + (z - this.cam.z) ** 2;
-    if (!always && d2 > this.radius ** 2) return false;
+    if (!always && d2 > this.radius ** 2) {
+      if (d2 < (this.radius + PREFETCH_MARGIN) ** 2) void this.request(look, 1);
+      return false;
+    }
     const lod = !always && d2 > LOD_RADIUS ** 2 ? 1 : 0;
-    const key = lookKey(look) + (lod ? "|1" : "");
+    const base = lookKey(look);
+    let key = base + (lod ? "|1" : "");
     let entry = this.cache.get(key);
-    if (!entry) {
-      if (this.builds >= BUILDS_PER_FRAME) return false;
-      this.builds++;
-      entry = { geo: this.pack.build(look, lod), usedAt: this.frame };
-      this.cache.set(key, entry);
-      this.evict();
+    // Geometri işçide kuruluyor: o zamana kadar uzak görünüm (hazırsa) ya da kapsül
+    if (!entry?.geo) {
+      if (!entry) void this.request(look, lod, key);
+      key = base + "|1";
+      entry = this.cache.get(key);
+      if (!entry?.geo) return false;
     }
     entry.usedAt = this.frame;
     const slot = this.slots[this.used] ?? this.makeSlot();
     this.used++;
     if (slot.key !== key) {
       slot.key = key;
-      slot.mesh.geometry = entry.geo;
-      slot.outline.geometry = entry.geo;
+      slot.mesh.geometry = slot.outline.geometry = entry.geo;
     }
     this.mat.multiplyMatrices(pose, this.scale);
     slot.mesh.matrix.copy(this.mat);
@@ -229,7 +275,7 @@ export class ChibiLayer {
           s.mesh.geometry = s.outline.geometry = new THREE.BufferGeometry();
         }
       }
-      geo.dispose();
+      geo?.dispose();
     }
   }
 }

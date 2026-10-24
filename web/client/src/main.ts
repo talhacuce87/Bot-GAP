@@ -143,10 +143,11 @@ async function start(): Promise<void> {
   }
 
   const atlas = new AvatarAtlas();
-  // Yakındaki avatarlar chibi; paket (~2 MB) arka planda iner, o zamana kadar herkes kapsül.
+  // Yakındaki avatarlar chibi; paket (~2 MB) dünya kurulurken iner, yükleme ekranının sonunda beklenir.
   const chibi = new ChibiLayer(lowPower ? 14 : 28, lowPower ? 26 : 40);
   world.scene.add(chibi.group);
-  void chibi.load(chibiManifest as ChibiManifest, chibiBinUrl).catch((err) => console.warn("[chibi]", err));
+  const chibiReady = chibi.load(chibiManifest as ChibiManifest, chibiBinUrl).catch((err) => console.warn("[chibi]", err));
+  life.onStop(() => chibi.dispose());
   const avatars = new AvatarRenderer(atlas, chibi);
   world.scene.add(avatars.group);
   const remotes = new Remotes(atlas);
@@ -724,7 +725,7 @@ async function start(): Promise<void> {
     renderNow: () => renderScene(0),
     shopWardrobe: (shop) => wardrobe.open(undefined, shop),
     // ---- NPC şehir (feat/npc-sehir) ----
-    chibiPack: () => chibi.pack,
+    chibi,
     bubble: (sid, text) => bubbles.say(sid, text, performance.now()),
     say: (text) => net.send({ t: "chat", text }),
     battle: () => switchMode(true),
@@ -935,6 +936,15 @@ async function start(): Promise<void> {
     if (document.hidden) renderer.setAnimationLoop(null);
     else run();
   });
+  // NPC mesh'leri (trafik görünümleri, kalabalık) ve bilinen kıyafetler şimdi kurulur: oyun sırasında geometri
+  // kurulmasın, programları da aşağıda derlensin. Paket çok geç inerse (yavaş bağlantı) beklenmez, sonra işçide kurulur.
+  const warmAt = performance.now();
+  cars.prewarm(settings.car);
+  await Promise.race([chibiReady, new Promise((r) => setTimeout(r, 8000))]);
+  const packAt = performance.now();
+  await features.prewarmNpcs();
+  if (params.has("debug")) console.info(`[perf] NPC ön kurulum ${(performance.now() - warmAt).toFixed(0)} ms (paket bekleme ${(packAt - warmAt).toFixed(0)} ms)`);
+  if (!life.active) return;
   // Sahnedeki shader'lar yükleme ekranı açıkken ve paralel derlenir; yoksa ilk karede ~70 program sırayla
   // derlenir ve ekran saniyelerce donar
   // Son işlem açıksa sahne onun hedefine çizilir: shader'lar o hedefe göre derlenmeli

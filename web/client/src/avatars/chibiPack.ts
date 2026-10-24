@@ -79,6 +79,51 @@ export function lookKey(look: Look | null | undefined): string {
   return [...parts, ...colors].join("|");
 }
 
+/** Kurulmuş kıyafetin dizileri (işçiden aktarılabilir). */
+export interface ChibiArrays {
+  pos: Float32Array;
+  nor: Float32Array;
+  col: Float32Array;
+  limb: Float32Array;
+  outl: Float32Array;
+  index: Uint16Array | Uint32Array;
+  /** LOD2 indeksi (yoksa null). */
+  index2: Uint16Array | Uint32Array | null;
+  /** Sınır küresi [x, y, z, r] (ana iş parçacığı köşeleri yeniden taramasın). */
+  sphere: number[];
+}
+
+/** Dizilerden geometri (kopyasız). */
+export function chibiGeometry(a: ChibiArrays): THREE.BufferGeometry {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(a.pos, 3));
+  geo.setAttribute("normal", new THREE.BufferAttribute(a.nor, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(a.col, 3));
+  geo.setAttribute("aLimb", new THREE.BufferAttribute(a.limb, 1));
+  geo.setAttribute("aOutline", new THREE.BufferAttribute(a.outl, 1));
+  geo.setIndex(new THREE.BufferAttribute(a.index, 1));
+  if (a.index2) geo.userData.farIndex = new THREE.BufferAttribute(a.index2, 1);
+  const [x, y, z, r] = a.sphere;
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(x, y, z), r);
+  return geo;
+}
+
+/** three.js computeBoundingSphere ile aynı: kutunun merkezi, en uzak köşe. */
+function boundingSphere(pos: Float32Array): number[] {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < pos.length; i += 3) {
+    for (let c = 0; c < 3; c++) {
+      const v = pos[i + c];
+      if (v < lo[c]) lo[c] = v;
+      if (v > hi[c]) hi[c] = v;
+    }
+  }
+  const cx = (lo[0] + hi[0]) / 2, cy = (lo[1] + hi[1]) / 2, cz = (lo[2] + hi[2]) / 2;
+  let r2 = 0;
+  for (let i = 0; i < pos.length; i += 3) r2 = Math.max(r2, (pos[i] - cx) ** 2 + (pos[i + 1] - cy) ** 2 + (pos[i + 2] - cz) ** 2);
+  return [cx, cy, cz, Math.sqrt(r2)];
+}
+
 function hex(v: string | undefined): [number, number, number] | null {
   if (!v || !/^#[0-9a-f]{6}$/i.test(v)) return null;
   return [parseInt(v.slice(1, 3), 16), parseInt(v.slice(3, 5), 16), parseInt(v.slice(5, 7), 16)];
@@ -128,9 +173,14 @@ export class ChibiPack {
   /**
    * Kıyafeti tek geometriye birleştirir: position, normal, color (doğrusal), aLimb, aOutline. `lod` 1: uzak
    * görünüm (paket desteklemiyorsa tam ayrıntı); paket LOD2 de taşıyorsa aynı köşelerin daha kaba indeksi
-   * `userData.farIndex`'e konur.
+   * `userData.farIndex`'e konur. Oyun sırasında ana iş parçacığında değil, chibiWorker'da (bake) kurulur.
    */
   build(look: Look | null | undefined, lod: 0 | 1 = 0): THREE.BufferGeometry {
+    return chibiGeometry(this.bake(look, lod));
+  }
+
+  /** build'in three.js'siz yarısı: dizileri kurar (işçide de çalışır). */
+  bake(look: Look | null | undefined, lod: 0 | 1 = 0): ChibiArrays {
     const l = look ?? DEFAULT_LOOK;
     const m = this.manifest;
     const ids = this.compose(l);
@@ -229,16 +279,7 @@ export class ChibiPack {
       }
     }
 
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
-    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    geo.setAttribute("aLimb", new THREE.BufferAttribute(limb, 1));
-    geo.setAttribute("aOutline", new THREE.BufferAttribute(outl, 1));
-    geo.setIndex(new THREE.BufferAttribute(index, 1));
-    if (index2) geo.userData.farIndex = new THREE.BufferAttribute(index2, 1);
-    geo.computeBoundingSphere();
-    return geo;
+    return { pos, nor, col, limb, outl, index, index2, sphere: boundingSphere(pos) };
   }
 
   /** Kafa merkezine göre (dx,dy,dz) yönünün şapka haritası hücresi [satır, sütun]; ızgaranın altındaysa null. */

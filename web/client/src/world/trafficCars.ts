@@ -55,8 +55,6 @@ export class TrafficCars {
   private v = new THREE.Vector3();
   private s = new THREE.Vector3();
   private up = new THREE.Vector3(0, 1, 0);
-  /** Bu kare kurulan görünüm (kare başına en çok bir: ~8 ms). */
-  private built = false;
 
   constructor() {
     this.shadow = new THREE.InstancedMesh(
@@ -68,33 +66,29 @@ export class TrafficCars {
     this.shadow.frustumCulled = false;
     this.shadow.renderOrder = 2;
     this.group.add(this.shadow);
-    // Görünümler tarayıcı boştayken önceden kurulur: araba ilk göründüğü karede takılma olmasın
-    const idle: (f: () => void) => void = typeof requestIdleCallback === "function" ? (f) => requestIdleCallback(f, { timeout: 2000 }) : (f) => setTimeout(f, 50);
-    const warm = (look: number) => {
-      if (look >= TRAFFIC_LOOKS.length) return;
-      idle(() => {
-        if (!this.batches.has(look)) this.make(look);
-        warm(look + 1);
-      });
-    };
-    warm(0);
   }
 
-  /** Görünümün mesh'leri henüz kurulmadıysa bu kare kurulur; başka biri kurulduysa null (araba sonra belirir). */
-  private batch(look: number): Batch | null {
-    const b = this.batches.get(look);
-    if (b) return b;
-    if (this.built) return null;
-    this.built = true;
-    return this.make(look);
+  /**
+   * Bütün görünümlerin mesh'leri: yükleme ekranında, shader ön derlemesinden önce çağrılır (~24 Tofaş kurulumu).
+   * Oyun sırasında geometri kurulmaz, cam ve gövde programları da ilk karede hazırdır.
+   */
+  prebuild(): void {
+    for (let look = 0; look < TRAFFIC_LOOKS.length; look++) this.batch(look);
+  }
+
+  /** Görünümün mesh'leri (prebuild çağrılmadıysa ilk kullanıldığında kurulur). */
+  private batch(look: number): Batch {
+    look %= TRAFFIC_LOOKS.length;
+    return this.batches.get(look) ?? this.make(look);
   }
 
   private make(look: number): Batch {
-    const g = harvest({ ...DEFAULT_CAR, ...TRAFFIC_LOOKS[look % TRAFFIC_LOOKS.length] });
+    const g = harvest({ ...DEFAULT_CAR, ...TRAFFIC_LOOKS[look] });
     const mk = (geo: THREE.BufferGeometry, mat: THREE.Material) => {
       const mesh = new THREE.InstancedMesh(geo, mat, MAX_PER_LOOK);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.count = 0;
+      mesh.visible = false;
       mesh.frustumCulled = false;
       this.group.add(mesh);
       return mesh;
@@ -115,13 +109,12 @@ export class TrafficCars {
   begin(): void {
     for (const b of this.batches.values()) b.n = 0;
     this.shadowN = 0;
-    this.built = false;
   }
 
   /** Bir araba: görünüm, konum (yer), yön; `scale` belirip kaybolurken. */
   push(look: number, x: number, z: number, rot: number, scale = 1): void {
     const b = this.batch(look);
-    if (!b || b.n >= MAX_PER_LOOK) return;
+    if (b.n >= MAX_PER_LOOK) return;
     this.q.setFromAxisAngle(this.up, rot);
     this.m.compose(this.v.set(x, 0, z), this.q, this.s.setScalar(scale));
     b.body.setMatrixAt(b.n, this.m);
@@ -133,9 +126,11 @@ export class TrafficCars {
 
   end(): void {
     for (const b of this.batches.values()) {
+      // Boş görünüm çizim listesine girmesin (program ve uniform bağlama boşuna)
       for (const mesh of [b.body, b.glass, b.glow]) {
         mesh.count = b.n;
-        mesh.instanceMatrix.needsUpdate = true;
+        mesh.visible = b.n > 0;
+        if (b.n) mesh.instanceMatrix.needsUpdate = true;
       }
       if (b.n) boundInstances(b.body, 0);
     }

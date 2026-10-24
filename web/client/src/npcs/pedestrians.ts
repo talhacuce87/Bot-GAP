@@ -8,6 +8,7 @@ import type { ClientEvent } from "../../../shared/protocol";
 import { CHIBI_SEAT_LIFT } from "../avatars/avatars";
 import type { CrowdPose, CrowdRenderer } from "../avatars/crowd";
 import type { Walkway, Zone } from "../world/walkways";
+import { lerp, lerpAngle } from "./fixedStep";
 
 /** Yayaların konuşma balonu kimlikleri bu sayıdan başlar (oyuncu sid'leriyle çakışmaz). */
 export const PED_SID_BASE = 80_000;
@@ -40,6 +41,13 @@ const HIT_COOLDOWN = 3;
 const FLY_T = 0.55;
 const LIE_T = 2.4;
 const UP_T = 3.1;
+/** Çizim durumu bitleri (benzetim adımı yazar, çizim pozu bunlardan kurar). */
+const S_MOVING = 1;
+const S_RUN = 2;
+const S_WAVE = 4;
+const S_PHONE = 8;
+/** Adım başına kayıtlı değerler: x, y, z, yön, düşme açısı. */
+const REC = 5;
 const HIT_LINES = ["Kör müsün!", "Ayy belim!", "Hey! Yavaş!", "Ehliyeti nereden aldın?", "Polis çağırıyorum!", "Ah ah, gençler…"];
 
 type P2 = [number, number];
@@ -367,9 +375,15 @@ export class Pedestrians {
   private rot: Float32Array;
   /** Son çizildiği kare (yönü ilk görüldüğünde yumuşatmadan koymak için). */
   private seen: Int32Array;
-  /** Bu kare hesaplanan konum (konuşma balonu için). */
+  /** Bu kare çizildiği konum (konuşma balonu için). */
   private px: Float32Array;
   private pz: Float32Array;
+  /** Son ve önceki benzetim adımındaki x, y, z, yön, düşme (REC'er); çizim ikisinin arasından. */
+  private cur: Float32Array;
+  private prev: Float32Array;
+  /** Son adımın durum bitleri (S_*) ve belirme ölçeği. */
+  private state: Uint8Array;
+  private fade: Float32Array;
   private down = new Map<number, { at: number; vx: number; vz: number }>();
   private lastHit = new Map<number, number>();
   private frame = 0;
@@ -444,6 +458,10 @@ export class Pedestrians {
     this.px = new Float32Array(n).fill(NaN);
     this.pz = new Float32Array(n).fill(NaN);
     this.dist = new Float32Array(n);
+    this.cur = new Float32Array(n * REC);
+    this.prev = new Float32Array(n * REC);
+    this.state = new Uint8Array(n);
+    this.fade = new Float32Array(n);
   }
 
   get count(): number {
@@ -500,11 +518,12 @@ export class Pedestrians {
   }
 
   /**
-   * Kare başına: `serverMs` ortak saat, `time` yerel animasyon saati (sn), `hour` dünyanın saati, `mul` kalabalık
-   * çarpanı (0 kapalı). Yakındakileri kalabalık çizicisine iter; arabanla çarptığın yayayı `send` ile bildirir.
-   * `taken`: oyuncuların oturduğu yerler (bankta üst üste binmesinler).
+   * Benzetim adımı (FixedStep, ~30 Hz): `serverMs` ortak saat, `time` yerel animasyon saati (sn), `dt` adımın süresi,
+   * `hour` dünyanın saati, `mul` kalabalık çarpanı (0 kapalı). Yakındakilerin yerini, tepkisini ve pozunu kaydeder
+   * (çizim `draw` ile); arabanla çarptığın yayayı `send` ile bildirir. `taken`: oyuncuların oturduğu yerler
+   * (bankta üst üste binmesinler).
    */
-  update(
+  step(
     crowd: CrowdRenderer,
     serverMs: number,
     time: number,
@@ -519,7 +538,10 @@ export class Pedestrians {
     taken: { x: number; z: number }[] = [],
   ): void {
     this.frame++;
-    if (!crowd.ready || mul <= 0) return;
+    if (!crowd.ready || mul <= 0) {
+      this.order.length = 0;
+      return;
+    }
     const t = serverMs / 1000;
     const R = lowPower ? DRAW_R_LOW : DRAW_R, maxDrawn = lowPower ? MAX_DRAWN_LOW : MAX_DRAWN;
     const dens: Record<Zone, number> = { village: zoneDensity("village", hour) * mul, city: zoneDensity("city", hour) * mul, hood: zoneDensity("hood", hour) * mul };
@@ -540,7 +562,6 @@ export class Pedestrians {
     this.order.sort((a, b) => this.dist[a] - this.dist[b]);
     if (this.order.length > maxDrawn) this.order.length = maxDrawn;
 
-    crowd.begin(cam.x, cam.z);
     const k = 1 - Math.exp(-dt * 4);
     for (const i of this.order) {
       const p = this.peds[i];
@@ -586,7 +607,8 @@ export class Pedestrians {
         want = Math.atan2(waveAt.x - x, waveAt.z - z);
         moving = false;
       }
-      if (this.seen[i] < this.frame - 1) this.rot[i] = want;
+      const fresh = this.seen[i] < this.frame - 1;
+      if (fresh) this.rot[i] = want;
       const dr = Math.atan2(Math.sin(want - this.rot[i]), Math.cos(want - this.rot[i]));
       this.rot[i] += dr * Math.min(1, dt * 5);
       this.seen[i] = this.frame;
@@ -611,8 +633,6 @@ export class Pedestrians {
           this.oz[i] = z - base.z;
         }
       } else if (dn) this.down.delete(i);
-      this.px[i] = x;
-      this.pz[i] = z;
 
       // Arabanla çarptın mı: sunucuya bildir (o herkese duyurur)
       if (myCar && p.kind !== "sit" && Math.abs(myCar.v) > HIT_SPEED && !dn && time - (this.lastHit.get(i) ?? -Infinity) > HIT_COOLDOWN) {
@@ -625,18 +645,51 @@ export class Pedestrians {
         }
       }
 
+      // Kayıt: önceki adım (yeni beliren ya da sıçrayan yaya ara değerlenmez), son adım, poz durumu
+      const o = i * REC, c = this.cur, pv = this.prev;
+      const jump = fresh || Math.abs(c[o] - x) + Math.abs(c[o + 2] - z) > 3;
+      for (let r = 0; r < REC; r++) pv[o + r] = c[o + r];
+      c[o] = x;
+      c[o + 1] = y;
+      c[o + 2] = z;
+      c[o + 3] = this.rot[i];
+      c[o + 4] = fall;
+      if (jump) for (let r = 0; r < REC; r++) pv[o + r] = c[o + r];
+      this.state[i] =
+        (moving ? S_MOVING : 0) | (run ? S_RUN : 0) | (waveAt && !run && !fall ? S_WAVE : 0) |
+        ((p.kind === "phone" || (base.act === 1 && !moving)) && !fall ? S_PHONE : 0);
+      this.fade[i] = 0.3 + 0.7 * Math.max(0, fade);
+    }
+  }
+
+  /**
+   * Kare başına: son adımda seçilen yayalar son iki adımın arasında (`alpha` 0 önceki, 1 son adım) kalabalık
+   * çizicisine itilir; kol-bacak salınımı ve bakınma kare saatiyle (`time`).
+   */
+  draw(crowd: CrowdRenderer, time: number, alpha: number, cam: { x: number; z: number }): void {
+    crowd.begin(cam.x, cam.z);
+    const c = this.cur, pv = this.prev;
+    for (const i of this.order) {
+      const p = this.peds[i];
+      const o = i * REC;
+      const x = lerp(pv[o], c[o], alpha), y = lerp(pv[o + 1], c[o + 1], alpha), z = lerp(pv[o + 2], c[o + 2], alpha);
+      const rot = lerpAngle(pv[o + 3], c[o + 3], alpha), fall = lerp(pv[o + 4], c[o + 4], alpha);
+      this.px[i] = x;
+      this.pz[i] = z;
+      const st = this.state[i];
+      const moving = (st & S_MOVING) !== 0, run = (st & S_RUN) !== 0;
       // Adımlar hıza uyar (kaymasın); koşarken sık ve geniş
       const po = this.pose;
       const stepHz = run ? 9 : 2.4 * p.v + 1.2;
       po.swing = moving ? Math.sin(time * stepHz + p.phase) * (run ? 0.7 : 0.38) : 0;
       po.seated = p.kind === "sit";
-      po.wave = waveAt && !run && !fall ? 1 : 0;
-      po.phone = (p.kind === "phone" || (base.act === 1 && !moving)) && !fall ? 1 : 0;
+      po.wave = st & S_WAVE ? 1 : 0;
+      po.phone = st & S_PHONE ? 1 : 0;
       if ((p.kind === "chat" || p.kind === "sit") && !fall) po.swing = Math.sin(time * 1.3 + p.phase) * 0.1 * (p.kind === "sit" ? 0 : 1);
       // Dururken ara ara etrafına bakar (gövde hafifçe döner)
       const look = !moving && !fall && p.kind !== "sit" ? Math.sin(time * 0.5 + p.phase) * 0.35 : 0;
       const bob = moving ? Math.abs(Math.sin(time * stepHz + p.phase)) * 0.04 : 0;
-      crowd.push(p.outfit, x, y + bob, z, this.rot[i] + look, po, time, fall, 0.3 + 0.7 * Math.max(0, fade));
+      crowd.push(p.outfit, x, y + bob, z, rot + look, po, time, fall, this.fade[i]);
     }
     crowd.end();
   }

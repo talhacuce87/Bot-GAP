@@ -92,8 +92,11 @@ export class CrowdRenderer {
     this.group.add(this.shadow);
   }
 
-  /** Kıyafetlerin geometrisi kare kare kurulur (açılışta takılma olmasın). */
-  async load(pack: ChibiPack, looks: Look[]): Promise<void> {
+  /**
+   * Kıyafetlerin geometrisi `bake` ile (ChibiLayer: kurulum işçisinde) kurulur; yükleme ekranında beklenir, mesh'ler
+   * shader ön derlemesinden önce sahnede olur.
+   */
+  async load(pack: ChibiPack, looks: Look[], bake: (look: Look) => Promise<THREE.BufferGeometry> = async (l) => pack.build(l, 1)): Promise<void> {
     const pivots = Array.from({ length: LIMB_COUNT }, (_, l) => new THREE.Vector3().fromArray(pack.pivots, l * 3));
     const patch = (shader: THREE.WebGLProgramParametersWithUniforms, outline: boolean) => {
       shader.uniforms.uPivot = { value: pivots };
@@ -120,10 +123,8 @@ export class CrowdRenderer {
     const line = new THREE.MeshBasicMaterial({ color: 0x1c1622, side: THREE.BackSide });
     line.onBeforeCompile = (shader) => patch(shader, true);
     line.customProgramCacheKey = () => "crowd-outline";
-    for (const look of looks) {
-      // Kıyafetler arasında kareye nefes aldır
-      await new Promise((r) => setTimeout(r, 0));
-      const geo = pack.build(look, 1);
+    const geos = await Promise.all(looks.map(bake));
+    for (const geo of geos) {
       const tiers = [geo];
       // Uzak görünüm aynı köşeleri kaba indeksle çizer (köşe belleği paylaşılır)
       const farIndex = geo.userData.farIndex as THREE.BufferAttribute | undefined;

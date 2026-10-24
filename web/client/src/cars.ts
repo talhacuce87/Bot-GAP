@@ -41,9 +41,13 @@ const HEAD_Y = 0.7;
 /** Aks aralığı (direksiyon açısı için) ve en büyük direksiyon açısı. */
 const WHEELBASE = 2.49;
 const MAX_STEER = 0.5;
+/** İnilen arabaların bu kadarı gizli bekletilir: tekrar binince Tofaş yeniden kurulmaz (~10 ms). */
+const SPARE_MAX = 3;
 
 export class Cars {
   private entries = new Map<number, Entry>();
+  /** Kurulmuş ama şu an kimsenin binmediği arabalar (görünüm anahtarıyla). */
+  private spare = new Map<string, TofasMesh>();
   private seated = new Map<number, AvatarView>();
   private night = 0;
   private focus = { x: 0, z: 0 };
@@ -69,8 +73,7 @@ export class Cars {
     let e = this.entries.get(sid);
     if (!e || e.key !== key) {
       if (e) this.drop(sid);
-      const mesh = buildTofas(spec);
-      this.scene.add(mesh.group);
+      const mesh = this.take(key, spec);
       e = { key, mesh, seen: true, x, z, rot, steer: 0 };
       this.entries.set(sid, e);
     }
@@ -115,11 +118,43 @@ export class Cars {
     );
   }
 
+  /**
+   * Yükleme ekranında kendi arabanı kurar (gizli bekler): ilk binişte kurulum ve shader derlemesi olmasın.
+   */
+  prewarm(spec: CarSpec): void {
+    const key = JSON.stringify(spec);
+    if (!this.spare.has(key)) this.keep(key, this.build(spec));
+  }
+
+  private build(spec: CarSpec): TofasMesh {
+    const mesh = buildTofas(spec);
+    this.scene.add(mesh.group);
+    return mesh;
+  }
+
+  /** Bekleyen aynı görünümlü araba varsa o, yoksa yenisi. */
+  private take(key: string, spec: CarSpec): TofasMesh {
+    const mesh = this.spare.get(key);
+    if (!mesh) return this.build(spec);
+    this.spare.delete(key);
+    mesh.group.visible = true;
+    return mesh;
+  }
+
+  private keep(key: string, mesh: TofasMesh): void {
+    if (this.spare.has(key) || this.spare.size >= SPARE_MAX) {
+      this.scene.remove(mesh.group);
+      mesh.dispose();
+      return;
+    }
+    mesh.group.visible = false;
+    this.spare.set(key, mesh);
+  }
+
   private drop(sid: number): void {
     const e = this.entries.get(sid);
     if (!e) return;
-    this.scene.remove(e.mesh.group);
-    e.mesh.dispose();
+    this.keep(e.key, e.mesh);
     this.entries.delete(sid);
     this.seated.delete(sid);
   }

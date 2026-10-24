@@ -51,7 +51,7 @@ import { BuildMode } from "./ui/buildUi";
 import { WeatherFx } from "./world/weather";
 import { CityLife } from "./npcs/cityLife";
 import { PED_SID_BASE } from "./npcs/pedestrians";
-import type { ChibiPack } from "./avatars/chibiPack";
+import type { ChibiLayer } from "./avatars/chibi";
 import { EngineSounds, type EngineSource } from "./ui/engine";
 import { CarSmoke } from "./world/carSmoke";
 
@@ -92,8 +92,8 @@ export interface FeatureContext {
   /** Dükkân gardırobu: berberde yalnızca saç, modada yalnızca kıyafet. */
   shopWardrobe(shop: "barber" | "fashion"): void;
   // ---- NPC şehir (feat/npc-sehir) ----
-  /** İnmiş chibi paketi (NPC kalabalığı kıyafetleri için); henüz inmediyse null. */
-  chibiPack(): ChibiPack | null;
+  /** Chibi katmanı: inmiş paket ve kıyafet kurulum işçisi (NPC kalabalığı kıyafetleri için). */
+  chibi: ChibiLayer;
   /** Dünyada konuşma balonu (NPC'ler: PED_SID_BASE + kimlik). */
   bubble(sid: number, text: string): void;
 }
@@ -1098,7 +1098,7 @@ export class Features {
     this.updateRace(serverNow);
     this.updateCarFx(time, dt);
     this.cityLife.update({
-      pack: this.c.chibiPack(), serverMs: serverNow, time, dt, camera: camera.position, hour: world.hour(), me, remotes,
+      chibi: this.c.chibi, serverMs: serverNow, time, dt, camera: camera.position, hour: world.hour(), me, remotes,
       send: (ev) => net.send(ev),
     });
     this.vehicles.update(dt, time);
@@ -1530,6 +1530,18 @@ export class Features {
   }
 
   /** Gece farı yanan NPC arabalar (Cars gerçek far ışığını bunlarla paylaşır). */
+  /**
+   * Yükleme ekranında NPC mesh'leri (trafik, kalabalık) ve senin, ocakçının, çalışanların kıyafetleri (işçide):
+   * oyun sırasında geometri kurulmasın.
+   */
+  prewarmNpcs(): Promise<unknown> {
+    const { chibi, me } = this.c;
+    const near = [me.outfit, this.teaMaker.outfit].map((look) => ({ look, lod: 0 as const }));
+    const far = this.workers.map((w) => ({ look: w.outfit, lod: 1 as const }));
+    const looks = chibi.warm([...near, ...far]);
+    return Promise.all([this.cityLife.prewarm(chibi), looks]);
+  }
+
   npcHeadlights(): { x: number; z: number; rot: number }[] {
     return this.cityLife.traffic.headlights();
   }

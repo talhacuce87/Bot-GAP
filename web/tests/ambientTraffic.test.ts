@@ -70,16 +70,16 @@ describe("NPC trafik", () => {
     const { AmbientTraffic } = await import("../client/src/npcs/traffic");
     const tr = new AmbientTraffic(false);
     const t0 = 1.7e12;
-    tr.update(t0, 0.016, { x: 0, z: 0 }, 13, 1, []);
+    tr.step(t0, 0.016, { x: 0, z: 0 }, 13, 1, []);
     const car = tr.cars.find((c) => c.shown && c.v > 5)!;
     expect(car).toBeTruthy();
     // Arabanın 5 m önüne geç
     const me = { x: car.x + Math.sin(car.rot) * 5, z: car.z + Math.cos(car.rot) * 5, car: null };
     const at = { x: car.x, z: car.z };
-    for (let i = 1; i <= 60; i++) tr.update(t0 + i * 16, 0.016, { x: 0, z: 0 }, 13, 1, [me]);
+    for (let i = 1; i <= 60; i++) tr.step(t0 + i * 16, 0.016, { x: 0, z: 0 }, 13, 1, [me]);
     expect(Math.hypot(car.x - at.x, car.z - at.z)).toBeLessThan(1);
     expect(car.delay).toBeGreaterThan(0.8);
-    for (let i = 61; i <= 2000; i++) tr.update(t0 + i * 16, 0.016, { x: 0, z: 0 }, 13, 1, []);
+    for (let i = 61; i <= 2000; i++) tr.step(t0 + i * 16, 0.016, { x: 0, z: 0 }, 13, 1, []);
     expect(car.delay).toBe(0);
   });
 });

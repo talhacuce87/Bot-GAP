@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { CASINO, PLAZA } from "../../../shared/zones";
 import { mat, part } from "../world/geo";
+import { lerp, lerpAngle } from "./fixedStep";
 
 interface Bird {
   hx: number;
@@ -13,6 +14,11 @@ interface Bird {
   y: number;
   z: number;
   rot: number;
+  /** Önceki benzetim adımındaki yer ve yön (çizim ikisinin arasından). */
+  px: number;
+  py: number;
+  pz: number;
+  prot: number;
   /** Uçuş: başladığı an, tur yarıçapı ve yönü; 0 ise yerde. */
   flyAt: number;
   r: number;
@@ -26,6 +32,8 @@ interface Flock {
   birds: Bird[];
   /** Sürü havadayken yere iniş zamanı (sn). */
   landAt: number;
+  /** Kamera yakın mı (uzaktaysa çizilmez). */
+  near: boolean;
 }
 
 /** Ürkütme: koşan/araba bu kadar yakına gelince, yürüyen ise daha yakına. */
@@ -82,9 +90,10 @@ export class Pigeons {
       for (let i = 0; i < n; i++) {
         const a = rand() * Math.PI * 2, r = rand() * 2.6;
         const hx = x + Math.cos(a) * r, hz = z + Math.sin(a) * r;
-        birds.push({ hx, hz, x: hx, y: 0, z: hz, rot: rand() * 6.28, flyAt: 0, r: 5 + rand() * 4, dir: rand() < 0.5 ? -1 : 1, phase: rand() * 10 });
+        const rot = rand() * 6.28;
+        birds.push({ hx, hz, x: hx, y: 0, z: hz, rot, px: hx, py: 0, pz: hz, prot: rot, flyAt: 0, r: 5 + rand() * 4, dir: rand() < 0.5 ? -1 : 1, phase: rand() * 10 });
       }
-      this.flocks.push({ x, z, birds, landAt: 0 });
+      this.flocks.push({ x, z, birds, landAt: 0, near: false });
     }
     const total = this.flocks.reduce((s, f) => s + f.birds.length, 0);
     const { body, wing } = birdGeometry();
@@ -98,11 +107,11 @@ export class Pigeons {
     }
   }
 
-  /** Kare başına: `cam` uzaktaysa (sürü görünmüyorsa) yalnızca durum ilerler. */
-  update(time: number, dt: number, cam: { x: number; z: number }, scarers: Scarer[]): void {
-    let i = 0;
+  /** Benzetim adımı (FixedStep): ürkme, uçuş ve yerdeki dönüş. Çizim `draw` ile. */
+  step(time: number, dt: number, cam: { x: number; z: number }, scarers: Scarer[]): void {
     for (const f of this.flocks) {
       const near = Math.hypot(f.x - cam.x, f.z - cam.z) < 120;
+      f.near = near;
       const flying = f.landAt > time;
       if (!flying && near) {
         for (const s of scarers) {
@@ -118,6 +127,10 @@ export class Pigeons {
         }
       }
       for (const b of f.birds) {
+        b.px = b.x;
+        b.py = b.y;
+        b.pz = b.z;
+        b.prot = b.rot;
         const ft = time - b.flyAt;
         if (b.flyAt && ft >= 0 && ft < FLY_TIME) {
           // Kalkış, tur, iniş: yükseklik yumuşak bir tümsek; konum sürü merkezinin çevresinde daire
@@ -137,17 +150,28 @@ export class Pigeons {
           b.z = b.hz;
           b.y = 0;
         }
-        if (!near) {
-          i++;
-          continue;
-        }
-        const air = b.y > 0.05;
-        // Yerde: gagalama (öne eğilme) ve ara sıra dönme
+        // Yerde ara sıra dönme
+        if (b.y <= 0.05) b.rot += Math.sin(time * 0.7 + b.phase) * dt * 0.8;
+      }
+    }
+  }
+
+  /** Kare başına: yakındaki sürüler son iki adımın arasında (`alpha`); gagalama ve kanat çırpma kare saatiyle. */
+  draw(time: number, alpha: number): void {
+    let i = 0;
+    for (const f of this.flocks) {
+      if (!f.near) {
+        i += f.birds.length;
+        continue;
+      }
+      for (const b of f.birds) {
+        const y = lerp(b.py, b.y, alpha);
+        const air = y > 0.05;
+        // Yerde: gagalama (öne eğilme)
         const peck = air ? 0 : Math.max(0, Math.sin(time * 3 + b.phase * 7)) ** 6 * 0.5;
-        if (!air) b.rot += Math.sin(time * 0.7 + b.phase) * dt * 0.8;
-        this.q.setFromAxisAngle(this.up, b.rot);
+        this.q.setFromAxisAngle(this.up, lerpAngle(b.prot, b.rot, alpha));
         if (peck) this.q.multiply(this.tilt.setFromAxisAngle(this.xAxis, peck));
-        this.m.compose(this.v.set(b.x, b.y, b.z), this.q, this.s.set(1, 1, 1));
+        this.m.compose(this.v.set(lerp(b.px, b.x, alpha), y, lerp(b.pz, b.z, alpha)), this.q, this.s.set(1, 1, 1));
         this.body.setMatrixAt(i, this.m);
         // Kanat: havada hızlı çırpma, yerde katlı (dar)
         const flap = air ? 0.35 + Math.abs(Math.sin(time * 18 + b.phase)) * 1.1 : 0.25;

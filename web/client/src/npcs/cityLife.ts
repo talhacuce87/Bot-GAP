@@ -1,6 +1,6 @@
 // Şehrin canlıları tek yerde: NPC yayalar (örnekli kalabalık), NPC trafik, güvercin sürüleri, sokak kedileri.
-// Features her kare `update` çağırır; kediler evcil hayvan çizicisiyle (Companions) görünmez bir yürüyüşçünün
-// peşinden gider.
+// Features her kare `update` çağırır: benzetim sabit adımla (~30 Hz, FixedStep) ilerler, çizim her kare son iki
+// adımın arasından. Kediler evcil hayvan çizicisiyle (Companions) görünmez bir yürüyüşçünün peşinden gider.
 import * as THREE from "three";
 import { FLAG_RUNNING, FLAG_SEATED, FLAG_WALKING, outsideWorld, vehicleOf } from "../../../shared/constants";
 import type { ClientEvent, Look } from "../../../shared/protocol";
@@ -8,7 +8,8 @@ import { CASINO, KAHVEHANE, PLAZA, SAKURA_SPOT } from "../../../shared/zones";
 import { HOOD_PARK } from "../../../shared/build";
 import manifest from "../../chibi/chibi.json";
 import type { AvatarView } from "../avatars/avatars";
-import { type ChibiManifest, type ChibiPack, randomLook } from "../avatars/chibiPack";
+import type { ChibiLayer } from "../avatars/chibi";
+import { type ChibiManifest, randomLook } from "../avatars/chibiPack";
 import type { Companions } from "../avatars/companions";
 import { CrowdRenderer } from "../avatars/crowd";
 import type { Remotes } from "../avatars/remotes";
@@ -18,6 +19,7 @@ import type { Seat } from "../world/builder";
 import { walkable } from "../world/terrain";
 import { walkways } from "../world/walkways";
 import { type Mover, type MyCar, PED_SID_BASE, Pedestrians } from "./pedestrians";
+import { FixedStep } from "./fixedStep";
 import { Pigeons, type Scarer } from "./pigeons";
 import { AmbientTraffic, type TrafficMover } from "./traffic";
 import { signalClock } from "../world/signals";
@@ -38,7 +40,8 @@ const CAT_DRAW_R = 90;
 const CROWD_MUL: Record<string, number> = { off: 0, low: 0.5, normal: 1, high: 1.5 };
 
 export interface CityLifeFrame {
-  pack: ChibiPack | null;
+  /** Kıyafet paketi ve kurulum işçisi (kalabalık için). */
+  chibi: ChibiLayer;
   serverMs: number;
   /** Yerel animasyon saati (sn), avatarlarla aynı. */
   time: number;
@@ -58,6 +61,7 @@ export class CityLife {
   readonly traffic: AmbientTraffic;
   private trafficMovers: TrafficMover[] = [];
   private loading = false;
+  private clock = new FixedStep();
   private movers: Mover[] = [];
   private scarers: Scarer[] = [];
   private prev = new Map<number, { x: number; z: number }>();
@@ -92,14 +96,40 @@ export class CityLife {
     return sid >= PED_SID_BASE && sid < PED_SID_BASE + this.peds.count ? this.peds.anchor(sid - PED_SID_BASE) : null;
   }
 
+  /**
+   * Yükleme ekranında: trafik görünümlerinin mesh'leri ve kalabalık kıyafetleri (işçide) kurulur, shader ön
+   * derlemesinden önce beklenir. Oyun sırasında NPC geometrisi kurulmaz.
+   */
+  prewarm(chibi: ChibiLayer): Promise<void> {
+    // Kıyafetler işçide kurulurken arabalar burada
+    const crowd = this.loadCrowd(chibi);
+    this.traffic.renderer.prebuild();
+    return crowd;
+  }
+
+  private loadCrowd(chibi: ChibiLayer): Promise<void> {
+    if (this.loading || !chibi.pack) return Promise.resolve();
+    this.loading = true;
+    const looks: Look[] = OUTFIT_SEEDS.map((s) => randomLook(manifest as ChibiManifest, s));
+    return this.crowd.load(chibi.pack, looks, (look) => chibi.bake(look, 1)!).catch((err) => console.warn("[kalabalık] kurulamadı:", err));
+  }
+
   update(f: CityLifeFrame): void {
-    if (f.pack && !this.loading) {
-      this.loading = true;
-      const looks: Look[] = OUTFIT_SEEDS.map((s) => randomLook(manifest as ChibiManifest, s));
-      void this.crowd.load(f.pack, looks).catch((err) => console.warn("[kalabalık] kurulamadı:", err));
-    }
-    const { me, remotes, dt } = f;
+    // Paket yüklemede inmediyse kalabalık sonradan (işçide) kurulur
+    if (f.chibi.pack && !this.loading) void this.loadCrowd(f.chibi);
     signalClock.ms = f.serverMs;
+    const h = this.clock.advance(f.dt);
+    if (h > 0) this.step(f, h);
+    const a = this.clock.alpha;
+    this.traffic.draw(a);
+    this.peds.draw(this.crowd, f.time, a, f.camera);
+    this.crowd.group.visible = this.mul > 0;
+    this.pigeons.draw(f.time, a);
+  }
+
+  /** Benzetim adımı (`dt` adımın süresi): kim nerede, kim kimden kaçıyor, kim bekliyor. */
+  private step(f: CityLifeFrame, dt: number): void {
+    const { me, remotes } = f;
     // Hareket edenler: sen ve diğer oyuncular (arabadakilerin hızı kareden kareye konum farkından)
     this.movers.length = 0;
     this.scarers.length = 0;
@@ -133,15 +163,14 @@ export class CityLife {
 
     const myCar: MyCar | null = me.car ? { x: me.x, z: me.z, rot: me.rot, v: me.car.v } : null;
     const cam = { x: f.camera.x, z: f.camera.z };
-    this.traffic.update(f.serverMs, dt, cam, f.hour, this.mul, this.trafficMovers);
+    this.traffic.step(f.serverMs, dt, cam, f.hour, this.mul, this.trafficMovers);
     // Yayalar NPC arabalardan da kaçar (yakındakiler)
     for (const c of this.traffic.cars) {
       if (!c.shown || c.v < 4 || Math.abs(c.x - cam.x) > 60 || Math.abs(c.z - cam.z) > 60) continue;
       this.movers.push({ x: c.x, z: c.z, speed: c.v, vx: Math.sin(c.rot) * c.v, vz: Math.cos(c.rot) * c.v, wave: false });
     }
-    this.peds.update(this.crowd, f.serverMs, f.time, dt, cam, f.hour, this.mul, this.movers, myCar, this.lowPower, f.send, this.taken);
-    this.crowd.group.visible = this.mul > 0;
-    this.pigeons.update(f.time, dt, cam, this.scarers);
+    this.peds.step(this.crowd, f.serverMs, f.time, dt, cam, f.hour, this.mul, this.movers, myCar, this.lowPower, f.send, this.taken);
+    this.pigeons.step(f.time, dt, cam, this.scarers);
   }
 
   /**

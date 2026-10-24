@@ -233,3 +233,20 @@ describe("dünya kıyafet akışı", () => {
     expect(b.text.length).toBe(before);
   });
 });
+
+describe("chibi kurulum işçisi", () => {
+  it("işçinin dizileri (bake) ve sınır küresi ana iş parçacığındaki kurulumla aynı", () => {
+    for (const seed of [3, 41, 77]) {
+      const look = randomLook(manifest, seed);
+      for (const lod of [0, 1] as const) {
+        const a = pack.bake(look, lod);
+        const geo = pack.build(look, lod);
+        expect(Array.from(a.pos)).toEqual(Array.from(geo.attributes.position.array));
+        const ref = geo.clone();
+        ref.computeBoundingSphere();
+        expect(geo.boundingSphere!.radius).toBeCloseTo(ref.boundingSphere!.radius, 4);
+        expect(geo.boundingSphere!.center.distanceTo(ref.boundingSphere!.center)).toBeLessThan(1e-4);
+      }
+    }
+  });
+});

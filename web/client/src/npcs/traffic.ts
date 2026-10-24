@@ -6,6 +6,7 @@ import { CAR_HULL_R, carCircles } from "../../../shared/car";
 import { falloff, sfx } from "../ui/sfx";
 import type { DynamicColliders, Vec2 } from "../world/colliders";
 import { TRAFFIC_LOOKS, TrafficCars } from "../world/trafficCars";
+import { lerp, lerpAngle } from "./fixedStep";
 import { buildRoutes, type Route, routePose, trajAt } from "./trafficRoutes";
 
 /** Çizim ve tepki yarıçapı (m). */
@@ -34,12 +35,20 @@ interface Car {
   look: number;
   /** Yoğunluk eşiği (saate göre azalır). */
   gate: number;
-  /** Yerel bekleme (sn) ve bu kare yeri. */
+  /** Yerel bekleme (sn) ve son benzetim adımındaki yeri. */
   delay: number;
   s: number;
   x: number;
   z: number;
   rot: number;
+  /** Önceki adımdaki yeri (çizim ikisinin arasından). */
+  px: number;
+  pz: number;
+  prot: number;
+  /** Bu kare çizildiği yer (çarpışma da bunu kullanır: görünenle aynı). */
+  rx: number;
+  rz: number;
+  rrot: number;
   v: number;
   shown: boolean;
   scale: number;
@@ -63,6 +72,9 @@ export class AmbientTraffic {
   readonly cars: Car[] = [];
   private pose = { x: 0, z: 0, rot: 0 };
   private byRoute = new Map<Route, Car[]>();
+  /** Son adımda görünenler. */
+  private shownList: Car[] = [];
+  private lit: { x: number; z: number; rot: number }[] = [];
 
   constructor(private lowPower: boolean) {
     this.routes = buildRoutes();
@@ -73,7 +85,7 @@ export class AmbientTraffic {
       for (const offset of route.offsets) {
         const car: Car = {
           route, offset, look: Math.floor(rand() * TRAFFIC_LOOKS.length), gate: rand(), delay: 0, s: 0, x: 0, z: 0, rot: 0, v: 0,
-          shown: false, scale: 1, blockedFor: 0, honkAt: 0,
+          px: 0, pz: 0, prot: 0, rx: 0, rz: 0, rrot: 0, shown: false, scale: 1, blockedFor: 0, honkAt: 0,
         };
         this.cars.push(car);
         list.push(car);
@@ -86,8 +98,8 @@ export class AmbientTraffic {
   readonly colliders: DynamicColliders = {
     resolve: (p: Vec2, radius: number) => {
       for (const c of this.cars) {
-        if (!c.shown || Math.abs(c.x - p.x) > 5 || Math.abs(c.z - p.z) > 5) continue;
-        const [fx, fz, bx, bz] = carCircles(c.x, c.z, c.rot);
+        if (!c.shown || Math.abs(c.rx - p.x) > 5 || Math.abs(c.rz - p.z) > 5) continue;
+        const [fx, fz, bx, bz] = carCircles(c.rx, c.rz, c.rrot);
         for (const [cx, cz] of [[fx, fz], [bx, bz]]) {
           const dx = p.x - cx, dz = p.z - cz, d = Math.hypot(dx, dz), min = CAR_HULL_R * c.scale + radius;
           if (d >= min) continue;
@@ -104,18 +116,33 @@ export class AmbientTraffic {
 
   /** Gece farı yanacak en yakın NPC arabalar (Cars gerçek far ışığını bunlarla paylaşır). */
   headlights(): { x: number; z: number; rot: number }[] {
-    return this.cars.filter((c) => c.shown && c.scale > 0.5);
+    const out = this.lit;
+    let n = 0;
+    for (const c of this.shownList) {
+      if (c.scale <= 0.5) continue;
+      const o = (out[n++] ??= { x: 0, z: 0, rot: 0 });
+      o.x = c.rx;
+      o.z = c.rz;
+      o.rot = c.rrot;
+    }
+    out.length = n;
+    return out;
   }
 
   /**
-   * Kare başına: `serverMs` ortak saat, `hour` dünyanın saati, `mul` kalabalık çarpanı (0 kapalı), `movers`
-   * oyuncular (ilki sensin: korna sesi ona göre).
+   * Benzetim adımı (FixedStep): `serverMs` ortak saat, `dt` adımın süresi, `hour` dünyanın saati, `mul` kalabalık
+   * çarpanı (0 kapalı), `movers` oyuncular (ilki sensin: korna sesi ona göre). Çizim `draw` ile.
    */
-  update(serverMs: number, dt: number, cam: { x: number; z: number }, hour: number, mul: number, movers: TrafficMover[]): void {
+  step(serverMs: number, dt: number, cam: { x: number; z: number }, hour: number, mul: number, movers: TrafficMover[]): void {
     const t = serverMs / 1000;
     const R = this.lowPower ? DRAW_R_LOW : DRAW_R;
     const dens = trafficDensity(hour) * Math.min(1.2, mul);
+    this.shownList.length = 0;
     for (const c of this.cars) {
+      const was = c.shown;
+      c.px = c.x;
+      c.pz = c.z;
+      c.prot = c.rot;
       const want = dens - c.gate;
       c.scale = want <= 0 ? 0 : Math.min(1, want / 0.08);
       const tr = trajAt(c.route, t - c.route.t0 - c.offset - c.delay);
@@ -126,6 +153,14 @@ export class AmbientTraffic {
       c.z = this.pose.z;
       c.rot = this.pose.rot;
       c.shown = c.scale > 0 && Math.abs(c.x - cam.x) < R && Math.abs(c.z - cam.z) < R;
+      if (!c.shown) continue;
+      // Yeni beliren ya da sıçrayan (rota başı, uzun bekleme) araba ara değerlenmez
+      if (!was || Math.abs(c.x - c.px) + Math.abs(c.z - c.pz) > 6) {
+        c.px = c.x;
+        c.pz = c.z;
+        c.prot = c.rot;
+      }
+      this.shownList.push(c);
     }
     // Bekleme: önünde oyuncu ya da aynı rotada öndeki araba
     for (const [route, list] of this.byRoute) {
@@ -170,9 +205,18 @@ export class AmbientTraffic {
         }
       }
     }
+  }
+
+  /** Kare başına: arabalar son iki adımın arasında (`alpha` 0 önceki, 1 son adım) çizilir. */
+  draw(alpha: number): void {
     const r = this.renderer;
     r.begin();
-    for (const c of this.cars) if (c.shown) r.push(c.look, c.x, c.z, c.rot, 0.3 + 0.7 * c.scale);
+    for (const c of this.shownList) {
+      c.rx = lerp(c.px, c.x, alpha);
+      c.rz = lerp(c.pz, c.z, alpha);
+      c.rrot = lerpAngle(c.prot, c.rot, alpha);
+      r.push(c.look, c.rx, c.rz, c.rrot, 0.3 + 0.7 * c.scale);
+    }
     r.end();
   }
 }
