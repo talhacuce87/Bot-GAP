@@ -1,13 +1,16 @@
 // Casino oyun ekranı: masaya oturunca açılan alt katman. Başlık, canlı bakiye (sayarak değişir), "test coin
 // al" ve "Kalk". Açıkken klavye oyuna değil bu ekrana gider (yanlışlıkla kalkılmaz); kısayolları oyun işler.
+// Rulet ve blackjack canlı masalardır: oturan oynar, yakında duran izler (sunucuda ortak, süreli turlar).
 import { MIN_BET } from "../../../../shared/casino";
 import type { ClientEvent, ServerEvent } from "../../../../shared/protocol";
 import { BlackjackView } from "./blackjackView";
+import type { LiveCtx } from "./liveBar";
+import { LiveBlackjackView } from "./liveBlackjackView";
 import { RouletteView } from "./rouletteView";
 import { SlotView } from "./slotView";
 
 export type GameKind = "blackjack" | "roulette" | "slot";
-export type CasinoEvent = Extract<ServerEvent, { t: "wallet" | "bj" | "roulette" | "slot" }>;
+export type CasinoEvent = Extract<ServerEvent, { t: "wallet" | "bj" | "roulette" | "slot" | "live" }>;
 
 export interface GameView {
   readonly el: HTMLElement;
@@ -32,6 +35,12 @@ export interface CasinoCtx {
 
 const TITLES: Record<GameKind, string> = { blackjack: "♠ BLACKJACK", roulette: "🎡 RULET", slot: "🎰 GAP SLOT" };
 
+/** Canlı masa: masa numarası ve oturulan koltuk (null: izleyici). */
+export interface LiveSeat {
+  table: number;
+  seat: number | null;
+}
+
 export const fmt = (n: number) => Math.round(n).toLocaleString("tr-TR");
 
 export class CasinoUi {
@@ -42,13 +51,23 @@ export class CasinoUi {
   private body: HTMLDivElement;
   private view: GameView | null = null;
   private kind: GameKind | null = null;
+  private live: LiveSeat | null = null;
+  /** Canlı masadan ilk görünüm geldi mi (gelmeden ret: yer dolu vb.). */
+  private liveSeen = false;
+  private closeBtn: HTMLButtonElement;
+  /** Açık mı (görünür sınıfı bir kare sonra eklenir; o arada gelen olaylar kaybolmasın). */
+  private opened = false;
   private target = 0;
   private shown = 0;
   private raf = 0;
   private watchdog = 0;
   private ctx: CasinoCtx;
 
-  constructor(private parent: HTMLElement, private net: { send(ev: ClientEvent): void }, private opts: { onClose(): void; toast(text: string): void }) {
+  constructor(
+    private parent: HTMLElement,
+    private net: { send(ev: ClientEvent): void; serverNow(): number; you: number },
+    private opts: { onClose(): void; toast(text: string): void },
+  ) {
     this.root = document.createElement("div");
     this.root.className = "cz-overlay";
     const head = document.createElement("div");
@@ -63,11 +82,11 @@ export class CasinoUi {
     this.refillBtn.className = "cz-refill";
     this.refillBtn.textContent = "+ Test coin al";
     this.refillBtn.addEventListener("click", () => this.net.send({ t: "casino", op: "refill" }));
-    const close = document.createElement("button");
+    const close = (this.closeBtn = document.createElement("button"));
     close.className = "cz-close";
     close.textContent = "Kalk ✕";
     close.title = "Masadan kalk (Esc)";
-    close.addEventListener("click", () => this.opts.onClose());
+    close.addEventListener("click", () => this.leave());
     head.append(this.titleEl, bal, this.refillBtn, close);
     this.body = document.createElement("div");
     this.body.className = "cz-body";
@@ -92,7 +111,7 @@ export class CasinoUi {
   }
 
   get isOpen(): boolean {
-    return this.root.classList.contains("show");
+    return this.opened;
   }
 
   /** Son bilinen bakiye. */
@@ -104,14 +123,30 @@ export class CasinoUi {
     return this.isOpen ? this.kind : null;
   }
 
-  open(kind: GameKind): void {
-    if (this.isOpen && this.kind === kind) return;
+  /** Canlı masa izlenirken (oturmadan) açık mı. */
+  get watching(): LiveSeat | null {
+    return this.isOpen && this.live?.seat === null ? this.live : null;
+  }
+
+  open(kind: GameKind, live: LiveSeat | null = null): void {
+    if (this.isOpen && this.kind === kind && this.live?.table === live?.table && this.live?.seat === live?.seat) return;
+    if (this.live) this.net.send({ t: "live", op: "leave" });
     this.view?.dispose();
     this.kind = kind;
-    this.titleEl.textContent = TITLES[kind];
-    this.view = kind === "blackjack" ? new BlackjackView(this.ctx) : kind === "roulette" ? new RouletteView(this.ctx) : new SlotView(this.ctx);
+    this.live = live;
+    this.liveSeen = false;
+    this.titleEl.innerHTML = live ? `<i class="cz-live-dot"></i>CANLI ${TITLES[kind]}` : TITLES[kind];
+    this.closeBtn.textContent = live?.seat === null ? "Ayrıl ✕" : "Kalk ✕";
+    this.closeBtn.title = live?.seat === null ? "İzlemeyi bırak (Esc)" : "Masadan kalk (Esc)";
+    const lc: LiveCtx | null = live && { ...live, me: () => this.net.you, now: () => this.net.serverNow() };
+    this.view =
+      kind === "blackjack"
+        ? lc ? new LiveBlackjackView(this.ctx, lc) : new BlackjackView(this.ctx)
+        : kind === "roulette" ? new RouletteView(this.ctx, lc) : new SlotView(this.ctx);
+    if (live) this.net.send(live.seat === null ? { t: "live", op: "watch", table: live.table } : { t: "live", op: "sit", table: live.table, seat: live.seat });
     this.body.replaceChildren(this.view.el);
     this.root.className = `cz-overlay cz-${kind}`;
+    this.opened = true;
     requestAnimationFrame(() => this.root.classList.add("show"));
     this.parent.classList.add("casino-open");
     if (document.pointerLockElement) document.exitPointerLock();
@@ -119,6 +154,9 @@ export class CasinoUi {
   }
 
   close(): void {
+    if (this.live && this.isOpen) this.net.send({ t: "live", op: "leave" });
+    this.live = null;
+    this.opened = false;
     this.root.classList.remove("show");
     this.parent.classList.remove("casino-open");
     this.view?.dispose();
@@ -127,6 +165,10 @@ export class CasinoUi {
 
   event(ev: CasinoEvent): void {
     clearTimeout(this.watchdog);
+    if (ev.t === "live") {
+      if (!this.isOpen || ev.table.id !== this.live?.table) return;
+      this.liveSeen = true;
+    }
     if (ev.t === "wallet") {
       this.setBalance(ev.balance);
       this.view?.refresh();
@@ -136,7 +178,15 @@ export class CasinoUi {
   /** Sunucudan bildirim geldi (hata ya da reddedilen hamle). */
   failed(): void {
     clearTimeout(this.watchdog);
+    // Canlı masa bizi almadı (yer dolu, uzak): kalk
+    if (this.live && !this.liveSeen && this.isOpen) return this.leave();
     this.view?.failed();
+  }
+
+  /** Kalk ya da izlemeyi bırak. */
+  private leave(): void {
+    if (this.live?.seat === null) this.close();
+    else this.opts.onClose();
   }
 
   private setBalance(b: number): void {
@@ -159,7 +209,7 @@ export class CasinoUi {
     const t = e.target;
     if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
     if (e.code === "Escape") {
-      if (e.type === "keydown") this.opts.onClose();
+      if (e.type === "keydown") this.leave();
       e.stopPropagation();
       return;
     }

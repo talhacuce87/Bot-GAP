@@ -7,6 +7,7 @@
 // (LED, ekran, ampul) ışıktan etkilenmeyen ayrı mesh'lerde: gece bloom'la parlarlar.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { BJ_SEATS, bjSeatAngle, LIVE_TABLES, type LiveKind } from "../../../shared/liveCasino";
 import { CASINO, CASINO_MEZZ_Z } from "../../../shared/zones";
 import type { Builder, Seat } from "./builder";
 import type { CityNpc } from "./city";
@@ -17,6 +18,8 @@ const X0 = CX - HW, X1 = CX + HW;
 /** Kuzey (arka) ve güney (giriş) cepheleri. */
 const Z0 = CZ - HD, Z1 = CZ + HD;
 const MZ = CASINO_MEZZ_Z;
+/** Bu konumdaki canlı masanın numarası (sunucuyla aynı tablo). */
+const liveTable = (kind: LiveKind, x: number) => LIVE_TABLES.find((t) => t.kind === kind && Math.abs(t.x - x) < 0.5)?.id;
 /** Duvar kalınlığı ve iç yüzeyin cepheden uzaklığı. */
 const T = 0.5;
 const IN = T / 2;
@@ -606,13 +609,15 @@ export function casino(b: Builder, lamps: number): Casino {
     }
     for (let i = 0; i < 3; i++) box(0.58, 0.012, 0.14, "#f2efe6", cx - 0.06 + i * 0.6, 0.856, cz + 0.38, 0, 0);
     chips(cx + 0.5, cz - 0.5, 0.85, 6);
-    for (const o of [-0.85, -0.1, 0.65, 1.35]) stool(cx + o, cz + 1.35, Math.PI, 0, { kind: "roulette", x: cx, y: 0.9, z: cz });
+    const table = liveTable("roulette", cx);
+    [-0.85, -0.1, 0.65, 1.35].forEach((o, seat) => stool(cx + o, cz + 1.35, Math.PI, 0, { kind: "roulette", x: cx, y: 0.9, z: cz, table, seat }));
     dealer("Krupiye", cx - 1.15, cz - 1.25, 0, "hair_joleli", "#e5bf98");
     b.colliders.segment(cx - 1.0, cz, cx + 1.0, cz, 0.85);
   };
 
-  /** Blackjack: yarım daire masa, düz kenar kuzeyde (krupiye), yayda 5 tabure ve bahis halkaları. */
+  /** Blackjack: yarım daire masa, düz kenar kuzeyde (krupiye), yayda 7 tabure ve bahis halkaları. */
   const blackjack = (cx: number, cz: number) => {
+    const table = liveTable("blackjack", cx);
     const half = (r: number, h: number) => new THREE.CylinderGeometry(r, r, h, 28, 1, false, -Math.PI / 2, Math.PI);
     solid(half(1.5, 0.72), MARBLE[0], mat(cx, 0.36, cz), 0.02);
     box(3.0, 0.72, 0.04, MARBLE[1], cx, 0.36, cz, 0, 0);
@@ -620,13 +625,13 @@ export function casino(b: Builder, lamps: number): Casino {
     box(3.3, 0.1, 0.06, GOLD, cx, 0.77, cz - 0.02, 0, 0);
     solid(half(1.5, 0.03), "#14593a", mat(cx, 0.835, cz), 0.02);
     glow(half(1.4, 0.03), LED_GOLD, mat(cx, 0.7, cz));
-    for (let k = -2; k <= 2; k++) {
-      const a = k * 0.5;
+    for (let seat = 0; seat < BJ_SEATS; seat++) {
+      const a = bjSeatAngle(seat);
       ring(0.13, 0.012, GOLD_LIGHT, cx + Math.sin(a) * 1.05, 0.856, cz + Math.cos(a) * 1.05);
       box(0.09, 0.006, 0.13, "#fbfbf8", cx + Math.sin(a) * 0.75, 0.855, cz + Math.cos(a) * 0.75, a + 0.2, 0);
       box(0.09, 0.006, 0.13, "#fbfbf8", cx + Math.sin(a) * 0.75 + 0.05, 0.858, cz + Math.cos(a) * 0.75, a - 0.15, 0);
       const r = 2.05, sx = cx + Math.sin(a) * r, sz = cz + Math.cos(a) * r;
-      stool(sx, sz, Math.atan2(cx - sx, cz - sz), 0, { kind: "blackjack", x: cx, y: 0.9, z: cz + 0.35 });
+      stool(sx, sz, Math.atan2(cx - sx, cz - sz), 0, { kind: "blackjack", x: cx, y: 0.9, z: cz + 0.35, table, seat });
     }
     box(0.8, 0.05, 0.25, ONYX, cx, 0.87, cz + 0.2, 0, 0);
     chips(cx, cz + 0.2, 0.895, 8);

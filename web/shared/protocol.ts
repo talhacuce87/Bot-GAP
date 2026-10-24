@@ -12,6 +12,7 @@ import type { TableKind } from "./zones";
 import type { CarRadio, CarSpec, ParkedCar } from "./car";
 import type { BjView, RouletteBet } from "./casino";
 import type { RingView } from "./ring";
+import type { BjBets, LiveTableView } from "./liveCasino";
 import type { SetType, VBall, VolleyEv, VolleyHit, VolleyState } from "./volley";
 
 export const MSG_STATE = 1; // istemci → sunucu: kendi konumu
@@ -356,6 +357,8 @@ export type ServerEvent =
   /** GAP Ring yarışı: grid, lambalar, sıralama ve sonuçlar (faz değişince ve yarışta sık). */
   | { t: "ring"; ring: RingView }
   | { t: "wallet"; balance: number }
+  /** Canlı casino masası (oturan ve izleyenlere, değişince). */
+  | { t: "live"; table: LiveTableView }
   | { t: "bj"; view: BjView; balance: number }
   | { t: "roulette"; n: number; bets: RouletteBet[]; payout: number; balance: number }
   | { t: "slot"; stops: number[]; mult: number; payout: number; balance: number }
@@ -440,6 +443,12 @@ export type ClientEvent =
   | { t: "ring"; op: "leave" }
   | { t: "ring"; op: "start"; laps: number }
   | { t: "casino"; op: "wallet" | "refill" }
+  /** Canlı masa: otur / izle / kalk / bahis / hamle. */
+  | { t: "live"; op: "sit"; table: number; seat: number }
+  | { t: "live"; op: "watch"; table: number }
+  | { t: "live"; op: "leave" }
+  | { t: "live"; op: "bet"; bets?: RouletteBet[]; bj?: BjBets; ready?: boolean }
+  | { t: "live"; op: "act"; a: "hit" | "stand" | "double" | "split" | "insure" }
   | { t: "bj"; op: "deal"; bet: number }
   | { t: "bj"; op: "hit" | "stand" | "double" | "split" }
   | { t: "roulette"; bets: RouletteBet[] }

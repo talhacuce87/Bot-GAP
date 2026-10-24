@@ -29,6 +29,7 @@ import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
 import type { WorldGames } from "./games/world";
 import type { RingHost } from "./ring";
+import type { LiveHost } from "./liveTables";
 
 const PET_IDS = new Set<string>(PETS.map((p) => p.id));
 const SKIN_IDS = new Set<string>(SKINS.map((s) => s.id));
@@ -111,6 +112,8 @@ export class Room {
   games: WorldGames | null = null;
   /** GAP Ring yarışı (savaş odasında yok). */
   ring: RingHost | null = null;
+  /** Canlı casino masaları (savaş odasında yok). */
+  live: LiveHost | null = null;
   /** Görev/sayaç olayı (botta): sunucu bağlar; tank isabeti, savaşta vuruş ve galibiyet buradan. */
   onReport: (sid: number, event: string, amount?: number) => void = () => {};
   private nextSid = 1;
@@ -182,6 +185,7 @@ export class Room {
     this.battle?.leave(sid);
     this.games?.leave(sid);
     this.ring?.leave(sid);
+    this.live?.leave(sid);
     this.broadcast({ t: "leave", sid });
     // Boşalan yere en eski izleyici geçer; istemciler onu yeni katılan gibi görür.
     if (!p.info.spectator) {
@@ -232,6 +236,7 @@ export class Room {
     p.lastUpdate = now;
     this.dirty = TRAIL_TICKS;
     if (p.info.car) this.ring?.move(sid, p.state.x, p.state.z, now);
+    this.live?.move(sid, p.state.x, p.state.z, now);
   }
 
   /** Odaya sohbet satırı: geçmişe eklenir ve herkese gider. */
@@ -435,6 +440,7 @@ export class Room {
     this.battle?.tick(now);
     this.games?.tick(now);
     this.ring?.tick(now);
+    this.live?.tick(now);
     const t = this.tank;
     if (!t.driver && t.idleSince && now - t.idleSince > TANK_RETURN_MS) {
       Object.assign(t, { x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, idleSince: 0 });

@@ -13,7 +13,8 @@ export interface Seat {
   /** Oturulan yüzeyin yüksekliği; verilmezse bank (SEAT_H). */
   h?: number;
   /** Casino taburesi: oturunca bu oyun açılır; (x, y, z) kameranın yaklaşıp baktığı nokta (masa ya da ekran). */
-  game?: { kind: "blackjack" | "roulette" | "slot"; x: number; y: number; z: number };
+  /** Casino taburesi; canlı masada masa ve koltuk numarası (shared/liveCasino). */
+  game?: { kind: "blackjack" | "roulette" | "slot"; x: number; y: number; z: number; table?: number; seat?: number };
 }
 
 /** Bankların oturma yüksekliği: avatarların oturma duruşu buna göre ayarlı. */

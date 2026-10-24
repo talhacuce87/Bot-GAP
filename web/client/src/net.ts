@@ -94,7 +94,7 @@ export class Net {
   /** Kendi evcil hayvanımız/kamuflajımız sunucudan döndü (diğerlerininki Remotes'a yazılır). */
   onCosm: (sid: number, pet: string | null, skin: string | null) => void = () => {};
   /** Casino: bakiye ve oyun sonuçları (yalnızca bu oyuncuya). */
-  onCasino: (ev: Extract<ServerEvent, { t: "wallet" | "bj" | "roulette" | "slot" }>) => void = () => {};
+  onCasino: (ev: Extract<ServerEvent, { t: "wallet" | "bj" | "roulette" | "slot" | "live" }>) => void = () => {};
   /** Bir arabanın radyosu değişti (kendininki dahil). */
   onRadio: (sid: number, radio: CarRadio | null) => void = () => {};
   /** Park halindeki araba (sid kendin de olabilir). */
@@ -425,6 +425,7 @@ export class Net {
       case "bj":
       case "roulette":
       case "slot":
+      case "live":
         this.onCasino(ev);
         break;
       case "radio":

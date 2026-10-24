@@ -11,7 +11,7 @@ const CHIPS = [10, 25, 100, 500, 1000];
 const DEAL_GAP = 140;
 const DEALER_GAP = 560;
 
-function cardEl(c: Card | null, anim: "" | "deal" | "flip", delay = 0): HTMLElement {
+export function cardEl(c: Card | null, anim: "" | "deal" | "flip", delay = 0): HTMLElement {
   const el = document.createElement("div");
   if (!c) el.className = "cz-card back";
   else {
@@ -28,7 +28,7 @@ function cardEl(c: Card | null, anim: "" | "deal" | "flip", delay = 0): HTMLElem
 }
 
 /** El değeri metni: yumuşaksa "7/17". */
-function valueText(cards: Card[]): string {
+export function valueText(cards: Card[]): string {
   const v = handValue(cards);
   return v.soft && v.total < 21 ? `${v.total - 10}/${v.total}` : String(v.total);
 }
