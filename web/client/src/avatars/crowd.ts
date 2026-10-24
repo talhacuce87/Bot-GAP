@@ -199,6 +199,33 @@ export class CrowdRenderer {
     }
   }
 
+  /**
+   * Bu kare görünmeyen örnekleri (kameranın arkası, binaların arkası: `visible` occlusion.ts) çıkarır; sıra
+   * (yakından uzağa, kontur önektekilere) korunur. Gölge atmazlar: gölge haritası etkilenmez. end()'den sonra.
+   */
+  cull(visible: (x: number, y: number, z: number, r: number) => boolean): void {
+    for (const b of this.batches.flat()) {
+      if (!b.n) continue;
+      const m = b.mesh.instanceMatrix.array as Float32Array, p = b.pose.array as Float32Array;
+      const bs = b.mesh.geometry.boundingSphere!;
+      const r0 = bs.radius + bs.center.length();
+      let k = 0, lined = 0;
+      for (let i = 0; i < b.n; i++) {
+        const o = i * 16;
+        // El sallama ve düşme pozu için yarım metre pay (end() ile aynı)
+        if (!visible(m[o + 12], m[o + 13], m[o + 14], r0 * Math.hypot(m[o], m[o + 1], m[o + 2]) + 0.5)) continue;
+        if (k !== i) {
+          m.copyWithin(k * 16, o, o + 16);
+          p.copyWithin(k * 4, i * 4, i * 4 + 4);
+        }
+        if (i < b.lined) lined = k + 1;
+        k++;
+      }
+      b.n = b.mesh.count = k;
+      b.lined = b.outline.count = lined;
+    }
+  }
+
   end(): void {
     for (const b of this.batches.flat()) {
       b.mesh.count = b.n;

@@ -918,6 +918,8 @@ async function start(): Promise<void> {
       watch.panel.update(now);
     }
 
+    // Binaların örttüğü karolar ve dükkân içleri bu kare çizilmez (kameranın son konumuyla)
+    world.cull(camera);
     renderScene(dt);
     perf.frame(dtMs, performance.now() - t0);
     hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);

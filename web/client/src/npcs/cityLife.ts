@@ -76,6 +76,11 @@ export class CityLife {
     }));
   }
 
+  /** Görünmeyen yayaları bu kare çizme (occlusion.ts; update'ten sonra). */
+  cull(visible: (x: number, y: number, z: number, r: number) => boolean): void {
+    this.crowd.cull(visible);
+  }
+
   /** Kalabalık çarpanı: 0 kapalı. */
   private get mul(): number {
     const level = (settings as Partial<{ crowd: string }>).crowd;

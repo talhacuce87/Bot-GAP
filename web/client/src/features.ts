@@ -242,6 +242,8 @@ export class Features {
     };
     c.life.onStop(() => this.engines.silence());
     world.scene.add(this.cityLife.group);
+    // Binaların arkasındaki ve kameranın görmediği yayalar o kare çizilmez
+    world.occlusion.dynamic.push(() => this.cityLife.cull((x, y, z, r) => world.occlusion.sphereVisible(x, y, z, r)));
     net.onPedhit = (id, vx, vz, by) => {
       const line = this.cityLife.hit(id, vx, vz, performance.now() / 1000);
       if (!line) return;
