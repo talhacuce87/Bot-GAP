@@ -88,7 +88,7 @@ export class Hud {
     }
     this.hint.textContent =
       `${move.every((m) => m.length === 1) ? move.join("") : move.join("/")}: yürü • ${k("run")}: koş • ${k("jump")}: zıpla • ` +
-      `${k("sit")}: otur • ${k("actF")}/${k("actG")}: etkileşim • 1–6: hızlı slot • ${k("emotes")} basılı: emote • ${k("inventory")}: çanta • ${k("wardrobe")}: gardırop • ` +
+      `${k("sit")}: otur • ${k("actF")}/${k("actG")}: etkileşim • 1–6: hızlı slot • ${k("emotes")} basılı: emote • ${k("inventory")}: çanta • ${k("menu")}: telefon • ${k("map")}: harita • ${k("wardrobe")}: gardırop • ` +
       `${k("shiftlock")}: shift lock • Enter: sohbet`;
   }
 

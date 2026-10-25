@@ -110,7 +110,7 @@ export const ACTION_NAMES: Record<Action, string> = {
   wardrobe: "Gardırop",
   zoomIn: "Yakınlaş",
   zoomOut: "Uzaklaş",
-  menu: "Menü",
+  menu: "Telefon",
   quests: "Görevler",
   card: "Oyuncu kartım",
   album: "Balık albümü",
@@ -159,7 +159,7 @@ export const ACTION_NAMES: Record<Action, string> = {
 };
 
 export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
-  forward: ["KeyW", "ArrowUp"],
+  forward: ["KeyW", ""],
   back: ["KeyS", "ArrowDown"],
   left: ["KeyA", "ArrowLeft"],
   right: ["KeyD", "ArrowRight"],
@@ -172,7 +172,7 @@ export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
   wardrobe: ["KeyC", ""],
   zoomIn: ["WheelUp", ""],
   zoomOut: ["WheelDown", ""],
-  menu: ["KeyM", ""],
+  menu: ["ArrowUp", ""],
   quests: ["KeyQ", ""],
   card: ["KeyK", ""],
   album: ["KeyL", ""],
@@ -183,7 +183,7 @@ export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
   hug: ["KeyJ", ""],
   accept: ["KeyY", ""],
   build: ["KeyN", ""],
-  map: ["KeyU", ""],
+  map: ["KeyM", ""],
   car: ["KeyT", ""],
   radio: ["KeyR", ""],
   // Arabada E boşta: GTA'daki gibi korna (yürürken otur/kalk)
@@ -226,7 +226,7 @@ const NONE = Object.fromEntries(Object.keys(DEFAULT_BINDS).map((a) => [a, ["", "
 /** Stadyum: futbol tuşları; dünyanın E/Q/C/F/G işleri (otur, görevler, gardırop, etkileşim) burada yok. */
 export const STADIUM_BINDS: Record<Action, [Bind, Bind]> = {
   ...NONE,
-  forward: ["KeyW", "ArrowUp"],
+  forward: ["KeyW", ""],
   back: ["KeyS", "ArrowDown"],
   left: ["KeyA", "ArrowLeft"],
   right: ["KeyD", "ArrowRight"],
@@ -235,7 +235,7 @@ export const STADIUM_BINDS: Record<Action, [Bind, Bind]> = {
   shiftlock: ["ShiftRight", ""],
   zoomIn: ["WheelUp", ""],
   zoomOut: ["WheelDown", ""],
-  menu: ["KeyM", ""],
+  menu: ["ArrowUp", ""],
   camera: ["KeyV", ""],
   net: ["F3", ""],
   fbPass: ["KeyQ", ""],
@@ -255,7 +255,7 @@ export const STADIUM_BINDS: Record<Action, [Bind, Bind]> = {
  */
 export const VOLLEY_BINDS: Record<Action, [Bind, Bind]> = {
   ...NONE,
-  forward: ["KeyW", "ArrowUp"],
+  forward: ["KeyW", ""],
   back: ["KeyS", "ArrowDown"],
   left: ["KeyA", "ArrowLeft"],
   right: ["KeyD", "ArrowRight"],
@@ -264,7 +264,7 @@ export const VOLLEY_BINDS: Record<Action, [Bind, Bind]> = {
   shiftlock: ["ShiftLeft", "ShiftRight"],
   zoomIn: ["WheelUp", ""],
   zoomOut: ["WheelDown", ""],
-  menu: ["KeyM", ""],
+  menu: ["ArrowUp", ""],
   camera: ["", ""],
   net: ["F3", ""],
   vHit: ["Mouse0", ""],
@@ -290,12 +290,12 @@ export const VOLLEY_BINDS: Record<Action, [Bind, Bind]> = {
  */
 export const PAINTBALL_BINDS: Record<Action, [Bind, Bind]> = {
   ...NONE,
-  forward: ["KeyW", "ArrowUp"],
+  forward: ["KeyW", ""],
   back: ["KeyS", "ArrowDown"],
   left: ["KeyA", "ArrowLeft"],
   right: ["KeyD", "ArrowRight"],
   jump: ["Space", ""],
-  menu: ["KeyM", ""],
+  menu: ["ArrowUp", ""],
   net: ["F3", ""],
   pbFire: ["Mouse0", ""],
   pbCrouch: ["ControlLeft", "KeyC"],
@@ -315,12 +315,16 @@ export function reserved(bind: Bind, p: Profile = profile): boolean {
   return RESERVED.has(bind) && !((p === "volley" || p === "paintball") && VOLLEY_FREE.has(bind));
 }
 
+const LEGACY: Partial<Record<Action, [Bind, Bind]>> = { menu: ["KeyM", ""], map: ["KeyU", ""], forward: ["KeyW", "ArrowUp"] };
+
 function load(p: Profile): Record<Action, [Bind, Bind]> {
   const b = structuredClone(DEFAULTS[p]);
   try {
     const saved = JSON.parse(localStorage.getItem(KEYS[p]) || "{}") as Partial<Record<Action, unknown>>;
     for (const a of PROFILE_ACTIONS[p]) {
       const v = saved[a];
+      // Telefondan önceki varsayılanlar (M menü, U harita, ↑ ileri) kayıtlıysa yenileri geçerli
+      if (Array.isArray(v) && LEGACY[a]?.every((x, i) => v[i] === x)) continue;
       if (Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "string" && !reserved(x, p))) b[a] = [v[0], v[1]];
     }
   } catch {

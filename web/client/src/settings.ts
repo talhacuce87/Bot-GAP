@@ -53,6 +53,8 @@ export interface Settings {
   firstPerson: boolean;
   /** Evcil hayvan (PETS id, "" yok) ve tank kamuflajı (SKINS id). */
   pet: string;
+  /** Telefonun duvar kağıdı (ui/phone WALLS id). */
+  phoneWall: string;
   /** Son çağrılan/sürülen Tofaş (görünümü GAP Garaj'da düzenlenir). */
   car: CarSpec;
   /** Her modelin kendi tuning'i (Şahin, Doğan SLX, Kartal herkeste var). */
@@ -105,6 +107,7 @@ function defaults(): Settings {
     sfxVolume: 0.7,
     firstPerson: false,
     pet: "",
+    phoneWall: "gece",
     car: { ...DEFAULT_CAR },
     cars: Object.fromEntries(CAR_MODELS.map((m) => [m.id, { ...DEFAULT_CAR, model: m.id }])) as Settings["cars"],
     radioVolume: 0.8,

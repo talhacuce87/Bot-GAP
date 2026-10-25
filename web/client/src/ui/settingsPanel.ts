@@ -65,6 +65,8 @@ export class SettingsPanel {
     onBinds(() => {
       if (this.isOpen && !this.capture) this.render();
     });
+    // Telefondaki Ayarlar uygulaması
+    addEventListener("gap:settings", () => this.open());
     // Stadyumdaki "Tuşlar" düğmesi: paneli tuşlar bölümünde aç
     addEventListener("gap:keys", () => {
       this.open();

@@ -34,7 +34,7 @@ import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
 import { type CarRadio, carCircles, CAR_ENGINES, CAR_STATS, type CarSpec, ENTER_REACH, RADIO_RANGE } from "../../shared/car";
-import { Hub } from "./ui/hub";
+import { Phone } from "./ui/phone";
 import { WorldMap } from "./ui/worldMap";
 import { LifeHud, type MapDot } from "./ui/lifeHud";
 import { LIFE } from "../../shared/economy";
@@ -164,7 +164,9 @@ export class Features {
   private fogColor = new THREE.Color();
   private boards: BoardGameUi;
   private profile: ProfileUi;
-  private hub: Hub;
+  private phone: Phone;
+  /** Cüzdan cevabı telefona mı (Cüzdan uygulaması) yoksa para kutusunun paneline mi. */
+  private walletToPhone = false;
   private map: WorldMap;
   /** Hayat barları, minimap, GAP ₺ ve yaralı kartı. */
   private lifeHud: LifeHud;
@@ -447,6 +449,7 @@ export class Features {
     });
     net.onMoney = (balance, tx) => {
       this.lifeHud.setMoney(balance, tx);
+      this.phone.setBalance(balance);
       this.shopUi.setBalance(balance);
     };
     this.shopUi = new ShopUi(hudRoot, {
@@ -489,7 +492,11 @@ export class Features {
       const d = itemDef(item);
       if (sid === net.you && d) hud.toast(`${d.icon} ${d.name} ${d.cat === "drink" ? "içtin" : "yedin"}.`);
     };
-    net.onEcon = (w) => this.lifeHud.showWallet(w);
+    net.onEcon = (w) => {
+      if (this.walletToPhone) this.phone.showWallet(w);
+      else this.lifeHud.showWallet(w);
+      this.walletToPhone = false;
+    };
     net.onReviving = (by, target, until) => {
       this.revivingTarget = until && by === net.you ? target : 0;
       const text = by === net.you ? `🩹 ${this.nameOf(target)} kaldırılıyor… yanında kal` : `🩹 ${this.nameOf(by)} seni kaldırıyor…`;
@@ -515,21 +522,18 @@ export class Features {
     me.onFall = (h) => {
       if (h > LIFE.fallFrom && !me.vehicle) net.send({ t: "fall", h });
     };
-    this.hub = new Hub(hudRoot, c.input.touch, {
+    this.phone = new Phone(hudRoot, c.input.touch, {
       quests: () => this.profile.openQuests(),
       card: () => this.profile.open(net.you, c.session.user.name),
       album: () => this.profile.openAlbum(c.session.user.name),
       photo: () => this.photo.toggle(),
-      vehicle: (v) => this.setVehicle(v),
       fireworks: () => net.send({ t: "fireworks" }),
       tag: (mode) => c.say(`!${mode}`),
       match: () => c.say(!this.match ? "!maç 5" : this.myTeam() === null ? "!maç katıl" : "!maç bitir"),
-      build: () => this.build.toggle(),
-      map: () => {
-        this.hub.close();
-        this.map.toggle();
+      wallet: () => {
+        this.walletToPhone = true;
+        net.send({ t: "econ", op: "wallet" });
       },
-      pair: (kind) => this.pair(kind),
       queue: () => this.whud.openQueue(),
       weather: () => c.say("!hava"),
       battle: c.battle,
@@ -1397,7 +1401,7 @@ export class Features {
   /** Kısayollar (oyuncu güncellemesinden önce). */
   keys(): void {
     const { input, me } = this.c;
-    if (input.consumeKey("menu")) this.hub.toggle();
+    if (input.consumeKey("menu")) this.phone.toggle();
     if (input.consumeKey("build")) this.build.toggle();
     if (input.consumeKey("map")) this.map.toggle();
     if (this.build.active) {
