@@ -3,6 +3,8 @@
 // ve harcama, son işlemler. Can sıfırlanınca "yaralı" kartı: kırmızı kenar, kalan süre, arkadaşın kaldırabilir ya
 // da E ile ambulans çağırırsın.
 import { ECON, LIFE, type LifeState, lira, type MoneyTx, type WalletView } from "../../../shared/economy";
+import { type IconName, icon } from "./icons";
+import { region, setToolTip } from "./layout";
 import { el, Panel } from "./panel";
 import { BUFFS, type BuffId } from "../../../shared/items";
 
@@ -20,18 +22,16 @@ export interface MinimapBase {
   px: number;
 }
 
-const ICONS = {
-  hp: `<svg viewBox="0 0 24 24"><path d="M12 20.5s-7-4.3-9.3-8.4C1 8.8 2.9 5 6.6 5c2.1 0 3.6 1.2 5.4 3 1.8-1.8 3.3-3 5.4-3 3.7 0 5.6 3.8 3.9 7.1-2.3 4.1-9.3 8.4-9.3 8.4z"/></svg>`,
-  hunger: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v7a2 2 0 0 0 4 0V3M8 10v11M17 21V3c-2 1-3 4-3 8h3"/></svg>`,
-  thirst: `<svg viewBox="0 0 24 24"><path d="M12 2.5s-6.5 7.3-6.5 12a6.5 6.5 0 0 0 13 0c0-4.7-6.5-12-6.5-12z"/></svg>`,
-  energy: `<svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>`,
-};
+const ICONS: Record<keyof LifeState, IconName> = { hp: "heart", hunger: "forkKnife", thirst: "drop", energy: "lightning" };
+const NAMES: Record<keyof LifeState, string> = { hp: "Can", hunger: "Açlık", thirst: "Susuzluk", energy: "Enerji" };
 
 /** Navigasyon rotasının rengi (navigator NAV_COLOR ile aynı). */
 const NAV_LINE = "#36c8ff";
 
-/** Minimapin gösterdiği genişlik (m). */
+/** Minimapin gösterdiği genişlik (m) ve ekrandaki boyutu (px). */
 const VIEW_M = 120;
+const MM_W = 214;
+const MM_H = 140;
 
 export class LifeHud {
   private root: HTMLDivElement;
@@ -39,6 +39,7 @@ export class LifeHud {
   private bars = {} as Record<keyof LifeState, HTMLElement>;
   private rows = {} as Record<keyof LifeState, HTMLElement>;
   private pill: HTMLButtonElement;
+  private pillValue: HTMLElement;
   private cards: HTMLDivElement;
   private vignette: HTMLDivElement;
   private downedCard: HTMLDivElement;
@@ -58,43 +59,49 @@ export class LifeHud {
   private buffBox: HTMLDivElement;
 
   constructor(parent: HTMLElement, private a: { openWallet(): void; ambulance(): void; base(): MinimapBase | null }) {
-    this.root = el("div", "life-hud", parent);
+    this.root = el("div", "life-hud", region(parent, "bl"));
     this.buffBox = el("div", "life-buffs", this.root);
-    this.mm = el("canvas", "mm-canvas", this.root);
+    this.mm = el("canvas", "mm-canvas", el("div", "mm-wrap", this.root));
     const dpr = Math.min(2, devicePixelRatio || 1);
-    this.mm.width = 190 * dpr;
-    this.mm.height = 130 * dpr;
+    this.mm.width = MM_W * dpr;
+    this.mm.height = MM_H * dpr;
     const box = el("div", "life-bars", this.root);
     for (const k of ["hp", "hunger", "thirst", "energy"] as const) {
       const row = el("div", `life-row ${k}`, box);
-      const ic = el("span", "life-ic", row);
-      ic.innerHTML = ICONS[k];
+      row.title = NAMES[k];
+      icon(ICONS[k], "", el("span", "life-ic", row));
       const bar = el("div", "life-bar", row);
       this.bars[k] = el("i", "", bar);
       this.rows[k] = row;
     }
-    this.pill = el("button", "money-pill", parent);
-    this.pill.title = "Cüzdan";
+    const tr = region(parent, "tr");
+    this.pill = el("button", "money-pill", tr);
+    this.pill.type = "button";
+    el("span", "money-ic", this.pill, "₺");
+    this.pillValue = el("span", "money-val", this.pill);
+    setToolTip(this.pill, "Cüzdan");
     this.pill.addEventListener("click", () => this.a.openWallet());
-    this.cards = el("div", "money-cards", parent);
+    this.cards = el("div", "money-cards", tr);
     this.vignette = el("div", "downed-vignette", parent);
-    this.downedCard = el("div", "downed-card", parent);
+    const bc = region(parent, "bc");
+    this.downedCard = el("div", "downed-card", bc);
     const head = el("div", "downed-head", this.downedCard);
-    head.innerHTML = `<span class="downed-ic">${ICONS.hp}</span>`;
+    icon("heart", "downed-ic", head);
     this.downedTime = el("b", "", head, "Yaralısın · 1:00");
     const bar = el("div", "downed-bar", this.downedCard);
     this.downedBar = el("i", "", bar);
     const hints = el("div", "downed-hints", this.downedCard);
-    el("span", "", hints, "F · arkadaşın kaldırır");
-    const amb = el("button", "", hints, `E · ambulans çağır (${lira(ECON.hospitalFee)})`);
+    el("span", "", hints, "Arkadaşın F ile kaldırabilir");
+    const amb = el("button", "", hints, `E · Ambulans (${lira(ECON.hospitalFee)})`);
+    amb.type = "button";
     amb.addEventListener("click", () => this.a.ambulance());
     addEventListener("keydown", (e) => {
       if (this.downedUntil && e.code === "KeyE" && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) this.a.ambulance();
     });
-    this.prog = el("div", "revive-prog", parent);
+    this.prog = el("div", "revive-prog", bc);
     this.progText = el("b", "", this.prog);
     this.progBar = el("i", "", el("div", "revive-prog-bar", this.prog));
-    this.wallet = new Panel(parent, "💰 CÜZDAN", "hub-panel wallet-panel");
+    this.wallet = new Panel(parent, "Cüzdan", "hub-panel wallet-panel", "wallet");
     this.renderPill();
   }
 
@@ -192,7 +199,7 @@ export class LifeHud {
   private drawMap(me: { x: number; z: number; rot: number }, dots: MapDot[], route: readonly [number, number][] | null): void {
     const c = this.mm, g = c.getContext("2d")!;
     const w = c.width, h = c.height, s = w / VIEW_M;
-    g.fillStyle = "#16202a";
+    g.fillStyle = "#121a22";
     g.fillRect(0, 0, w, h);
     const base = this.a.base();
     if (base) {
@@ -253,7 +260,7 @@ export class LifeHud {
         continue;
       }
       if (d.kind === "car") {
-        g.fillStyle = "#85b7eb";
+        g.fillStyle = "#e8eef5";
         g.fillRect(x - r * 1.4, y - r * 2, r * 2.8, r * 4);
       } else if (goal) {
         g.strokeStyle = tint;
@@ -266,17 +273,17 @@ export class LifeHud {
         g.arc(x, y, r, 0, Math.PI * 2);
         g.fill();
       } else {
-        g.fillStyle = d.kind === "downed" ? "#ff4d5e" : "#5dcaa5";
+        g.fillStyle = d.kind === "downed" ? "#ff5a6a" : "#5db3ff";
         g.beginPath();
         g.arc(x, y, r * 1.6, 0, Math.PI * 2);
         g.fill();
       }
     }
-    // Sen: baktığın yöne dönen ok
+    // Sen: baktığın yöne dönen ok (safran)
     g.save();
     g.translate(w / 2, h / 2);
     g.rotate(Math.PI - me.rot);
-    g.fillStyle = "#fff";
+    g.fillStyle = "#ffb547";
     g.strokeStyle = "rgba(0,0,0,0.55)";
     g.lineWidth = r * 0.5;
     g.beginPath();
@@ -288,10 +295,6 @@ export class LifeHud {
     g.fill();
     g.stroke();
     g.restore();
-    g.fillStyle = "#c9a24a";
-    g.font = `500 ${Math.round(r * 5)}px system-ui, sans-serif`;
-    g.textAlign = "right";
-    g.fillText("K", w - r * 2.5, r * 6);
   }
 
   private card(tx: MoneyTx): void {
@@ -317,6 +320,6 @@ export class LifeHud {
   };
 
   private renderPill(): void {
-    this.pill.textContent = lira(this.shown);
+    this.pillValue.textContent = Math.round(this.shown).toLocaleString("tr-TR");
   }
 }

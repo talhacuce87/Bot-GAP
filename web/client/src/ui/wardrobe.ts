@@ -5,6 +5,8 @@ import { lookItem, LOOK_PRICES, lookShop } from "../../../shared/shop";
 import { owned } from "../owned";
 import type { ChibiManifest, ChibiPack } from "../avatars/chibiPack";
 import { type PreviewFocus, type ThumbRegion, WardrobePreview } from "./wardrobePreview";
+import { type IconName, icon as uiIcon } from "./icons";
+import { modalClosed, modalOpened } from "./layout";
 
 type Tab = LookSlot | "colors";
 
@@ -26,16 +28,9 @@ const SHOP: Record<WardrobeShop, { kicker: string; title: string; tabs: Tab[]; c
   fashion: { kicker: "GAP AVM", title: "GAP MODA", tabs: ["tops", "bottoms", "shoes", "hats", "glasses"], colors: [] },
 };
 
-/** Kategori simgeleri (24×24 çizgi). */
-const ICONS: Record<Tab, string> = {
-  hair: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12"/>',
-  tops: '<path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>',
-  bottoms: '<path d="M6 2h12l1.2 20h-5.4L12 10.5 10.2 22H4.8z"/><path d="M6 6h12"/>',
-  shoes: '<path d="M2 18h20v-2.4a2.5 2.5 0 0 0-2-2.45L14.5 12 13 6H8.6L8 9.2l-4 1A2.6 2.6 0 0 0 2 12.7z"/><path d="M9.5 12.5h2M10 15h2.5"/>',
-  hats: '<path d="M5 15a7 7 0 0 1 14 0"/><path d="M2.5 15h19v1.8a1.2 1.2 0 0 1-1.2 1.2H3.7a1.2 1.2 0 0 1-1.2-1.2z"/><path d="M12 8V5"/>',
-  glasses: '<circle cx="6" cy="15" r="4"/><circle cx="18" cy="15" r="4"/><path d="M14 15a2 2 0 0 0-4 0M2.5 13 5 7c.7-1.3 1.4-2 3-2M21.5 13 19 7c-.7-1.3-1.5-2-3-2"/>',
-  facial: '<path d="M5 6v5a7 7 0 0 0 14 0V6"/><path d="M8 13c1.5-1.2 2.7-1.2 4 0 1.3-1.2 2.5-1.2 4 0"/>',
-  colors: '<path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.55-2.5 5.55-5.55C21.97 6.01 17.46 2 12 2z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="10.5" r="1"/>',
+/** Kategori simgeleri (arayüzün simge takımı). */
+const TAB_ICONS: Record<Tab, IconName> = {
+  hair: "scissors", tops: "shirt", bottoms: "pants", shoes: "sneaker", hats: "cap", glasses: "eyeglasses", facial: "beard", colors: "palette",
 };
 
 /** Boş seçenek: üst/alt boşsa temel atlet/şort görünür. */
@@ -87,9 +82,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent?:
   return e;
 }
 
-function icon(key: Tab, parent: HTMLElement): void {
-  const s = el("span", "wd-icon", parent);
-  s.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[key]}</svg>`;
+function tabIcon(key: Tab, parent: HTMLElement): void {
+  uiIcon(TAB_ICONS[key], "", el("span", "wd-icon", parent));
 }
 
 /** Tuş ipucu: [ESC] Vazgeç gibi. */
@@ -200,7 +194,7 @@ export class Wardrobe {
     const hints = el("div", "wd-hints", foot);
     kbd(hints, "A D", "Döndür");
     kbd(hints, "Q E", "Kategori");
-    kbd(hints, "🖱", "Sürükle · Tekerlek");
+    kbd(hints, "Fare", "Sürükle · Tekerlek");
     const actions = el("div", "wd-actions", foot);
     el("span", "wd-dirty", actions).textContent = "Kaydedilmemiş değişiklik";
     const reset = el("button", "wd-btn ghost", actions);
@@ -265,6 +259,7 @@ export class Wardrobe {
     const t = this.tabs.find((x) => x.key === tab);
     if (t) this.tab = t.key;
     else if (!this.tabs.some((x) => x.key === this.tab)) this.tab = this.tabs[0].key;
+    if (!this.isOpen) modalOpened(this);
     this.isOpen = true;
     this.info = null;
     this.dirty = false;
@@ -299,6 +294,7 @@ export class Wardrobe {
 
   private hide(): void {
     this.isOpen = false;
+    modalClosed(this);
     this.backdrop.classList.remove("show");
     this.preview.stop();
     this.hooks.modal(false);
@@ -412,7 +408,7 @@ export class Wardrobe {
     this.rail.replaceChildren(
       ...this.tabs.map((t) => {
         const b = el("button", `wd-slot${t.key === this.tab ? " active" : ""}`);
-        icon(t.key, b);
+        tabIcon(t.key, b);
         const text = el("span", "wd-slot-text", b);
         el("small", "", text).textContent = t.label;
         const value = el("strong", "", text);

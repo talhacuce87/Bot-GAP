@@ -18,6 +18,7 @@ import { Player } from "./player";
 import { onSettings, settings, updateSettings } from "./settings";
 import { Chat } from "./ui/chat";
 import { Hud } from "./ui/hud";
+import { modeButton, region } from "./ui/layout";
 import { button, Panel } from "./ui/panel";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { buildArena } from "./world/arena";
@@ -121,7 +122,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   const input = new Input(canvas, hudRoot);
   const hud = new Hud(hudRoot, session.user.name, input.touch, () => input.triggerAction());
   life.onStop(() => input.dispose());
-  life.onStop(onBinds(() => hud.refreshHint()));
+  life.onStop(onBinds(() => hud.refreshKeys()));
   const net = new Net(`${session.wsUrl}&battle=1`, remotes);
   life.onStop(() => net.close());
   net.onStatus = (s) => hud.setStatus(s);
@@ -140,14 +141,17 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   life.onStop(onSettings(syncNet));
 
   // ---- Arayüz ----
-  const exit = el("button", "battle-exit", hudRoot, "🏠 Dünyaya dön");
-  exit.addEventListener("click", () => switchMode(false));
-  const seasonBtn = el("button", "battle-exit battle-season", hudRoot, "🏆 Sezon");
-  const seasonPanel = new Panel(hudRoot, "🏆 TANK SEZONU", "season-panel");
-  seasonBtn.addEventListener("click", () => {
-    seasonPanel.body.replaceChildren(el("div", "pc-loading", document.createElement("div"), "Yükleniyor…"));
-    seasonPanel.open();
-    net.send({ t: "season" });
+  // Sol üstte mod düğmeleri: dünyaya dön, sezon, takım değiştir
+  modeButton(hudRoot, { icon: "house", label: "Dünyaya dön", onClick: () => switchMode(false) });
+  const seasonPanel = new Panel(hudRoot, "Tank sezonu", "season-panel", "trophy");
+  modeButton(hudRoot, {
+    icon: "trophy",
+    label: "Sezon",
+    onClick: () => {
+      seasonPanel.body.replaceChildren(el("div", "pc-loading", document.createElement("div"), "Yükleniyor…"));
+      seasonPanel.open();
+      net.send({ t: "season" });
+    },
   });
   net.onSeason = (season, top) => {
     const b = seasonPanel.body;
@@ -162,13 +166,15 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
     if (!top.length) el("li", "settings-note", list, "Bu ay henüz kimse tank vurmadı.");
     top.forEach((e, i) => el("li", "", list, `${["🥇", "🥈", "🥉"][i] ?? ""} ${e.name} · ${e.kills} vuruş · ${e.wins} galibiyet`));
   };
-  const board = el("div", "panel battle-board", hudRoot);
-  const banner = el("div", "battle-banner", hudRoot);
-  const feed = el("div", "battle-feed", hudRoot);
-  const myHp = el("div", "panel battle-hp", hudRoot);
+  const tc = region(hudRoot, "tc");
+  const board = el("div", "battle-board", tc);
+  const banner = el("div", "battle-banner", tc);
+  const feed = el("div", "battle-feed", region(hudRoot, "tr"));
+  const myHp = el("div", "battle-hp", region(hudRoot, "bc"));
   const crosshair = el("div", "crosshair", hudRoot);
-  const picker = el("div", "panel battle-picker", hudRoot);
-  const pickTitle = el("h2", "", picker, "⚔️ Tank Savaşı — takımını seç");
+  const picker = el("div", "battle-picker", hudRoot);
+  el("small", "battle-kicker", picker, "Tank savaşı");
+  const pickTitle = el("h2", "", picker, "Takımını seç");
   // Mod: takım savaşı, herkes tek, bayrak kapmaca (değiştirmek maçı baştan başlatır)
   const modeRow = el("div", "settings-seg battle-modes", picker);
   const modeBtns = MODES.map((m) => {
@@ -206,8 +212,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   el("p", "battle-help", picker, input.touch
     ? "Joystick: sür · sağ yarı: nişan · ⤒: ateş · 3 isabette tank yanar, 5 sn sonra üste doğarsın."
     : "W/S/A/D: sür · fare: nişan · sol tık/Space: ateş · Esc: imleci bırak · 3 isabette tank yanar, 5 sn sonra üste doğarsın.");
-  const switchBtn = el("button", "battle-switch", hudRoot, "Takım değiştir");
-  switchBtn.addEventListener("click", () => picker.classList.toggle("show"));
+  const switchBtn = modeButton(hudRoot, { icon: "users", label: "Takım değiştir", toggle: true, onClick: () => picker.classList.toggle("show") });
 
   let state: BattleState = { phase: "wait", endsAt: 0, score: [0, 0], fighters: [] };
   const foes = new Map<number, Foe>();
@@ -233,7 +238,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
     const mine = fighter(net.you);
     const counts = [0, 1].map((t) => state.fighters.filter((f) => f.team === t).length);
     const ffa = mode() === "ffa";
-    pickTitle.textContent = ffa ? "⚔️ Tank Savaşı — herkes tek" : mode() === "ctf" ? "🚩 Bayrak kapmaca — takımını seç" : "⚔️ Tank Savaşı — takımını seç";
+    pickTitle.textContent = ffa ? "Herkes tek" : mode() === "ctf" ? "Bayrak kapmaca" : "Takımını seç";
     modeBtns.forEach((b, i) => b.classList.toggle("active", MODES[i].id === mode()));
     pickBtns.forEach((b, i) => {
       const full = counts[i] + (mine?.team === i ? 0 : 1) - counts[1 - i] + (mine?.team === 1 - i ? 1 : 0) > 1;

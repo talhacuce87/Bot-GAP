@@ -1,6 +1,8 @@
 // Fotoğraf modu (P): arayüz gizlenir, kamera daha uzağa açılır, filtre seçilir; çekilen kare önizlenir,
 // Discord'daki fotoğraf kanalına gönderilir ya da indirilir.
 import type { QuestDone } from "../../../shared/protocol";
+import { iconHtml } from "./icons";
+import { region } from "./layout";
 import { button, el } from "./panel";
 import { sfx } from "./sfx";
 
@@ -25,8 +27,8 @@ export class PhotoMode {
   private preview: HTMLDivElement;
 
   constructor(private root: HTMLElement, private host: PhotoHost) {
-    this.bar = el("div", "photo-bar", root);
-    this.preview = el("div", "panel photo-preview", root);
+    this.bar = el("div", "photo-bar", region(root, "bc"));
+    this.preview = el("div", "photo-preview", root);
   }
 
   toggle(): void {
@@ -58,8 +60,8 @@ export class PhotoMode {
         this.renderBar();
       }, i === this.filter ? "active" : "");
     });
-    button(b, "📸 Çek", () => void this.shoot(), "primary photo-shoot");
-    button(b, "✕ Çık", () => this.exit());
+    button(b, "", () => void this.shoot(), "primary photo-shoot").innerHTML = `${iconHtml("camera")}<span>Çek</span>`;
+    button(b, "", () => this.exit()).innerHTML = `${iconHtml("close")}<span>Çık</span>`;
     el("div", "photo-hint", b, "Sürükle: kamerayı çevir · tekerlek/iki parmak: yakınlaştır · 1–6 emote · P: çık");
     this.host.setFilter(this.filter);
   }
@@ -75,7 +77,7 @@ export class PhotoMode {
     img.src = url;
     img.alt = "Çekilen fotoğraf";
     const row = el("div", "bg-actions", p);
-    const send = button(row, "📤 Discord'a gönder", () => {
+    const send = button(row, "Discord'a gönder", () => {
       send.disabled = true;
       send.textContent = "Gönderiliyor…";
       void blobToBase64(blob).then(async (b64) => {
@@ -87,11 +89,11 @@ export class PhotoMode {
         } else {
           this.host.toast(`📸 ${r.error ?? "Gönderilemedi."}`);
           send.disabled = false;
-          send.textContent = "📤 Discord'a gönder";
+          send.textContent = "Discord'a gönder";
         }
       });
     }, "primary");
-    const save = el("a", "photo-save", row, "💾 İndir");
+    const save = el("a", "photo-save", row, "İndir");
     save.href = url;
     save.download = `gap-dunyasi-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.jpg`;
     button(row, "Kapat", () => {

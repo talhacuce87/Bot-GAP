@@ -77,7 +77,7 @@ export class RaceUi {
     this.placeEl = box("SIRA");
     this.timeEl = box("SÜRE");
     const quit = el("button", "race-quit", this.hud);
-    quit.textContent = "✕ Yarıştan çık";
+    quit.textContent = "Yarıştan çık";
     quit.addEventListener("click", () => this.hooks.leave());
     this.standEl = el("ol", "race-stand", this.hud);
     const bottom = el("div", "race-bottom", this.hud);
@@ -86,7 +86,6 @@ export class RaceUi {
     const nitro = el("div", "race-nitro", bottom);
     el("span", "race-nitro-label", nitro).innerHTML = touch ? "NİTRO" : "<kbd>E</kbd> NİTRO";
     this.nitroFill = el("div", "race-nitro-fill", el("div", "race-nitro-bar", nitro));
-    if (!touch) el("div", "race-keys", bottom).innerHTML = "<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> sür · <kbd>Space</kbd> drift · <kbd>E</kbd> nitro";
     this.big = el("div", "race-big", this.hud);
     if (touch) this.buildTouch(root);
   }
@@ -129,7 +128,7 @@ export class RaceUi {
     const host = s.host === you;
     this.panel.replaceChildren();
     const head = el("div", "race-head", this.panel);
-    el("h3", "", head).textContent = "🏎️ OYUNCAK PİST";
+    el("h3", "", head).textContent = "Oyuncak pist";
     el("span", "race-count", head).textContent = `${s.players.length}/${RACE.max} oyuncu`;
 
     if (s.phase === "end") {

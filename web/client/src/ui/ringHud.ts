@@ -3,6 +3,7 @@
 // bitişte sonuç tablosu. Durumu sunucu gönderir (RingView); konumlar her kare dışarıdan verilir.
 import { lightsAt, type RingView, raceTime, RACE_AREA, TRACK, TRACK_HALF } from "../../../shared/ring";
 import { CITY_DX } from "../../../shared/zones";
+import { region } from "./layout";
 
 export interface RingFrame {
   race: RingView | null;
@@ -91,7 +92,8 @@ export class RingHud {
     // Sol alt: hız
     this.speedo = el("canvas", "rh-speedo", this.root);
     this.speedo.width = this.speedo.height = 150 * dpr;
-    this.lobby = el("div", "rh-lobby", this.root);
+    // Lobi bandı üstte ortada, bildirimlerle aynı sütunda (üst üste binmez)
+    this.lobby = el("div", "rh-lobby", region(hudRoot, "tc"));
     this.results = el("div", "rh-results", this.root);
     this.wrong = el("div", "rh-wrong", this.root);
     this.wrong.textContent = "⟲ TERS YÖN";
@@ -121,12 +123,12 @@ export class RingHud {
     this.leaveBtn.hidden = !canLeave;
     const armed = performance.now() < this.leaveArmed;
     this.leaveBtn.classList.toggle("armed", armed);
-    this.leaveBtn.textContent = inLobby ? "🚪 Gridden çık" : armed ? "⚠️ Emin misin? Tıkla: terk et (DNF)" : "🏳️ Yarışı terk et";
+    this.leaveBtn.textContent = inLobby ? "Gridden çık" : armed ? "Emin misin? Tıkla: terk et (DNF)" : "Yarışı terk et";
     // Gridde bekleme şeridi
     this.lobby.classList.toggle("show", inLobby);
     if (inLobby) {
       const host = race.racers.find((r) => r.sid === race.host);
-      this.lobby.innerHTML = `<b>🏁 GRID · ${race.racers.length}/8</b><span>${race.racers.map((r) => `${r.slot + 1}. ${esc(r.name)}`).join(" · ")}</span><small>${race.host === f.me ? "F: yarışı başlat · G: tur sayısı" : `Yarışı ${esc(host?.name ?? "grid sahibi")} başlatacak · G: gridden çık`}</small>`;
+      this.lobby.innerHTML = `<b>GRID · ${race.racers.length}/8</b><span>${race.racers.map((r) => `${r.slot + 1}. ${esc(r.name)}`).join(" · ")}</span><small>${race.host === f.me ? "F: yarışı başlat · G: tur sayısı" : `Yarışı ${esc(host?.name ?? "grid sahibi")} başlatacak · G: gridden çık`}</small>`;
     }
 
     // Lambalar
@@ -252,23 +254,23 @@ export function drawSpeedo(canvas: HTMLCanvasElement, v: number, hand = false): 
   const kmh = Math.abs(v) * 3.6, max = 160;
   const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
   g.lineCap = "round";
-  g.lineWidth = 10;
-  g.strokeStyle = "rgba(255,255,255,0.14)";
+  g.lineWidth = 8;
+  g.strokeStyle = "rgba(255,255,255,0.1)";
   g.beginPath();
   g.arc(75, 78, 58, a0, a1);
   g.stroke();
   const t = Math.min(1, kmh / max);
   const grad = g.createLinearGradient(20, 0, 130, 0);
-  grad.addColorStop(0, "#3fa9ff");
-  grad.addColorStop(0.7, "#ffd23f");
-  grad.addColorStop(1, "#ff3b3b");
+  grad.addColorStop(0, "#5db3ff");
+  grad.addColorStop(0.65, "#ffb547");
+  grad.addColorStop(1, "#ff6464");
   g.strokeStyle = grad;
   g.beginPath();
   g.arc(75, 78, 58, a0, a0 + (a1 - a0) * t);
   g.stroke();
   // Çentikler (20 km/s)
   g.lineWidth = 2;
-  g.strokeStyle = "rgba(255,255,255,0.5)";
+  g.strokeStyle = "rgba(255,255,255,0.35)";
   for (let k = 0; k <= max; k += 20) {
     const a = a0 + (a1 - a0) * (k / max);
     g.beginPath();
@@ -276,17 +278,17 @@ export function drawSpeedo(canvas: HTMLCanvasElement, v: number, hand = false): 
     g.lineTo(75 + Math.cos(a) * 49, 78 + Math.sin(a) * 49);
     g.stroke();
   }
-  g.fillStyle = "#fff";
+  g.fillStyle = "#f2efe8";
   g.textAlign = "center";
-  g.font = "900 38px system-ui, sans-serif";
-  g.fillText(String(Math.round(kmh)), 75, 86);
-  g.font = "700 12px system-ui, sans-serif";
-  g.fillStyle = "rgba(255,255,255,0.7)";
-  g.fillText(v < -0.3 ? "R · km/sa" : "km/sa", 75, 106);
+  g.font = '700 44px "Barlow Condensed", system-ui, sans-serif';
+  g.fillText(String(Math.round(kmh)), 75, 90);
+  g.font = '700 12px "Barlow Condensed", system-ui, sans-serif';
+  g.fillStyle = "rgba(242,239,232,0.6)";
+  g.fillText(v < -0.3 ? "R · KM/SA" : "KM/SA", 75, 108);
   // El freni lambası
   if (hand) {
-    g.fillStyle = "#ff3b3b";
-    g.font = "900 12px system-ui, sans-serif";
+    g.fillStyle = "#ff6464";
+    g.font = '700 13px "Barlow Condensed", system-ui, sans-serif';
     g.fillText("(P) EL FRENİ", 75, 128);
   }
 }

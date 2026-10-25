@@ -7,6 +7,8 @@ import { CAR_PRICES, carItem } from "../../../shared/shop";
 import { owned } from "../owned";
 import { buildMotor } from "../world/motor";
 import { buildTofas } from "../world/tofas";
+import { iconHtml } from "./icons";
+import { modalClosed, modalOpened } from "./layout";
 
 export interface CarMenuHooks {
   /** Bu model yanına gelsin. */
@@ -99,7 +101,7 @@ export class CarMenu {
     this.root.className = "carmenu";
     const panel = document.createElement("div");
     panel.className = "cm-panel";
-    panel.innerHTML = '<div class="cm-head"><b>ARAÇLARIM</b><span>Bir araca tıkla: yanına gelsin · F ile bin</span><button class="cm-x" title="Kapat (Esc)">✕</button></div>';
+    panel.innerHTML = `<div class="cm-head">${iconHtml("car", "cm-ic")}<div class="cm-titles"><b>Araçlarım</b><span>Bir araca tıkla: yanına gelsin · F ile bin</span></div><button class="gp-x cm-x" title="Kapat (Esc)" aria-label="Kapat">${iconHtml("close")}</button></div>`;
     this.head = panel.querySelector(".cm-head")!;
     owned.on(() => this.isOpen && this.render());
     this.cards = document.createElement("div");
@@ -132,8 +134,9 @@ export class CarMenu {
 
   open(gallery = false): void {
     this.gallery = gallery;
-    this.head.querySelector("b")!.textContent = gallery ? "GAP GALERİ" : "ARAÇLARIM";
-    this.head.querySelector("span")!.textContent = gallery ? "Sıfır araçlar · bir kez al, hep senin" : "Bir araca tıkla: yanına gelsin · F ile bin";
+    this.head.querySelector("b")!.textContent = gallery ? "GAP Galeri" : "Araçlarım";
+    this.head.querySelector(".cm-titles span")!.textContent = gallery ? "Sıfır araçlar · bir kez al, hep senin" : "Bir araca tıkla: yanına gelsin · F ile bin";
+    if (!this.isOpen) modalOpened(this);
     this.isOpen = true;
     this.root.classList.add("show");
     this.hooks.modal(true);
@@ -144,6 +147,7 @@ export class CarMenu {
     if (!this.isOpen) return;
     this.isOpen = false;
     this.root.classList.remove("show");
+    modalClosed(this);
     this.hooks.modal(false);
     this.thumbs.dispose();
   }
@@ -168,17 +172,17 @@ export class CarMenu {
         if (this.gallery) {
           card.innerHTML =
             `<div class="cm-img">${img ? `<img src="${img}" alt="">` : "🚗"}</div>` +
-            `<div class="cm-info"><b>${m.name.toUpperCase()}</b><small>${TAGLINE[m.id]}</small>` +
-            `<div class="cm-tags"><span>⚡ ${Math.round(perf.top * 3.6)} km/sa</span><span>🏁 ${perf.accel.toFixed(1)} ivme</span>${perf.diesel ? "<span>⛽ Dizel</span>" : ""}</div>` +
-            `<em>${mine ? "✓ Senin" : `${price.toLocaleString("tr-TR")} ₺`}</em></div>` +
+            `<div class="cm-info"><b>${m.name}</b><small>${TAGLINE[m.id]}</small>` +
+            `<div class="cm-tags"><span>${iconHtml("gauge")} ${Math.round(perf.top * 3.6)} km/sa</span><span>${iconHtml("lightning")} ${perf.accel.toFixed(1)} ivme</span>${perf.diesel ? "<span>Dizel</span>" : ""}</div>` +
+            `<em>${mine ? "Senin" : `${price.toLocaleString("tr-TR")} ₺`}</em></div>` +
             `<div class="cm-call${mine ? "" : " buy"}">${mine ? "ÇAĞIR" : "SATIN AL"}</div>`;
           card.addEventListener("click", () => (mine ? this.pick(m.id) : this.hooks.buy(m.id)));
           return card;
         }
-        const status = !mine ? `🔒 ${price.toLocaleString("tr-TR")} ₺ · GAP Galeri'de` : st.driving === m.id ? "🟢 Şu an sürüyorsun" : st.parked?.model === m.id ? `🅿️ Park halinde · ${Math.round(st.parked.dist)} m` : "Garajda";
+        const status = !mine ? `${price.toLocaleString("tr-TR")} ₺ · GAP Galeri'de` : st.driving === m.id ? "Şu an sürüyorsun" : st.parked?.model === m.id ? `Park halinde · ${Math.round(st.parked.dist)} m` : "Garajda";
         card.innerHTML =
           `<div class="cm-img">${img ? `<img src="${img}" alt="">` : "🚗"}</div>` +
-          `<div class="cm-info"><kbd>${i + 1}</kbd><b>${m.name.toUpperCase()}</b><small>${TAGLINE[m.id]}</small>` +
+          `<div class="cm-info"><kbd>${i + 1}</kbd><b>${m.name}</b><small>${TAGLINE[m.id]}</small>` +
           `<div class="cm-tags"><span><i style="background:${color?.hex}"></i>${color?.name ?? ""}</span><span class="cm-plate">${spec.plate}</span></div>` +
           `<em>${status}</em></div>` +
           `<div class="cm-call">${st.parked?.model === m.id ? "YANIMA GETİR" : "ÇAĞIR"}</div>`;
@@ -194,7 +198,7 @@ export class CarMenu {
     if (st.parked && !st.driving) {
       const b = document.createElement("button");
       b.className = "cm-dismiss";
-      b.textContent = "🅿️ Park edilen arabayı kaldır";
+      b.textContent = "Park edilen arabayı kaldır";
       b.addEventListener("click", () => {
         this.hooks.dismiss();
         this.close();

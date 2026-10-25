@@ -2,6 +2,9 @@
 // Kare başına DOM'a dokunulmaz; süre göstergesi saniyede 4 kez güncellenir.
 import type { WatchState } from "../../../shared/protocol";
 import type { WatchSync } from "../watch/sync";
+import { icon, iconHtml } from "./icons";
+import { region } from "./layout";
+import { paintRange } from "./panel";
 
 const OP_TEXT: Record<string, string> = {
   load: "yeni video açtı",
@@ -55,10 +58,14 @@ export class WatchPanel {
     private sync: WatchSync,
     private actions: WatchActions,
   ) {
-    this.root = el("div", "panel watch", hud);
-    this.title = el("div", "watch-title", this.root, "Watch party");
+    this.root = el("div", "watch", region(hud, "bc"));
+    const top = el("div", "watch-top", this.root);
+    icon("film", "watch-ic", top);
+    this.title = el("div", "watch-title", top, "Watch party");
     const row = el("div", "watch-row", this.root);
-    this.playBtn = el("button", "watch-btn", row, "⏸");
+    this.playBtn = el("button", "watch-btn main", row);
+    this.playBtn.innerHTML = iconHtml("pause");
+    this.playBtn.setAttribute("aria-label", "Oynat / duraklat");
     this.playBtn.addEventListener("click", () => {
       const s = this.sync.state;
       if (s) this.actions.command(s.playing ? "pause" : "play", this.sync.target());
@@ -68,6 +75,7 @@ export class WatchPanel {
     this.seek.min = "0";
     this.seek.step = "1";
     this.seek.addEventListener("pointerdown", () => (this.dragging = true));
+    this.seek.addEventListener("input", () => paintRange(this.seek));
     this.seek.addEventListener("change", () => {
       this.dragging = false;
       this.actions.command("seek", Number(this.seek.value));
@@ -75,20 +83,25 @@ export class WatchPanel {
     this.time = el("span", "watch-time", row, "--:--");
     const full = this.actions.fullscreen;
     if (full) {
-      const fs = el("button", "watch-btn small", row, "⛶");
+      const fs = el("button", "watch-btn small", row);
+      icon("cornersOut", "", fs);
       fs.title = "Tam ekran (Esc ile çık)";
       fs.addEventListener("click", () => full());
     }
 
     const row2 = el("div", "watch-row", this.root);
-    el("span", "watch-label", row2, "🔊");
+    icon("speaker", "watch-label", row2);
     const vol = el("input", "watch-vol", row2);
     vol.type = "range";
     vol.min = "0";
     vol.max = "1";
     vol.step = "0.05";
     vol.value = String(this.sync.userVolume);
-    vol.addEventListener("input", () => this.sync.setVolume(Number(vol.value)));
+    paintRange(vol);
+    vol.addEventListener("input", () => {
+      paintRange(vol);
+      this.sync.setVolume(Number(vol.value));
+    });
     const link = el("input", "watch-link", row2);
     link.placeholder = "Yeni link yapıştır…";
     link.addEventListener("keydown", (e) => {
@@ -99,7 +112,8 @@ export class WatchPanel {
         link.blur();
       }
     });
-    this.interactBtn = el("button", "watch-btn small", row2, "🖱");
+    this.interactBtn = el("button", "watch-btn small", row2);
+    icon("cursorClick", "", this.interactBtn);
     this.interactBtn.title = "Etkileşim modu: oynatıcıya doğrudan tıkla (ör. Kick'te sesi açmak için)";
     this.interactBtn.addEventListener("click", () => {
       this.interactive = !this.interactive;
@@ -107,8 +121,9 @@ export class WatchPanel {
       this.actions.setInteractive(this.interactive);
     });
 
-    this.toast = el("div", "panel toast", hud);
-    this.start = el("button", "watch-start", hud, "🍿 İzlemeye başla (sesi aç)");
+    this.toast = el("div", "toast watch-toast", region(hud, "tc"));
+    this.start = el("button", "watch-start", hud);
+    this.start.innerHTML = `${iconHtml("play")}<span>İzlemeye başla</span><small>Sesi açmak için dokun</small>`;
     // Tarayıcı sesi ilk kullanıcı hareketinden sonra açtırır: oyunda herhangi bir tık ya da tuş yeter
     // (düğmeyi görmeyen sessiz izlemesin).
     const unlock = () => {
@@ -140,7 +155,7 @@ export class WatchPanel {
     const kick = s.source?.kind === "kick" && !s.source.relay ? s.source.channel : ""; // aktarılan Kick normal video gibi sesli
     if (kick && kick !== this.kickHint) {
       this.kickHint = kick;
-      this.notice("Kick: ses için 🍿 İzlemeye başla'ya bas. Yine gelmezse 🖱 ile oynatıcıdaki hoparlöre tıkla.");
+      this.notice("Kick: ses için «İzlemeye başla»ya bas. Yine gelmezse fare düğmesiyle oynatıcıdaki hoparlöre tıkla.");
     }
     this.title.textContent = s.source ? s.title : "Bir link yapıştır";
     const key = `${s.op}|${s.updatedAt}`;
@@ -158,7 +173,11 @@ export class WatchPanel {
     this.lastUpdate = now;
     const s = this.sync.state;
     if (!s) return;
-    this.playBtn.textContent = s.playing ? "⏸" : "▶";
+    const playing = s.playing ? "1" : "0";
+    if (this.playBtn.dataset.playing !== playing) {
+      this.playBtn.dataset.playing = playing;
+      this.playBtn.innerHTML = iconHtml(s.playing ? "pause" : "play");
+    }
     if (this.sync.live) {
       this.time.textContent = "● CANLI";
       return;
@@ -166,7 +185,10 @@ export class WatchPanel {
     const t = this.sync.target();
     const dur = this.sync.player?.duration() ?? Number.NaN;
     if (Number.isFinite(dur)) this.seek.max = String(Math.floor(dur));
-    if (!this.dragging) this.seek.value = String(Math.floor(t));
+    if (!this.dragging) {
+      this.seek.value = String(Math.floor(t));
+      paintRange(this.seek);
+    }
     this.time.textContent = `${fmt(t)} / ${fmt(dur)}`;
   }
 }

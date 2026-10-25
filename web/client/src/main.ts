@@ -45,6 +45,7 @@ import { sakuraEntrance } from "./ui/sakuraFx";
 import { Chat } from "./ui/chat";
 import { plainLook, Wardrobe } from "./ui/wardrobe";
 import { SettingsPanel } from "./ui/settingsPanel";
+import { toolMenuItem } from "./ui/layout";
 import { openYoutubeTest } from "./ui/youtube";
 import { ScreenSender } from "./share/sender";
 import { ShareViewer } from "./share/viewer";
@@ -152,6 +153,12 @@ async function start(): Promise<void> {
     return;
   }
 
+  // İsim etiketleri tuvale arayüzün yazı tipiyle çizilir: yüklenmesini kısa süre bekle (yavaş bağlantıda yedek yazı tipi)
+  await Promise.race([
+    Promise.all(["600 31px Barlow", '700 20px "Barlow Condensed"'].map((f) => document.fonts.load(f))).catch(() => undefined),
+    new Promise((r) => setTimeout(r, 1500)),
+  ]);
+  if (!life.active) return;
   const atlas = new AvatarAtlas();
   // Yakındaki avatarlar chibi; paket (~2 MB) dünya kurulurken iner, yükleme ekranının sonunda beklenir.
   const chibi = new ChibiLayer(lowPower ? 14 : 28, lowPower ? 26 : 40);
@@ -203,7 +210,7 @@ async function start(): Promise<void> {
   const input = new Input(canvas, hudRoot);
   const hud = new Hud(hudRoot, session.user.name, input.touch, () => input.triggerAction());
   life.onStop(() => input.dispose());
-  life.onStop(onBinds(() => hud.refreshHint()));
+  life.onStop(onBinds(() => hud.refreshKeys()));
   world.fame.setAvatarUrl((id, hash) => `${session.base}/avatar/${id}/${hash}`);
   if (!life.active) return;
   const net = new Net(session.wsUrl, remotes);
@@ -468,12 +475,7 @@ async function start(): Promise<void> {
   /** Sinemada bir şey oynuyor mu (perdede ya da tarayıcıda). */
   let cinemaOn = false;
   // Tank savaşı: aynı odanın savaş odası (izleme odasından da); geçiş sayfa yenilenmeden
-  const battleBtn = document.createElement("button");
-  battleBtn.className = "wardrobe-btn battle-btn";
-  battleBtn.textContent = "⚔️";
-  battleBtn.title = "Tank savaşı (!savaş)";
-  battleBtn.addEventListener("click", () => switchMode(true));
-  hudRoot.append(battleBtn);
+  toolMenuItem(hudRoot, { icon: "sword", label: "Tank savaşı", order: 3, onClick: () => switchMode(true) });
   if (session.mode !== "watch") {
     hud.cinemaButton(openCinema);
     // Dosya/HLS (TRT, .m3u8, .mp4) ve sunucunun yt-dlp ile çözdüğü YouTube/Twitch/Kick sunucu üzerinden
@@ -613,7 +615,7 @@ async function start(): Promise<void> {
   hud.shareButton(() => void toggleShare());
   if (session.mode === "watch" && params.has("share")) {
     hud.highlightShare();
-    hud.toast("🖥️ Ekranını paylaşmak için sağdaki 🖥️ düğmesine bas.");
+    hud.toast("🖥️ Ekranını paylaşmak için sağ üstteki Diğer menüsünden «Ekranını paylaş»ı seç.");
   }
 
   // Debug: gardırobu bot olmadan denemek için (ekran görüntüsü testleri)

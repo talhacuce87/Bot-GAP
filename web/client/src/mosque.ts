@@ -10,6 +10,7 @@ import type { FeatureAct } from "./features";
 import type { Input } from "./input/input";
 import type { Net } from "./net";
 import type { Player } from "./player";
+import { region } from "./ui/layout";
 import { sfx } from "./ui/sfx";
 
 /** Ezanın duyulduğu uzaklık (m, en yakın minareye). */
@@ -44,7 +45,7 @@ export class MosqueClient {
   constructor(private c: MosqueContext) {
     this.banner = document.createElement("div");
     this.banner.className = "namaz-banner";
-    c.hudRoot.append(this.banner);
+    region(c.hudRoot, "tc").append(this.banner);
   }
 
   /** Debug: kendi karakterini bir duruşun ortasında sabitler (görünüm denemesi). */

@@ -1,0 +1,550 @@
+/* ---- Ayarlar penceresi: solda kategoriler, sağda ayarlar ---- */
+.settings {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 20;
+  display: none;
+  grid-template-columns: 220px minmax(0, 1fr);
+  width: min(860px, calc(100vw - 24px));
+  height: min(600px, calc(100dvh - 40px));
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xl);
+  background: var(--ink-2);
+  box-shadow: var(--shadow-3), var(--hl);
+  color: var(--text);
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+
+.settings.show {
+  display: grid;
+  animation: ui-pop var(--t) var(--ease-out);
+}
+
+/* Sol: kategoriler */
+.st-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 18px 12px 12px;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--ink-1), #080b10);
+}
+
+.st-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 10px 18px;
+}
+
+.st-brand small {
+  color: var(--accent);
+  font: 700 11.5px/1 var(--font-display);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.st-brand b {
+  font: 700 30px/1 var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.st-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.st-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 42px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text-2);
+  font: 600 15px/1 var(--font);
+  text-align: left;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.st-tab .ic {
+  width: 19px;
+  height: 19px;
+  color: var(--faint);
+  transition: color var(--t-fast);
+}
+
+.st-tab:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.st-tab.on {
+  background: var(--ink-4);
+  color: var(--text);
+}
+
+.st-tab.on .ic {
+  color: var(--accent);
+}
+
+.st-tab.on::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.st-reset {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  margin-top: auto;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--muted);
+  font: 600 13px/1 var(--font);
+}
+
+.st-reset .ic {
+  width: 16px;
+  height: 16px;
+}
+
+.st-reset:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.st-reset.armed {
+  background: var(--bad-soft);
+  color: #ffb3b3;
+}
+
+/* Sağ: başlık, ayarlar, uygula şeridi */
+.st-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.st-head {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 22px 14px 14px 28px;
+}
+
+.st-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.st-titles h3 {
+  margin: 0;
+  font: 700 26px/1 var(--font-display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.st-titles p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.st-body {
+  flex: 1;
+  min-height: 0;
+  padding: 2px 28px 24px;
+  overflow-y: auto;
+}
+
+.st-body > .settings-section {
+  margin: 18px 0 4px;
+}
+
+.st-body > .settings-section:first-child {
+  margin-top: 4px;
+}
+
+/* Ayar satırı: ad ve açıklama solda, denetim sağda */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 56px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-row.clickable {
+  cursor: pointer;
+}
+
+.settings-row.clickable:hover .settings-label b {
+  color: #fff;
+}
+
+.settings-label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-label b {
+  color: var(--text);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.settings-label small {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.settings-row .settings-seg {
+  flex: none;
+}
+
+.settings-row.stack {
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+
+.settings-row.stack .settings-seg {
+  flex: 1 1 100%;
+}
+
+.settings-slider {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-slider input {
+  width: 170px;
+}
+
+.settings-value {
+  min-width: 44px;
+  color: var(--text);
+  font: 700 16px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Grafik ön ayarları: dört kart, sinyal çubuklarıyla seviye */
+.st-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 6px 0 4px;
+}
+
+.st-preset {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 78px;
+  padding: 12px 12px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--ink-1);
+  color: var(--text);
+  text-align: left;
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+
+.st-preset b {
+  font: 700 19px/1 var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.st-preset small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.st-preset:hover {
+  border-color: var(--line-3);
+  background: var(--ink-3);
+}
+
+.st-preset.on {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(255, 181, 71, 0.12), rgba(255, 181, 71, 0.03));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.st-preset.on small {
+  color: #ffd38f;
+}
+
+/* Seviye çubukları (sağ üst köşe) */
+.st-bars {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 22px;
+  height: 14px;
+  background:
+    linear-gradient(var(--c1), var(--c1)) 0 100% / 4px 35% no-repeat,
+    linear-gradient(var(--c2), var(--c2)) 6px 100% / 4px 57% no-repeat,
+    linear-gradient(var(--c3), var(--c3)) 12px 100% / 4px 78% no-repeat,
+    linear-gradient(var(--c4), var(--c4)) 18px 100% / 4px 100% no-repeat;
+  --off: rgba(255, 255, 255, 0.14);
+  --c1: var(--off);
+  --c2: var(--off);
+  --c3: var(--off);
+  --c4: var(--off);
+}
+
+.st-bars[data-level="1"] {
+  --c1: var(--text-2);
+}
+
+.st-bars[data-level="2"] {
+  --c1: var(--text-2);
+  --c2: var(--text-2);
+}
+
+.st-bars[data-level="3"] {
+  --c1: var(--text-2);
+  --c2: var(--text-2);
+  --c3: var(--text-2);
+}
+
+.st-bars[data-level="4"] {
+  --c1: var(--text-2);
+  --c2: var(--text-2);
+  --c3: var(--text-2);
+  --c4: var(--text-2);
+}
+
+.st-preset.on .st-bars {
+  --c-on: var(--accent);
+}
+
+.st-preset.on .st-bars[data-level="1"] {
+  --c1: var(--accent);
+}
+
+.st-preset.on .st-bars[data-level="2"] {
+  --c1: var(--accent);
+  --c2: var(--accent);
+}
+
+.st-preset.on .st-bars[data-level="3"] {
+  --c1: var(--accent);
+  --c2: var(--accent);
+  --c3: var(--accent);
+}
+
+.st-preset.on .st-bars[data-level="4"] {
+  --c1: var(--accent);
+  --c2: var(--accent);
+  --c3: var(--accent);
+  --c4: var(--accent);
+}
+
+.st-custom {
+  margin-top: 4px;
+  color: #ffd38f;
+}
+
+.st-tip {
+  margin: 4px 0 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--info);
+  border-radius: var(--r);
+  background: var(--ink-1);
+}
+
+/* Tuş atamaları: eylem başına iki tuş kutusu */
+.st-keys {
+  display: flex;
+  flex-direction: column;
+}
+
+.st-key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 44px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.st-key-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.st-key-slots {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.settings-key {
+  width: 104px;
+  height: 32px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid var(--line-3);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, #232c39, #19202a);
+  color: var(--text);
+  font: 700 14px/1 var(--font-display);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+
+.settings-key:hover {
+  border-color: var(--accent-line);
+}
+
+.settings-key.empty {
+  border-style: dashed;
+  border-bottom-width: 1px;
+  background: transparent;
+  color: var(--faint);
+}
+
+.settings-key.waiting {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  animation: blink 1s ease-in-out infinite;
+}
+
+.st-keynote {
+  margin-top: 10px;
+}
+
+.st-keys-reset {
+  margin-top: 14px;
+}
+
+/* Uygula şeridi (yeniden kurulum gerektiren ayar değişince) */
+.st-apply {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px 12px 28px;
+  border-top: 1px solid var(--accent-line);
+  background: rgba(255, 181, 71, 0.07);
+  color: #ffd38f;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.st-apply.show {
+  display: flex;
+}
+
+.st-apply span {
+  flex: 1;
+}
+
+/* Dar ekran: kategoriler üstte yatay */
+@media (max-width: 700px) {
+  .settings {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 24px);
+  }
+
+  .st-side {
+    flex-direction: row;
+    align-items: center;
+    padding: 8px;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .st-brand,
+  .st-reset span {
+    display: none;
+  }
+
+  .st-nav {
+    flex-direction: row;
+  }
+
+  .st-tab {
+    flex: none;
+    height: 36px;
+    font-size: 14px;
+  }
+
+  .st-tab.on::before {
+    left: 10px;
+    right: 10px;
+    top: auto;
+    bottom: -8px;
+    width: auto;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+  }
+
+  .st-reset {
+    margin: 0 0 0 auto;
+  }
+
+  .st-head {
+    padding: 16px 10px 8px 16px;
+  }
+
+  .st-body {
+    padding: 0 16px 18px;
+  }
+
+  .st-presets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-slider input {
+    width: 120px;
+  }
+
+  .settings-key {
+    width: 84px;
+  }
+}

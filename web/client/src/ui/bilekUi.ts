@@ -34,7 +34,7 @@ export function drawBilek(g: CanvasRenderingContext2D, t: TableState, s: BilekSt
 }
 
 function text(g: CanvasRenderingContext2D, s: string, x: number, y: number, size: number, color: string, align: CanvasTextAlign = "center"): void {
-  g.font = `600 ${size}px system-ui, "Segoe UI", sans-serif`;
+  g.font = `600 ${size}px Barlow, system-ui, sans-serif`;
   g.textAlign = align;
   g.textBaseline = "middle";
   g.fillStyle = color;

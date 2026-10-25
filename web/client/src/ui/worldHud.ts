@@ -1,6 +1,7 @@
 // Dünya oyunlarının ekran parçaları: şarkı kuyruğu / DJ paneli, ebelemece-saklambaç bandı (ebeye göz kapama),
 // futbol skoru ve şut gücü, beşlik/sarılma isteği.
 import type { StageState, TagState } from "../../../shared/protocol";
+import { region } from "./layout";
 import { button, el, Panel } from "./panel";
 
 const SHOWS = ["Kapalı", "🌈 Gökkuşağı", "🔥 Sıcak", "💜 Lazer"];
@@ -28,14 +29,15 @@ export class WorldHud {
   private tagKey = "";
 
   constructor(root: HTMLElement, private me: () => number, private a: WorldHudActions, private nameOf: (sid: number) => string) {
-    this.queue = new Panel(root, "🎵 ŞARKI KUYRUĞU", "queue-panel");
-    this.tagEl = el("div", "panel tag-banner", root);
+    this.queue = new Panel(root, "Şarkı kuyruğu", "queue-panel", "music");
+    this.tagEl = el("div", "tag-banner", region(root, "tc"));
     this.blind = el("div", "tag-blind", root);
-    this.score = el("div", "panel pitch-score", root);
-    this.power = el("div", "kick-power", root);
+    const bc = region(root, "bc");
+    this.score = el("div", "pitch-score", bc);
+    this.power = el("div", "kick-power", bc);
     this.powerFill = el("div", "kick-fill", this.power);
     this.powerLabel = el("span", "kick-label", this.power);
-    this.pairEl = el("div", "panel pair-req", root);
+    this.pairEl = el("div", "pair-req", bc);
   }
 
   // ---- Şarkı kuyruğu ve DJ ----

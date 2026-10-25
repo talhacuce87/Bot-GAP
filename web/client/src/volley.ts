@@ -43,6 +43,7 @@ import type { Input } from "./input/input";
 import { type Action, actionLabel, onBinds, profile, setProfile } from "./input/keybinds";
 import type { Net } from "./net";
 import type { Player } from "./player";
+import { modeButton, region } from "./ui/layout";
 import { button, el, Panel } from "./ui/panel";
 import { falloff, sfx } from "./ui/sfx";
 import type { VolleyCourt } from "./world/volleyCourt";
@@ -131,7 +132,8 @@ export class VolleyClient {
   private modeEl: HTMLElement;
   private setEl: HTMLElement;
   private keyEls: { a: Action; e: HTMLElement }[] = [];
-  private help: HTMLDivElement;
+  private help: HTMLButtonElement;
+  private top: HTMLDivElement;
   private exitBtn: HTMLButtonElement;
   private teamBtn: HTMLButtonElement;
   private panel: Panel;
@@ -151,8 +153,9 @@ export class VolleyClient {
     this.balls.set(0, new BallView(d.scene, { x: VOLLEY_COURT.x - 3, y: V_BALL_R, z: VOLLEY_COURT.z, vx: 0, vy: 0, vz: 0, at: 0 }));
 
     const hud = d.hudRoot;
-    this.root = el("div", "vb-hud", hud);
-    const top = el("div", "vb-top", this.root);
+    // Skor üstte ortada, alt panel (top, güç, stamina) etkileşimlerin altında: HUD bölgelerinde, üst üste binmez
+    this.root = el("div", "vb-hud", region(hud, "bc"));
+    const top = (this.top = el("div", "vb-top", region(hud, "tc")));
     this.scoreEl = el("div", "vb-score", top);
     this.infoEl = el("div", "vb-info", top);
     // Alt panel (4.2 düzeni): üstte falso topu, ortada güç ve stamina, yanlarda zıplama ve pas türü
@@ -194,12 +197,11 @@ export class VolleyClient {
     el("small", "", rt, "PAS TÜRÜ:");
     this.setEl = el("b", "", rt);
     key(right, "vSetType");
-    this.help = el("div", "fb-help vb-help", hud);
-    this.exitBtn = el("button", "battle-exit fb-exit", hud, "🏠 Dünyaya dön");
-    this.exitBtn.addEventListener("click", () => this.goHome());
-    this.teamBtn = el("button", "battle-switch", hud, "🏐 Menü");
-    this.teamBtn.addEventListener("click", () => this.togglePos());
-    this.panel = new Panel(hud, "🏐 VOLEYBOL", "vb-menu");
+    // Sol üstte mod düğmeleri: dünyaya dön, menü, tuşlar (tuş listesi ekranda şerit değil, Ayarlar → Tuşlar)
+    this.exitBtn = modeButton(hud, { icon: "house", label: "Dünyaya dön", toggle: true, onClick: () => this.goHome() });
+    this.teamBtn = modeButton(hud, { icon: "users", label: "Menü", toggle: true, onClick: () => this.togglePos() });
+    this.help = modeButton(hud, { icon: "keyboard", label: "Tuşlar", toggle: true, onClick: () => dispatchEvent(new Event("gap:keys")) });
+    this.panel = new Panel(hud, "Voleybol", "vb-menu");
     this.offBinds = onBinds(() => this.renderHelp());
 
     const { net } = d;
@@ -220,7 +222,7 @@ export class VolleyClient {
     this.offBinds();
     for (const v of this.balls.values()) v.dispose();
     this.balls.clear();
-    for (const e of [this.root, this.help, this.exitBtn, this.teamBtn, this.panel.root]) e.remove();
+    for (const e of [this.root, this.top, this.help, this.exitBtn, this.teamBtn, this.panel.root]) e.remove();
     if (profile === "volley") setProfile("world");
   }
 
@@ -540,6 +542,7 @@ export class VolleyClient {
     this.d.me.volley = on;
     setProfile(on ? "volley" : "world");
     this.root.classList.toggle("show", on);
+    this.top.classList.toggle("show", on);
     this.exitBtn.classList.toggle("show", on);
     this.teamBtn.classList.toggle("show", on);
     this.d.hudRoot.classList.toggle("volley", on);
@@ -602,16 +605,10 @@ export class VolleyClient {
     this.d.court.setBoard(s.score, s.target, s.target ? (s.phase === "serve" ? `Servis: ${this.d.nameOf(s.server)}` : s.note) : `Antrenman · ${actionLabel("vTeam")}: pozisyon`);
   }
 
-  /** Tuş ipucu şeridi ve alt paneldeki tuşlar: geçerli atamalarla. */
+  /** Alt paneldeki tuşlar: geçerli atamalarla. */
   private renderHelp(): void {
     if (profile !== "volley") return;
     for (const { a, e } of this.keyEls) e.textContent = actionLabel(a);
-    const k = (a: Action) => `<b>${actionLabel(a)}</b>`;
-    this.help.innerHTML =
-      `${k("vHit")} Manşet · havada Smaç · ${k("vSetF")}/${k("vSetB")} Pas · ${k("vDump")} Dump · ${k("vDive")} Dalış · ` +
-      `${k("vPow1")}/${k("vPow8")}/${k("vPow15")} Güç 1/8/15 · ${k("vServe")} Servis topu (${k("vHit")} at, ${k("vHit")} vur) · ${k("run")} Sprint · ` +
-      `havada WASD yatış · ${k("vToss")} Top at · ${k("vTeam")} Menü <button type="button">⌨️ Tuşlar</button>`;
-    this.help.querySelector("button")?.addEventListener("click", () => dispatchEvent(new Event("gap:keys")));
   }
 
   private goHome(): void {
