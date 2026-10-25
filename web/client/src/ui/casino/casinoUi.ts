@@ -1,7 +1,6 @@
-// Casino oyun ekranı: masaya oturunca açılan alt katman. Başlık, canlı bakiye (sayarak değişir), "test coin
-// al" ve "Kalk". Açıkken klavye oyuna değil bu ekrana gider (yanlışlıkla kalkılmaz); kısayolları oyun işler.
+// Casino oyun ekranı: masaya oturunca açılan alt katman. Başlık, canlı bakiye (GAP ₺, sayarak değişir) ve
+// "Kalk". Açıkken klavye oyuna değil bu ekrana gider (yanlışlıkla kalkılmaz); kısayolları oyun işler.
 // Rulet ve blackjack canlı masalardır: oturan oynar, yakında duran izler (sunucuda ortak, süreli turlar).
-import { MIN_BET } from "../../../../shared/casino";
 import { POKER } from "../../../../shared/poker";
 import type { ClientEvent, ServerEvent } from "../../../../shared/protocol";
 import { BlackjackView } from "./blackjackView";
@@ -22,7 +21,7 @@ export interface GameView {
   key(code: string): boolean;
   /** Sunucu hamleyi reddetti (bildirim geldi): bekleyen hamle kilidini aç. */
   failed(): void;
-  /** Bakiye dışarıdan değişti (test coin): düğmeleri yenile. */
+  /** Bakiye dışarıdan değişti: düğmeleri yenile. */
   refresh(): void;
   dispose(): void;
 }
@@ -49,7 +48,6 @@ export class CasinoUi {
   private root: HTMLDivElement;
   private titleEl: HTMLDivElement;
   private balEl: HTMLElement;
-  private refillBtn: HTMLButtonElement;
   private body: HTMLDivElement;
   private view: GameView | null = null;
   private kind: GameKind | null = null;
@@ -78,18 +76,14 @@ export class CasinoUi {
     this.titleEl.className = "cz-title";
     const bal = document.createElement("div");
     bal.className = "cz-balance";
-    bal.innerHTML = '💰 <b>0</b> <span>GAP</span>';
+    bal.innerHTML = '💰 <b>0</b> <span>₺</span>';
     this.balEl = bal.querySelector("b")!;
-    this.refillBtn = document.createElement("button");
-    this.refillBtn.className = "cz-refill";
-    this.refillBtn.textContent = "+ Test coin al";
-    this.refillBtn.addEventListener("click", () => this.net.send({ t: "casino", op: "refill" }));
     const close = (this.closeBtn = document.createElement("button"));
     close.className = "cz-close";
     close.textContent = "Kalk ✕";
     close.title = "Masadan kalk (Esc)";
     close.addEventListener("click", () => this.leave());
-    head.append(this.titleEl, bal, this.refillBtn, close);
+    head.append(this.titleEl, bal, close);
     this.body = document.createElement("div");
     this.body.className = "cz-body";
     const panel = document.createElement("div");
@@ -198,7 +192,6 @@ export class CasinoUi {
 
   private setBalance(b: number): void {
     this.target = b;
-    this.refillBtn.classList.toggle("show", b < MIN_BET);
     if (this.raf) return;
     const tick = () => {
       const d = this.target - this.shown;

@@ -8108,3 +8108,357 @@ button.cz-bjspot {
   font-size: 11px;
   opacity: 0.75;
 }
+
+/* ---- Hayat ve para (sol altta minimap + barlar, sağ üstte GAP ₺, yaralı kartı) ---- */
+.life-hud {
+  position: absolute;
+  left: max(10px, env(safe-area-inset-left));
+  bottom: max(10px, env(safe-area-inset-bottom));
+  width: 190px;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+.has-life .life-hud {
+  display: flex;
+}
+.mm-canvas {
+  width: 190px;
+  height: 130px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.life-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: rgba(12, 16, 24, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.life-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  --c: #e24b4a;
+}
+.life-row.hunger {
+  --c: #ef9f27;
+}
+.life-row.energy {
+  --c: #378add;
+}
+.life-ic {
+  width: 14px;
+  height: 14px;
+  color: var(--c);
+  flex: none;
+  display: flex;
+}
+.life-ic svg {
+  width: 100%;
+  height: 100%;
+  fill: var(--c);
+}
+.life-row.hunger .life-ic svg {
+  fill: none;
+}
+.life-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.life-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 3px;
+  background: var(--c);
+  transition: width 0.6s;
+}
+.life-row.warn .life-bar i,
+.life-row.warn .life-ic {
+  animation: life-blink 0.9s ease-in-out infinite;
+}
+@keyframes life-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+/* Minimap varken sohbet sağına kayar; arabanın hız göstergesi sağ alta */
+.has-life .chat {
+  left: calc(max(10px, env(safe-area-inset-left)) + 200px);
+  width: min(340px, calc(100vw - 220px));
+}
+.has-life .hint {
+  max-width: calc(100vw - 230px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.has-life .drive-speedo,
+.has-life .rh-speedo {
+  left: auto;
+  right: calc(max(10px, env(safe-area-inset-right)) + 14px);
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 30px);
+}
+
+.money-pill {
+  position: absolute;
+  top: calc(max(10px, env(safe-area-inset-top)) + 46px);
+  right: calc(max(10px, env(safe-area-inset-right)) + 150px);
+  display: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: inherit;
+  font-weight: 700;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: #9fe1cb;
+  background: rgba(12, 16, 24, 0.8);
+  box-shadow: inset 0 0 0 1px rgba(93, 202, 165, 0.35);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.has-life .money-pill {
+  display: block;
+}
+.money-cards {
+  position: absolute;
+  top: calc(max(10px, env(safe-area-inset-top)) + 86px);
+  right: calc(max(10px, env(safe-area-inset-right)) + 150px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+.money-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 10px;
+  border-radius: 12px;
+  background: rgba(12, 16, 24, 0.88);
+  border-left: 3px solid #5dcaa5;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transform: translateX(30px);
+  opacity: 0;
+  transition: transform 0.35s, opacity 0.35s;
+}
+.money-card.down {
+  border-left-color: #e24b4a;
+}
+.money-card.show {
+  transform: none;
+  opacity: 1;
+}
+.money-card-ic {
+  font-size: 20px;
+}
+.money-card b {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.money-card small {
+  font-size: 14px;
+  font-weight: 700;
+  color: #5dcaa5;
+}
+.money-card.down small {
+  color: #f09595;
+}
+
+.wallet-panel {
+  width: min(380px, calc(100vw - 20px));
+}
+.wallet-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0 12px;
+}
+.wallet-top small,
+.wallet-day small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.wallet-top b {
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+}
+.wallet-day {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.wallet-day > div {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.wallet-earn b {
+  color: #5dcaa5;
+}
+.wallet-spend b {
+  color: #f09595;
+}
+.wallet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow: auto;
+}
+.wallet-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.wallet-ic {
+  font-size: 18px;
+}
+.wallet-mid {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+.wallet-mid small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.wallet-row b.up {
+  color: #5dcaa5;
+}
+.wallet-row b.down {
+  color: #f09595;
+}
+
+.downed-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(160, 20, 30, 0.55));
+  opacity: 0;
+  transition: opacity 0.6s;
+}
+.downed-vignette.show {
+  opacity: 1;
+  animation: downed-pulse 1.6s ease-in-out infinite;
+}
+@keyframes downed-pulse {
+  50% {
+    opacity: 0.7;
+  }
+}
+.downed-card {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 120px);
+  transform: translateX(-50%);
+  width: min(320px, calc(100vw - 20px));
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: rgba(16, 10, 12, 0.9);
+  border: 1px solid rgba(226, 75, 74, 0.45);
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+.downed-card.show {
+  display: flex;
+}
+.downed-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+}
+.downed-ic {
+  width: 18px;
+  height: 18px;
+  display: flex;
+}
+.downed-ic svg {
+  width: 100%;
+  fill: #e24b4a;
+}
+.downed-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.downed-bar i {
+  display: block;
+  height: 100%;
+  background: #e24b4a;
+  transition: width 0.25s linear;
+}
+.downed-hints {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.downed-hints button {
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(226, 75, 74, 0.8);
+  cursor: pointer;
+}
+
+/* Kaldırma barı (kaldıran ve kaldırılan görür) */
+.revive-prog {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 210px);
+  transform: translateX(-50%);
+  width: min(300px, calc(100vw - 20px));
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(12, 16, 24, 0.88);
+  border: 1px solid rgba(93, 202, 165, 0.4);
+  display: none;
+  flex-direction: column;
+  gap: 7px;
+  pointer-events: none;
+}
+.revive-prog.show {
+  display: flex;
+}
+.revive-prog b {
+  font-size: 14px;
+  font-weight: 600;
+}
+.revive-prog-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.revive-prog-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #5dcaa5;
+}

@@ -12,7 +12,9 @@ import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
 import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
 import { validCar } from "../../shared/car";
-import { Casino, type CasinoMsg, secureRng, Wallets } from "./casino";
+import { Casino, type CasinoMsg, secureRng } from "./casino";
+import { Economy } from "./economy";
+import { LifeHost } from "./life";
 import { RingHost, type RingMsg } from "./ring";
 import { LiveHost, type LiveMsg } from "./liveTables";
 import { CASINO } from "../../shared/zones";
@@ -41,7 +43,15 @@ function watchLink(w: Watch): string {
 const PORT = Number(process.env.PORT || 3000);
 /** Kalıcı küçük veriler (casino bakiyeleri); Docker'da volume. */
 const DATA_DIR = process.env.WORLD_DATA_DIR || "data";
-const casino = new Casino(new Wallets(join(DATA_DIR, "casino-wallets.json")));
+/** GAP ₺ ve hayat barları (test coin'den yeni başlangıç: ayrı dosya). */
+const economy = new Economy(join(DATA_DIR, "economy.json"));
+const casino = new Casino(economy.casino());
+/** Para değişince o hesabın bağlı bütün oturumlarına bakiye (ve açıklamalıysa bildirim). */
+const moneyConns = new Map<string, Set<Conn>>();
+economy.onChange = (key, balance, tx) => {
+  const msg = JSON.stringify({ t: "wallet", balance, tx });
+  for (const c of moneyConns.get(key) ?? []) c.send(msg);
+};
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
 const SHARED_SECRET = process.env.WORLD_SHARED_SECRET || "";
@@ -180,16 +190,14 @@ rooms.onCreate = (room) => {
       const stats = r.ok && r.body.ok ? (r.body.stats as Record<string, number> | undefined) : undefined;
       return stats ? Number(stats.pb_wins) || 0 : null;
     };
-    // Yarış ödülü casino cüzdanına (test coin) gider
+    // Yarış ödülü cüzdana (GAP ₺)
     room.ring = new RingHost(room, (sid, amount) => {
       const p = room.players.get(sid);
       if (!p) return;
-      const key = p.user.guest ? `guest:${p.user.id}` : p.user.id;
-      casino.wallets.add(key, amount);
-      room.sendTo(p.conn, { t: "wallet", balance: casino.wallets.get(key) });
-      room.sendTo(p.conn, { t: "notice", text: `🏆 Yarış ödülü: +${amount} GAP test coin` });
+      economy.add(p.user.guest ? `guest:${p.user.id}` : p.user.id, amount, { reason: "GAP Ring yarış ödülü", icon: "🏁" });
     });
-    room.live = new LiveHost(room, casino.wallets, secureRng);
+    room.live = new LiveHost(room, economy.casino(), secureRng);
+    room.life = new LifeHost(room, economy);
   }
 };
 
@@ -1068,8 +1076,14 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   let lastCasino = 0;
   let lastLive = 0;
   let lastRing = 0;
-  /** Casino cüzdanı: Discord hesabına bağlı (misafirde oturuma). */
+  /** Cüzdan (GAP ₺) ve hayat: Discord hesabına bağlı (misafirde oturuma). */
   const walletKey = user.guest ? `guest:${user.id}` : user.id;
+  const conns = moneyConns.get(walletKey) ?? new Set<Conn>();
+  moneyConns.set(walletKey, conns.add(conn));
+  room.life?.join(sid, walletKey);
+  if (room.life) ws.send(JSON.stringify({ t: "wallet", balance: economy.get(walletKey) }));
+  let lastFall = 0;
+  let lastRevive = 0;
   let lastAct = 0;
   let lastFish = 0;
   let lastFishQ = 0;
@@ -1242,6 +1256,21 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const ops = ["next", "prev", "shuffle", "repeat", "jump", "remove", "clear", "stop", "play", "ended"] as const;
         const op = ops.find((o) => o === msg.op);
         if (op) void room.radioQ.op(sid, op, typeof msg.i === "number" ? msg.i : undefined, typeof msg.id === "string" ? msg.id : undefined);
+      } else if (msg?.t === "fall") {
+        const now = Date.now();
+        if (now - lastFall < 800) return;
+        lastFall = now;
+        room.life?.fall(sid, msg.h, now);
+      } else if (msg?.t === "revive" && typeof msg.sid === "number") {
+        const now = Date.now();
+        if (now - lastRevive < 500) return;
+        lastRevive = now;
+        const err = room.life?.revive(sid, msg.sid, now);
+        if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
+      } else if (msg?.t === "ambulance") {
+        room.life?.ambulance(sid);
+      } else if (msg?.t === "econ") {
+        ws.send(JSON.stringify({ t: "econ", wallet: economy.wallet(walletKey) }));
       } else if (msg?.t === "carlights") {
         room.setLights(sid, msg.on);
       } else if (msg?.t === "carfx") {
@@ -1287,6 +1316,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
       endShare(room, s);
     }
     casino.leave(sid, walletKey);
+    conns.delete(conn);
+    if (!conns.size) moneyConns.delete(walletKey);
     room.leave(sid);
     if (room.size === 0) room.games?.builds?.dispose();
     rooms.release(room);

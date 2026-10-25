@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type Card, MIN_BET, REFILL_TO, Shoe, SLOT_STRIP, START_BALANCE } from "../shared/casino";
+import { type Card, MIN_BET, Shoe, SLOT_STRIP, START_BALANCE } from "../shared/casino";
 import type { ServerEvent } from "../shared/protocol";
 import { Casino, Wallets } from "../server/src/casino";
 
@@ -27,7 +27,7 @@ function stackShoe(c: Casino, ...ranks: number[]) {
 }
 
 describe("casino sunucusu", () => {
-  it("yeni oyuncu test coinle başlar; casino dışında oynanmaz", () => {
+  it("yeni oyuncu başlangıç bakiyesiyle başlar; casino dışında oynanmaz", () => {
     const { play } = table();
     expect(play({ t: "casino", op: "wallet" })).toEqual({ t: "wallet", balance: START_BALANCE });
     expect("error" in play({ t: "slot", bet: 10 }, false)).toBe(true);
@@ -51,13 +51,12 @@ describe("casino sunucusu", () => {
     expect(dbl.t === "bj" && dbl.balance).toBe(START_BALANCE + 100 + 400);
   });
 
-  it("yetersiz bakiyede bahis alınmaz; bitince test coin doldurulur", () => {
+  it("yetersiz bakiyede bahis alınmaz (test coin doldurma yok)", () => {
     const { c, play } = table();
     expect("error" in play({ t: "bj", op: "deal", bet: 50_000 })).toBe(true);
     c.wallets.add("u", -(START_BALANCE - 5));
     expect("error" in play({ t: "slot", bet: 10 })).toBe(true);
-    expect(play({ t: "casino", op: "refill" })).toEqual({ t: "wallet", balance: REFILL_TO });
-    expect("error" in play({ t: "casino", op: "refill" })).toBe(true);
+    expect(play({ t: "casino", op: "wallet" })).toEqual({ t: "wallet", balance: 5 });
     expect(MIN_BET).toBe(10);
   });
 

@@ -73,7 +73,7 @@ export class Wallets {
 
 /** Oyuncunun casinodaki mesajları. */
 export type CasinoMsg =
-  | { t: "casino"; op: "wallet" | "refill" }
+  | { t: "casino"; op: "wallet" }
   | { t: "bj"; op: "deal"; bet: number }
   | { t: "bj"; op: "hit" | "stand" | "double" | "split" }
   | { t: "roulette"; bets: RouletteBet[] }
@@ -83,7 +83,7 @@ export class Casino {
   private shoes = new Map<number, Shoe>();
   private rounds = new Map<number, BjRound>();
 
-  constructor(readonly wallets: Wallets, private rng: Rng = secureRng) {}
+  constructor(readonly wallets: { get(key: string): number; add(key: string, delta: number): boolean }, private rng: Rng = secureRng) {}
 
   /**
    * Bir mesajı işler; oyuncuya gidecek olayı ya da hatayı döndürür. `inside`: oyuncu casinonun içinde mi
@@ -91,10 +91,7 @@ export class Casino {
    */
   handle(sid: number, key: string, msg: CasinoMsg, inside: boolean): ServerEvent | { error: string } {
     const w = this.wallets;
-    if (msg.t === "casino") {
-      if (msg.op === "refill" && !w.refill(key)) return { error: "💰 Bakiyen bitince test coin alabilirsin." };
-      return { t: "wallet", balance: w.get(key) };
-    }
+    if (msg.t === "casino") return { t: "wallet", balance: w.get(key) };
     if (!inside) return { error: "🎰 Oyunlar yalnızca casinonun içinde oynanır." };
     if (msg.t === "bj") {
       let r = this.rounds.get(sid);
@@ -103,7 +100,7 @@ export class Casino {
         if (r && r.phase === "player") return this.bjEvent(sid, key, r);
         const bet = Math.floor(Number(msg.bet));
         if (!(bet >= MIN_BET && bet <= MAX_BET)) return { error: `🃏 Bahis ${MIN_BET}–${MAX_BET} arası olmalı.` };
-        if (!w.add(key, -bet)) return { error: "💰 Bakiyen yetmiyor." };
+        if (!w.add(key, -bet)) return { error: "💰 Bakiyen yetmiyor (ya da bugünkü kumarhane sınırın doldu)." };
         let shoe = this.shoes.get(sid);
         let shuffled = false;
         if (!shoe) {

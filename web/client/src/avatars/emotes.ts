@@ -30,8 +30,9 @@ export const FX_CELL = {
   dice: EMOTES.length + 16,
   hearts: EMOTES.length + 17,
   eyes: EMOTES.length + 18,
+  blood: EMOTES.length + 19,
 };
-const FX_EMOJI = ["🍢", "🍅", "🍵", "💥", "🎣", "🐟", "✨", "🎵", "🎶", "🙌", "🤗", "⚽", "🎉", "🎤", "🏆", "📸", "🎲", "💞", "👀"];
+const FX_EMOJI = ["🍢", "🍅", "🍵", "💥", "🎣", "🐟", "✨", "🎵", "🎶", "🙌", "🤗", "⚽", "🎉", "🎤", "🏆", "📸", "🎲", "💞", "👀", "🩸"];
 const CELL = 128;
 /** Emoji isim etiketinin üstünden çıkar: yüzü ve ismi kapatmasın. */
 const HEAD_Y = 2.6;

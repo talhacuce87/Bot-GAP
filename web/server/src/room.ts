@@ -33,6 +33,7 @@ import type { WorldGames } from "./games/world";
 import type { RingHost } from "./ring";
 import type { LiveHost } from "./liveTables";
 import { RadioQueues } from "./radioQueue";
+import type { LifeHost } from "./life";
 
 const PET_IDS = new Set<string>(PETS.map((p) => p.id));
 const SKIN_IDS = new Set<string>(SKINS.map((s) => s.id));
@@ -117,6 +118,8 @@ export class Room {
   ring: RingHost | null = null;
   /** Canlı casino masaları (savaş odasında yok). */
   live: LiveHost | null = null;
+  /** Hayat barları (savaş odasında yok). */
+  life: LifeHost | null = null;
   /** Oyuncuların radyo sıraları. */
   readonly radioQ = new RadioQueues(this);
   /** Görev/sayaç olayı (botta): sunucu bağlar; tank isabeti, savaşta vuruş ve galibiyet buradan. */
@@ -188,6 +191,7 @@ export class Room {
     if (this.tank.driver === sid) this.exitTank(sid);
     this.ejectRiders(sid);
     this.radioQ.leave(sid);
+    this.life?.leave(sid);
     this.players.delete(sid);
     this.battle?.leave(sid);
     this.games?.leave(sid);
@@ -221,6 +225,12 @@ export class Room {
     }
     if (sentAt > 0 && sentAt <= p.sentAt && sentAt > p.sentAt - REORDER_MS) return;
     if (sentAt > 0) p.sentAt = sentAt;
+    // Bayılan yerinde kalır (yerde oturur)
+    if (this.life?.isDowned(sid)) {
+      p.state.flags = FLAG_SEATED;
+      p.lastUpdate = now;
+      return;
+    }
     // Yolcu: konumu sürücünün arabası (istemcinin söylediği yok sayılır)
     const driver = p.info.ride ? this.players.get(p.info.ride.d) : undefined;
     if (driver) {
@@ -254,7 +264,10 @@ export class Room {
     p.sampledAt = sampleTime(sentAt, p.sampledAt, now);
     p.lastUpdate = now;
     this.dirty = TRAIL_TICKS;
-    if (p.info.car) this.ring?.move(sid, p.state.x, p.state.z, now);
+    if (p.info.car) {
+      this.ring?.move(sid, p.state.x, p.state.z, now);
+      this.life?.carMove(sid, p.state.x, p.state.z, now);
+    }
     this.live?.move(sid, p.state.x, p.state.z, now);
   }
 
@@ -509,6 +522,7 @@ export class Room {
     this.games?.tick(now);
     this.ring?.tick(now);
     this.live?.tick(now);
+    this.life?.tick(now);
     const t = this.tank;
     if (!t.driver && t.idleSince && now - t.idleSince > TANK_RETURN_MS) {
       Object.assign(t, { x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, idleSince: 0 });

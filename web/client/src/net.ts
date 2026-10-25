@@ -4,6 +4,7 @@ import { type Act, SEND_HZ } from "../../shared/constants";
 import type { Shot } from "../../shared/tank";
 import type { CarRadio, ParkedCar, RadioQueueView } from "../../shared/car";
 import type { RingView } from "../../shared/ring";
+import type { MoneyTx, WalletView } from "../../shared/economy";
 import type { BattleState } from "../../shared/protocol";
 import type { PlotState } from "../../shared/build";
 import type { VBall, VolleyEv, VolleyState } from "../../shared/volley";
@@ -96,6 +97,15 @@ export class Net {
   onCosm: (sid: number, pet: string | null, skin: string | null) => void = () => {};
   /** Casino: bakiye ve oyun sonuçları (yalnızca bu oyuncuya). */
   onCasino: (ev: Extract<ServerEvent, { t: "wallet" | "bj" | "roulette" | "slot" | "live" }>) => void = () => {};
+  /** GAP ₺ bakiyesi (açıklamalı işlemse bildirim). */
+  onMoney: (balance: number, tx: MoneyTx | null) => void = () => {};
+  /** Hayat barların; bayıldıysan uyanacağın an (sunucu saati, 0: ayaktasın); hastaneye ışınlandıysan yer. */
+  onLife: (ev: Extract<ServerEvent, { t: "life" }>) => void = () => {};
+  /** Biri bayıldı ya da kalktı (sen de olabilirsin). */
+  onDowned: (sid: number, on: boolean) => void = () => {};
+  onEcon: (w: WalletView) => void = () => {};
+  /** Kaldırma başladı (biten an) ya da bitti/iptal (0); sen kaldıran ya da kaldırılansın. */
+  onReviving: (by: number, target: number, until: number) => void = () => {};
   /** Bir arabanın radyosu değişti (kendininki dahil). */
   onRadio: (sid: number, radio: CarRadio | null) => void = () => {};
   /** Kendi radyo sıran. */
@@ -432,7 +442,25 @@ export class Net {
       case "car":
         this.remotes.setCar(ev.sid, ev.car);
         break;
+      case "life":
+        this.onLife(ev);
+        break;
+      case "downed": {
+        const r = this.remotes.map.get(ev.sid);
+        if (r) r.info.downed = ev.on;
+        this.onDowned(ev.sid, ev.on);
+        break;
+      }
+      case "econ":
+        this.onEcon(ev.wallet);
+        break;
+      case "reviving":
+        this.onReviving(ev.by, ev.target, ev.until);
+        break;
       case "wallet":
+        this.onMoney(ev.balance, ev.tx ?? null);
+        this.onCasino(ev);
+        break;
       case "bj":
       case "roulette":
       case "slot":

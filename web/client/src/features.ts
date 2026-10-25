@@ -36,6 +36,8 @@ import { RadioMixer, type RadioSource } from "./radio";
 import { type CarRadio, carCircles, CAR_ENGINES, CAR_STATS, type CarSpec, ENTER_REACH, RADIO_RANGE } from "../../shared/car";
 import { Hub } from "./ui/hub";
 import { WorldMap } from "./ui/worldMap";
+import { LifeHud, type MapDot } from "./ui/lifeHud";
+import { LIFE } from "../../shared/economy";
 import { button, el, Panel } from "./ui/panel";
 import { canvasToJpeg, PhotoMode } from "./ui/photo";
 import { ProfileUi } from "./ui/profile";
@@ -157,6 +159,12 @@ export class Features {
   private profile: ProfileUi;
   private hub: Hub;
   private map: WorldMap;
+  /** Hayat barları, minimap, GAP ₺ ve yaralı kartı. */
+  private lifeHud: LifeHud;
+  private dots: MapDot[] = [];
+  private bloodAt = 0;
+  /** Şu an kaldırdığın (0: yok). */
+  private revivingTarget = 0;
   private whud: WorldHud;
   private stage = { dj: 0, show: 0, singer: 0 };
   /** Önceki karede sahnede miydik: inişi (F, öne yürüme, araç, ışınlanma) sunucuya bildirmek için. */
@@ -418,6 +426,35 @@ export class Features {
         return p?.owner ? p.name : null;
       },
     });
+    this.lifeHud = new LifeHud(hudRoot, {
+      openWallet: () => net.send({ t: "econ", op: "wallet" }),
+      ambulance: () => net.send({ t: "ambulance" }),
+      base: () => this.map.minimapBase(),
+    });
+    net.onMoney = (balance, tx) => this.lifeHud.setMoney(balance, tx);
+    net.onEcon = (w) => this.lifeHud.showWallet(w);
+    net.onReviving = (by, target, until) => {
+      this.revivingTarget = until && by === net.you ? target : 0;
+      const text = by === net.you ? `🩹 ${this.nameOf(target)} kaldırılıyor… yanında kal` : `🩹 ${this.nameOf(by)} seni kaldırıyor…`;
+      this.lifeHud.setReviving(text, until);
+    };
+    net.onLife = (ev) => {
+      hudRoot.classList.add("has-life");
+      this.lifeHud.setLife(ev, ev.downed);
+      const was = me.downed;
+      me.downed = ev.downed > 0;
+      // Enerji bitince koşamazsın
+      me.noRun = ev.energy <= 0;
+      if (me.downed && !was) {
+        if (me.seated) me.standUpNow();
+        hud.toast("🩸 Bayıldın! Arkadaşın kaldırabilir ya da ambulans çağır.");
+      }
+      if (ev.tp) me.teleport(ev.tp.x, ev.tp.z, ev.tp.rot);
+    };
+    // Yüksekten düşme canı sunucuda (bildirdiğin yükseklikten)
+    me.onFall = (h) => {
+      if (h > LIFE.fallFrom && !me.vehicle) net.send({ t: "fall", h });
+    };
     this.hub = new Hub(hudRoot, c.input.touch, {
       quests: () => this.profile.openQuests(),
       card: () => this.profile.open(net.you, c.session.user.name),
@@ -468,7 +505,7 @@ export class Features {
     hudRoot.append(this.casinoChip);
     net.onCasino = (ev) => {
       this.casino.event(ev);
-      if (this.inCasino) this.casinoChip.textContent = `💰 ${fmt(this.casino.balance)} GAP · Oynamak için bir tabureye otur`;
+      if (this.inCasino) this.casinoChip.textContent = `💰 ${fmt(this.casino.balance)} ₺ · Oynamak için bir tabureye otur`;
     };
     // Reddedilen hamle bildirim olarak gelir: oyun ekranı beklemeyi bıraksın
     const notice = net.onNotice;
@@ -1005,6 +1042,25 @@ export class Features {
   // Yakındaki etkileşimler
   // ---------------------------------------------------------------------------
 
+  /** Minimap işaretleri (oyuncular, bayılanlar, park ettiğin araba) ve yaralı sayacı. */
+  private updateLife(serverNow: number): void {
+    const { me, remotes } = this.c;
+    const d = this.dots;
+    d.length = 0;
+    // Bayılanların üstünde ara ara 🩸
+    const t = performance.now() / 1000;
+    const blood = t - this.bloodAt > 1.4;
+    if (blood) {
+      this.bloodAt = t;
+      if (me.downed) this.c.emoteFx.emit(me.x, me.baseY, me.z, FX_CELL.blood, t, 0.5, 1);
+      for (const r of remotes.map.values()) if (r.info.downed && !r.leaving) this.c.emoteFx.emit(r.x, r.baseY ?? 0, r.z, FX_CELL.blood, t, 0.5, 1);
+    }
+    for (const r of remotes.map.values()) if (r.hasData && !r.leaving && !r.info.spectator) d.push({ x: r.x, z: r.z, kind: r.info.downed ? "downed" : "player" });
+    const p = this.vehicles.myParked;
+    if (p) d.push({ x: p.x, z: p.z, kind: "car" });
+    this.lifeHud.frame(me, d, serverNow);
+  }
+
   acts(): FeatureAct[] {
     const { me, world } = this.c;
     if (me.jailed || me.driving || this.race.driving() || this.paintball.busy()) return [];
@@ -1028,6 +1084,13 @@ export class Features {
     if (enter) return [enter];
     const ride = this.rideAct();
     if (ride) return [ride];
+    // Bayılmış arkadaşını kaldır
+    for (const r of this.c.remotes.map.values()) {
+      if (r.info.downed && !r.leaving && near(r, LIFE.reviveReach)) {
+        if (this.revivingTarget === r.info.sid) return [];
+        return [{ key: "f", label: `Kaldır 🩹 (${r.info.name})`, act: `revive:${r.info.sid}` }];
+      }
+    }
     // Mahallede kapı: Minecraft gibi açılıp kapanır (herkes)
     const door = me.seated ? null : this.buildWorld.doorNear(me.x, me.z, me.baseY);
     if (door) return [{ key: "f", label: door.open ? "Kapıyı kapat 🚪" : "Kapıyı aç 🚪", act: `door:${door.plot}:${door.i}:${door.j}:${door.k}` }];
@@ -1082,6 +1145,10 @@ export class Features {
       // Şarj başlar: bırakınca vurulur (F'ye kısa dokunuş pas). Dokunmatikte hemen orta güçle.
       if (this.c.input.touch) this.kick(0.55, act === "lob" ? "lob" : this.finishing() ? "shot" : "pass");
       else this.charge = { key: act === "lob" ? "actG" : "actF", kind: act === "lob" ? "lob" : "shot", t: 0 };
+      return true;
+    }
+    if (act.startsWith("revive:")) {
+      net.send({ t: "revive", sid: Number(act.slice(7)) });
       return true;
     }
     if (act.startsWith("door:")) {
@@ -1284,6 +1351,7 @@ export class Features {
       send: (ev) => net.send(ev),
     });
     this.vehicles.update(dt, time);
+    this.updateLife(serverNow);
 
     // Saat: kişisel ayar > sinema modu (gündüzse) > dünyanın saati (!saat) > gerçek saat
     let hour: number | null = settings.clock === "auto" ? this.worldClock : CLOCK_HOURS[settings.clock];

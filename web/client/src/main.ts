@@ -415,7 +415,15 @@ async function start(): Promise<void> {
   const chat = new Chat(
     hudRoot,
     {
-      send: (text) => net.send({ t: "chat", text }),
+      send: (text) => {
+        // Test: !bayıl yüksekten düşmüş gibi bayıltır (yalnızca kendine zarar; sunucu sınırlar)
+        if (text.trim().toLocaleLowerCase("tr-TR") === "!bayıl") {
+          net.send({ t: "fall", h: 40 });
+          setTimeout(() => net.send({ t: "fall", h: 40 }), 1100);
+          return;
+        }
+        net.send({ t: "chat", text });
+      },
       // Sohbetteki "Tarayıcıda izle": tarayıcıda video zaten perdede
       open: (url) => (session.mode !== "discord" && url.includes("/w/") ? hud.toast("🎬 Video sinema perdesinde oynuyor.") : openUrl(url)),
       local: (text) => {

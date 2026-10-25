@@ -109,6 +109,18 @@ export class WorldMap {
     this.terrain.prepareInBackground();
   }
 
+  /**
+   * Minimap için zemin katmanı (arazi arka planda hazırlandıysa; yoksa null) ve dünya → piksel dönüşümü.
+   * Haritayla aynı katman: bir kez çizilir.
+   */
+  minimapBase(): { canvas: HTMLCanvasElement; minX: number; minZ: number; px: number } | null {
+    if (!this.base) {
+      if (!this.terrain.done) return null;
+      this.base = drawBase(this.terrain.finish());
+    }
+    return { canvas: this.base, minX: AREA.minX, minZ: AREA.minZ, px: PX };
+  }
+
   toggle(): void {
     if (this.panel.isOpen) return this.panel.close();
     this.panel.open();
@@ -269,6 +281,10 @@ class TerrainRaster {
       if (this.row < this.h) setTimeout(step, 50);
     };
     setTimeout(step, 5000);
+  }
+
+  get done(): boolean {
+    return this.row >= this.h;
   }
 
   /** Kalan satırları hemen doldurur. */

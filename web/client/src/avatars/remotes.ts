@@ -40,6 +40,9 @@ function lerpAngle(a: number, b: number, t: number): number {
 export type Ground = (x: number, z: number, seated: boolean) => number;
 
 export class Remote implements AvatarView {
+  get downed(): boolean {
+    return !!this.info.downed;
+  }
   x = 0;
   z = 0;
   rot = 0;

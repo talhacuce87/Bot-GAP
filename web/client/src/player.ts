@@ -173,6 +173,15 @@ export class Player implements AvatarView, PlayerState {
   hideAvatar = false;
   /** Başkasının arabasında yolcu: konum ve yön sürücünün arabası (her kare dışarıdan verilir); yürünmez. */
   riding: { x: number; z: number; rot: number } | null = null;
+  /** Bayıldı: yerde oturur, hareket edemez. */
+  downed = false;
+  /** Enerjisi bitti: koşamaz. */
+  noRun = false;
+  /** Yüksekten düştü (düşülen metre): sunucuya bildirilir (can gider). */
+  onFall: (h: number) => void = () => {};
+  /** Havadayken çıkılan en yüksek nokta (düşme yüksekliği için). */
+  private peakY = 0;
+  private airborne = false;
   /** İçinde bulunduğu dükkân (kamera odanın içinde kalır); main.ts her kare günceller. */
   room: Room | null = null;
   /** Sürerken Space'e basıldı (main.ts sunucuya ateş yollar). */
@@ -270,6 +279,13 @@ export class Player implements AvatarView, PlayerState {
       return;
     }
 
+    if (this.downed) {
+      input.consumeAction();
+      input.consumeJump();
+      this.vx = this.vz = 0;
+      this.flags = FLAG_SEATED;
+      return;
+    }
     if (this.riding) {
       input.consumeAction();
       input.consumeJump();
@@ -325,7 +341,7 @@ export class Player implements AvatarView, PlayerState {
       const f = this.fps;
       const speedMax = f
         ? WALK_SPEED * (f.speed + (f.crouchSpeed - f.speed) * this.crouchK)
-        : WALK_SPEED * (this.vehicle ? VEHICLES[this.vehicle].speed : input.run ? RUN_MULTIPLIER : 1) * this.speedMul;
+        : WALK_SPEED * (this.vehicle ? VEHICLES[this.vehicle].speed : input.run && !this.noRun ? RUN_MULTIPLIER : 1) * this.speedMul;
       this.vx += (mx * speedMax - this.vx) * accel;
       this.vz += (mz * speedMax - this.vz) * accel;
     }
@@ -456,7 +472,14 @@ export class Player implements AvatarView, PlayerState {
   private land(): void {
     const g = this.groundAt(this.elev);
     const falling = this.jumpT >= this.jumpDur || this.vy <= 0;
+    // Düşme yüksekliği: havadayken çıkılan en yüksek noktadan konulan yere
+    if (this.elev > g + 0.05) {
+      this.peakY = this.airborne ? Math.max(this.peakY, this.elev) : this.elev;
+      this.airborne = true;
+    }
     if (this.elev <= g && falling) {
+      if (this.airborne && this.peakY - g > 0.5) this.onFall(this.peakY - g);
+      this.airborne = false;
       this.elev = g;
       this.vy = 0;
       this.jumpT = this.jumpDur;
@@ -733,6 +756,7 @@ export class Player implements AvatarView, PlayerState {
   }
 
   private resetHeight(): void {
+    this.airborne = false;
     this.elev = this.baseY = this.jumpY = this.vy = 0;
     this.jumpT = this.jumpDur;
     this.onTank = false;

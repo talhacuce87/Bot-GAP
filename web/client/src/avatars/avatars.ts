@@ -49,6 +49,8 @@ export interface AvatarView {
   vlean?: number;
   vpitch?: number;
   vstance?: "hold" | "cock" | null;
+  /** Bayıldı (can sıfır): yere yan yatar. */
+  downed?: boolean;
   /** İsim etiketi gizli (saklambaçta saklananlar). */
   hideName?: boolean;
   /** Avatar çizilmez (birinci şahıs kamerada kendin); gölge ve evcil hayvan kalır. */
@@ -235,6 +237,10 @@ const NAME_Y = 1.9;
 /** Otururken gövde kayması: kapsül bacaksız olduğu için iner; chibi kalçası bank yüzeyine (≈0.5 m) çıkar. */
 const SEAT_DROP = 0.32;
 export const CHIBI_SEAT_LIFT = 0.29;
+/** Bayılan yan yatınca gövdenin yerden yüksekliği (omuz genişliğinin yarısı) ve isim etiketi. */
+const DOWN_LIFT = 0.26;
+const DOWN_NAME_Y = 1.0;
+const DOWN_HALF = 0.6;
 
 /** Avatarın çizildiği yükseklik (konuşma balonu gibi üstüne konanlar için; chibi duruşu). */
 export function bodyY(v: AvatarView): number {
@@ -310,9 +316,9 @@ export class AvatarRenderer {
     // Araçta: bisiklet ve kayıkta oturur (bisiklette pedal), kaykayda ayakta kayar
     const vehicle = vehicleOf(v.flags);
     const moving = (v.flags & FLAG_WALKING) !== 0;
-    const seated = (v.flags & FLAG_SEATED) !== 0 || vehicle === 1 || vehicle === 3;
+    const seated = !v.downed && ((v.flags & FLAG_SEATED) !== 0 || vehicle === 1 || vehicle === 3);
     const airborne = v.jumpY > 0;
-    const walking = moving && !seated && !airborne && vehicle === 0;
+    const walking = moving && !seated && !airborne && vehicle === 0 && !v.downed;
     // Koşarken adımlar sıklaşır ve sallanma artar.
     const running = walking && (v.flags & FLAG_RUNNING) !== 0;
     const stepHz = running ? 14 : 9;
@@ -387,9 +393,17 @@ export class AvatarRenderer {
     if (v.vlean) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, 0.55 * v.vlean));
     // Kaykayda yana duruş ve hafif yatış
     if (vehicle === 2) this.quat.multiply(this.tilt.setFromAxisAngle(this.zAxis, moving ? Math.sin(time * 2.2 + v.phase) * 0.08 : 0));
-    // Namaz/abdest: gövde kalçadan yatar (kalça yerinde kalacak şekilde ötelenir), selamda yana döner
     const pray = prayPose(v, time);
     let px = v.x, pz = v.z;
+    // Bayılan: sağ omzunun üstüne yere yan yatar, nefes alır gibi hafifçe kıpırdar
+    // (gövdenin ortası durduğu yerde kalır: isim ve 🩸 üstünde)
+    if (v.downed) {
+      this.quat.setFromAxisAngle(this.up, v.rot).multiply(this.tilt.setFromAxisAngle(this.zAxis, -Math.PI / 2 + Math.sin(time * 1.6 + v.phase) * 0.025));
+      y = (v.baseY ?? 0) + DOWN_LIFT;
+      px -= Math.cos(v.rot) * DOWN_HALF;
+      pz += Math.sin(v.rot) * DOWN_HALF;
+    }
+    // Namaz/abdest: gövde kalçadan yatar (kalça yerinde kalacak şekilde ötelenir), selamda yana döner
     if (pray) {
       const yawed = v.rot + pray.yaw + (v.poseYaw ?? 0);
       this.quat.setFromAxisAngle(this.up, yawed).multiply(this.tilt.setFromAxisAngle(this.xAxis, pray.tilt));
@@ -426,7 +440,7 @@ export class AvatarRenderer {
     this.body.setMatrixAt(i, asChibi || v.hidden || v.bodyHidden ? HIDDEN : this.m);
     this.body.setColorAt(i, v.color);
 
-    this.m.makeTranslation(v.x, y + NAME_Y * s + (vehicle === 1 ? 0.25 : 0), v.z);
+    this.m.makeTranslation(v.x, y + (v.downed ? DOWN_NAME_Y : NAME_Y) * s + (vehicle === 1 ? 0.25 : 0), v.z);
     this.name.setMatrixAt(i, this.m);
     // Havadayken gölge küçülür: yükseklik hissi.
     const sh = 0.95 * s * Math.max(0.45, 1 - v.jumpY * 0.45);

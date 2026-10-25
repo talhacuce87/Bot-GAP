@@ -10,6 +10,7 @@ import type { OkeyMove, OkeyState } from "./games/okey";
 import type { TavlaMove, TavlaState } from "./games/tavla";
 import type { TableKind } from "./zones";
 import type { CarRadio, CarSpec, ParkedCar, RadioQueueView } from "./car";
+import type { MoneyTx, WalletView } from "./economy";
 import type { BjView, RouletteBet } from "./casino";
 import type { RingView } from "./ring";
 import type { BjBets, LiveTableView } from "./liveCasino";
@@ -59,6 +60,8 @@ export interface PlayerInfo {
   lights?: boolean | null;
   /** Başkasının arabasında yolcu: sürücü ve koltuk (1 ön sağ, 2 arka sol, 3 arka sağ). */
   ride?: { d: number; s: number } | null;
+  /** Bayıldı (can sıfır): yerde yatar, yanındakiler kaldırabilir. */
+  downed?: boolean;
   /** Arabasının hasarı (0 yok – 3 ağır): duman ve kararmış boya. */
   dmg?: number;
 }
@@ -390,7 +393,15 @@ export type ServerEvent =
   | { t: "parked"; sid: number; parked: ParkedCar | null }
   /** GAP Ring yarışı: grid, lambalar, sıralama ve sonuçlar (faz değişince ve yarışta sık). */
   | { t: "ring"; ring: RingView }
-  | { t: "wallet"; balance: number }
+  /** GAP ₺: bakiye; açıklamalı işlemse bildirim kartı. */
+  | { t: "wallet"; balance: number; tx?: MoneyTx | null }
+  /** Hayat barların (yalnızca sana); bayıldıysan uyanacağın an; hastanede uyandıysan yeni yerin. */
+  | { t: "life"; hp: number; hunger: number; energy: number; downed: number; tp?: { x: number; z: number; rot: number } }
+  | { t: "downed"; sid: number; on: boolean }
+  /** Kaldırma başladı (biten an, sunucu saati) ya da bitti/iptal (0): kaldırana ve kaldırılana. */
+  | { t: "reviving"; by: number; target: number; until: number }
+  /** Cüzdan paneli. */
+  | { t: "econ"; wallet: WalletView }
   /** Canlı casino masası (oturan ve izleyenlere, değişince). */
   | { t: "live"; table: LiveTableView }
   | { t: "bj"; view: BjView; balance: number }
@@ -485,12 +496,17 @@ export type ClientEvent =
   | { t: "carfx"; k: "horn" | "flash"; on: boolean }
   /** Yolcu olarak bin (sürücünün sid'i) ya da in (null). */
   | { t: "ride"; d: number | null }
+  /** Yüksekten düştün (metre); bayılanı kaldır; bayılınca ambulans; cüzdanı iste. */
+  | { t: "fall"; h: number }
+  | { t: "revive"; sid: number }
+  | { t: "ambulance" }
+  | { t: "econ"; op: "wallet" }
   /** Arabayı bir yere bırak (inince ya da çağırınca); null: kaldır. */
   | { t: "park"; parked: ParkedCar | null }
   | { t: "ring"; op: "join"; slot: number }
   | { t: "ring"; op: "leave" }
   | { t: "ring"; op: "start"; laps: number }
-  | { t: "casino"; op: "wallet" | "refill" }
+  | { t: "casino"; op: "wallet" }
   /** Canlı masa: otur / izle / kalk / bahis / hamle. */
   | { t: "live"; op: "sit"; table: number; seat: number; buyIn?: number }
   | { t: "live"; op: "watch"; table: number }
