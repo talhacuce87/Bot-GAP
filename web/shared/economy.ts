@@ -11,6 +11,8 @@ export const ECON = {
   hospitalFee: 300,
   /** Kumarhanede bir günde en çok bu kadar kaybedilir (net). */
   casinoDailyLoss: 30_000,
+  /** GAP Garaj tamiri (hasar seviyesi 1–3). */
+  repairFee: [0, 400, 900, 1800],
   /** Cüzdan geçmişinde tutulan işlem sayısı. */
   historyMax: 30,
 };

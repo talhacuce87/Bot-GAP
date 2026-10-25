@@ -133,7 +133,7 @@ describe("araba hasarı (sunucu)", () => {
     room.setCarDamage(sa, 7);
     room.setCarDamage(sa, 1.5);
     room.setCarDamage(sa, 2);
-    expect(dmg()).toEqual([{ t: "cardmg", sid: sa, d: 2 }]);
+    expect(dmg()).toEqual([{ t: "cardmg", sid: sa, d: 2, z: null }]);
     room.setCar(sa, null);
     expect(room.players.get(sa)!.info.dmg).toBe(0);
   });

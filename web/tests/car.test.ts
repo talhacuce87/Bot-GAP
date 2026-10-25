@@ -149,6 +149,28 @@ describe("Araba · sürüş", () => {
     expect(Math.abs(me.car!.slip)).toBeLessThan(0.5);
   });
 
+  it("duvara açılı çarpınca donup kalmaz: seker, duvar boyunca kayar, döner", () => {
+    const { me, run } = setup(-5, -2);
+    me.enterCar();
+    me.rot = Math.PI + 0.6; // kuzeye, 34° açıyla duvara
+    run(2.4, 1);
+    const sp = Math.hypot(me.car!.v, me.car!.slip);
+    expect(me.z).toBeGreaterThan(-20 + 0.5);
+    expect(sp).toBeGreaterThan(2);
+    expect(Math.abs(me.car!.spin ?? 0) + Math.abs(me.rot - (Math.PI + 0.6))).toBeGreaterThan(0.05);
+  });
+
+  it("başka araca çarpınca hız kütleye göre paylaşılır, o da itilir", () => {
+    const { me, run } = setup(-10, 60);
+    let got = 0;
+    const body = { x: -10, z: 50, rot: 0, vx: 0, vz: 0, mass: 1, hl: 2.15, hw: 0.86, hit: (dvx: number, dvz: number) => (got += Math.hypot(dvx, dvz)) };
+    (me as unknown as { world: { carBodies: () => unknown[] } }).world.carBodies = () => [body];
+    me.enterCar();
+    run(1.5, 1);
+    expect(got).toBeGreaterThan(2);
+    expect(me.z).toBeGreaterThan(50 + 1.5);
+  });
+
   it("normal virajda yol tutar (kayma küçük)", () => {
     const { me, run } = setup(0, 200);
     me.enterCar();

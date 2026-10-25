@@ -54,6 +54,8 @@ export interface AvatarView {
   eatAt?: number;
   /** Bayıldı (can sıfır): yere yan yatar. */
   downed?: boolean;
+  /** Araba çarptı: düştüğü an (sn, döngü saati) ve yönü (arabaya dönük, sırtüstü). */
+  ko?: { at: number; rot: number } | null;
   /** İsim etiketi gizli (saklambaçta saklananlar). */
   hideName?: boolean;
   /** Avatar çizilmez (birinci şahıs kamerada kendin); gölge ve evcil hayvan kalır. */
@@ -256,6 +258,20 @@ export function eatPose(v: AvatarView, time: number): number {
   const t = v.eatAt === undefined ? -1 : time - v.eatAt;
   return t < 0 || t > EAT_TIME ? 0 : Math.min(1, t * 6, (EAT_TIME - t) * 5);
 }
+/** Araba çarpınca: savrulma (havada), yerde yatma ve kalkma süreleri (sn). */
+export const KO_FLY = 0.45;
+export const KO_LIE = 2.4;
+export const KO_UP = 3.0;
+/** 0..1: sırtüstü yatma miktarı ve havadaki yükseklik (m); yere düşmemişse null. */
+export function koPose(v: AvatarView, time: number): { k: number; air: number } | null {
+  const t = v.ko ? time - v.ko.at : -1;
+  if (t < 0 || t > KO_UP) return null;
+  if (t < KO_FLY) {
+    const u = t / KO_FLY;
+    return { k: u, air: Math.sin(u * Math.PI) * 0.55 };
+  }
+  return { k: t < KO_LIE ? 1 : 1 - (t - KO_LIE) / (KO_UP - KO_LIE), air: 0 };
+}
 /** Gizlenecek kapsül için sıfır ölçek. */
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 
@@ -326,9 +342,10 @@ export class AvatarRenderer {
     // Araçta: bisiklet ve kayıkta oturur (bisiklette pedal), kaykayda ayakta kayar
     const vehicle = vehicleOf(v.flags);
     const moving = (v.flags & FLAG_WALKING) !== 0;
-    const seated = !v.downed && ((v.flags & FLAG_SEATED) !== 0 || vehicle === 1 || vehicle === 3);
+    const ko = koPose(v, time);
+    const seated = !v.downed && !ko && ((v.flags & FLAG_SEATED) !== 0 || vehicle === 1 || vehicle === 3);
     const airborne = v.jumpY > 0;
-    const walking = moving && !seated && !airborne && vehicle === 0 && !v.downed;
+    const walking = moving && !seated && !airborne && vehicle === 0 && !v.downed && !ko;
     // Koşarken adımlar sıklaşır ve sallanma artar.
     const running = walking && (v.flags & FLAG_RUNNING) !== 0;
     const stepHz = running ? 14 : 9;
@@ -413,6 +430,11 @@ export class AvatarRenderer {
       px -= Math.cos(v.rot) * DOWN_HALF;
       pz += Math.sin(v.rot) * DOWN_HALF;
     }
+    // Araba çarptı: arabaya dönük sırtüstü düşer (önce havaya savrulur), yatar, doğrulup kalkar
+    if (ko) {
+      this.quat.setFromAxisAngle(this.up, v.ko!.rot).multiply(this.tilt.setFromAxisAngle(this.xAxis, -1.45 * ko.k));
+      y = (v.baseY ?? 0) + ko.air + 0.2 * ko.k;
+    }
     // Namaz/abdest: gövde kalçadan yatar (kalça yerinde kalacak şekilde ötelenir), selamda yana döner
     if (pray) {
       const yawed = v.rot + pray.yaw + (v.poseYaw ?? 0);
@@ -452,7 +474,7 @@ export class AvatarRenderer {
     this.body.setMatrixAt(i, asChibi || v.hidden || v.bodyHidden ? HIDDEN : this.m);
     this.body.setColorAt(i, v.color);
 
-    this.m.makeTranslation(v.x, y + (v.downed ? DOWN_NAME_Y : NAME_Y) * s + (vehicle === 1 ? 0.25 : 0), v.z);
+    this.m.makeTranslation(v.x, y + (v.downed || (ko && ko.k > 0.5) ? DOWN_NAME_Y : NAME_Y) * s + (vehicle === 1 ? 0.25 : 0), v.z);
     this.name.setMatrixAt(i, this.m);
     // Havadayken gölge küçülür: yükseklik hissi.
     const sh = 0.95 * s * Math.max(0.45, 1 - v.jumpY * 0.45);

@@ -123,7 +123,7 @@ export function inCave(x: number, z: number): boolean {
 /** Otoban köprüsünün yarı genişliği: asfalt ve iki yanda kaldırım. */
 export const ROAD_BRIDGE_HALF = ROAD_HALF + 1.4;
 
-function onBridge(x: number, z: number): boolean {
+export function onBridge(x: number, z: number): boolean {
   // Otoban nehrin üstünden köprüyle geçer (kaldırımından yayalar da)
   if (riverDist(x, z) < RIVER_BANK + 1 && roadDist(x, z) <= ROAD_BRIDGE_HALF) return true;
   for (const br of BRIDGE_AXES) {
@@ -246,7 +246,35 @@ export function terrainColliders(c: Colliders): void {
       if ((bb > 0) !== (cc > 0)) pts.push([X + FINE, Z + cross(bb, cc) * FINE]);
       if ((d > 0) !== (cc > 0)) pts.push([X + cross(d, cc) * FINE, Z + FINE]);
       if ((a > 0) !== (d > 0)) pts.push([X, Z + cross(a, d) * FINE]);
-      for (let k = 0; k + 1 < pts.length; k += 2) c.segment(pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1], 0.08);
+      for (let k = 0; k + 1 < pts.length; k += 2) {
+        // Köprünün su üstündeki kenarları 2 m'lik ızgarada basamak basamak çıkıyor (çapraz köprüde koridor yer yer
+        // 1,9 m'ye daralıyor, araba geçemiyordu): onlar atlanır, yerine gerçek kenarda düz korkuluk konur
+        if (nearBridge((pts[k][0] + pts[k + 1][0]) / 2, (pts[k][1] + pts[k + 1][1]) / 2)) continue;
+        c.segment(pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1], 0.08);
+      }
+    }
+  }
+  bridgeRails(c);
+}
+
+/** Köprünün su üstündeki kısmının kenarı (korkuluk payıyla): ızgara kenarı yerine düz korkuluk. */
+const RAIL_T = RIVER_BANK + 1.2;
+function nearBridge(x: number, z: number): boolean {
+  for (const br of BRIDGE_AXES) {
+    const dx = x - br.x, dz = z - br.z;
+    if (Math.abs(dx * br.ux + dz * br.uz) <= RAIL_T && Math.abs(-dx * br.uz + dz * br.ux) <= BRIDGE.w / 2 + 1.2) return true;
+  }
+  return false;
+}
+
+/** Köprü korkulukları: iki yanda düz duvar; uçlarında dışa doğru kısa parça (kıyıyla aradaki boşluk kapansın). */
+function bridgeRails(c: Colliders): void {
+  for (const br of BRIDGE_AXES) {
+    const at = (t: number, s: number): [number, number] => [br.x + br.ux * t - br.uz * s, br.z + br.uz * t + br.ux * s];
+    for (const side of [-1, 1]) {
+      const s = side * BRIDGE.w / 2;
+      c.segment(...at(-RAIL_T - 0.3, s), ...at(RAIL_T + 0.3, s), 0.1);
+      for (const e of [-1, 1]) c.segment(...at(e * (RAIL_T + 0.3), s), ...at(e * (RAIL_T + 0.3), side * (BRIDGE.w / 2 + 1.7)), 0.1);
     }
   }
 }

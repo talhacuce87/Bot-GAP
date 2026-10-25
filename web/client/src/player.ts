@@ -40,8 +40,8 @@ import {
   TURRET_TOP,
   TURRET_TURN,
 } from "../../shared/tank";
-import { CAR_BOOST, CAR_BRAKE, CAR_HANDBRAKE, CAR_HULL_R, CAR_REVERSE, carCircles, carPerf, type CarStats } from "../../shared/car";
-import type { AvatarView } from "./avatars/avatars";
+import { CAR_BOOST, CAR_BRAKE, CAR_HANDBRAKE, CAR_REVERSE, carCircles, carPerf, type CarStats } from "../../shared/car";
+import { type AvatarView, KO_UP } from "./avatars/avatars";
 import type { Input } from "./input/input";
 import { LEDGE } from "./world/colliders";
 import { SEAT_H } from "./world/builder";
@@ -77,11 +77,101 @@ const SHOULDER = 0.7;
 /** Kenardan düşerken yerçekimi (zıplama eğrisinin inişi kadar yumuşak). */
 const FALL_G = 12;
 
-/** Araba: aks aralığı (direksiyon geometrisi), lastiklerin yana tutuşu (m/sn²; el freninde) ve çarpışma adımı (m). */
+/** Araba: aks aralığı (direksiyon geometrisi), lastiklerin yana tutuşu (m/sn²) ve çarpışma adımı (m). */
 const WHEELBASE = 2.5;
 const TIRE_GRIP = 22;
-const HAND_GRIP = 4.5;
 const CAR_STEP = 0.25;
+/**
+ * Lastiklerin yana kaymayı söndürme hızı (1/sn, üstel): normal sürüşte yüksek (araba yolu tutar, hız vektörü
+ * gövdeyle hizalanır), driftte düşük (araba yan gider, gaz ve direksiyonla yönetilir), el freninde en düşük.
+ */
+const LAT_GRIP = 9;
+const LAT_DRIFT = 1.15;
+const LAT_HAND = 0.9;
+/** Driftte direksiyonun gövdeyi çevirme hızı (rad/sn, tam kilit): kontra ve yönlendirme. */
+const DRIFT_YAW = 2.1;
+/**
+ * Çarpışma: sekme katsayısı (0 yapışır, 1 tam seker), duvara sürtünme, çarpmanın döndürme etkisi ve dönüşün
+ * sönmesi (1/sn). Model kütleleri (Şahin 1): araba arabaya çarpınca hız kütleye göre paylaşılır.
+ */
+const BOUNCE = 0.28;
+const WALL_FRICTION = 0.2;
+const SPIN_DAMP = 2.2;
+export const CAR_MASS: Partial<Record<string, number>> = { motor: 0.3, doblo: 1.35, taksi: 1.35, passat: 1.3, linea: 1.15, kartal: 1.05, e30: 1 };
+/** Modellerin yarı boyu ve yarı eni (m): araba arabaya çarpışmada dikdörtgen. */
+export const CAR_DIMS: Record<string, { hl: number; hw: number }> = {
+  sahin: { hl: 2.15, hw: 0.86 }, dogan: { hl: 2.15, hw: 0.86 }, kartal: { hl: 2.2, hw: 0.86 }, linea: { hl: 2.3, hw: 0.88 },
+  doblo: { hl: 2.15, hw: 0.9 }, taksi: { hl: 2.15, hw: 0.9 }, passat: { hl: 2.35, hw: 0.88 }, e30: { hl: 2.15, hw: 0.83 }, motor: { hl: 0.95, hw: 0.38 },
+};
+/** Engellere karşı gövde: boyunca dizili daireler (merkezden uzaklıkları) ve yarıçapları. */
+function carHull(model: string): { r: number; offs: number[] } {
+  return model === "motor" ? { r: 0.4, offs: [-0.55, 0.55] } : { r: 0.88, offs: [-1.25, 0, 1.25] };
+}
+/**
+ * Arabanın gövdesini engellerden çıkarırken verilen ayak yüksekliği (yerdekiyle aynı; ayırt etmek için): dinamik
+ * engeller (NPC trafik) bunu görünce duvar gibi davranmaz, araç olarak çarpışılır (carBodies).
+ */
+export const CAR_PROBE_Y = 1e-6;
+/** Dikdörtgenin kütle başına dönme ataleti: (boy² + en²) / 12. */
+const inertia = (hl: number, hw: number) => ((2 * hl) ** 2 + (2 * hw) ** 2) / 12;
+
+/**
+ * İki döndürülmüş dikdörtgenin çarpışması (ayırıcı eksen): en az girilen eksen normal (B'den A'ya), derinlik ve
+ * temas noktası (birinin diğerinin içine en çok giren köşesi). Değmiyorsa null.
+ */
+export function boxHit(
+  ax: number, az: number, arot: number, ahl: number, ahw: number,
+  bx: number, bz: number, brot: number, bhl: number, bhw: number,
+): { nx: number; nz: number; depth: number; px: number; pz: number } | null {
+  const au = [Math.sin(arot), Math.cos(arot)], av = [Math.cos(arot), -Math.sin(arot)];
+  const bu = [Math.sin(brot), Math.cos(brot)], bv = [Math.cos(brot), -Math.sin(brot)];
+  const dx = ax - bx, dz = az - bz;
+  let depth = Infinity, nx = 0, nz = 0;
+  for (const [x, z] of [au, av, bu, bv]) {
+    const ra = ahl * Math.abs(au[0] * x + au[1] * z) + ahw * Math.abs(av[0] * x + av[1] * z);
+    const rb = bhl * Math.abs(bu[0] * x + bu[1] * z) + bhw * Math.abs(bv[0] * x + bv[1] * z);
+    const d = dx * x + dz * z, o = ra + rb - Math.abs(d);
+    if (o <= 0) return null;
+    if (o < depth) [depth, nx, nz] = [o, d >= 0 ? x : -x, d >= 0 ? z : -z];
+  }
+  // Temas: A'nın B'ye en derin giren köşesi ya da B'nin A'ya giren köşesi
+  const corners = (cx: number, cz: number, u: number[], v: number[], hl: number, hw: number) =>
+    [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([a, b]) => [cx + u[0] * hl * a + v[0] * hw * b, cz + u[1] * hl * a + v[1] * hw * b]);
+  const inside = (p: number[], cx: number, cz: number, u: number[], v: number[], hl: number, hw: number) => {
+    const qx = p[0] - cx, qz = p[1] - cz;
+    return Math.abs(qx * u[0] + qz * u[1]) <= hl + 0.05 && Math.abs(qx * v[0] + qz * v[1]) <= hw + 0.05;
+  };
+  let best: number[] | null = null, bestD = Infinity;
+  for (const p of corners(ax, az, au, av, ahl, ahw)) {
+    const k = p[0] * nx + p[1] * nz;
+    if (inside(p, bx, bz, bu, bv, bhl, bhw) && k < bestD) [best, bestD] = [p, k];
+  }
+  if (!best) {
+    let bk = -Infinity;
+    for (const p of corners(bx, bz, bu, bv, bhl, bhw)) {
+      const k = p[0] * nx + p[1] * nz;
+      if (inside(p, ax, az, au, av, ahl, ahw) && k > bk) [best, bk] = [p, k];
+    }
+  }
+  const [px, pz] = best ?? [(ax + bx) / 2, (az + bz) / 2];
+  return { nx, nz, depth, px, pz };
+}
+
+/** Çarpışılan başka araç (oyuncu arabası ya da NPC trafik): yeri, yönü, hızı, kütlesi; çarpınca ne olur. */
+export interface CarBody {
+  x: number;
+  z: number;
+  rot: number;
+  vx: number;
+  vz: number;
+  mass: number;
+  /** Yarı boy ve yarı en (m) ve dönüş hızı (rad/sn). */
+  hl: number;
+  hw: number;
+  omega?: number;
+  /** Çarpmanın ona etkisi (hız değişimi m/sn ve dönüş rad/sn); oyuncu arabası kendi istemcisinde hesaplanır. */
+  hit?(dvx: number, dvz: number, spin: number): void;
+}
 
 /** Arabanın anlık hâli: ileri hız ve yana kayma (m/sn, + sağa), yumuşatılmış direksiyon, el freni, gaz. */
 export interface CarState {
@@ -92,6 +182,12 @@ export interface CarState {
   throttle: number;
   /** Direksiyon girişi (−1 sol … 1 sağ). */
   wheel: number;
+  /** Drift hâli (0 yol tutuyor … 1 tam drift): el freniyle başlar, gaz ve direksiyonla sürer. */
+  drift?: number;
+  /** Çarpmadan gelen dönüş hızı (rad/sn): söner. */
+  spin?: number;
+  /** Son adımdaki toplam dönüş hızı (rad/sn; çarpışmada temas noktasının hızı için). */
+  omega?: number;
 }
 
 /** `p`yi (x, z) merkezli r yarıçaplı dairenin dışına iter. */
@@ -164,7 +260,7 @@ export class Player implements AvatarView, PlayerState {
   /** Fareyle en son bakıştan beri geçen süre (sn). */
   private lookIdle = 0;
   /** Arabayla bir yere sertçe çarptı: çarpma anındaki hız (m/sn). */
-  onCrash: ((speed: number) => void) | null = null;
+  onCrash: ((speed: number, lx?: number, lz?: number) => void) | null = null;
   /** Arabayla gidiyorsa hızı (m/sn, geri vitesteyse eksi), kayması ve direksiyonu; konumu x/z, yönü rot. */
   car: CarState | null = null;
   /** Yarış gridinde (yeşil yanana kadar): gaz/geri tutmaz, araba yerinde durur. */
@@ -201,9 +297,13 @@ export class Player implements AvatarView, PlayerState {
   rideMeters = 0;
   /** Hız çarpanı (topla koşarken biraz yavaş: top sürmek bedava değil). */
   speedMul = 1;
+  /** Arabanın hasar seviyesi (0–3): ağır hasarlı araba yavaş ve güçsüz (features yazar). */
+  carWear = 0;
   /** Elindeki eşya (hızlı slot) ve son yediği an. */
   held: string | null = null;
   eatAt = -1;
+  /** Araba çarptı: düştüğü an ve yönü (yerdeyken ve kalkarken yürünmez). */
+  ko: { at: number; rot: number } | null = null;
   /** Sahnede (karaoke): sahne alanında kalır, sahne yüksekliğinde çizilir. */
   onStage = false;
   /** Fotoğraf modunda kamera daha uzağa açılır. */
@@ -302,6 +402,12 @@ export class Player implements AvatarView, PlayerState {
 
     // Paintball: geri sayımda ve vurulmuşken yerinden kıpırdamaz (yalnızca bakar)
     if (this.fps?.frozen) input.moveX = input.moveY = 0;
+    // Araba çarpıp yere düşürdüyse kalkana kadar kontrol yok (savrulma hızı söner)
+    if (this.ko && performance.now() / 1000 - this.ko.at < KO_UP) {
+      input.moveX = input.moveY = 0;
+      input.consumeAction();
+      input.consumeJump();
+    }
 
     const action = input.consumeAction();
     let jump = input.consumeJump() && !this.fps?.frozen;
@@ -528,7 +634,7 @@ export class Player implements AvatarView, PlayerState {
     this.knockT = 0;
     this.resetHeight();
     this.vx = this.vz = 0;
-    this.car = { v: 0, slip: 0, steer: 0, hand: false, throttle: 0, wheel: 0 };
+    this.car = { v: 0, slip: 0, steer: 0, hand: false, throttle: 0, wheel: 0, drift: 0 };
     this.flags = (this.flags & ~(3 << VEHICLE_SHIFT)) & ~(FLAG_WALKING | FLAG_RUNNING);
     this.yaw = this.rot + Math.PI;
   }
@@ -572,7 +678,10 @@ export class Player implements AvatarView, PlayerState {
     const c = this.car!;
     input.consumeAction();
     input.consumeJump();
-    const perf = carPerf(settings.car);
+    // Hasar: motor güç kaybeder (tepe hız ve ivme düşer)
+    const wear = [1, 0.94, 0.84, 0.68][this.carWear] ?? 1;
+    const base = carPerf(settings.car);
+    const perf = { ...base, top: base.top * wear, accel: base.accel * (0.5 + 0.5 * wear) };
     c.hand = !this.carLock && input.heldAction("jump");
     // Klavyede çapraz (W+D) vektör kısaltılır: arabada gaz ve direksiyon tam kalsın
     const diag = Math.abs(input.moveX) > 0.7 && Math.abs(Math.abs(input.moveX) - Math.abs(input.moveY)) < 1e-3 ? Math.SQRT2 : 1;
@@ -607,44 +716,148 @@ export class Player implements AvatarView, PlayerState {
     c.v = Math.max(-CAR_REVERSE, c.v);
     if (c.hand) c.v -= Math.sign(c.v) * Math.min(Math.abs(c.v), CAR_HANDBRAKE * dt);
     if (Math.abs(c.v) < 0.03 && Math.abs(gas) < 0.1) c.v = 0;
-    // Direksiyon: yumuşakça döner; tekerlek açısı hızla küçülür, dönüş tutuşun kaldırabildiğiyle sınırlı
-    // (el freninde ve gaz verilen arkadan itişli arabada sınır yok: arka kayar)
+    // Direksiyon: yumuşakça döner; tekerlek açısı hızla küçülür
     c.steer += (c.wheel - c.steer) * (1 - Math.exp(-dt * 9));
-    const sp = Math.abs(c.v);
+    const sp = Math.hypot(c.v, c.slip);
     const grip = TIRE_GRIP * perf.grip;
-    let yaw = (c.v * Math.tan(c.steer * 0.6 * perf.turn / (1 + sp / 22))) / WHEELBASE;
-    const power = gas > 0.5 && sp > 6 && Math.abs(c.steer) > 0.5 ? perf.drift : 0;
-    const cap = c.hand ? Infinity : (grip * (1.05 + power * 0.25)) / Math.max(sp, 1);
-    yaw = THREE.MathUtils.clamp(yaw, -cap, cap) * (c.hand ? 1.35 : 1);
-    const d = -yaw * dt;
+    // Drift: el freniyle başlar; gaz ve direksiyon tutuldukça sürer (arkadan itişli, drift'i yüksek arabada
+    // daha kolay ve uzun); bırakınca lastikler toparlar. Drift'i yüksek arabada tam gaz, tam kilit ve hızlıyken
+    // arka kendiliğinden kayabilir (power slide).
+    const angle = Math.atan2(Math.abs(c.slip), Math.max(1, Math.abs(c.v)));
+    const ease = Math.min(1, perf.drift / 1.2);
+    const keep = (c.drift ?? 0) > 0.25 && gas > 0.3 && Math.abs(c.steer) > 0.12 && sp > 6 && angle > 0.1;
+    const powerSlide = perf.drift > 1 && gas > 0.9 && Math.abs(c.steer) > 0.85 && c.v > 12;
+    const want = c.hand && sp > 4 ? 1 : keep ? 0.35 + 0.6 * ease : powerSlide ? 0.6 : 0;
+    const dr0 = c.drift ?? 0;
+    c.drift = dr0 + (want - dr0) * (1 - Math.exp(-dt * (want > dr0 ? 7 : 1.4 + (1 - ease) * 2)));
+    const dr = c.drift;
+    // Dönüş: normalde direksiyon geometrisi, lastiğin kaldırabildiği yanal ivmeyle sınırlı (sınırda araba
+    // genişler: understeer). Driftte direksiyon gövdeyi doğrudan çevirir (kontra, yönlendirme).
+    let yaw = (c.v * Math.tan(c.steer * 0.6 * perf.turn / (1 + Math.abs(c.v) / 22))) / WHEELBASE;
+    const cap = grip / Math.max(sp, 1);
+    yaw = THREE.MathUtils.clamp(yaw, -cap, cap);
+    if (dr > 0.02 && Math.abs(c.v) > 1) yaw += (c.steer * DRIFT_YAW * perf.turn * Math.sign(c.v) - yaw) * dr * 0.85;
+    // Drift açısı sınırı (drift'i yüksek arabada daha geniş): sınırda direksiyon açıyı daha da büyütmez, araba dönmez (spin)
+    const beta = Math.atan2(c.slip, Math.abs(c.v)), betaMax = (0.55 + 0.35 * ease) * (c.hand ? 1.4 : 1);
+    if (Math.abs(beta) > betaMax * 0.8 && -yaw * Math.sign(beta) * Math.sign(c.v) > 0) yaw *= Math.max(0, 1 - (Math.abs(beta) - betaMax * 0.8) / (betaMax * 0.2));
+    // Çarpmanın döndürmesi (söner)
+    const spin = c.spin ?? 0;
+    c.spin = spin * Math.exp(-dt * SPIN_DAMP);
+    const d = (-yaw + spin) * dt;
+    c.omega = -yaw + spin;
     this.rot += d;
     // Gövde döndü ama hız vektörü dönmedi: ileri hız ve kayma yeni yöne göre
     const cs = Math.cos(d), sn = Math.sin(d);
     [c.v, c.slip] = [c.v * cs - c.slip * sn, c.v * sn + c.slip * cs];
-    // Lastikler yana kaymayı tutuşları kadar söndürür (el freninde ve gazla kayan arkada az)
-    const hold = c.hand ? HAND_GRIP : grip * (1 - Math.min(0.6, power * 0.3));
-    c.slip -= Math.sign(c.slip) * Math.min(Math.abs(c.slip), hold * dt);
+    // Lastikler yana kaymayı söndürür (üstel): normalde hızla (yol tutar), driftte yavaş, el freninde en yavaş.
+    // Söndürülen kaymanın bir kısmı ileri hıza döner: driftten çıkış hızlı olur (arcade)
+    const lat = c.hand ? LAT_HAND : LAT_GRIP * perf.grip + (LAT_DRIFT * (0.6 + 0.4 / Math.max(0.3, perf.drift)) - LAT_GRIP * perf.grip) * dr;
+    const before = Math.abs(c.slip);
+    c.slip *= Math.exp(-dt * lat);
+    // Tutuş sınırının altındaki kayma tamamen söner (normal virajda araba hiç kaymaz)
+    if (!c.hand) c.slip -= Math.sign(c.slip) * Math.min(Math.abs(c.slip), grip * 0.75 * (1 - dr) * dt);
+    if (c.v > 1 && !c.hand) c.v = Math.min(top, c.v + (before - Math.abs(c.slip)) * 0.3 * dr);
+    // Drift ve sert viraj hız yer (lastik sürtünmesi)
+    c.v *= Math.exp(-dt * (0.12 * dr + Math.abs(yaw) * 0.06));
     const fx = Math.sin(this.rot), fz = Math.cos(this.rot);
+    const px = this.x, pz = this.z;
     this.x += (fx * c.v - fz * c.slip) * dt;
     this.z += (fz * c.v + fx * c.slip) * dt;
-    // Gövdenin ön ve arka dairesini engellerden (ve yalnızca arabayı durduran kapılardan) çıkar
-    const [ax, az, bx, bz] = carCircles(this.x, this.z, this.rot);
-    const f = { x: ax, z: az }, b = { x: bx, z: bz };
-    for (const p of [f, b]) {
-      this.world.colliders.resolve(p, CAR_HULL_R);
-      this.world.carColliders.resolve(p, CAR_HULL_R);
+    // Su: araba girmez (otoban köprüsünün yanından nehre, şelale havuzuna, göle); duvar gibi durur
+    const [wx1, wz1, wx2, wz2] = carCircles(this.x, this.z, this.rot);
+    const water = this.world.carWater;
+    if (water && (water(wx1, wz1) || water(wx2, wz2))) {
+      const speed = Math.hypot(c.v, c.slip);
+      this.x = px;
+      this.z = pz;
+      if (speed > 2.5) this.onCrash?.(speed);
+      c.v *= 0.3;
+      c.slip *= 0.3;
     }
-    const ox = (f.x - ax + b.x - bx) / 2, oz = (f.z - az + b.z - bz) / 2;
-    this.x += ox;
-    this.z += oz;
-    const hit = Math.hypot(ox, oz);
-    const speed = Math.hypot(c.v, c.slip);
-    if (hit > 0.08 && speed > 2.5) this.onCrash?.(speed);
-    if (hit > 0.01) {
-      const k = hit > 0.08 ? 0.35 : 0.85;
-      c.v *= k;
-      c.slip *= k;
+    // Engeller (duvar, direk, kapı): gövde boyunca dizili daireler (scooter'da küçük) engelden çıkarılır
+    const hull = carHull(settings.car.model);
+    let sx = 0, sz = 0, touch = 0, cw = 0, cpx = 0, cpz = 0;
+    for (const off of hull.offs) {
+      const hx = this.x + fx * off, hz = this.z + fz * off;
+      const p = { x: hx, z: hz };
+      this.world.colliders.resolve(p, hull.r, CAR_PROBE_Y);
+      this.world.carColliders.resolve(p, hull.r, CAR_PROBE_Y);
+      const dx = p.x - hx, dz = p.z - hz, dl = Math.hypot(dx, dz);
+      if (dl < 1e-4) continue;
+      sx += dx;
+      sz += dz;
+      touch++;
+      // Temas noktası: dairenin engele değen yüzü (itilme payıyla ağırlıklı)
+      cpx += (hx - (dx / dl) * hull.r) * dl;
+      cpz += (hz - (dz / dl) * hull.r) * dl;
+      cw += dl;
     }
+    if (touch) {
+      this.x += sx / touch;
+      this.z += sz / touch;
+      const nl = Math.hypot(sx, sz) || 1;
+      this.collide(sx / nl, sz / nl, cpx / cw, cpz / cw);
+    }
+    // Başka araçlar: döndürülmüş dikdörtgen (gerçek boyut) çarpışması; üst üste binmez, dürtü kütle ve
+    // dönme ataletiyle paylaşılır (köşeden çarpan da çarpılan da döner)
+    const dims = CAR_DIMS[settings.car.model] ?? CAR_DIMS.sahin;
+    for (const o of this.world.carBodies?.() ?? []) {
+      if (Math.abs(o.x - this.x) > 7 || Math.abs(o.z - this.z) > 7) continue;
+      const hit = boxHit(this.x, this.z, this.rot, dims.hl, dims.hw, o.x, o.z, o.rot, o.hl, o.hw);
+      if (!hit) continue;
+      const m = CAR_MASS[settings.car.model] ?? 1, share = o.mass / (m + o.mass);
+      this.x += hit.nx * hit.depth * share;
+      this.z += hit.nz * hit.depth * share;
+      this.collide(hit.nx, hit.nz, hit.px, hit.pz, o);
+    }
+  }
+
+  /**
+   * Çarpışmanın tepkisi (katı cisim dürtüsü): `n` engelden arabaya doğru birim normal, (px, pz) temas noktası
+   * (dünya). Temas noktasının hızı dönüşü de içerir; dürtü kütle ve dönme ataletiyle bulunur: dik kısmı seker
+   * (hızlı çarpmada az: enerji ezilmede kaybolur), yanal kısmı sürtünür (duvar boyunca kayar), merkezden uzak
+   * çarpma döndürür. Karşı araçsa ona eşit ve ters dürtü gider.
+   */
+  private collide(nx: number, nz: number, px: number, pz: number, o?: CarBody): void {
+    const c = this.car!;
+    const fx = Math.sin(this.rot), fz = Math.cos(this.rot);
+    const model = settings.car.model, m = CAR_MASS[model] ?? 1, dims = CAR_DIMS[model] ?? CAR_DIMS.sahin;
+    const I = m * inertia(dims.hl, dims.hw);
+    const rx = px - this.x, rz = pz - this.z, w = c.omega ?? 0;
+    // Temas noktalarının hızları (dönüş dahil: v = V + ω·(rz, −rx))
+    const vx = fx * c.v - fz * c.slip + w * rz, vz = fz * c.v + fx * c.slip - w * rx;
+    let ox = 0, oz = 0, orx = 0, orz = 0, mo = Infinity, Io = Infinity;
+    if (o) {
+      [mo, Io, orx, orz] = [o.mass, o.mass * inertia(o.hl, o.hw), px - o.x, pz - o.z];
+      const ow = o.omega ?? 0;
+      ox = o.vx + ow * orz;
+      oz = o.vz - ow * orx;
+    }
+    const rvx = vx - ox, rvz = vz - oz, vn = rvx * nx + rvz * nz;
+    if (vn >= 0) return;
+    const tA = rz * nx - rx * nz, tB = orz * nx - orx * nz;
+    const kN = 1 / m + (tA * tA) / I + (o ? 1 / mo + (tB * tB) / Io : 0);
+    // Sekme: yavaş çarpma seker, sert çarpmada enerji gövdenin ezilmesine gider
+    const e = Math.max(0.06, BOUNCE + vn * 0.012);
+    const j = (-(1 + e) * vn) / kN;
+    // Sürtünme dürtüsü (Coulomb): yanal kayma hızını en çok μ·j kadar keser
+    const tx = -nz, tz = nx, vt = rvx * tx + rvz * tz;
+    const sA = rz * tx - rx * tz, sB = orz * tx - orx * tz;
+    const kT = 1 / m + (sA * sA) / I + (o ? 1 / mo + (sB * sB) / Io : 0);
+    const mu = o ? 0.45 : WALL_FRICTION;
+    const jt = THREE.MathUtils.clamp(-vt / kT, -mu * j, mu * j);
+    const Jx = j * nx + jt * tx, Jz = j * nz + jt * tz;
+    const Vx = fx * c.v - fz * c.slip + Jx / m, Vz = fz * c.v + fx * c.slip + Jz / m;
+    c.v = Vx * fx + Vz * fz;
+    c.slip = -Vx * fz + Vz * fx;
+    // Dönme: τ = Fx·rz − Fz·rx
+    c.spin = THREE.MathUtils.clamp((c.spin ?? 0) + (rz * Jx - rx * Jz) / I, -5, 5);
+    const dv = j / m;
+    // Sert çarpmada lastikler bir an yolu bırakır: araba savrulur, kayar (hemen yapışıp durmaz)
+    c.drift = Math.max(c.drift ?? 0, Math.min(0.85, dv / 9));
+    // Hasar: çarpmanın sertliği ve yeri (arabanın yerel ekseninde: x sol, z ön)
+    if (dv > 2.2) this.onCrash?.(dv * 1.4, rx * fz - rz * fx, rx * fx + rz * fz);
+    if (o?.hit) o.hit(-Jx / mo, -Jz / mo, -(orz * Jx - orx * Jz) / Io);
   }
 
   /** Tanktan in: gövdenin soluna çıkar (orası kapalıysa çarpışma iter). */

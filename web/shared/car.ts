@@ -183,6 +183,27 @@ export function carPerf(spec: Pick<CarSpec, "model" | "engine">): CarStats {
   const s = CAR_STATS[spec.model] ?? CAR_STATS.sahin, m = ENGINE_MULT[spec.engine] ?? ENGINE_MULT.stok;
   return { ...s, top: s.top * m.top, accel: s.accel * m.accel };
 }
+/**
+ * Görsel hasar (herkes görür): ön, arka, sol ve sağ göçük (0–3) ve kırık farlar (bit: 1 sol, 2 sağ).
+ * Arabanın yerel ekseni: +x sol, +z ön.
+ */
+export interface CarDents {
+  f: number;
+  r: number;
+  l: number;
+  rt: number;
+  hl: number;
+}
+export const NO_DENTS: CarDents = { f: 0, r: 0, l: 0, rt: 0, hl: 0 };
+/** İstemciden gelen hasarı doğrular (geçersizse null). */
+export function validDents(v: unknown): CarDents | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const lvl = (x: unknown) => (Number.isInteger(x) && (x as number) >= 0 && (x as number) <= 3 ? (x as number) : null);
+  const f = lvl(o.f), r = lvl(o.r), l = lvl(o.l), rt = lvl(o.rt), hl = lvl(o.hl);
+  return f === null || r === null || l === null || rt === null || hl === null ? null : { f, r, l, rt, hl };
+}
+
 /** Çarpışma: gövde boyunca iki daire (merkezden ±OFFSET, yarıçap R). */
 export const CAR_HULL_R = 0.92;
 export const CAR_HULL_OFFSET = 1.15;

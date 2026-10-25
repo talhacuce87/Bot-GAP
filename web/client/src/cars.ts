@@ -5,7 +5,7 @@
 // ışık yok: yolda ışık lekesi taklit eder.
 import * as THREE from "three";
 import { FLAG_SEATED } from "../../shared/constants";
-import type { CarSpec } from "../../shared/car";
+import { type CarDents, type CarSpec, NO_DENTS } from "../../shared/car";
 import type { AvatarView } from "./avatars/avatars";
 import { wetEnv } from "./world/geo";
 import { type LampField, MAX_CARS } from "./world/lamps";
@@ -37,6 +37,9 @@ interface Entry {
   /** Kayarken arka lastiklerin son izi (sol x, z, sağ x, z); kaymıyorsa null. */
   skid: [number, number, number, number] | null;
   smokeAt: number;
+  /** Yumuşatılmış gövde yatışı (titremesin; scooter sürücüsü de bununla yatar). */
+  roll: number;
+  pitch: number;
 }
 
 /** Arabanın kendi verdiği sürüş bilgisi (yalnızca kendi araban): fren, el freni, uzun far. */
@@ -100,13 +103,13 @@ export class Cars {
    * Bu kare `sid`in arabası (x, z, rot) — yoksa çağırma. `lights`: farlar açık / kapalı; verilmezse gece
    * kendiliğinden yanar.
    */
-  push(sid: number, spec: CarSpec, x: number, z: number, rot: number, night: number, dmg = 0, lights: boolean | null = null, fx: CarFx = {}): void {
+  push(sid: number, spec: CarSpec, x: number, z: number, rot: number, night: number, dmg = 0, lights: boolean | null = null, fx: CarFx = {}, dents: CarDents | null = null): void {
     const key = JSON.stringify(spec);
     let e = this.entries.get(sid);
     if (!e || e.key !== key) {
       if (e) this.drop(sid);
       const mesh = this.take(key, spec);
-      e = { key, motor: spec.model === "motor", mesh, seen: true, x, z, rot, steer: 0, lit: false, vel: 0, acc: 0, yr: 0, skid: null, smokeAt: 0 };
+      e = { key, motor: spec.model === "motor", mesh, seen: true, x, z, rot, steer: 0, lit: false, vel: 0, acc: 0, yr: 0, skid: null, smokeAt: 0, roll: 0, pitch: 0 };
       this.entries.set(sid, e);
     }
     e.seen = true;
@@ -128,9 +131,11 @@ export class Cars {
     e.mesh.group.rotation.y = rot;
     e.mesh.setNight(night);
     e.mesh.setDamage(dmg);
+    e.mesh.setDents(dents ?? NO_DENTS);
     // Açık farlar gündüz de yanar (camlar parlar); gerçek ışık yalnızca gece görünür
     const head = !this.opts.headlights || lights === false ? 0 : lights ? Math.max(night, 0.45) : night;
-    e.lit = head > 0.01 || !!fx.high;
+    // İki far da kırıksa yol aydınlanmaz
+    e.lit = (head > 0.01 || !!fx.high) && (dents?.hl ?? 0) !== 3;
     e.mesh.setHeadlights(head, { decal: !this.opts.lamps, haze: wetEnv.uWetRain.value, high: fx.high });
     this.night = night;
   }
@@ -142,14 +147,21 @@ export class Cars {
   private motion(e: Entry, d: number, lat: number, dr: number, x: number, z: number, rot: number, spec: CarSpec, fx: CarFx): void {
     const dt = this.dt;
     if (dt <= 0) return;
-    const vel = d / dt, acc = (vel - e.vel) / dt;
-    e.vel += (vel - e.vel) * Math.min(1, dt * 12);
-    e.acc += (acc - e.acc) * Math.min(1, dt * 5);
-    e.yr += (dr / dt - e.yr) * Math.min(1, dt * 8);
-    const soft = spec.model === "doblo" ? 1.7 : spec.model === "kartal" ? 1.2 : spec.low ? 0.6 : 1;
+    // Hız, ivme ve dönüş hızı hareketten bulunur: kare süresi oynadıkça gürültülü (özellikle ivme, hızın türevi).
+    // Hepsi yumuşatılır ve yatış da ayrıca süzülür; yoksa gövde titrer (yumuşak süspansiyonlu Doblo'da çok).
+    const vel = d / dt;
+    const v0 = e.vel;
+    e.vel += (vel - e.vel) * Math.min(1, dt * 6);
+    e.acc += ((e.vel - v0) / dt - e.acc) * Math.min(1, dt * 3);
+    e.yr += (dr / dt - e.yr) * Math.min(1, dt * 5);
+    const doblo = spec.model === "doblo" || spec.model === "taksi";
+    const soft = doblo ? 1.7 : spec.model === "kartal" ? 1.2 : spec.low ? 0.6 : 1;
     const roll = Math.max(-0.075, Math.min(0.075, e.vel * e.yr * 0.0024 * soft));
     const pitch = Math.max(-0.045, Math.min(0.045, -e.acc * 0.0035 * soft));
-    e.mesh.setLean(roll, pitch);
+    const k = 1 - Math.exp(-dt * 7);
+    e.roll += (roll - e.roll) * k;
+    e.pitch += (pitch - e.pitch) * k;
+    e.mesh.setLean(e.roll, e.pitch);
     e.mesh.setBrake(fx.brake ?? (e.acc < -5 && Math.abs(e.vel) > 1));
     // Patinaj: yana kayma hızı ya da el freni
     const skids = this.opts.skids;
@@ -251,6 +263,8 @@ export class Cars {
     s.flags = FLAG_SEATED;
     s.bodyHidden = !motor;
     s.baseY = motor ? MOTOR_SEAT_Y - 0.5 : SEAT_DROP;
+    // Scooter virajda yatınca sürücü de onunla yatar (motor.ts: gövde −roll·4 döner; avatarda vlean·0.55)
+    s.vlean = motor ? (-this.entries.get(sid)!.roll * 4) / 0.55 : 0;
     s.jumpY = 0;
     s.lift = 0;
     return s;

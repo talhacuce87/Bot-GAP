@@ -9,7 +9,7 @@
 // Yerel +z ön, +x sol (sürücü tarafı), araba merkezi orijinde ve tekerlekler yerde.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { CAR_COLORS, CAR_LIGHTS, CAR_NEONS, type CarSpec } from "../../../shared/car";
+import { CAR_COLORS, CAR_LIGHTS, CAR_NEONS, type CarDents, type CarSpec } from "../../../shared/car";
 import { mat, part } from "./geo";
 
 /**
@@ -215,6 +215,8 @@ export interface TofasMesh {
   roll(dist: number, steer: number): void;
   /** Hasar (0 yok – 3 ağır): boya kararır, tozlanır. */
   setDamage(level: number): void;
+  /** Göçükler (çarpılan taraf içeri çöker), kırık farlar, ağır hasarda sarkan tampon ve aralanan kapı. */
+  setDents(d: CarDents): void;
   dispose(): void;
 }
 
@@ -671,7 +673,7 @@ export function buildTofas(spec: CarSpec): TofasMesh {
     return m;
   };
   const bodyMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-  mesh(body, bodyMat, true);
+  const bodyMesh = mesh(body, bodyMat, true);
   // Tekerlekler: göbekte dönen parça; öndekiler direksiyonla birlikte bir pivotta döner
   const spins: THREE.Mesh[] = [];
   const steers: THREE.Group[] = [];
@@ -689,7 +691,7 @@ export function buildTofas(spec: CarSpec): TofasMesh {
   let spin = 0;
   const glassMesh = mesh(glass, new THREE.MeshPhongMaterial({ vertexColors: true, transparent: true, opacity: spec.tint ? 0.88 : 0.42, shininess: 90, specular: "#ffffff", depthWrite: false }));
   glassMesh.renderOrder = 3;
-  mesh(glow, new THREE.MeshBasicMaterial({ vertexColors: true }));
+  const glowMesh = mesh(glow, new THREE.MeshBasicMaterial({ vertexColors: true }));
 
   const decal = (tex: THREE.Texture, w: number, h: number, x: number, y: number, z: number, ry: number, emissive = "#555555", transparent = false) => {
     const m = new THREE.MeshLambertMaterial({ map: tex, emissive, emissiveMap: tex, transparent });
@@ -858,6 +860,93 @@ export function buildTofas(spec: CarSpec): TofasMesh {
   const tails = [-1, 1].map((sx) => halo("#ff2a1a", 0.3, sx * tailX, tailY + dy, RZ - 0.05));
   pool.visible = false;
   let tailN = 0, braking = false;
+  // ---------------------------------------------------------------
+  // Hasar: göçükler köşe noktaları itilerek (ilk göçükte asıl konumlar saklanır, onarımda geri döner), kırık far
+  // camı kararır ve o taraf yanmaz; ağır hasarda tampon sarkar, kapı aralanır (ayrı parçalar, sallanır)
+  // ---------------------------------------------------------------
+  let broken = 0;
+  let dentKey = "0,0,0,0,0";
+  const origPos = new Map<THREE.BufferGeometry, Float32Array>();
+  let glowCol: Float32Array | null = null;
+  const hash = (x: number, y: number, z: number) => {
+    const h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
+    return h - Math.floor(h);
+  };
+  const smooth = (a: number, b: number, x: number) => {
+    const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  const FRONT = [0, 0.07, 0.15, 0.26], SIDE = [0, 0.05, 0.1, 0.17];
+  const deform = (g: THREE.BufferGeometry, d: CarDents) => {
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    let o = origPos.get(g);
+    if (!o) origPos.set(g, (o = new Float32Array(pos.array as Float32Array)));
+    const a = pos.array as Float32Array;
+    for (let i = 0; i < a.length; i += 3) {
+      let x = o[i], y = o[i + 1], z = o[i + 2];
+      const n = hash(o[i], o[i + 1], o[i + 2]) - 0.5;
+      if (d.f) {
+        const t = smooth(ZF - 1.0, ZF + 0.1, z);
+        z -= FRONT[d.f] * t;
+        y += n * 0.05 * d.f * t;
+        x *= 1 - 0.025 * d.f * t;
+      }
+      if (d.r) {
+        const t = smooth(ZR + 1.0, ZR - 0.1, z);
+        z += FRONT[d.r] * t;
+        y += n * 0.05 * d.r * t;
+        x *= 1 - 0.025 * d.r * t;
+      }
+      for (const [lvl, sx] of [[d.l, 1], [d.rt, -1]] as const) {
+        if (!lvl) continue;
+        const t = smooth(W / 2 - 0.45, W / 2 + 0.05, x * sx) * Math.exp(-(((z - 0.15) / 1.0) ** 2));
+        x -= sx * SIDE[lvl] * t * (1 + n * 0.6);
+        y += n * 0.03 * lvl * t;
+      }
+      a[i] = x;
+      a[i + 1] = y;
+      a[i + 2] = z;
+    }
+    pos.needsUpdate = true;
+    g.computeVertexNormals();
+  };
+  /** Kırık farın camı: o taraftaki far noktalarının rengi kararır. */
+  const lampGlass = (hl: number) => {
+    const g = glowMesh.geometry, col = g.attributes.color as THREE.BufferAttribute, pos = g.attributes.position.array as Float32Array;
+    if (!glowCol) glowCol = new Float32Array(col.array as Float32Array);
+    const c = col.array as Float32Array;
+    for (let i = 0; i < c.length; i += 3) {
+      const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+      const side = x > 0 ? 1 : 2;
+      const dead = (hl & side) !== 0 && z > ZF - 0.35 && Math.abs(Math.abs(x) - lampX) < 0.22 && Math.abs(y - (lampY + dy)) < 0.16;
+      c[i] = dead ? 0.16 : glowCol[i];
+      c[i + 1] = dead ? 0.16 : glowCol[i + 1];
+      c[i + 2] = dead ? 0.17 : glowCol[i + 2];
+    }
+    col.needsUpdate = true;
+  };
+  // Sarkan tampon ve aralanan kapı (ağır hasarda görünür)
+  const loosePart = (w: number, h: number, depth: number, color: string) => {
+    const pivot = new THREE.Group();
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, depth), new THREE.MeshLambertMaterial({ color }));
+    m.castShadow = true;
+    pivot.add(m);
+    pivot.visible = false;
+    shell.add(pivot);
+    disposables.push(m.geometry, m.material as THREE.Material);
+    return { pivot, m };
+  };
+  const hangBumper = loosePart(W * 0.92, 0.16, 0.12, TRIM);
+  hangBumper.m.position.set(W * 0.46, 0, 0);
+  hangBumper.pivot.position.set(-W * 0.46, 0.34 + dy, ZF + 0.08);
+  const doorLen = Math.max(0.7, cabFront - 0.1 - bPillar);
+  const doors = [1, -1].map((sx) => {
+    const p = loosePart(0.05, BELT - 0.3, doorLen, paint);
+    p.m.position.set(0, 0, -doorLen / 2);
+    p.pivot.position.set(sx * (W / 2 + 0.03), (BELT + 0.3) / 2 + dy, cabFront - 0.1);
+    return { ...p, sx };
+  });
+  let sway = 0;
   const applyTails = () => {
     for (const m of tails) m.opacity = Math.max(0.6 * tailN, braking ? 0.95 : 0);
   };
@@ -874,7 +963,7 @@ export function buildTofas(spec: CarSpec): TofasMesh {
       beamUniforms.uOpacity.value = 0.1 * n * haze * (high ? 1.8 : 1);
       poolUniforms.uOpacity.value = (high ? 1 : 0.75) * n;
       for (const sp of headSprites) sp.scale.setScalar(high ? 1.1 : 0.45);
-      for (const m of heads) m.opacity = (high ? 1 : 0.85) * n;
+      heads.forEach((m, i) => (m.opacity = (broken & (i ? 1 : 2) ? 0 : 1) * (high ? 1 : 0.85) * n));
       tailN = n;
       applyTails();
     },
@@ -886,6 +975,23 @@ export function buildTofas(spec: CarSpec): TofasMesh {
     setLean(roll, pitch) {
       shell.rotation.z = roll;
       shell.rotation.x = pitch;
+      // Sarkan parçalar virajda ve frende sallanır
+      sway += (roll * 6 - pitch * 4 - sway) * 0.2;
+      hangBumper.pivot.rotation.z = -0.32 + sway * 0.4;
+      for (const dr of doors) dr.pivot.rotation.y = -dr.sx * (0.55 + sway * 0.5 * dr.sx);
+    },
+    setDents(d) {
+      const key = `${d.f},${d.r},${d.l},${d.rt},${d.hl}`;
+      if (key === dentKey) return;
+      dentKey = key;
+      deform(bodyMesh.geometry, d);
+      deform(glassMesh.geometry, d);
+      deform(glowMesh.geometry, d);
+      broken = d.hl;
+      lampGlass(d.hl);
+      hangBumper.pivot.visible = d.f >= 3;
+      doors[0].pivot.visible = d.l >= 3;
+      doors[1].pivot.visible = d.rt >= 3;
     },
     setDamage(level) {
       bodyMat.color.setScalar(1 - 0.16 * Math.max(0, Math.min(3, level)));

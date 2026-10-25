@@ -11,7 +11,7 @@ import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
 import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
-import { isJobCar, validCar } from "../../shared/car";
+import { isJobCar, NO_DENTS, validCar } from "../../shared/car";
 import { Casino, type CasinoMsg, secureRng } from "./casino";
 import { Economy } from "./economy";
 import { LifeHost } from "./life";
@@ -20,7 +20,8 @@ import { JobHost } from "./jobs";
 import { EVENT_DAILY_MAX, EVENT_REWARDS } from "../../shared/jobs";
 import { RingHost, type RingMsg } from "./ring";
 import { LiveHost, type LiveMsg } from "./liveTables";
-import { CASINO } from "../../shared/zones";
+import { CASINO, GARAGE } from "../../shared/zones";
+import { ECON } from "../../shared/economy";
 import { cleanName, exchangeCode, type SessionUser, signSession, signValue, verifySession, verifyValue } from "./auth";
 import { type Board, Boards } from "./board";
 import { CHAT_COOLDOWN_MS, CHAT_HISTORY, CINEMA_COOLDOWN_MS, cleanChat, parseCommand, runCommand } from "./chat";
@@ -1106,6 +1107,7 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   room.bags?.join(sid, walletKey);
   room.jobs?.join(sid, walletKey);
   let lastJob = 0;
+  let lastBump = 0;
   let lastInv = 0;
   if (room.life) ws.send(JSON.stringify({ t: "wallet", balance: economy.get(walletKey) }));
   let lastFall = 0;
@@ -1231,11 +1233,27 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const want = (msg.car as { model?: unknown } | null)?.model;
         if (car && isJobCar(want) && room.jobs?.modelOf(sid) === want) car.model = want;
         room.setCar(sid, car);
+      } else if (msg?.t === "tbump") {
+        // NPC trafik çarpması: doğrula, diğerlerine aktar (araba istemcide; herkes aynı savrulmayı görsün)
+        const now = Date.now();
+        if (now - lastBump < 60 || !Number.isInteger(msg.id) || msg.id < 0 || msg.id > 2000 || !Array.isArray(msg.s) || msg.s.length !== 7) return;
+        if (!msg.s.every((v: unknown) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < 60)) return;
+        lastBump = now;
+        room.broadcast({ t: "tbump", id: msg.id, s: msg.s.map((v: number) => Math.round(v * 100) / 100) }, sid);
+      } else if (msg?.t === "repair") {
+        const now = Date.now();
+        if (now - lastCar < 300) return;
+        lastCar = now;
+        const p = room.players.get(sid), lvl = p?.info.dmg ?? 0;
+        if (!p?.info.car || !lvl || Math.hypot(p.state.x - GARAGE.spot.x, p.state.z - GARAGE.spot.z) > 6) return;
+        const fee = ECON.repairFee[lvl] ?? 0;
+        if (!economy.add(walletKey, -fee, { reason: "GAP Garaj tamiri", icon: "🔧" })) ws.send(JSON.stringify({ t: "notice", text: `🔧 Tamir için ${fee} ₺ lazım.` }));
+        else room.setCarDamage(sid, 0, NO_DENTS);
       } else if (msg?.t === "cardmg") {
         const now = Date.now();
         if (now - lastCar < 300) return;
         lastCar = now;
-        room.setCarDamage(sid, msg.d);
+        room.setCarDamage(sid, msg.d, msg.z);
       } else if (msg?.t === "park") {
         const now = Date.now();
         if (now - lastPark < 250) return;

@@ -25,7 +25,7 @@ import {
 } from "../../shared/protocol";
 import { inStadium, inVolley, SPAWN } from "../../shared/zones";
 import { inPbField } from "../../shared/paintball";
-import { CAR_MAX_SPEED, type CarRadio, type CarSpec, ENTER_REACH, isJobCar, type ParkedCar, PARK_REACH, RIDE_SEATS, validCar } from "../../shared/car";
+import { CAR_MAX_SPEED, type CarRadio, type CarSpec, ENTER_REACH, isJobCar, validDents, type ParkedCar, PARK_REACH, RIDE_SEATS, validCar } from "../../shared/car";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
@@ -301,7 +301,10 @@ export class Room {
     const p = this.players.get(sid);
     if (!p || p.info.spectator || (car && (p.info.jailed || this.tank.driver === sid))) return;
     p.info.car = car;
-    if (!car) p.info.dmg = 0;
+    if (!car) {
+      p.info.dmg = 0;
+      p.info.dents = null;
+    }
     this.broadcast({ t: "car", sid, car });
     // Park halindeki arabasına bindi: park yeri boşalır
     if (car && p.info.parked) this.setParked(sid, null);
@@ -317,11 +320,14 @@ export class Room {
 
   /** Arabanın radyosu: şarkı (herkes aynı andan dinler) ya da sus (null). Arabada değilse çalmaz. */
   /** Arabanın hasar seviyesi (0–3): yalnızca arabadayken; odaya duyurulur. */
-  setCarDamage(sid: number, d: unknown): void {
+  setCarDamage(sid: number, d: unknown, z?: unknown): void {
     const p = this.players.get(sid);
-    if (!p || !p.info.car || !Number.isInteger(d) || (d as number) < 0 || (d as number) > 3 || p.info.dmg === d) return;
+    if (!p || !p.info.car || !Number.isInteger(d) || (d as number) < 0 || (d as number) > 3) return;
+    const dents = z === undefined ? (p.info.dents ?? null) : validDents(z);
+    if (p.info.dmg === d && JSON.stringify(dents) === JSON.stringify(p.info.dents ?? null)) return;
     p.info.dmg = d as number;
-    this.broadcast({ t: "cardmg", sid, d: d as number });
+    p.info.dents = dents;
+    this.broadcast({ t: "cardmg", sid, d: d as number, z: dents });
   }
 
   /** Arabayı park et (indiği yer ya da çağırdığı yer): oyuncunun yakınında olmalı. Geçersizse yok sayılır. */

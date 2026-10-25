@@ -9,7 +9,7 @@ import type { ChessMove, ChessState } from "./games/chess";
 import type { OkeyMove, OkeyState } from "./games/okey";
 import type { TavlaMove, TavlaState } from "./games/tavla";
 import type { TableKind } from "./zones";
-import type { CarRadio, CarSpec, ParkedCar, RadioQueueView } from "./car";
+import type { CarRadio, CarSpec, ParkedCar, RadioQueueView, CarDents } from "./car";
 import type { MoneyTx, WalletView } from "./economy";
 import type { BuffId, ItemId, ShopId, Slot } from "./items";
 import type { JobKind, JobView, TaxiCall } from "./jobs";
@@ -68,6 +68,8 @@ export interface PlayerInfo {
   held?: ItemId | null;
   /** Arabasının hasarı (0 yok – 3 ağır): duman ve kararmış boya. */
   dmg?: number;
+  /** Görsel hasar: göçükler, kırık farlar. */
+  dents?: CarDents | null;
 }
 
 export const PETS = [
@@ -402,6 +404,10 @@ export type ServerEvent =
   /** Hayat barların (yalnızca sana); bayıldıysan uyanacağın an; hastanede uyandıysan yeni yerin. */
   | { t: "life"; hp: number; hunger: number; thirst: number; energy: number; downed: number; tp?: { x: number; z: number; rot: number }; buffs?: Partial<Record<BuffId, number>> }
   | { t: "downed"; sid: number; on: boolean }
+  /** Çarpılıp savrulan NPC trafik arabasının hâli (çarpan gönderir, herkes aynı savrulmayı görür). */
+  | { t: "tbump"; id: number; s: number[] }
+  /** Arabanın çarptığı oyuncu (herkese): savrulur, sırtüstü düşer, kalkar (hız m/sn). */
+  | { t: "runover"; sid: number; vx: number; vz: number }
   /** Kaldırma başladı (biten an, sunucu saati) ya da bitti/iptal (0): kaldırana ve kaldırılana. */
   | { t: "reviving"; by: number; target: number; until: number }
   /** Çantan (yalnızca sana). */
@@ -466,7 +472,7 @@ export type ServerEvent =
   /** Araba bir NPC yayaya çarptı: herkes savrulup düşmesini görür (`by` çarpan). */
   | { t: "pedhit"; id: number; vx: number; vz: number; by: number }
   /** Arabanın hasar seviyesi değişti (0–3). */
-  | { t: "cardmg"; sid: number; d: number };
+  | { t: "cardmg"; sid: number; d: number; z?: CarDents | null };
 
 /** İstemcinin gönderdiği JSON olaylar. */
 export type ClientEvent =
@@ -524,6 +530,10 @@ export type ClientEvent =
   | { t: "job"; op: "start"; kind: JobKind }
   | { t: "job"; op: "stop" }
   | { t: "taxi"; on: boolean }
+  /** GAP Garaj'da arabanı tamir ettir (ücretli). */
+  | { t: "repair" }
+  /** Çarptığın NPC trafik arabasının savrulma hâli: kayma (x, z, dönüş), hızları ve sersemlik. */
+  | { t: "tbump"; id: number; s: number[] }
   /** Arabayı bir yere bırak (inince ya da çağırınca); null: kaldır. */
   | { t: "park"; parked: ParkedCar | null }
   | { t: "ring"; op: "join"; slot: number }
@@ -620,7 +630,7 @@ export type ClientEvent =
   /** Arabanla NPC yayaya çarptın (yaya kimliği ve arabanın hızı). */
   | { t: "pedhit"; id: number; vx: number; vz: number }
   /** Arabamın hasar seviyesi (0–3; çarptıkça artar, garajda sıfırlanır). */
-  | { t: "cardmg"; d: number };
+  | { t: "cardmg"; d: number; z?: CarDents };
 
 /** Konum mesajı: durum + konumun ait olduğu an (gönderenin sunucu saati tahmini). */
 export const STATE_BYTES = 16;

@@ -144,6 +144,7 @@ export class LifeHost {
     this.drivers.set(sid, { x, z, at: now });
     if (!prev || now - prev.at > 500 || now <= prev.at) return;
     const v = Math.hypot(x - prev.x, z - prev.z) / ((now - prev.at) / 1000);
+    const ux = (x - prev.x) / (Math.hypot(x - prev.x, z - prev.z) || 1), uz = (z - prev.z) / (Math.hypot(x - prev.x, z - prev.z) || 1);
     const dmg = carHitDamage(v);
     if (!dmg) return;
     for (const [other, q] of this.room.players) {
@@ -154,7 +155,12 @@ export class LifeHost {
       this.hits.set(k, now);
       this.hurt(other, dmg, now);
       const me = this.room.players.get(other);
-      if (me) this.room.sendTo(me.conn, { t: "notice", text: `🚗 ${this.room.players.get(sid)?.info.name ?? "Bir araba"} sana çarptı! −${dmg} can` });
+      if (me) {
+        this.room.sendTo(me.conn, { t: "notice", text: `🚗 ${this.room.players.get(sid)?.info.name ?? "Bir araba"} sana çarptı! −${dmg} can` });
+        // Savrulma: arabanın gidiş yönüne ve biraz yana, hızla orantılı
+        const side = (q.state.x - x) * -uz + (q.state.z - z) * ux >= 0 ? 1 : -1, f = Math.min(14, v * 0.75);
+        this.room.broadcast({ t: "runover", sid: other, vx: Math.round((ux * f - uz * side * f * 0.4) * 10) / 10, vz: Math.round((uz * f + ux * side * f * 0.4) * 10) / 10 });
+      }
     }
     if (this.hits.size > 500) this.hits.clear();
   }

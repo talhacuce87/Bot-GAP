@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { outsideWorld, WORLD_BOUNDS } from "../../../shared/constants";
 import type { Weather } from "../../../shared/protocol";
-import { BRIDGE, CAVE, CITY, PLAZA, RACE_HOUSE, RACE_SCALE, RACE_TRACK_Y, RIVER, onAsphalt, ROAD_PATH, ROAD_WALK, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
+import { BRIDGE, CAVE, CITY, LAKE, PLAZA, RACE_HOUSE, RACE_SCALE, RACE_TRACK_Y, RIVER, RIVER_HALF, onAsphalt, ROAD_PATH, ROAD_WALK, SPAWN, TUNNEL, WATERFALL } from "../../../shared/zones";
 import { HOOD_BOX } from "../../../shared/build";
 import type { ShadowLevel } from "../settings";
 import { Builder, type PropKind, type Seat } from "./builder";
@@ -22,7 +22,7 @@ import { type Pitch, pitch } from "./pitch";
 import { type Stadium, stadium } from "./stadium";
 import { djBooth, type StageLights, stageLights, stageTruss } from "./stageFx";
 import { addRipple, dungeon, GROVE, grove, GROVE_SIGN, GROVE_SIGN_RY, POND, pond, signPost, steppingStones, waterEnv, waterMaterial } from "./zones";
-import { BRIDGE_AXES, buildTerrain, groundY, inCave, mountainHeight, riverMesh, terrainColliders, walkable, WATER_Y, waterfallMesh } from "./terrain";
+import { BRIDGE_AXES, buildTerrain, groundY, inCave, mountainHeight, onBridge, riverDist, riverMesh, terrainColliders, walkable, WATER_Y, waterfallMesh } from "./terrain";
 import { casino } from "./casino";
 import { city, type CityNpc, type Room } from "./city";
 import { type RingTrack, ringTrack } from "./ringTrack";
@@ -97,6 +97,10 @@ export interface World {
   sunDir: THREE.Vector3;
   /** Yalnızca arabaları durduran engeller (dükkân ve casino kapıları). */
   carColliders: Colliders;
+  /** Araba bu noktada suya girer mi (nehir, göl, şelale havuzu; köprüler hariç). */
+  carWater?: (x: number, z: number) => boolean;
+  /** Çarpışılabilen diğer araçlar (oyuncu arabaları, NPC trafik): features doldurur. */
+  carBodies?: () => Iterable<import("../player").CarBody>;
   /** Şehirdeki dükkân çalışanları. */
   npcs: CityNpc[];
   /** GAP Ring yarış pisti (start lambaları). */
@@ -562,6 +566,13 @@ function nature(b: Builder): void {
 }
 
 /** Nehrin üstündeki ahşap köprüler: kalaslar, iki yanda korkuluk, uçlarda taş ayak (yürünürlük terrain.ts'te). */
+/** Arabanın gövde dairesinin merkezi suyun üstünde mi (asfalt ve köprüler hariç). */
+function carWater(x: number, z: number): boolean {
+  if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r + 1.2) return true;
+  if (Math.hypot(x - WATERFALL.x, z - WATERFALL.z) < WATERFALL.poolR + 1) return true;
+  return riverDist(x, z) < RIVER_HALF + 1 && !onBridge(x, z) && !onAsphalt(x, z, -0.5);
+}
+
 function bridges(b: Builder): void {
   const { half, w } = BRIDGE;
   for (const a of BRIDGE_AXES) {
@@ -1274,6 +1285,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     colliders: b.colliders,
     seats: b.seats,
     carColliders: b.carColliders,
+    carWater,
     npcs: [...town.npcs, ...cas.npcs, ...vendors],
     ring,
     garage: shop,

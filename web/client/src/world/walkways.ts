@@ -77,6 +77,44 @@ export function offsetLine(pts: P[], d: number): P[] {
   });
 }
 
+/**
+ * Şehrin kaldırımları: kavşakta karşı caddenin asfaltının üstünden geçmez (orada kesilir); karşıya geçiş
+ * kavşağın biraz dışındaki zebradan (city.ts'in çizdiği yer: karşı caddenin kaldırımının 1,6 m ötesi).
+ */
+function citySidewalks(): Walkway[] {
+  const out: Walkway[] = [];
+  const horiz = (s: (typeof STREETS)[number]) => Math.abs(s.az - s.bz) < 1e-6;
+  for (const s of STREETS) {
+    const H = horiz(s);
+    const c = H ? s.az : s.ax;
+    const lo = H ? Math.min(s.ax, s.bx) : Math.min(s.az, s.bz), hi = H ? Math.max(s.ax, s.bx) : Math.max(s.az, s.bz);
+    const at2 = (u: number, v: number): P => (H ? [u, v] : [v, u]);
+    for (const side of [-1, 1]) {
+      const v = c + side * (s.half + s.walk / 2), zebra = c + side * (s.half + s.walk + 1.6);
+      const cuts: [number, number][] = [];
+      for (const o of STREETS) {
+        if (horiz(o) === H) continue;
+        const at = H ? o.ax : o.az;
+        if (at < lo - 1 || at > hi + 1) continue;
+        const oLo = H ? Math.min(o.az, o.bz) : Math.min(o.ax, o.bx), oHi = H ? Math.max(o.az, o.bz) : Math.max(o.ax, o.bx);
+        // Karşı cadde bu kaldırımın hizasına uzanıyor mu (T kavşağın kapalı yanında asfalt yok)
+        if (v < oLo - 0.5 || v > oHi + 0.5) continue;
+        const d = o.half + o.walk / 2;
+        cuts.push([at - d, at + d]);
+        if (zebra >= oLo + 1 && zebra <= oHi - 1) out.push({ pts: [at2(at - d, zebra), at2(at + d, zebra)], zone: "city" });
+      }
+      cuts.sort((a, b) => a[0] - b[0]);
+      let u = lo;
+      for (const [a, b] of cuts) {
+        if (a > u + 0.5) out.push({ pts: [at2(u, v), at2(a, v)], zone: "city" });
+        u = Math.max(u, b);
+      }
+      if (hi > u + 0.5) out.push({ pts: [at2(u, v), at2(hi, v)], zone: "city" });
+    }
+  }
+  return out;
+}
+
 /** Bütün yürüyüş yolları: köy patikaları ve meydan halkası, şehir ve mahalle kaldırımları (iki yan). */
 export function walkways(): Walkway[] {
   const out: Walkway[] = [];
@@ -87,10 +125,7 @@ export function walkways(): Walkway[] {
     out.push({ pts: [[a.x - a.ux * e, a.z - a.uz * e], [a.x + a.ux * e, a.z + a.uz * e]], zone: "village" });
   }
   out.push({ pts: ring(PLAZA.x, PLAZA.z, 6), zone: "village" });
-  for (const s of STREETS) {
-    const line: P[] = [[s.ax, s.az], [s.bx, s.bz]];
-    for (const side of [-1, 1]) out.push({ pts: offsetLine(line, side * (s.half + s.walk / 2)), zone: "city" });
-  }
+  out.push(...citySidewalks());
   for (const r of HOOD_ROADS) {
     for (const side of [-1, 1]) out.push({ pts: offsetLine(r, side * (HOOD_STREET_HALF + HOOD_SIDEWALK / 2)), zone: "hood" });
   }

@@ -54,6 +54,16 @@ interface Car {
   scale: number;
   blockedFor: number;
   honkAt: number;
+  /** Çarpılınca: şeritten kayma (m), hızı (m/sn), dönüş (rad) ve dönüş hızı; sersemlik (sn, bu sürede durur). */
+  bx: number;
+  bz: number;
+  bvx: number;
+  bvz: number;
+  brot: number;
+  bspin: number;
+  stun: number;
+  /** Savrulma hâlinin son gönderildiği an (sn). */
+  sentAt: number;
 }
 
 /** Saate göre trafik yoğunluğu (Türkiye saati). */
@@ -86,11 +96,45 @@ export class AmbientTraffic {
         const car: Car = {
           route, offset, look: Math.floor(rand() * TRAFFIC_LOOKS.length), gate: rand(), delay: 0, s: 0, x: 0, z: 0, rot: 0, v: 0,
           px: 0, pz: 0, prot: 0, rx: 0, rz: 0, rrot: 0, shown: false, scale: 1, blockedFor: 0, honkAt: 0,
+          bx: 0, bz: 0, bvx: 0, bvz: 0, brot: 0, bspin: 0, stun: 0, sentAt: 0,
         };
         this.cars.push(car);
         list.push(car);
       }
       this.byRoute.set(route, list);
+    }
+  }
+
+  /** Savrulma hâli değişti (çarpan oyuncu): sunucu üzerinden herkese gider. */
+  onBump: ((id: number, s: number[]) => void) | null = null;
+
+  /** Başkası çarptı: savrulma hâlini uygula. */
+  applyBump(id: number, s: number[]): void {
+    const c = this.cars[id];
+    if (!c) return;
+    [c.bx, c.bz, c.brot, c.bvx, c.bvz, c.bspin, c.stun] = s;
+  }
+
+  /** Arabanın çarpabileceği NPC arabalar (görünenler): yeri, hızı ve çarpınca savrulması. */
+  *bodies(near: { x: number; z: number }, mass: number): Iterable<import("../player").CarBody> {
+    for (const c of this.shownList) {
+      if (c.scale < 0.9 || Math.abs(c.rx - near.x) > 8 || Math.abs(c.rz - near.z) > 8) continue;
+      const v = c.stun > 0 ? 0 : c.v;
+      yield {
+        x: c.rx, z: c.rz, rot: c.rrot, mass, hl: 2.15 * c.scale, hw: 0.86 * c.scale, omega: c.bspin,
+        vx: Math.sin(c.rrot) * v + c.bvx, vz: Math.cos(c.rrot) * v + c.bvz,
+        hit: (dvx, dvz, spin) => {
+          c.bvx += dvx;
+          c.bvz += dvz;
+          c.bspin += spin;
+          c.stun = Math.max(c.stun, 2.5 + Math.min(3, Math.hypot(dvx, dvz) * 0.3));
+          const now = performance.now() / 1000;
+          if (this.onBump && now - c.sentAt > 0.08) {
+            c.sentAt = now;
+            this.onBump(this.cars.indexOf(c), [c.bx, c.bz, c.brot, c.bvx, c.bvz, c.bspin, c.stun]);
+          }
+        },
+      };
     }
   }
 
@@ -153,6 +197,37 @@ export class AmbientTraffic {
       c.z = this.pose.z;
       c.rot = this.pose.rot;
       c.shown = c.scale > 0 && Math.abs(c.x - cam.x) < R && Math.abs(c.z - cam.z) < R;
+      // Çarpılmış: savrulma söner; sersemken durur, sonra şeridine yavaşça döner
+      if (c.bvx || c.bvz || c.bspin || c.bx || c.bz || c.brot) {
+        c.bx += c.bvx * dt;
+        c.bz += c.bvz * dt;
+        c.brot += c.bspin * dt;
+        const k = Math.exp(-dt * 2.4);
+        c.bvx *= k;
+        c.bvz *= k;
+        c.bspin *= Math.exp(-dt * 2);
+        if (c.stun <= 0) {
+          const back = Math.exp(-dt * 0.8);
+          c.bx *= back;
+          c.bz *= back;
+          c.brot *= back;
+          if (Math.abs(c.bx) + Math.abs(c.bz) + Math.abs(c.brot) < 0.02) c.bx = c.bz = c.brot = c.bvx = c.bvz = c.bspin = 0;
+        }
+      }
+      if (c.stun > 0) {
+        c.stun -= dt;
+        c.delay += dt;
+        const tr2 = trajAt(c.route, t - c.route.t0 - c.offset - c.delay);
+        c.s = tr2.s;
+        routePose(c.route, c.s, this.pose);
+        c.x = this.pose.x;
+        c.z = this.pose.z;
+        c.rot = this.pose.rot;
+        c.v = 0;
+      }
+      c.x += c.bx;
+      c.z += c.bz;
+      c.rot += c.brot;
       if (!c.shown) continue;
       // Yeni beliren ya da sıçrayan (rota başı, uzun bekleme) araba ara değerlenmez
       if (!was || Math.abs(c.x - c.px) + Math.abs(c.z - c.pz) > 6) {

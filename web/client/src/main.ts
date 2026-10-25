@@ -879,8 +879,8 @@ async function start(): Promise<void> {
     me.room = world.roomAt(me.x, me.z);
     // Tofaşlar: arabadaki oyuncu sürücü koltuğunda, yolcular sağ önde ve arkada oturur; farlar açık/kapalı
     cars.begin(me.x, me.z);
-    if (me.car) cars.push(net.you, settings.car, me.x, me.z, me.rot, world.env.lights, features.carDamage, features.myLights, features.myCarFx());
-    for (const r of remotes.map.values()) if (r.hasData && r.info.car) cars.push(r.info.sid, r.info.car, r.x, r.z, r.rot, world.env.lights, r.info.dmg ?? 0, r.info.lights ?? null, features.carFxOf(r.info.sid));
+    if (me.car) cars.push(net.you, settings.car, me.x, me.z, me.rot, world.env.lights, features.carDamage, features.myLights, features.myCarFx(), features.dents);
+    for (const r of remotes.map.values()) if (r.hasData && r.info.car) cars.push(r.info.sid, r.info.car, r.x, r.z, r.rot, world.env.lights, r.info.dmg ?? 0, r.info.lights ?? null, features.carFxOf(r.info.sid), r.info.dents ?? null);
     cars.end();
     /** Yolcunun bindiği araba (sürücü sen ya da başkası; araba yoksa null). */
     const carOf = (d: number) => {

@@ -106,6 +106,10 @@ export class Net {
   /** Biri bayıldı ya da kalktı (sen de olabilirsin). */
   onDowned: (sid: number, on: boolean) => void = () => {};
   onEcon: (w: WalletView) => void = () => {};
+  /** Araba çarptı: savrul. */
+  onRunover: (sid: number, vx: number, vz: number) => void = () => {};
+  /** Biri bir NPC trafik arabasına çarptı: savrulma hâli. */
+  onTbump: (id: number, s: number[]) => void = () => {};
   /** Çantan; birinin elindeki eşya (sen de olabilirsin); biri yedi/içti. */
   onInv: (slots: Slot[]) => void = () => {};
   onHeld: (sid: number, item: ItemId | null) => void = () => {};
@@ -463,6 +467,12 @@ export class Net {
       case "econ":
         this.onEcon(ev.wallet);
         break;
+      case "tbump":
+        this.onTbump(ev.id, ev.s);
+        break;
+      case "runover":
+        this.onRunover(ev.sid, ev.vx, ev.vz);
+        break;
       case "inv":
         this.onInv(ev.slots);
         break;
@@ -615,7 +625,10 @@ export class Net {
         break;
       case "cardmg": {
         const r = this.remotes.map.get(ev.sid);
-        if (r) r.info.dmg = ev.d;
+        if (r) {
+          r.info.dmg = ev.d;
+          r.info.dents = ev.z ?? null;
+        }
         this.onCarDamage(ev.sid, ev.d);
         break;
       }

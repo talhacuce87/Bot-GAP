@@ -142,6 +142,7 @@ export function buildMotor(_spec: CarSpec): TofasMesh {
       steer.rotation.y = steerA * 0.8;
     },
     setDamage() {},
+    setDents() {},
     dispose() {
       for (const d of disposables) d.dispose();
     },

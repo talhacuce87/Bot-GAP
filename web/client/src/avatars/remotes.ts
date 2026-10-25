@@ -47,6 +47,7 @@ export class Remote implements AvatarView {
     return this.info.held ?? null;
   }
   eatAt = -1;
+  ko: { at: number; rot: number } | null = null;
   x = 0;
   z = 0;
   rot = 0;

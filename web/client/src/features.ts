@@ -22,7 +22,7 @@ import type { Session } from "./discord";
 import type { Input } from "./input/input";
 import type { ModeLife } from "./mode";
 import type { Net } from "./net";
-import type { Player } from "./player";
+import { CAR_DIMS, CAR_MASS, CAR_PROBE_Y, type CarBody, type Player } from "./player";
 import { settings, updateSettings } from "./settings";
 import { BoardGameUi } from "./ui/boardGame";
 import { CasinoUi, fmt } from "./ui/casino/casinoUi";
@@ -33,7 +33,7 @@ import { LIVE_TABLES } from "../../shared/liveCasino";
 import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
-import { type CarRadio, carCircles, CAR_ENGINES, CAR_STATS, type CarSpec, DEFAULT_CAR, ENTER_REACH, RADIO_RANGE } from "../../shared/car";
+import { type CarDents, type CarRadio, carCircles, CAR_ENGINES, CAR_STATS, type CarSpec, DEFAULT_CAR, ENTER_REACH, NO_DENTS, RADIO_RANGE } from "../../shared/car";
 import { Phone } from "./ui/phone";
 import { JobHud } from "./ui/jobHud";
 import { JobMarker } from "./world/jobMarker";
@@ -185,6 +185,12 @@ export class Features {
   /** Hayat barları, minimap, GAP ₺ ve yaralı kartı. */
   private lifeHud: LifeHud;
   private dots: MapDot[] = [];
+  private repairAsked = false;
+  /** Göçükler (herkes görür) ve taraf başına birikmiş hasar. */
+  dents: CarDents = { ...NO_DENTS };
+  private zones = { f: 0, r: 0, l: 0, rt: 0 };
+  /** Diğer oyuncuların arabalarının önceki yeri (hız tahmini: çarpışmada). */
+  private carPrev = new Map<number, { x: number; z: number; t: number; vx: number; vz: number }>();
   /** Yeme-içme: dükkân, çanta (I), hızlı slot (1–6), eldeki eşyalar ve emote çarkı ("). */
   private shopUi: ShopUi;
   private inv: InventoryUi;
@@ -286,21 +292,34 @@ export class Features {
     const { world, net, hud, hudRoot, me } = c;
     world.scene.add(this.companions.group, this.fireworks.points);
     this.cityLife = new CityLife(c.lowPower, world.seats);
+    // NPC trafiğe çarpma herkese: çarpan gönderir, diğerleri aynı savrulmayı uygular
+    this.cityLife.traffic.onBump = (id, s) => net.send({ t: "tbump", id, s });
+    net.onTbump = (id, s) => this.cityLife.traffic.applyBump(id, s);
     world.scene.add(this.smoke.mesh);
     this.speedo = document.createElement("canvas");
     this.speedo.className = "drive-speedo";
     this.speedo.width = this.speedo.height = 150 * Math.min(2, devicePixelRatio || 1);
     hudRoot.append(this.speedo);
     // Arabayla sert çarpma: ses, 💥, hasar (seviye değişince herkese)
-    me.onCrash = (speed) => {
+    me.onCrash = (speed, lx = 0, lz = 2) => {
       const k = Math.min(1, speed / 14);
       sfx.crash(0.4 + 0.6 * k);
-      c.emoteFx.emit(me.x + Math.sin(me.rot) * 2.2, 0.6, me.z + Math.cos(me.rot) * 2.2, FX_CELL.splat, performance.now() / 1000, undefined, 1);
+      // Kıvılcım/💥 çarpılan yerde (yerel → dünya)
+      const cs = Math.cos(me.rot), sn = Math.sin(me.rot);
+      c.emoteFx.emit(me.x + lx * cs + lz * sn, 0.6, me.z - lx * sn + lz * cs, FX_CELL.splat, performance.now() / 1000, undefined, 1);
       const before = this.carDamage;
       this.damage = Math.min(3.99, this.damage + Math.max(0, speed - 3) / 18);
-      if (this.carDamage !== before) {
-        net.send({ t: "cardmg", d: this.carDamage });
-        if (this.carDamage === 3) hud.toast("💨 Araban ağır hasarlı! GAP Garaj'da onarılır.");
+      // Göçük: çarpılan taraf (ön/arka uçlar, yanlar); farlar sert önden çarpmada kırılır
+      const zone = Math.abs(lz) > 1.0 ? (lz > 0 ? "f" : "r") : lx > 0 ? "l" : "rt";
+      this.zones[zone] = Math.min(3.99, this.zones[zone] + Math.max(0, speed - 4) / 11);
+      let hl = this.dents.hl;
+      if (zone === "f" && speed > 10) hl |= Math.abs(lx) < 0.35 ? (speed > 18 ? 3 : lx >= 0 ? 1 : 2) : lx > 0 ? 1 : 2;
+      const next = { f: Math.floor(this.zones.f), r: Math.floor(this.zones.r), l: Math.floor(this.zones.l), rt: Math.floor(this.zones.rt), hl };
+      const changed = JSON.stringify(next) !== JSON.stringify(this.dents);
+      this.dents = next;
+      if (this.carDamage !== before || changed) {
+        net.send({ t: "cardmg", d: this.carDamage, z: this.dents });
+        if (this.carDamage === 3 && before !== 3) hud.toast("💨 Araban ağır hasarlı! GAP Garaj'da onarılır.");
       }
     };
     c.life.onStop(() => {
@@ -511,6 +530,24 @@ export class Features {
       const d = itemDef(item);
       if (sid === net.you && d) hud.toast(`${d.icon} ${d.name} ${d.cat === "drink" ? "içtin" : "yedin"}.`);
     };
+    net.onCarDamage = (sid, d) => {
+      if (sid !== net.you || d !== 0 || this.carDamage === 0) return;
+      this.damage = 0;
+      this.clearDents(false);
+      hud.toast("🔧 Araban onarıldı.");
+    };
+    // Arabanın çarptığı oyuncu: savrulur, sırtüstü düşer, ~2 sn yatar, kalkar (herkes görür)
+    net.onRunover = (sid, vx, vz) => {
+      const ko = { at: performance.now() / 1000, rot: Math.atan2(-vx, -vz) };
+      if (sid === net.you) {
+        me.knock(vx, vz);
+        me.ko = ko;
+        sfx.bump(1);
+      } else {
+        const r = c.remotes.map.get(sid);
+        if (r) r.ko = ko;
+      }
+    };
     net.onEcon = (w) => {
       if (this.walletToPhone) this.phone.showWallet(w);
       else this.lifeHud.showWallet(w);
@@ -648,10 +685,13 @@ export class Features {
       resolve: (p, r, y) => {
         this.buildWorld.resolve(p, r, y);
         this.vehicles.colliders.resolve(p, r, y);
-        this.cityLife.traffic.colliders.resolve(p, r, y);
+        // Arabanın gövdesi NPC arabalarla duvar gibi değil, araç olarak çarpışır (carBodies: savrulurlar)
+        if (y !== CAR_PROBE_Y) this.cityLife.traffic.colliders.resolve(p, r, y);
       },
       groundAt: (x, z, r, y) => this.buildWorld.groundAt(x, z, r, y),
     };
+    // Arabanın çarpabildiği araçlar: diğer oyuncuların arabaları (kendi istemcileri savrulmayı hesaplar) ve NPC trafik
+    world.carBodies = () => this.carBodies();
     // Dükkân çalışanları: tezgâhlarının arkasında duran sabit karakterler
     this.workers = world.npcs.map((n, i) => ({
       x: n.x, z: n.z, rot: n.rot, flags: 0, alpha: 1, cell: c.atlas.alloc(n.name),
@@ -1199,6 +1239,34 @@ export class Features {
       if (!r.info.held || !r.hasData || r.leaving || r.info.downed || r.info.car || r.info.ride || r.alpha < 0.5) continue;
       this.held.place(r, r.info.held, eatPose(r, t));
     }
+  }
+
+  private *carBodies(): Iterable<CarBody> {
+    const { me, remotes } = this.c;
+    const t = performance.now() / 1000;
+    for (const r of remotes.map.values()) {
+      if (!r.info.car || !r.hasData || r.leaving) continue;
+      if (Math.abs(r.x - me.x) > 8 || Math.abs(r.z - me.z) > 8) continue;
+      let p = this.carPrev.get(r.info.sid);
+      if (!p) this.carPrev.set(r.info.sid, (p = { x: r.x, z: r.z, t, vx: 0, vz: 0 }));
+      else if (t - p.t > 0.03) {
+        const dt = t - p.t;
+        p.vx += ((r.x - p.x) / dt - p.vx) * 0.5;
+        p.vz += ((r.z - p.z) / dt - p.vz) * 0.5;
+        [p.x, p.z, p.t] = [r.x, r.z, t];
+      }
+      const dims = CAR_DIMS[r.info.car.model] ?? CAR_DIMS.sahin;
+      yield { x: r.x, z: r.z, rot: r.rot, vx: p.vx, vz: p.vz, mass: CAR_MASS[r.info.car.model] ?? 1, hl: dims.hl, hw: dims.hw };
+    }
+    yield* this.cityLife.traffic.bodies(me, 1.1);
+  }
+
+  /** Göçükleri sil (onarım); `send`: herkese de bildir. */
+  private clearDents(send = true): void {
+    const had = this.dents.f || this.dents.r || this.dents.l || this.dents.rt || this.dents.hl;
+    this.zones = { f: 0, r: 0, l: 0, rt: 0 };
+    this.dents = { ...NO_DENTS };
+    if (had && send) this.c.net.send({ t: "cardmg", d: 0, z: this.dents });
   }
 
   /** Minimap işaretleri (oyuncular, bayılanlar, park ettiğin araba) ve yaralı sayacı. */
@@ -1972,16 +2040,24 @@ export class Features {
 
   /** Motor sesleri, hasar dumanı, garajda onarım. */
   private updateCarFx(time: number, dt: number): void {
-    const { me, net, remotes, camera, hud } = this.c;
+    const { me, net, remotes, camera } = this.c;
     this.fxTime = time;
     // Arabaya binince hasarı herkese bildir; garajda onar
-    if (me.car && !this.hadCar && this.carDamage) net.send({ t: "cardmg", d: this.carDamage });
+    if (me.car && !this.hadCar && (this.carDamage || this.dents.f || this.dents.r || this.dents.l || this.dents.rt || this.dents.hl)) net.send({ t: "cardmg", d: this.carDamage, z: this.dents });
     this.hadCar = !!me.car;
-    if (this.vehicles.tuning.isOpen && this.damage > 0) {
-      this.damage = 0;
-      net.send({ t: "cardmg", d: 0 });
-      hud.toast("🔧 Araban onarıldı.");
+    // Garajda: hafif çizik bedava silinir, hasar ücretle onarılır (sunucu parayı alıp hasarı sıfırlar)
+    if (this.vehicles.tuning.isOpen && this.damage > 0 && !this.repairAsked) {
+      if (this.carDamage === 0) {
+        this.damage = 0;
+        this.clearDents();
+      }
+      else {
+        this.repairAsked = true;
+        net.send({ t: "repair" });
+      }
     }
+    if (!this.vehicles.tuning.isOpen) this.repairAsked = false;
+    me.carWear = me.car ? this.carDamage : 0;
     // Hız göstergesi: arabadayken (GAP Ring yarışında yarışın göstergesi çıkar)
     const inRing = !!this.ring && this.ring.phase !== "idle" && this.ring.racers.some((r) => r.sid === net.you);
     const showSpeed = !!me.car && !inRing;

@@ -3,12 +3,16 @@
 // Konumları sunucu saatinin fonksiyonudur (yol ağı, tur, hız ve duraklar sabit tohumdan): herkes aynı yayayı
 // aynı yerde görür, ağ trafiği yok. Oyuncuya yol verme, arabadan kaçma, el sallamaya karşılık verme yereldir.
 // Arabanın çarptığı yaya sunucu üzerinden herkese duyurulur ("pedhit").
+// GTA gibi: asfalt boyunca giden patikalar yolun kenarına kayar; karşıya geçecek yaya kaldırımda durup arabaya
+// bakar, yol boşsa geçer; geçerken araba gelirse koşar (bekleme yerel: çizelgesine biraz hızlı yürüyerek yetişir).
 import { CAR_HULL_R, carCircles } from "../../../shared/car";
 import type { ClientEvent } from "../../../shared/protocol";
 import { CHIBI_SEAT_LIFT } from "../avatars/avatars";
 import type { CrowdPose, CrowdRenderer } from "../avatars/crowd";
 import type { Walkway, Zone } from "../world/walkways";
 import { lerp, lerpAngle } from "./fixedStep";
+import { onAsphalt, ROAD_HALF, roadDist, STREETS, VILLAGE_ROAD_HALF, villageRoadDist } from "../../../shared/zones";
+import { signalLamp, signalNow } from "../world/signals";
 
 /** Yayaların konuşma balonu kimlikleri bu sayıdan başlar (oyuncu sid'leriyle çakışmaz). */
 export const PED_SID_BASE = 80_000;
@@ -116,6 +120,60 @@ export interface BenchSeat {
   rot: number;
   h?: number;
 }
+
+/** Taşıt yolunda mı (otoban, köy yolu, mahalle ve şehir caddeleri). */
+export function onRoadway(x: number, z: number): boolean {
+  if (onAsphalt(x, z)) return true;
+  for (const s of STREETS) {
+    const ex = s.bx - s.ax, ez = s.bz - s.az;
+    const t = Math.max(0, Math.min(1, ((x - s.ax) * ex + (z - s.az) * ez) / (ex * ex + ez * ez)));
+    if (Math.hypot(x - s.ax - ex * t, z - s.az - ez * t) < s.half) return true;
+  }
+  return false;
+}
+
+/**
+ * Asfaltın boyunca giden patika (yarısından çoğu otobanda ya da köy yolunda): yolun kenarına (banket) kaydırılır;
+ * karşıya geçenler olduğu gibi kalır.
+ */
+function toShoulder(w: Walkway): Walkway {
+  const dense: P2[] = [];
+  for (let i = 0; i < w.pts.length - 1; i++) {
+    const [a, b] = [w.pts[i], w.pts[i + 1]], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 3));
+    for (let k = 0; k < n; k++) dense.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+  }
+  dense.push(w.pts[w.pts.length - 1]);
+  const on = dense.filter(([x, z]) => roadDist(x, z) < ROAD_HALF || villageRoadDist(x, z) < VILLAGE_ROAD_HALF).length;
+  if (on / dense.length < 0.5) return w;
+  const pts = dense.map(([x, z]): P2 => {
+    for (const [dist, half] of [[roadDist, ROAD_HALF], [villageRoadDist, VILLAGE_ROAD_HALF]] as const) {
+      const d = dist(x, z), want = half + 1.3;
+      if (d >= want) continue;
+      // Yolun orta çizgisinden dışa (uzaklığın arttığı yöne)
+      const gx = dist(x + 0.3, z) - dist(x - 0.3, z), gz = dist(x, z + 0.3) - dist(x, z - 0.3), gl = Math.hypot(gx, gz) || 1;
+      return [x + (gx / gl) * (want - d), z + (gz / gl) * (want - d)];
+    }
+    return [x, z];
+  });
+  return { ...w, pts };
+}
+
+/**
+ * Şehirde ışıklı kavşak: noktanın üstünde olduğu cadde (yatay: 0, dikey: 1 grubu), değilse -1. Yaya ancak o
+ * caddenin araç ışığı kırmızıyken geçer.
+ */
+function signalGroup(x: number, z: number): 0 | 1 | -1 {
+  for (const s of STREETS) {
+    const ex = s.bx - s.ax, ez = s.bz - s.az;
+    const t = Math.max(0, Math.min(1, ((x - s.ax) * ex + (z - s.az) * ez) / (ex * ex + ez * ez)));
+    if (Math.hypot(x - s.ax - ex * t, z - s.az - ez * t) < s.half) return Math.abs(s.az - s.bz) < 1e-6 ? 0 : 1;
+  }
+  return -1;
+}
+
+/** Karşıya geçmeden önce bakılan mesafe (m) ve arabanın sayıldığı yaklaşma hızı (m/sn). */
+const CROSS_LOOK = 22;
+const CROSS_SPEED = 2;
 
 function mulberry(seed: number): () => number {
   let a = seed >>> 0;
@@ -391,11 +449,14 @@ export class Pedestrians {
   private tmp = { x: 0, z: 0, dx: 0, dz: 1 };
   private order: number[] = [];
   private dist: Float32Array;
+  /** Karşıya geçmek için beklenen yerel süre (sn): yaya çizelgesinin bu kadar gerisinden gelir. */
+  private hold: Float32Array;
+  private crossing: Uint8Array;
 
   constructor(ways: Walkway[], outfits: number, benches: BenchSeat[] = [], ok?: (x: number, z: number) => boolean) {
     const rand = mulberry(0x5eed_9a7);
     const pickOutfit = () => Math.floor(rand() * Math.max(1, outfits));
-    const g = buildGraph(ways, ok);
+    const g = buildGraph(ways.map(toShoulder), ok);
     for (const zone of ["village", "city", "hood"] as Zone[]) {
       // Başlangıç düğümleri: bölgenin kenarlarının uçları, kenar uzunluğuyla orantılı
       const edges = g.edges.filter((e) => e.zone === zone);
@@ -458,6 +519,8 @@ export class Pedestrians {
     this.px = new Float32Array(n).fill(NaN);
     this.pz = new Float32Array(n).fill(NaN);
     this.dist = new Float32Array(n);
+    this.hold = new Float32Array(n);
+    this.crossing = new Uint8Array(n);
     this.cur = new Float32Array(n * REC);
     this.prev = new Float32Array(n * REC);
     this.state = new Uint8Array(n);
@@ -563,9 +626,43 @@ export class Pedestrians {
     if (this.order.length > maxDrawn) this.order.length = maxDrawn;
 
     const k = 1 - Math.exp(-dt * 4);
+    const ahead = { x: 0, z: 0, rot: 0, moving: false, act: 0 };
     for (const i of this.order) {
       const p = this.peds[i];
-      this.baseAt(i, t, base);
+      this.baseAt(i, t - this.hold[i], base);
+      // Karşıya geçiş: yola adım atmadan önce bakar; yaklaşan araba varsa kaldırımda bekler. Yoldayken araba
+      // gelirse koşar (çizelgesine yetişir).
+      let waitCurb = false, hurry = false;
+      if (p.kind === "walk" && base.moving) {
+        const here = onRoadway(base.x, base.z);
+        this.baseAt(i, t - this.hold[i] + 1.4, ahead);
+        const into = !here && onRoadway(ahead.x, ahead.z);
+        if (here || into) {
+          const cx = here ? base.x : ahead.x, cz = here ? base.z : ahead.z;
+          // Işıklı kavşak: araçların ışığı kırmızı değilse kaldırımda bekler; geçerken yeşil yanarsa koşar
+          const g = signalGroup(cx, cz);
+          if (g !== -1 && signalLamp(signalNow(), g) !== 0) {
+            if (into && !this.crossing[i]) waitCurb = true;
+            else hurry = true;
+          }
+          for (const m of movers) {
+            if (m.speed < CROSS_SPEED) continue;
+            const dx = cx - m.x, dz = cz - m.z, d = Math.hypot(dx, dz);
+            if (d > CROSS_LOOK) continue;
+            // Bize doğru geliyor mu (geçeceğimiz yere yaklaşıyor)
+            if ((dx * m.vx + dz * m.vz) / (m.speed * Math.max(d, 1e-3)) > 0.35) {
+              if (into && !this.crossing[i]) waitCurb = true;
+              else hurry = true;
+            }
+          }
+        }
+        this.crossing[i] = here ? 1 : 0;
+      } else this.crossing[i] = 0;
+      if (waitCurb) {
+        this.hold[i] += dt;
+        this.baseAt(i, t - this.hold[i], base);
+        base.moving = false;
+      } else this.hold[i] = Math.max(0, this.hold[i] - dt * (hurry ? 1.6 : 0.3));
       // Belirip kaybolma: yoğunluk eşiğe yakınken küçülerek
       const fade = Math.min(1, (dens[p.zone] - p.gate) / 0.06) * Math.min(1, (R - this.dist[i]) / 6);
       // Tepkiler: oyuncuya yol ver, arabadan kaç, el sallayana el salla (oturan yalnızca el sallar)
@@ -602,6 +699,7 @@ export class Pedestrians {
         this.oz[i] += ez * f;
       }
       let x = base.x + this.ox[i], z = base.z + this.oz[i];
+      if (hurry) run = true;
       let want = base.rot, moving = base.moving || run;
       if (waveAt && !run && p.kind !== "sit") {
         want = Math.atan2(waveAt.x - x, waveAt.z - z);
