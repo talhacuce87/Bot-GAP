@@ -10,7 +10,7 @@ import { BUFFS, type BuffId } from "../../../shared/items";
 export interface MapDot {
   x: number;
   z: number;
-  kind: "player" | "downed" | "car" | "target";
+  kind: "player" | "downed" | "car" | "target" | "call";
 }
 
 export interface MinimapBase {
@@ -204,8 +204,39 @@ export class LifeHud {
     const P = (x: number, z: number): [number, number] => [w / 2 + (x - me.x) * s, h / 2 + (z - me.z) * s];
     const r = w / 95;
     for (const d of dots) {
-      const [x, y] = P(d.x, d.z);
+      let [x, y] = P(d.x, d.z);
+      // Hedef (iş) minimapin dışındaysa kenarda, yönünü gösteren üçgen (GTA gibi)
+      if (d.kind === "target" && (x < r * 3 || y < r * 3 || x > w - r * 3 || y > h - r * 3)) {
+        const dx = x - w / 2, dy = y - h / 2, k = Math.min((w / 2 - r * 3) / Math.abs(dx || 1e-6), (h / 2 - r * 3) / Math.abs(dy || 1e-6));
+        x = w / 2 + dx * k;
+        y = h / 2 + dy * k;
+        g.save();
+        g.translate(x, y);
+        g.rotate(Math.atan2(dy, dx));
+        g.fillStyle = "#ef9f27";
+        g.strokeStyle = "rgba(0,0,0,0.5)";
+        g.lineWidth = r * 0.4;
+        g.beginPath();
+        g.moveTo(r * 2.6, 0);
+        g.lineTo(-r * 1.6, r * 1.8);
+        g.lineTo(-r * 1.6, -r * 1.8);
+        g.closePath();
+        g.fill();
+        g.stroke();
+        g.restore();
+        continue;
+      }
       if (x < -6 || y < -6 || x > w + 6 || y > h + 6) continue;
+      if (d.kind === "call") {
+        g.fillStyle = "#fac775";
+        g.strokeStyle = "#412402";
+        g.lineWidth = r * 0.5;
+        g.beginPath();
+        g.arc(x, y, r * 2, 0, Math.PI * 2);
+        g.fill();
+        g.stroke();
+        continue;
+      }
       if (d.kind === "car") {
         g.fillStyle = "#85b7eb";
         g.fillRect(x - r * 1.4, y - r * 2, r * 2.8, r * 4);

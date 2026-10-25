@@ -23,6 +23,8 @@ const TAGLINE: Record<CarSpec["model"], string> = {
   doblo: "Esnafın gözdesi · koltuk sökülür, kasa olur",
   passat: "Sakal Passat · chip'le uçak olur",
   e30: "Arkadan itiş · el freniyle drift kralı",
+  motor: "GAP Kurye · arkada teslimat kutusu",
+  taksi: "Sarı Doblo · tepede TAKSİ tabelası",
 };
 
 /** Kart görselleri: tek bir gizli WebGL sahnesinde çizilir, resme dönüştürülür (menü açıkken). */

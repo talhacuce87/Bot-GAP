@@ -9344,3 +9344,75 @@ button.cz-bjspot {
   outline: 2px solid #5dcaa5;
   outline-offset: 2px;
 }
+
+/* ---- İş görev kartı (üstte ortada, GTA görev metni gibi) ---- */
+.job-card {
+  position: absolute;
+  left: 50%;
+  top: calc(max(10px, env(safe-area-inset-top)) + 4px);
+  transform: translate(-50%, -12px);
+  width: min(360px, calc(100vw - 260px));
+  min-width: 240px;
+  padding: 9px 13px 8px;
+  border-radius: 14px;
+  background: rgba(12, 16, 24, 0.88);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(239, 159, 39, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+}
+.job-card.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.job-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.job-top b {
+  font-size: 14px;
+}
+.job-time {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #fac775;
+}
+.job-time.late {
+  color: #f09595;
+}
+.job-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+.job-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.job-bar i {
+  display: block;
+  height: 100%;
+  background: #5dcaa5;
+  transition: width 0.3s linear;
+}
+.job-bottom {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.job-pay {
+  color: #9fe1cb;
+  font-weight: 600;
+}
+.job-count {
+  color: var(--muted);
+}
+.has-job .toast {
+  top: calc(max(10px, env(safe-area-inset-top)) + 112px);
+}

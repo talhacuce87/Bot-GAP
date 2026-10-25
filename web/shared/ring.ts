@@ -15,7 +15,7 @@ export const PIT_GATE = { x: 466 + CITY_DX, half: 7 };
 export const MAX_RACERS = 8;
 export const RACE_LAPS = [1, 3, 5] as const;
 /** İlk üçe test coin (en az iki yarışçı varsa). */
-export const RACE_PRIZES = [1000, 500, 250];
+export const RACE_PRIZES = [2000, 1000, 500];
 /** Erken kalkış cezası (ms) ve lambalar yanarken gridden izin verilen kayma (m). */
 export const JUMP_PENALTY = 5000;
 export const JUMP_TOLERANCE = 1.6;

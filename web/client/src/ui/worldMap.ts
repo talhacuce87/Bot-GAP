@@ -77,6 +77,8 @@ export interface WorldMapHost {
   others(): Iterable<MapPlayer>;
   /** Arsa sahiplerinin adları (arsa dizinine göre; boşsa null). */
   owner(plot: number): string | null;
+  /** İş hedefi ve taksi çağrıları gibi işaretler. */
+  marks?(): Iterable<{ x: number; z: number; label: string; color: string }>;
 }
 
 export class WorldMap {
@@ -248,6 +250,22 @@ export class WorldMap {
       g.fill();
       g.stroke();
       if (s > 2.5) text(o.name, X(o.x), Z(o.z) - 10 * dpr, 10, 600);
+    }
+    // İşaretler (iş hedefi: elmas ve adı)
+    for (const k of this.host.marks?.() ?? []) {
+      const px = X(k.x), pz = Z(k.z), q = 7 * dpr;
+      g.fillStyle = k.color;
+      g.strokeStyle = "#ffffff";
+      g.lineWidth = 2 * dpr;
+      g.beginPath();
+      g.moveTo(px, pz - q);
+      g.lineTo(px + q, pz);
+      g.lineTo(px, pz + q);
+      g.lineTo(px - q, pz);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      text(k.label, px, pz - 16 * dpr, 11);
     }
     const m = this.host.me(), mx = X(m.x), mz = Z(m.z), r = 8 * dpr;
     // Ok: avatarın baktığı yöne (dünyada +z güney; rot 0 → +z)

@@ -87,8 +87,19 @@ export const CAR_HORNS = [
 
 type Id<T extends readonly { id: string }[]> = T[number]["id"];
 
+/**
+ * İşin araçları (shared/jobs): kuryenin GAP Kurye scooter'ı ve sarı GAP Taksi (Doblo). Garajda ve çağırma
+ * menüsünde yoktur; yalnızca o işteyken sürülür (sunucu doğrular).
+ */
+export const JOB_CAR_MODELS = [
+  { id: "motor", name: "GAP Kurye scooter" },
+  { id: "taksi", name: "GAP Taksi" },
+] as const;
+export type CarModel = Id<typeof CAR_MODELS> | Id<typeof JOB_CAR_MODELS>;
+export const isJobCar = (m: unknown): m is Id<typeof JOB_CAR_MODELS> => JOB_CAR_MODELS.some((x) => x.id === m);
+
 export interface CarSpec {
-  model: Id<typeof CAR_MODELS>;
+  model: CarModel;
   color: Id<typeof CAR_COLORS>;
   rim: Id<typeof CAR_RIMS>;
   spoiler: Id<typeof CAR_SPOILERS>;
@@ -143,7 +154,11 @@ export interface CarStats {
   pitch: number;
   diesel: boolean;
 }
-export const CAR_STATS: Record<Id<typeof CAR_MODELS>, CarStats> = {
+export const CAR_STATS: Record<CarModel, CarStats> = {
+  // Scooter: çevik ve hızlı kalkar, son sürati düşük
+  motor: { top: 21, accel: 12.5, turn: 1.3, grip: 1.1, drift: 0.1, pitch: 1.5, diesel: false },
+  // Taksi Doblo: dizel, ağır
+  taksi: { top: 23, accel: 8.6, turn: 0.94, grip: 0.92, drift: 0.2, pitch: 0.75, diesel: true },
   sahin: { top: CAR_SPEED, accel: 10, turn: 1, grip: 1, drift: 0.6, pitch: 1, diesel: false },
   dogan: { top: 26.5, accel: 10.5, turn: 1.02, grip: 1.03, drift: 0.6, pitch: 1.08, diesel: false },
   kartal: { top: 24, accel: 9.2, turn: 0.95, grip: 0.98, drift: 0.7, pitch: 0.95, diesel: false },
@@ -184,7 +199,8 @@ export function validCar(v: unknown): CarSpec | null {
   const c = v as Record<string, unknown>;
   const plate = typeof c.plate === "string" ? c.plate.toLocaleUpperCase("tr-TR").replace(/\s+/g, " ").trim().slice(0, 10) : "";
   return {
-    model: pick(CAR_MODELS, c.model, DEFAULT_CAR.model),
+    // İş araçları burada düşer (sunucu işteyse ayrıca izin verir)
+    model: pick(CAR_MODELS, c.model, "sahin"),
     color: pick(CAR_COLORS, c.color, DEFAULT_CAR.color),
     rim: pick(CAR_RIMS, c.rim, DEFAULT_CAR.rim),
     spoiler: pick(CAR_SPOILERS, c.spoiler, DEFAULT_CAR.spoiler),

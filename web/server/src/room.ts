@@ -25,7 +25,7 @@ import {
 } from "../../shared/protocol";
 import { inStadium, inVolley, SPAWN } from "../../shared/zones";
 import { inPbField } from "../../shared/paintball";
-import { CAR_MAX_SPEED, type CarRadio, type CarSpec, ENTER_REACH, type ParkedCar, PARK_REACH, RIDE_SEATS, validCar } from "../../shared/car";
+import { CAR_MAX_SPEED, type CarRadio, type CarSpec, ENTER_REACH, isJobCar, type ParkedCar, PARK_REACH, RIDE_SEATS, validCar } from "../../shared/car";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
@@ -35,6 +35,7 @@ import type { LiveHost } from "./liveTables";
 import { RadioQueues } from "./radioQueue";
 import type { LifeHost } from "./life";
 import type { Bags } from "./inventory";
+import type { JobHost } from "./jobs";
 
 const PET_IDS = new Set<string>(PETS.map((p) => p.id));
 const SKIN_IDS = new Set<string>(SKINS.map((s) => s.id));
@@ -123,6 +124,8 @@ export class Room {
   life: LifeHost | null = null;
   /** Çantalar (savaş odasında yok). */
   bags: Bags | null = null;
+  /** İşler: kuryelik, taksicilik (savaş odasında yok). */
+  jobs: JobHost | null = null;
   /** Oyuncuların radyo sıraları. */
   readonly radioQ = new RadioQueues(this);
   /** Görev/sayaç olayı (botta): sunucu bağlar; tank isabeti, savaşta vuruş ve galibiyet buradan. */
@@ -196,6 +199,7 @@ export class Room {
     this.radioQ.leave(sid);
     this.life?.leave(sid);
     this.bags?.leave(sid);
+    this.jobs?.leave(sid);
     this.players.delete(sid);
     this.battle?.leave(sid);
     this.games?.leave(sid);
@@ -328,6 +332,8 @@ export class Room {
     if (v && typeof v === "object") {
       const o = v as Record<string, unknown>;
       const car = validCar(o.car);
+      const want = (o.car as { model?: unknown } | null)?.model;
+      if (car && isJobCar(want) && this.jobs?.modelOf(sid) === want) car.model = want;
       const x = Number(o.x), z = Number(o.z), rot = Number(o.rot);
       if (!car || ![x, z, rot].every(Number.isFinite)) return;
       if (Math.hypot(x - p.state.x, z - p.state.z) > PARK_REACH) return;
@@ -363,19 +369,23 @@ export class Room {
     if (!p || p.info.spectator) return null;
     if (driver === null) {
       if (!p.info.ride) return null;
+      const prev = p.info.ride.d;
       p.info.ride = null;
       this.broadcast({ t: "ride", sid, ride: null });
+      this.jobs?.rideChanged(sid, null, prev);
       return null;
     }
     const d = this.players.get(driver);
     if (!d || !d.info.car || driver === sid) return "🚗 Bu arabanın sürücüsü yok.";
     if (p.info.car || p.info.jailed || this.tank.driver === sid) return "🚗 Önce arabandan in.";
+    if (d.info.car.model === "motor") return "🛵 Kurye scooter'ına yolcu binmez.";
     if (Math.hypot(p.state.x - d.state.x, p.state.z - d.state.z) > ENTER_REACH + 2) return "🚗 Arabaya yaklaş.";
     const taken = new Set([...this.players.values()].filter((q) => q.info.ride?.d === driver).map((q) => q.info.ride!.s));
     const seat = [1, 2, 3].find((s) => s <= RIDE_SEATS && !taken.has(s));
     if (!seat) return "🚗 Arabada boş koltuk yok.";
     p.info.ride = { d: driver, s: seat };
     this.broadcast({ t: "ride", sid, ride: p.info.ride });
+    this.jobs?.rideChanged(sid, driver, null);
     return null;
   }
 
@@ -527,6 +537,7 @@ export class Room {
     this.ring?.tick(now);
     this.live?.tick(now);
     this.life?.tick(now);
+    this.jobs?.tick(now);
     const t = this.tank;
     if (!t.driver && t.idleSince && now - t.idleSince > TANK_RETURN_MS) {
       Object.assign(t, { x: TANK_PARK.x, z: TANK_PARK.z, h: TANK_PARK.h, tr: TANK_PARK.h, el: DEFAULT_ELEV, idleSince: 0 });

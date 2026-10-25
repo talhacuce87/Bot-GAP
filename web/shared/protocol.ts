@@ -12,6 +12,7 @@ import type { TableKind } from "./zones";
 import type { CarRadio, CarSpec, ParkedCar, RadioQueueView } from "./car";
 import type { MoneyTx, WalletView } from "./economy";
 import type { BuffId, ItemId, ShopId, Slot } from "./items";
+import type { JobKind, JobView, TaxiCall } from "./jobs";
 import type { BjView, RouletteBet } from "./casino";
 import type { RingView } from "./ring";
 import type { BjBets, LiveTableView } from "./liveCasino";
@@ -408,6 +409,9 @@ export type ServerEvent =
   /** Birinin elindeki eşya değişti; biri bir şey yedi/içti (herkese). */
   | { t: "held"; sid: number; item: ItemId | null }
   | { t: "eat"; sid: number; item: ItemId }
+  /** İşin (yalnızca işi yapana; null: işten çıktın) ve bekleyen taksi çağrıları (taksicilere). */
+  | { t: "job"; view: JobView | null }
+  | { t: "taxicalls"; calls: TaxiCall[] }
   /** Cüzdan paneli. */
   | { t: "econ"; wallet: WalletView }
   /** Canlı casino masası (oturan ve izleyenlere, değişince). */
@@ -516,6 +520,10 @@ export type ClientEvent =
   | { t: "inv"; op: "move"; from: number; to: number }
   | { t: "inv"; op: "give"; slot: number; sid: number }
   | { t: "inv"; op: "hold"; slot: number | null }
+  /** İşe gir/çık; taksi çağır/iptal. */
+  | { t: "job"; op: "start"; kind: JobKind }
+  | { t: "job"; op: "stop" }
+  | { t: "taxi"; on: boolean }
   /** Arabayı bir yere bırak (inince ya da çağırınca); null: kaldır. */
   | { t: "park"; parked: ParkedCar | null }
   | { t: "ring"; op: "join"; slot: number }

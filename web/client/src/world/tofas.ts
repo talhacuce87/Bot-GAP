@@ -71,6 +71,9 @@ const SHAPES: Record<CarSpec["model"], Shape> = {
     W: 1.65, ZF: 2.16, ZR: -2.16, AXLE: 1.285, TRACK: 0.7, TIRE_R: 0.3, BELT: 0.88, ROOF: 1.36, CAB_W: 1.42,
     cabFront: 0.95, wsTop: 0.36, roofRear: -0.78, cabRear: -1.06, cabRearY: 0.9, bPillar: -0.16, noseY: 0.76, hoodY: 0.8, deckY: 0.88, deck: [-1.1, 0.9],
   },
+  // İş araçları: taksi Doblo gövdesiyle kurulur, scooter ayrı (motor.ts); yer tutucu
+  taksi: TOFAS,
+  motor: TOFAS,
 };
 
 const TIRE_W = 0.19;
@@ -80,7 +83,7 @@ const TRIM = "#1b1c1f";
 const CHROME = "#cfd3d8";
 const RUBBER = "#121315";
 
-const MODEL_NAMES: Record<CarSpec["model"], string> = { sahin: "ŞAHİN", dogan: "DOĞAN SLX", kartal: "KARTAL", linea: "LINEA", doblo: "DOBLÒ", passat: "PASSAT", e30: "316i" };
+const MODEL_NAMES: Record<CarSpec["model"], string> = { sahin: "ŞAHİN", dogan: "DOĞAN SLX", kartal: "KARTAL", linea: "LINEA", doblo: "DOBLÒ", passat: "PASSAT", e30: "316i", taksi: "DOBLÒ", motor: "GAP" };
 /** Bagajın solundaki ikinci yazı (motor). */
 const ENGINE_BADGE: Partial<Record<CarSpec["model"], string>> = { linea: "1.3 MULTIJET", passat: "TDI", doblo: "1.3 MULTIJET" };
 
@@ -224,7 +227,8 @@ export function buildTofas(spec: CarSpec): TofasMesh {
   const head = CAR_LIGHTS.find((l) => l.id === spec.lights)?.hex ?? "#fff6dc";
   /** Açık renkli boyada şerit ve yazılar koyu, koyu boyada beyaz. */
   const light = new THREE.Color(paint).getHSL({ h: 0, s: 0, l: 0 }).l > 0.55;
-  const model = spec.model;
+  // GAP Taksi: sarı, damalı Doblo
+  const model = spec.model === "taksi" ? "doblo" : spec.model;
   const sh = SHAPES[model] ?? TOFAS;
   const { W, ZF, ZR, AXLE, TRACK, TIRE_R, BELT, ROOF, CAB_W, cabFront, wsTop, roofRear, cabRear, cabRearY, bPillar, noseY, hoodY, deckY } = sh;
   const FZ = ZF + BEV, RZ = ZR - BEV, LEN = ZF - ZR;

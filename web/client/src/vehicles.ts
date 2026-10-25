@@ -3,7 +3,7 @@
 // gelir. GAP Garaj'daki parlayan işarete arabayla gelince tuning ekranı açılır; kamera araba etrafında döner ve
 // seçili parçaya bakar (oda duvarlarının içinde kalır).
 import * as THREE from "three";
-import { CAR_HULL_R, CAR_MODELS, carCircles, type CarSpec, ENTER_REACH, type ParkedCar } from "../../shared/car";
+import { CAR_HULL_R, CAR_MODELS, carCircles, type CarSpec, ENTER_REACH, isJobCar, type ParkedCar } from "../../shared/car";
 import { GARAGE } from "../../shared/zones";
 import type { Remotes } from "./avatars/remotes";
 import { Cars } from "./cars";
@@ -37,7 +37,7 @@ export interface VehicleContext {
 const UP = new THREE.Vector3(0, 1, 0);
 /** "…'e bin" (yönelme hâli, okunuşa göre). */
 const TO: Record<CarSpec["model"], string> = {
-  sahin: "Şahin'e", dogan: "Doğan SLX'e", kartal: "Kartal'a", linea: "Linea'ya", doblo: "Doblo'ya", passat: "Passat'a", e30: "E30'a",
+  sahin: "Şahin'e", dogan: "Doğan SLX'e", kartal: "Kartal'a", linea: "Linea'ya", doblo: "Doblo'ya", passat: "Passat'a", e30: "E30'a", motor: "Scooter'a", taksi: "Taksiye",
 };
 
 /** Park halindeki arabaların çizildiği en uzak mesafe. */
@@ -137,7 +137,8 @@ export class Vehicles {
     if (me.vehicle) me.setVehicle(0);
     me.enterCarAt(p.x, p.z, p.rot);
     settings.car = p.car;
-    updateSettings({ car: p.car });
+    // İş aracı (scooter, taksi) ayarlara yazılmaz: işten çıkınca kendi arabana dönersin
+    if (!isJobCar(p.car.model)) updateSettings({ car: p.car });
     this.myParked = null;
     net.send({ t: "car", car: p.car });
     hud.toast(`🚗 ${p.car.plate} · W/S gaz-fren · Space el freni · Shift güç · E korna · X selektör · G far · F in · R radyo`);
@@ -189,6 +190,37 @@ export class Vehicles {
     sfx.pop();
     hud.toast(`🚗 ${CAR_MODELS.find((m) => m.id === model)?.name} yanında! Yanına gidip F ile bin.`);
   }
+
+  /** İşin aracı yanına gelir (scooter, taksi); ayarlara kaydedilmez. */
+  callJob(car: CarSpec): void {
+    const { me, hud } = this.c;
+    if (me.car && settings.car.model === car.model) return;
+    if (me.car) this.exit();
+    if (!isJobCar(settings.car.model)) this.prevModel = settings.car.model;
+    const spot = this.findSpot();
+    if (!spot) return hud.toast("🚗 Burada araç için yer yok; biraz açık bir alana geç.");
+    const parked: ParkedCar = { car: { ...car }, ...spot };
+    this.myParked = parked;
+    settings.car = parked.car;
+    this.c.net.send({ t: "park", parked });
+    this.c.sparkle(spot.x, spot.z);
+    sfx.pop();
+    hud.toast(car.model === "motor" ? "🛵 GAP Kurye scooter'ın yanında! F ile bin." : "🚕 GAP Taksi yanında! F ile bin.");
+  }
+
+  /** İş bitti: iş aracındaysan inersin, park edilmiş iş aracı kalkar; son arabana dönersin. */
+  endJob(): void {
+    const { me, net } = this.c;
+    if (me.car && isJobCar(settings.car.model)) {
+      me.exitCar();
+      net.send({ t: "car", car: null });
+    }
+    if (this.myParked && isJobCar(this.myParked.car.model)) this.dismiss();
+    if (isJobCar(settings.car.model)) settings.car = { ...settings.cars[this.prevModel] };
+  }
+
+  /** İşten önce sürdüğün model (iş bitince geri). */
+  private prevModel: (typeof CAR_MODELS)[number]["id"] = "sahin";
 
   dismiss(): void {
     if (!this.myParked) return;

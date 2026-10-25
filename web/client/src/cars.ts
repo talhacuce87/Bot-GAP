@@ -11,6 +11,7 @@ import { wetEnv } from "./world/geo";
 import { type LampField, MAX_CARS } from "./world/lamps";
 import type { Skids } from "./world/skids";
 import { buildTofas, type TofasMesh } from "./world/tofas";
+import { buildMotor, MOTOR_SEAT_Y } from "./world/motor";
 
 /** Koltuklar (0 sürücü sol ön, 1 sağ ön, 2 sol arka, 3 sağ arka): merkezden yana ve arkaya; oturma yüzeyi alçak. */
 const SEATS: [number, number][] = [[0.33, -0.25], [-0.33, -0.25], [0.33, -1.0], [-0.33, -1.0]];
@@ -18,6 +19,8 @@ const SEAT_DROP = -0.58;
 
 interface Entry {
   key: string;
+  /** Kurye scooter'ı: sürücü selede görünür. */
+  motor: boolean;
   mesh: TofasMesh;
   seen: boolean;
   /** Önceki karedeki yer (tekerlek dönüşü ve direksiyon buradan) ve yumuşatılmış direksiyon açısı. */
@@ -103,7 +106,7 @@ export class Cars {
     if (!e || e.key !== key) {
       if (e) this.drop(sid);
       const mesh = this.take(key, spec);
-      e = { key, mesh, seen: true, x, z, rot, steer: 0, lit: false, vel: 0, acc: 0, yr: 0, skid: null, smokeAt: 0 };
+      e = { key, motor: spec.model === "motor", mesh, seen: true, x, z, rot, steer: 0, lit: false, vel: 0, acc: 0, yr: 0, skid: null, smokeAt: 0 };
       this.entries.set(sid, e);
     }
     e.seen = true;
@@ -198,7 +201,7 @@ export class Cars {
   }
 
   private build(spec: CarSpec): TofasMesh {
-    const mesh = buildTofas(spec);
+    const mesh = spec.model === "motor" ? buildMotor(spec) : buildTofas(spec);
     this.scene.add(mesh.group);
     return mesh;
   }
@@ -238,14 +241,16 @@ export class Cars {
     let s = this.seated.get(sid);
     if (!s) this.seated.set(sid, (s = { ...v }));
     Object.assign(s, v);
-    const [side, back] = SEATS[seat] ?? SEATS[0];
+    // Scooter: sürücü ortada, selede oturur ve görünür
+    const motor = this.entries.get(sid)?.motor ?? false;
+    const [side, back] = motor ? [0, -0.28] : (SEATS[seat] ?? SEATS[0]);
     const c = Math.cos(car.rot), sn = Math.sin(car.rot);
     s.x = car.x + c * side + sn * back;
     s.z = car.z - sn * side + c * back;
     s.rot = car.rot;
     s.flags = FLAG_SEATED;
-    s.bodyHidden = true;
-    s.baseY = SEAT_DROP;
+    s.bodyHidden = !motor;
+    s.baseY = motor ? MOTOR_SEAT_Y - 0.5 : SEAT_DROP;
     s.jumpY = 0;
     s.lift = 0;
     return s;

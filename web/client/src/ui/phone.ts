@@ -3,6 +3,7 @@
 // fareyle de tıklanır. Eski menünün (M) yerini alır: haritanın, inşanın ve diğer kısayollu şeylerin kendi tuşu var,
 // telefonda yalnızca kısayolu olmayanlar ve yeni uygulamalar (işler, cüzdan, mesajlar) durur.
 import { lira, type WalletView } from "../../../shared/economy";
+import { JOB_PAY, JOBS, type JobKind, type JobView } from "../../../shared/jobs";
 import { PETS, SKINS } from "../../../shared/protocol";
 import { actionLabel } from "../input/keybinds";
 import { settings, updateSettings } from "../settings";
@@ -36,6 +37,11 @@ export interface PhoneApps {
   cosmetics(): void;
   /** Cüzdanı sunucudan iste (gelince showWallet). */
   wallet(): void;
+  /** İşe gir (kind) ya da işten çık (null); işin aracını yanına çağır. */
+  job(kind: JobKind | null): void;
+  jobCar(): void;
+  /** Taksi çağır / çağrıyı iptal et. */
+  taxi(on: boolean): void;
 }
 
 type AppId = "jobs" | "events" | "profile" | "camera" | "car" | "wallet" | "music" | "settings" | "messages";
@@ -63,6 +69,8 @@ export class Phone {
   private focus = 0;
   private balance = 0;
   private walletView: WalletView | null = null;
+  private jobView: JobView | null = null;
+  private calling = false;
   private timer = 0;
 
   constructor(parent: HTMLElement, touch: boolean, private a: PhoneApps) {
@@ -106,6 +114,17 @@ export class Phone {
   setBalance(b: number): void {
     this.balance = b;
     if (this.isOpen && !this.app) this.home(this.focus);
+  }
+
+  setJob(v: JobView | null): void {
+    const was = !!this.jobView;
+    this.jobView = v;
+    if (this.isOpen && this.app === "jobs" && was !== !!v) this.openApp("jobs");
+  }
+
+  setCalling(on: boolean): void {
+    this.calling = on;
+    if (this.isOpen && this.app === "messages") this.openApp("messages");
   }
 
   showWallet(v: WalletView): void {
@@ -201,11 +220,20 @@ export class Phone {
     el("b", "", head, app.name);
     const list = el("div", "ph-list", this.body);
     switch (id) {
-      case "jobs":
-        this.card(list, "📦", "Kuryelik", "Paketleri zamanında teslim et · 250–450 ₺");
-        this.card(list, "🚕", "Taksicilik", "Müşterileri gideceği yere götür · 300–700 ₺");
-        el("div", "ph-note", list, "İşler çok yakında burada açılacak.");
+      case "jobs": {
+        const v = this.jobView;
+        if (v) {
+          const j = JOBS[v.kind];
+          this.card(list, j.icon, `${j.name} · çalışıyorsun`, `Bugün ${v.done} iş · ${lira(v.earned)} kazandın`);
+          this.row(list, v.kind === "kurye" ? "🛵" : "🚕", "Aracımı çağır", v.kind === "kurye" ? "GAP Kurye scooter'ı" : "Sarı GAP Taksi", () => this.run(this.a.jobCar));
+          this.row(list, "🛑", "İşi bırak", "Aracın geri alınır", () => this.run(() => this.a.job(null)));
+        } else {
+          this.row(list, "📦", "Kuryelik", `Paketleri zamanında teslim et · ${JOB_PAY.kuryeMin}–${JOB_PAY.kuryeMax} ₺`, () => this.run(() => this.a.job("kurye")));
+          this.row(list, "🚕", "Taksicilik", `Müşterileri götür · ${JOB_PAY.taksiMin}–${JOB_PAY.taksiMax} ₺`, () => this.run(() => this.a.job("taksi")));
+          el("div", "ph-note", list, "İşe girince aracın yanına gelir; hedef haritada ve minimapte turuncu.");
+        }
         break;
+      }
       case "events":
         this.row(list, "⚽", "Futbol maçı", "5 dk, stadyumda", () => this.run(this.a.match));
         this.row(list, "🏐", "Voleybol", "Salona ışınlan", () => this.run(this.a.volley));
@@ -272,7 +300,11 @@ export class Phone {
         break;
       }
       case "messages":
-        this.card(list, "💬", "Mesajlar", "Oyunculara mesaj, 🚑 ambulans ve 🚕 taksi çağırma çok yakında.");
+        this.row(list, "🚕", this.calling ? "Taksi çağrını iptal et" : "Taksi çağır", this.calling ? "Taksiciler yoluna çıktı" : `Taksimetre: ${JOB_PAY.meterStart} ₺ + 100 m'de ${JOB_PAY.meterPer100} ₺`, () => {
+          this.a.taxi(!this.calling);
+          this.setCalling(!this.calling);
+        });
+        el("div", "ph-note", list, "Taksi gelince yanına gidip F ile bin; inince ücret cüzdanından ödenir. Mesajlaşma çok yakında.");
         break;
     }
     this.setFocus(Math.min(focus, this.items.length - 1));

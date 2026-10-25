@@ -33,8 +33,11 @@ import { LIVE_TABLES } from "../../shared/liveCasino";
 import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
-import { type CarRadio, carCircles, CAR_ENGINES, CAR_STATS, type CarSpec, ENTER_REACH, RADIO_RANGE } from "../../shared/car";
+import { type CarRadio, carCircles, CAR_ENGINES, CAR_STATS, type CarSpec, DEFAULT_CAR, ENTER_REACH, RADIO_RANGE } from "../../shared/car";
 import { Phone } from "./ui/phone";
+import { JobHud } from "./ui/jobHud";
+import { JobMarker } from "./world/jobMarker";
+import { type JobKind, type JobView, type TaxiCall } from "../../shared/jobs";
 import { WorldMap } from "./ui/worldMap";
 import { LifeHud, type MapDot } from "./ui/lifeHud";
 import { LIFE } from "../../shared/economy";
@@ -137,6 +140,10 @@ function matchClock(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/** İşin aracı (scooter ya da sarı damalı taksi). */
+const jobCar = (kind: JobKind): CarSpec =>
+  kind === "kurye" ? { ...DEFAULT_CAR, model: "motor", plate: "GAP KURYE" } : { ...DEFAULT_CAR, model: "taksi", color: "taksi", decal: "dama", plate: "34 T 3434" };
+
 export class Features {
   readonly photo: PhotoMode;
   private companions = new Companions();
@@ -165,6 +172,13 @@ export class Features {
   private boards: BoardGameUi;
   private profile: ProfileUi;
   private phone: Phone;
+  /** İş: görev kartı, dünyadaki hedef işareti, bekleyen NPC müşteri ve taksi çağrıları. */
+  private jobHud: JobHud;
+  private jobMarker = new JobMarker();
+  private job: JobView | null = null;
+  private calls: TaxiCall[] = [];
+  private jobNpc: AvatarView | null = null;
+  private npcCells = new Map<string, number>();
   /** Cüzdan cevabı telefona mı (Cüzdan uygulaması) yoksa para kutusunun paneline mi. */
   private walletToPhone = false;
   private map: WorldMap;
@@ -441,6 +455,11 @@ export class Features {
         const p = this.buildWorld.plots[plot];
         return p?.owner ? p.name : null;
       },
+      // İş hedefi ve taksi çağrıları
+      marks: () => [
+        ...(this.job?.target ? [{ x: this.job.target.x, z: this.job.target.z, label: this.job.target.name, color: "#ef9f27" }] : []),
+        ...this.calls.map((k) => ({ x: k.x, z: k.z, label: `🚕 ${k.name}`, color: "#fac775" })),
+      ],
     });
     this.lifeHud = new LifeHud(hudRoot, {
       openWallet: () => net.send({ t: "econ", op: "wallet" }),
@@ -534,6 +553,9 @@ export class Features {
         this.walletToPhone = true;
         net.send({ t: "econ", op: "wallet" });
       },
+      job: (kind) => net.send(kind ? { t: "job", op: "start", kind } : { t: "job", op: "stop" }),
+      jobCar: () => this.job && this.vehicles.callJob(jobCar(this.job.kind)),
+      taxi: (on) => net.send({ t: "taxi", on }),
       queue: () => this.whud.openQueue(),
       weather: () => c.say("!hava"),
       battle: c.battle,
@@ -553,7 +575,45 @@ export class Features {
     // Kendi şarkın bitti: sıradaki çalsın
     this.radio.onEnded = (id) => net.send({ t: "radioq", op: "ended", id });
     net.onRadioQueue = (q) => this.radioPanel.setQueue(q);
-    net.onRide = (sid, ride) => this.onRide(sid, ride);
+    net.onRide = (sid, ride) => {
+      this.onRide(sid, ride);
+      if (sid === net.you && ride) this.phone.setCalling(false);
+    };
+    this.jobHud = new JobHud(hudRoot);
+    world.scene.add(this.jobMarker.group);
+    net.onJob = (v) => {
+      const prev = this.job;
+      this.job = v;
+      this.jobHud.set(v, net.serverNow());
+      hudRoot.classList.toggle("has-job", !!v);
+      this.phone.setJob(v);
+      if (v && prev?.kind !== v.kind) {
+        this.vehicles.callJob(jobCar(v.kind));
+        hud.toast(v.kind === "kurye" ? "📦 Kuryeliğe başladın! Turuncu işarete git, paketi al." : "🚕 Taksiciliğe başladın! Turuncu işaretteki müşteriyi al.");
+      }
+      if (!v && prev) {
+        this.vehicles.endJob();
+        this.calls = [];
+        hud.toast("🛑 İşi bıraktın.");
+      }
+      // Bekleyen NPC müşteri (taksi)
+      const n = v?.npc;
+      if (!n) this.jobNpc = null;
+      else if (!this.jobNpc || this.jobNpc.x !== n.x || this.jobNpc.z !== n.z) {
+        let cell = this.npcCells.get(n.name);
+        if (cell === undefined) this.npcCells.set(n.name, (cell = c.atlas.alloc(n.name)));
+        const look = world.npcs.length ? world.npcs[Math.floor(Math.random() * world.npcs.length)].outfit : null;
+        this.jobNpc = {
+          x: n.x + 2.5, z: n.z, rot: -Math.PI / 2, flags: 0, alpha: 1, cell, color: colorFor(`job-${n.name}`), phase: 0.7, emote: -1, emoteAt: 0, jumpY: 0,
+          baseY: world.colliders.groundAt(n.x + 2.5, n.z, 0.4), outfit: look,
+        };
+      }
+    };
+    net.onTaxiCalls = (calls) => {
+      const had = this.calls.length;
+      this.calls = calls;
+      if (calls.length > had) hud.toast(`🚕 Yeni taksi çağrısı: ${calls[calls.length - 1].name} (haritada sarı)`);
+    };
     this.radioChip = document.createElement("div");
     this.radioChip.className = "radio-chip";
     hudRoot.append(this.radioChip);
@@ -1114,6 +1174,21 @@ export class Features {
     this.c.net.send({ t: "inv", op: "hold", slot: next });
   }
 
+  /** İş: görev kartı (mesafe, süre), dünyadaki hedef işareti ve el sallayan müşteri. */
+  private updateJob(serverNow: number): void {
+    const { me, world } = this.c;
+    this.jobHud.frame(me, serverNow);
+    const t = this.job?.target;
+    const time = performance.now() / 1000;
+    this.jobMarker.set(t ? { x: t.x, z: t.z, y: world.colliders.groundAt(t.x, t.z, 0.4) } : null, time);
+    const n = this.jobNpc;
+    if (n && time - n.emoteAt > 2.5) {
+      n.emote = 0;
+      n.emoteAt = time;
+      n.rot = Math.atan2(me.x - n.x, me.z - n.z);
+    }
+  }
+
   /** Avatarların elindeki eşyalar (yerken el ağza). */
   private updateHeld(): void {
     const { me, remotes } = this.c;
@@ -1142,6 +1217,9 @@ export class Features {
     for (const r of remotes.map.values()) if (r.hasData && !r.leaving && !r.info.spectator) d.push({ x: r.x, z: r.z, kind: r.info.downed ? "downed" : "player" });
     const p = this.vehicles.myParked;
     if (p) d.push({ x: p.x, z: p.z, kind: "car" });
+    for (const k of this.calls) d.push({ x: k.x, z: k.z, kind: "call" });
+    const goal = this.job?.target;
+    if (goal) d.push({ x: goal.x, z: goal.z, kind: "target" });
     this.lifeHud.frame(me, d, serverNow);
   }
 
@@ -1457,6 +1535,7 @@ export class Features {
     this.vehicles.update(dt, time);
     this.updateLife(serverNow);
     this.updateHeld();
+    this.updateJob(serverNow);
 
     // Saat: kişisel ayar > sinema modu (gündüzse) > dünyanın saati (!saat) > gerçek saat
     let hour: number | null = settings.clock === "auto" ? this.worldClock : CLOCK_HOURS[settings.clock];
@@ -1816,6 +1895,7 @@ export class Features {
   pushExtras(time: number, dt: number): void {
     const { me, remotes, avatars, net } = this.c;
     avatars.push(this.teaMaker, time);
+    if (this.jobNpc) avatars.push(this.jobNpc, time);
     for (const v of this.paintball.extras()) avatars.push(v, time);
     // Çalışanlar yalnızca yakındayken çizilir (her chibi on binlerce üçgen)
     for (const w of this.workers) if ((w.x - me.x) ** 2 + (w.z - me.z) ** 2 < 28 * 28) avatars.push(w, time);

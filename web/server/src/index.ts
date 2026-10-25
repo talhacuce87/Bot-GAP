@@ -11,11 +11,13 @@ import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
 import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
-import { validCar } from "../../shared/car";
+import { isJobCar, validCar } from "../../shared/car";
 import { Casino, type CasinoMsg, secureRng } from "./casino";
 import { Economy } from "./economy";
 import { LifeHost } from "./life";
 import { Bags } from "./inventory";
+import { JobHost } from "./jobs";
+import { EVENT_DAILY_MAX, EVENT_REWARDS } from "../../shared/jobs";
 import { RingHost, type RingMsg } from "./ring";
 import { LiveHost, type LiveMsg } from "./liveTables";
 import { CASINO } from "../../shared/zones";
@@ -154,6 +156,20 @@ function reportEvent(room: Room, sid: number, event: string, amount = 1): void {
   }, 3000);
 }
 
+/** Etkinlik galibiyeti: GAP ₺ ödülü (etkinlik başına günde sınırlı). */
+const eventWins = new Map<string, { day: string; n: number }>();
+function rewardEvent(room: Room, sid: number, event: string): void {
+  const r = EVENT_REWARDS[event], p = room.players.get(sid);
+  if (!r || !p) return;
+  const key = p.user.guest ? `guest:${p.user.id}` : p.user.id;
+  const day = new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10), k = `${key}:${event}`;
+  const c = eventWins.get(k);
+  const n = c?.day === day ? c.n : 0;
+  if (n >= EVENT_DAILY_MAX) return;
+  eventWins.set(k, { day, n: n + 1 });
+  economy.add(key, r.amount, { reason: r.reason, icon: r.icon });
+}
+
 /** Odanın sinemasını yükleyen ve soran yardımcı (kuyruk/DJ için). */
 function stageHost(room: Room) {
   const guild = () => {
@@ -179,7 +195,10 @@ function stageHost(room: Room) {
 }
 
 rooms.onCreate = (room) => {
-  room.onReport = (sid, event, amount) => reportEvent(room, sid, event, amount);
+  room.onReport = (sid, event, amount) => {
+    reportEvent(room, sid, event, amount);
+    rewardEvent(room, sid, event);
+  };
   if (!room.battle) {
     room.games = new WorldGames(room, room.onReport, stageHost(room), () => weather.current);
     room.games.builds = new Builds(room, SHARED_SECRET ? botPost : null);
@@ -200,6 +219,7 @@ rooms.onCreate = (room) => {
     room.live = new LiveHost(room, economy.casino(), secureRng);
     room.life = new LifeHost(room, economy);
     room.bags = new Bags(room, economy, room.life);
+    room.jobs = new JobHost(room, economy);
   }
 };
 
@@ -1084,6 +1104,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   moneyConns.set(walletKey, conns.add(conn));
   room.life?.join(sid, walletKey);
   room.bags?.join(sid, walletKey);
+  room.jobs?.join(sid, walletKey);
+  let lastJob = 0;
   let lastInv = 0;
   if (room.life) ws.send(JSON.stringify({ t: "wallet", balance: economy.get(walletKey) }));
   let lastFall = 0;
@@ -1204,7 +1226,11 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const now = Date.now();
         if (now - lastCar < 300) return;
         lastCar = now;
-        room.setCar(sid, validCar(msg.car));
+        const car = validCar(msg.car);
+        // İş aracı (scooter, taksi) yalnızca o işteyken
+        const want = (msg.car as { model?: unknown } | null)?.model;
+        if (car && isJobCar(want) && room.jobs?.modelOf(sid) === want) car.model = want;
+        room.setCar(sid, car);
       } else if (msg?.t === "cardmg") {
         const now = Date.now();
         if (now - lastCar < 300) return;
@@ -1281,6 +1307,12 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
           lastInv = now;
         }
         const err = msg.t === "shop" ? room.bags?.shop(sid, msg.shop, msg.cart) : room.bags?.handle(sid, msg, now);
+        if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
+      } else if (msg?.t === "job" || msg?.t === "taxi") {
+        const now = Date.now();
+        if (now - lastJob < 500) return;
+        lastJob = now;
+        const err = msg.t === "taxi" ? room.jobs?.call(sid, !!msg.on) : msg.op === "start" ? room.jobs?.start(sid, msg.kind, walletKey, now) : (room.jobs?.stop(sid), null);
         if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
       } else if (msg?.t === "econ") {
         ws.send(JSON.stringify({ t: "econ", wallet: economy.wallet(walletKey) }));
