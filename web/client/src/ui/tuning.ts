@@ -8,6 +8,7 @@ import { itemPrice, modItem } from "../../../shared/shop";
 import { owned } from "../owned";
 import { hornIsTune, Horns } from "./horn";
 import { sfx } from "./sfx";
+import { type IconName, iconHtml } from "./icons";
 
 /** Kamera: arabaya göre hedef nokta (yerel: +x sol, +z ön), etrafındaki açı (0 ön, π/2 sol), eğim ve uzaklık. */
 export interface CamPreset {
@@ -28,7 +29,7 @@ interface Option {
 interface Category {
   key: keyof CarSpec;
   label: string;
-  icon: string;
+  icon: IconName;
   desc: string;
   cam: CamPreset;
   options?: readonly Option[];
@@ -39,18 +40,18 @@ const OVERVIEW: CamPreset = { tx: 0, ty: 0.6, tz: 0, yaw: 0.8, pitch: 0.26, dist
 const YESNO = (no: string, yes: string): Option[] => [{ id: "false", name: no }, { id: "true", name: yes }];
 
 const CATEGORIES: Category[] = [
-  { key: "engine", label: "Motor", icon: "⚙️", desc: "Chip, büyük turbo ya da yarış motoru: daha yüksek hız ve ivme. Turbo gaz bırakınca pıslar.", cam: { tx: 0, ty: 0.85, tz: 1.5, yaw: 0.55, pitch: 0.38, dist: 3.6 }, options: CAR_ENGINES },
-  { key: "color", label: "Boya", icon: "🎨", desc: "Gövde rengi. Çıkartma ve yazılar boyaya göre açık ya da koyu olur.", cam: { tx: 0, ty: 0.65, tz: 0, yaw: 0.95, pitch: 0.22, dist: 6.0 }, options: CAR_COLORS },
-  { key: "rim", label: "Jantlar", icon: "🛞", desc: "Jant modeli: çelik kapaklı, spor, altın ya da siyah.", cam: { tx: 0.82, ty: 0.31, tz: 1.245, yaw: 1.3, pitch: 0.1, dist: 2.4 }, options: CAR_RIMS },
-  { key: "spoiler", label: "Spoiler", icon: "🪽", desc: "Bagaj kapağına arka spoiler.", cam: { tx: 0, ty: 1.15, tz: -1.9, yaw: Math.PI - 0.6, pitch: 0.42, dist: 4.4 }, options: CAR_SPOILERS },
-  { key: "decal", label: "Çıkartma", icon: "🏁", desc: "Kaput ve tavandan geçen yarış şeridi, yanlarda alev ya da damalı taksi.", cam: { tx: 0, ty: 0.85, tz: 0, yaw: Math.PI / 2 + 0.15, pitch: 0.3, dist: 5.8 }, options: CAR_DECALS },
-  { key: "neon", label: "Neon alt ışık", icon: "💡", desc: "Gövdenin altından yere vuran ışık; gece daha parlak.", cam: { tx: 0, ty: 0.15, tz: 0, yaw: 1.05, pitch: 0.07, dist: 5.6 }, options: CAR_NEONS },
-  { key: "lights", label: "Farlar", icon: "🔦", desc: "Far camının rengi: standart, xenon (buz mavisi) ya da retro sarı.", cam: { tx: 0, ty: 0.62, tz: 2.15, yaw: 0.32, pitch: 0.12, dist: 3.4 }, options: CAR_LIGHTS },
-  { key: "exhaust", label: "Egzoz", icon: "💨", desc: "Egzoz ucu: standart, çift çıkış ya da kalın krom spor.", cam: { tx: 0, ty: 0.28, tz: -2.2, yaw: Math.PI - 0.4, pitch: 0.12, dist: 2.7 }, options: CAR_EXHAUSTS },
-  { key: "horn", label: "Korna", icon: "📯", desc: "Arabada E ile çalınır (basılı tut). Melodili kornalar bir kez sonuna kadar çalar.", cam: { tx: 0, ty: 0.7, tz: 2.1, yaw: 0.2, pitch: 0.15, dist: 3.8 }, options: CAR_HORNS },
-  { key: "tint", label: "Cam filmi", icon: "🕶️", desc: "Koyu cam filmi: içerisi zor görünür.", cam: { tx: 0, ty: 1.1, tz: -0.1, yaw: Math.PI / 2 + 0.3, pitch: 0.12, dist: 4.2 }, options: YESNO("Yok", "Koyu film") },
-  { key: "low", label: "Süspansiyon", icon: "⬇️", desc: "Basık süspansiyon: gövde tekerleklere göre aşağıda.", cam: { tx: 0, ty: 0.35, tz: 0, yaw: Math.PI / 2, pitch: 0.03, dist: 5.2 }, options: YESNO("Standart", "Basık") },
-  { key: "plate", label: "Plaka", icon: "🔤", desc: "Plaka yazısı: harf, rakam ve boşluk, en çok 10 karakter.", cam: { tx: 0, ty: 0.37, tz: -2.3, yaw: Math.PI, pitch: 0.12, dist: 2.4 } },
+  { key: "engine", label: "Motor", icon: "engine", desc: "Chip, büyük turbo ya da yarış motoru: daha yüksek hız ve ivme. Turbo gaz bırakınca pıslar.", cam: { tx: 0, ty: 0.85, tz: 1.5, yaw: 0.55, pitch: 0.38, dist: 3.6 }, options: CAR_ENGINES },
+  { key: "color", label: "Boya", icon: "paintBucket", desc: "Gövde rengi. Çıkartma ve yazılar boyaya göre açık ya da koyu olur.", cam: { tx: 0, ty: 0.65, tz: 0, yaw: 0.95, pitch: 0.22, dist: 6.0 }, options: CAR_COLORS },
+  { key: "rim", label: "Jantlar", icon: "tire", desc: "Jant modeli: çelik kapaklı, spor, altın ya da siyah.", cam: { tx: 0.82, ty: 0.31, tz: 1.245, yaw: 1.3, pitch: 0.1, dist: 2.4 }, options: CAR_RIMS },
+  { key: "spoiler", label: "Spoiler", icon: "airplane", desc: "Bagaj kapağına arka spoiler.", cam: { tx: 0, ty: 1.15, tz: -1.9, yaw: Math.PI - 0.6, pitch: 0.42, dist: 4.4 }, options: CAR_SPOILERS },
+  { key: "decal", label: "Çıkartma", icon: "flag", desc: "Kaput ve tavandan geçen yarış şeridi, yanlarda alev ya da damalı taksi.", cam: { tx: 0, ty: 0.85, tz: 0, yaw: Math.PI / 2 + 0.15, pitch: 0.3, dist: 5.8 }, options: CAR_DECALS },
+  { key: "neon", label: "Neon alt ışık", icon: "lightbulb", desc: "Gövdenin altından yere vuran ışık; gece daha parlak.", cam: { tx: 0, ty: 0.15, tz: 0, yaw: 1.05, pitch: 0.07, dist: 5.6 }, options: CAR_NEONS },
+  { key: "lights", label: "Farlar", icon: "headlights", desc: "Far camının rengi: standart, xenon (buz mavisi) ya da retro sarı.", cam: { tx: 0, ty: 0.62, tz: 2.15, yaw: 0.32, pitch: 0.12, dist: 3.4 }, options: CAR_LIGHTS },
+  { key: "exhaust", label: "Egzoz", icon: "wind", desc: "Egzoz ucu: standart, çift çıkış ya da kalın krom spor.", cam: { tx: 0, ty: 0.28, tz: -2.2, yaw: Math.PI - 0.4, pitch: 0.12, dist: 2.7 }, options: CAR_EXHAUSTS },
+  { key: "horn", label: "Korna", icon: "megaphone", desc: "Arabada E ile çalınır (basılı tut). Melodili kornalar bir kez sonuna kadar çalar.", cam: { tx: 0, ty: 0.7, tz: 2.1, yaw: 0.2, pitch: 0.15, dist: 3.8 }, options: CAR_HORNS },
+  { key: "tint", label: "Cam filmi", icon: "sunglasses", desc: "Koyu cam filmi: içerisi zor görünür.", cam: { tx: 0, ty: 1.1, tz: -0.1, yaw: Math.PI / 2 + 0.3, pitch: 0.12, dist: 4.2 }, options: YESNO("Yok", "Koyu film") },
+  { key: "low", label: "Süspansiyon", icon: "arrowDown", desc: "Basık süspansiyon: gövde tekerleklere göre aşağıda.", cam: { tx: 0, ty: 0.35, tz: 0, yaw: Math.PI / 2, pitch: 0.03, dist: 5.2 }, options: YESNO("Standart", "Basık") },
+  { key: "plate", label: "Plaka", icon: "tag", desc: "Plaka yazısı: harf, rakam ve boşluk, en çok 10 karakter.", cam: { tx: 0, ty: 0.37, tz: -2.3, yaw: Math.PI, pitch: 0.12, dist: 2.4 } },
 ];
 
 export interface TuningHooks {
@@ -334,21 +335,21 @@ export class Tuning {
     this.list.replaceChildren();
     this.plateInput = null;
     if (this.level === 0) {
-      this.sub.innerHTML = `<span>${model.toUpperCase()} · KATEGORİLER</span><em>${this.sel + 1}/${this.rows()}</em>`;
+      this.sub.innerHTML = `<span>${model.toLocaleUpperCase("tr-TR")} · KATEGORİLER</span><em>${this.sel + 1}/${this.rows()}</em>`;
       this.cats.forEach((c, i) => {
         const cur = c.options?.find((o) => o.id === valueOf(this.applied, c.key));
-        this.row(i, `${c.icon} ${c.label}`, cur?.name ?? this.applied.plate, cur?.hex, false);
+        this.row(i, c.label, cur?.name ?? this.applied.plate, cur?.hex, false, c.icon);
       });
       const w = this.hooks.wear();
-      const state = w.busy ? "Tamir ediliyor…" : w.level ? `${w.fee.toLocaleString("tr-TR")} ₺` : w.dented ? "Bedava" : "✓ Sağlam";
-      this.row(this.repairRow, `🔧 Tamir${w.level ? ` · ${["", "hafif", "orta", "ağır"][w.level]} hasar` : ""}`, state, undefined, false);
-      this.row(this.exitRow, "🚪 Garajdan çık", "", undefined, false);
+      const state = w.busy ? "Tamir ediliyor…" : w.level ? `${w.fee.toLocaleString("tr-TR")} ₺` : w.dented ? "Bedava" : "Sağlam";
+      this.row(this.repairRow, `Tamir${w.level ? ` · ${["", "hafif", "orta", "ağır"][w.level]} hasar` : ""}`, state, undefined, false, "wrench");
+      this.row(this.exitRow, "Garajdan çık", "", undefined, false, "doorOpen");
       this.desc.textContent = this.sel < this.cats.length ? this.cats[this.sel].desc : this.sel === this.repairRow ? REPAIR_DESC : "Tuning'i bitir ve arabayla dışarı sür.";
       if (this.sel === 0) this.desc.textContent += ` ${perfLine(this.applied)}`;
       return;
     }
     const c = this.cats[this.cat];
-    this.sub.innerHTML = `<span>${c.icon} ${c.label.toUpperCase()}</span><em>${this.sel + 1}/${this.rows()}</em>`;
+    this.sub.innerHTML = `<span>${iconHtml(c.icon)} ${c.label.toLocaleUpperCase("tr-TR")}</span><em>${this.sel + 1}/${this.rows()}</em>`;
     if (c.key === "plate") {
       const wrap = document.createElement("div");
       wrap.className = "tune-plate";
@@ -368,7 +369,7 @@ export class Tuning {
         e.preventDefault();
       });
       const ok = document.createElement("button");
-      ok.textContent = "TAK";
+      ok.textContent = "Tak";
       ok.addEventListener("click", () => this.enter());
       wrap.append(input, ok);
       this.list.append(wrap);
@@ -376,16 +377,16 @@ export class Tuning {
     } else {
       c.options!.forEach((o, i) => {
         const on = o.id === valueOf(this.applied, c.key), p = this.price(c.key, o.id);
-        this.row(i, o.name, on ? "✓ TAKILI" : p ? `${p.toLocaleString("tr-TR")} ₺` : "✓ SENİN", o.hex, on);
+        this.row(i, o.name, on ? "Takılı" : p ? `${p.toLocaleString("tr-TR")} ₺` : "Senin", o.hex, on);
       });
     }
     this.desc.textContent = c.key === "engine" ? `${c.desc} ${perfLine(this.candidate())}` : c.desc;
   }
 
-  private row(i: number, label: string, value: string, hex: string | undefined, on: boolean): void {
+  private row(i: number, label: string, value: string, hex: string | undefined, on: boolean, ic?: IconName): void {
     const r = document.createElement("button");
     r.className = `tune-row${i === this.sel ? " sel" : ""}${on ? " on" : ""}`;
-    r.innerHTML = `${hex !== undefined ? `<i style="background:${hex || "transparent"}"></i>` : ""}<span>${label}</span><b>${value}</b>`;
+    r.innerHTML = `${ic ? iconHtml(ic, "tune-ic") : ""}${hex !== undefined ? `<i style="background:${hex || "transparent"}"></i>` : ""}<span>${label}</span><b>${value}</b>`;
     r.addEventListener("pointerenter", () => {
       if (this.sel === i) return;
       this.sel = i;

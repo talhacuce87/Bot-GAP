@@ -1,6 +1,7 @@
 // İş görev kartı (GTA görev metni gibi ekranın üstünde ortada): ne yapacağın, nereden nereye, kalan mesafe,
 // süre barı (kurye), ödül ya da taksimetre ve bugünkü iş sayısı.
 import { JOBS, type JobView } from "../../../shared/jobs";
+import { region } from "./layout";
 import { el } from "./panel";
 
 export class JobHud {
@@ -17,7 +18,7 @@ export class JobHud {
   private total = 1;
 
   constructor(parent: HTMLElement) {
-    this.root = el("div", "job-card", parent);
+    this.root = el("div", "job-card", region(parent, "tc"));
     const top = el("div", "job-top", this.root);
     this.title = el("b", "", top);
     this.time = el("span", "job-time", top);

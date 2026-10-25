@@ -212,7 +212,7 @@ export class PaintballClient {
       button(this.touchRow, "⤓", () => (this.touchCrouch = !this.touchCrouch), "pb-tbtn");
       button(this.touchRow, "↻", () => this.reload(), "pb-tbtn");
     }
-    this.panel = new Panel(hud, "🎯 GAP PAINTBALL", "pb-panel");
+    this.panel = new Panel(hud, "GAP Paintball", "pb-panel", "target");
 
     const params = new URLSearchParams(location.search);
     if (params.has("debug") && params.has("pbtest")) this.debug = params.get("pbtest") === "tp" ? "tp" : "fps";

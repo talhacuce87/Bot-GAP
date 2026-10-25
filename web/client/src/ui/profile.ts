@@ -88,7 +88,7 @@ export class ProfileUi {
       const img = el("img", "pc-avatar", head);
       img.src = url;
       img.alt = "";
-    } else el("div", "pc-avatar pc-noavatar", head, name.slice(0, 1).toUpperCase());
+    } else el("div", "pc-avatar pc-noavatar", head, name.slice(0, 1).toLocaleUpperCase("tr-TR"));
     const who = el("div", "pc-who", head);
     el("div", "pc-name", who, name);
     if (!p) {

@@ -9,8 +9,9 @@ import { HOOD_BOX, HOOD_PARK, HOOD_ROADS, HOOD_ROUNDABOUT, HOOD_SIDEWALK, HOOD_S
 import { WORLD_BOUNDS } from "../../../shared/constants";
 import { RACE_AREA, TRACK, TRACK_HALF } from "../../../shared/ring";
 import { TANK_PARK } from "../../../shared/tank";
-import { actionLabel } from "../input/keybinds";
 import { terrainHeight, walkable } from "../world/terrain";
+import { icon } from "./icons";
+import { toolButton } from "./layout";
 import { button, el, Panel } from "./panel";
 
 /** Haritanın kapsadığı dünya (ışınlanılan odalar dışında): mahalleden şehrin doğu kenarına. */
@@ -102,19 +103,24 @@ export class WorldMap {
   private press: { x: number; y: number; at: number; moved: boolean } | null = null;
 
   constructor(root: HTMLElement, touch: boolean, private host: WorldMapHost) {
-    const b = el("button", "wardrobe-btn map-btn", root, "🗺️");
-    b.title = touch ? "Harita" : `Harita (${actionLabel("map")})`;
-    b.addEventListener("click", () => this.toggle());
-    this.panel = new Panel(root, "HARİTA", "map-panel");
+    toolButton(root, { icon: "map", label: "Harita", action: touch ? undefined : "map", group: 0, order: 2, onClick: () => this.toggle() });
+    this.panel = new Panel(root, "Harita", "map-panel", "map");
     this.panel.onClose = () => cancelAnimationFrame(this.raf);
     this.canvas = el("canvas", "map-canvas", this.panel.body);
     const bar = el("div", "map-bar", this.panel.body);
-    button(bar, "📍 Ben", () => this.centerOnMe());
-    button(bar, "⤢ Tümü", () => this.fit());
-    button(bar, "+", () => this.zoomAt(1.4));
-    button(bar, "−", () => this.zoomAt(1 / 1.4));
-    if (host.setWaypoint) button(bar, "✕ İşareti kaldır", () => host.setWaypoint!(null));
-    el("span", "map-hint", bar, touch ? "Dokun: hedef işaretle · Sürükle: kaydır · İki parmak: yakınlaştır" : "Tıkla: hedef işaretle · Sürükle: kaydır · Tekerlek: yakınlaştır");
+    const tool = (name: Parameters<typeof icon>[0], label: string, fn: () => void, cls = "btn btn--sm") => {
+      const b = button(bar, "", fn, cls);
+      icon(name, "", b);
+      if (label) el("span", "", b, label);
+      else b.setAttribute("aria-label", name === "plus" ? "Yakınlaştır" : "Uzaklaştır");
+      return b;
+    };
+    tool("crosshair", "Ben", () => this.centerOnMe());
+    tool("arrowsOut", "Tümü", () => this.fit());
+    const zoom = el("div", "map-zoom", bar);
+    zoom.append(tool("minus", "", () => this.zoomAt(1 / 1.4), "btn btn--sm btn--icon"), tool("plus", "", () => this.zoomAt(1.4), "btn btn--sm btn--icon"));
+    if (host.setWaypoint) tool("trash", "İşareti kaldır", () => host.setWaypoint!(null), "btn btn--sm btn--ghost");
+    el("span", "map-hint", bar, touch ? "Dokun: hedef işaretle · İki parmak: yakınlaştır" : "Tıkla: hedef işaretle · Sürükle: kaydır · Tekerlek: yakınlaştır");
     this.listen();
     this.terrain.prepareInBackground();
   }
@@ -237,8 +243,9 @@ export class WorldMap {
     g.drawImage(this.base, x, y, this.base.width * k, this.base.height * k);
     const X = (wx: number) => x + (wx - AREA.minX) * s, Z = (wz: number) => y + (wz - AREA.minZ) * s;
     const dpr = this.canvas.width / Math.max(1, this.canvas.getBoundingClientRect().width);
-    const text = (t: string, px: number, py: number, size: number, weight = 700) => {
-      g.font = `${weight} ${size * dpr}px system-ui, sans-serif`;
+    const text = (t: string, px: number, py: number, size: number, weight = 700, place = false) => {
+      g.font = place ? `700 ${(size + 1) * dpr}px "Barlow Condensed", system-ui, sans-serif` : `${weight} ${size * dpr}px Barlow, system-ui, sans-serif`;
+      if (place) t = t.toLocaleUpperCase("tr-TR");
       g.lineWidth = 4 * dpr;
       g.strokeStyle = COLORS.halo;
       g.strokeText(t, px, py);
@@ -260,7 +267,7 @@ export class WorldMap {
         g.fill();
       }
     }
-    for (const [t, wx, wz] of PLACES) text(t, X(wx), Z(wz), 12);
+    for (const [t, wx, wz] of PLACES) text(t, X(wx), Z(wz), 12, 700, true);
     // Diğer oyuncular ve sen
     for (const o of this.host.others()) {
       g.fillStyle = "#3b6fd8";
@@ -321,8 +328,8 @@ export class WorldMap {
     const m = this.host.me(), mx = X(m.x), mz = Z(m.z), r = 8 * dpr;
     // Ok: avatarın baktığı yöne (dünyada +z güney; rot 0 → +z)
     const fx = Math.sin(m.rot), fz = Math.cos(m.rot);
-    g.fillStyle = "#e0412f";
-    g.strokeStyle = "#ffffff";
+    g.fillStyle = "#ffb547";
+    g.strokeStyle = "#1f1404";
     g.lineWidth = 2 * dpr;
     g.beginPath();
     g.moveTo(mx + fx * r, mz + fz * r);

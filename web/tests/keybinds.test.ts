@@ -30,6 +30,11 @@ describe("key bindings", () => {
     expect(binds).toEqual(DEFAULT_BINDS);
   });
 
+  it("a key event without a code triggers nothing (empty slots are not a key)", () => {
+    expect(binds.photo[1]).toBe("");
+    expect(actionsOf("")).toEqual([]);
+  });
+
   it("names keys for the screen", () => {
     expect(bindLabel("KeyQ")).toBe("Q");
     expect(bindLabel("WheelDown")).toBe("Tekerlek ↓");

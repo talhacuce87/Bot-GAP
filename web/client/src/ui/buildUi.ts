@@ -5,6 +5,8 @@
 import * as THREE from "three";
 import { blockDef, cellKey, inPlot, PLOTS } from "../../../shared/build";
 import { type BuildHit, type BuildWorld, PALETTE } from "../world/buildWorld";
+import { type IconName, icon } from "./icons";
+import { region } from "./layout";
 import { button, el } from "./panel";
 
 export interface BuildHost {
@@ -42,8 +44,8 @@ export class BuildMode {
     private camera: THREE.Camera,
     private host: BuildHost,
   ) {
-    this.badge = el("div", "panel plot-badge", root);
-    this.bar = el("div", "panel build-bar", root);
+    this.badge = el("div", "plot-badge", region(root, "tc"));
+    this.bar = el("div", "build-bar", region(root, "bc"));
     this.info = el("div", "build-info", this.bar);
     const row = el("div", "build-row", this.bar);
     PALETTE.forEach((p, idx) => {
@@ -55,13 +57,20 @@ export class BuildMode {
       this.slots.push(b);
     });
     const tools = el("div", "build-row build-tools", this.bar);
-    this.eraseBtn = button(tools, "🧽 Silgi (X)", () => this.setErase(!this.erase));
-    button(tools, "🔄 Döndür (R)", () => this.rotate());
-    button(tools, "🏚️ Arsayı boşalt", () => {
+    const tool = (name: IconName, label: string, key: string, fn: () => void) => {
+      const b = button(tools, "", fn);
+      icon(name, "", b);
+      el("span", "", b, label);
+      if (key) el("kbd", "", b, key);
+      return b;
+    };
+    this.eraseBtn = tool("trash", "Silgi", "X", () => this.setErase(!this.erase));
+    tool("reset", "Döndür", "R", () => this.rotate());
+    tool("house", "Arsayı boşalt", "", () => {
       if (this.world.plotOf(this.host.userId()) < 0) return;
       if (confirm("Arsandaki bütün bloklar silinecek ve arsa başkasına açılacak. Emin misin?")) this.host.send({ t: "bfree" });
     });
-    button(tools, "✕ Çık (Esc)", () => this.toggle(false));
+    tool("signOut", "Çık", "Esc", () => this.toggle(false));
 
     this.ghostMat = new THREE.MeshBasicMaterial({ color: "#7dff9a", transparent: true, opacity: 0.35, depthWrite: false });
     this.ghost = new THREE.Mesh(new THREE.BoxGeometry(1.02, 1.02, 1.02).translate(0, 0.51, 0), this.ghostMat);

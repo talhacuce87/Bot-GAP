@@ -132,7 +132,7 @@ class Plot {
   /** Izgara (0, yarı, üst), y etiketleri ve zaman etiketleri. */
   axes(max: number, span: number, c: Colors): void {
     const { ctx } = this;
-    ctx.font = "10px system-ui, -apple-system, 'Segoe UI', sans-serif";
+    ctx.font = "500 10px Barlow, system-ui, sans-serif";
     ctx.textBaseline = "middle";
     ctx.lineWidth = 1;
     for (const v of [0, max / 2, max]) {

@@ -7,6 +7,8 @@ import { JOB_PAY, JOBS, type JobKind, type JobView } from "../../../shared/jobs"
 import { PETS, SKINS } from "../../../shared/protocol";
 import { actionLabel } from "../input/keybinds";
 import { settings, updateSettings } from "../settings";
+import { type IconName, icon } from "./icons";
+import { toolButton } from "./layout";
 import { el } from "./panel";
 
 /** Duvar kağıtları (Ayarlar uygulamasından seçilir). */
@@ -50,16 +52,17 @@ export interface PhoneApps {
 }
 
 type AppId = "jobs" | "events" | "profile" | "camera" | "car" | "wallet" | "music" | "settings" | "messages";
-const APPS: { id: AppId; icon: string; name: string; color: string; dock?: boolean }[] = [
-  { id: "jobs", icon: "💼", name: "İşler", color: "#1d9e75" },
-  { id: "events", icon: "🎉", name: "Etkinlik", color: "#ef9f27" },
-  { id: "profile", icon: "👤", name: "Profil", color: "#7f77dd" },
-  { id: "camera", icon: "📸", name: "Kamera", color: "#444441" },
-  { id: "car", icon: "🚗", name: "Araba", color: "#d85a30" },
-  { id: "wallet", icon: "💰", name: "Cüzdan", color: "#3b6d11", dock: true },
-  { id: "music", icon: "🎵", name: "Müzik", color: "#d4537e", dock: true },
-  { id: "settings", icon: "⚙️", name: "Ayarlar", color: "#5f5e5a", dock: true },
-  { id: "messages", icon: "💬", name: "Mesajlar", color: "#185fa5", dock: true },
+/** Uygulamalar: simge ve iki tonlu zemin (üst, alt). */
+const APPS: { id: AppId; icon: IconName; name: string; color: [string, string]; dock?: boolean }[] = [
+  { id: "jobs", icon: "briefcase", name: "İşler", color: ["#2fbf8a", "#14845d"] },
+  { id: "events", icon: "confetti", name: "Etkinlik", color: ["#ffb24a", "#e0741c"] },
+  { id: "profile", icon: "user", name: "Profil", color: ["#8f86ff", "#5a4fd6"] },
+  { id: "camera", icon: "camera", name: "Kamera", color: ["#59606b", "#2f343c"] },
+  { id: "car", icon: "car", name: "Araba", color: ["#ff7a52", "#d4452a"] },
+  { id: "wallet", icon: "wallet", name: "Cüzdan", color: ["#47c37c", "#23854d"], dock: true },
+  { id: "music", icon: "music", name: "Müzik", color: ["#ff6f9b", "#d23a6c"], dock: true },
+  { id: "settings", icon: "gear", name: "Ayarlar", color: ["#8d939d", "#555b65"], dock: true },
+  { id: "messages", icon: "chat", name: "Mesajlar", color: ["#4ea2ff", "#2367c9"], dock: true },
 ];
 const COLS = 4;
 
@@ -79,15 +82,15 @@ export class Phone {
   private timer = 0;
 
   constructor(parent: HTMLElement, touch: boolean, private a: PhoneApps) {
-    const b = el("button", "wardrobe-btn hub-btn", parent, "📱");
-    b.title = touch ? "Telefon" : `Telefon (${actionLabel("menu")})`;
-    b.addEventListener("click", () => this.toggle());
+    toolButton(parent, { icon: "mobile", label: "Telefon", action: touch ? undefined : "menu", group: 0, order: 1, onClick: () => this.toggle() });
     this.root = el("div", "phone", parent);
     this.screen = el("div", "ph-screen", this.root);
     el("div", "ph-island", this.screen);
     const bar = el("div", "ph-status", this.screen);
-    this.clock = el("span", "", bar);
-    el("span", "", bar, "GAP ▮▮▮ 87%");
+    this.clock = el("span", "ph-clock", bar);
+    const right = el("span", "ph-status-r", bar);
+    icon("wifi", "", right);
+    el("i", "ph-battery", right);
     this.body = el("div", "ph-body", this.screen);
     el("div", "ph-home-bar", this.screen).addEventListener("click", () => (this.app ? this.home() : this.close()));
     // Açıkken oklar, Enter ve Backspace telefona (yürüme WASD ile sürer)
@@ -197,7 +200,9 @@ export class Phone {
     const dock = el("div", "ph-dock", this.body);
     for (const app of APPS) {
       const t = el("button", "ph-app", app.dock ? dock : grid);
-      el("span", "ph-icon", t, app.icon).style.background = app.color;
+      const tile = el("span", "ph-icon", t);
+      tile.style.background = `linear-gradient(160deg, ${app.color[0]}, ${app.color[1]})`;
+      icon(app.icon, "", tile);
       if (!app.dock) el("span", "ph-name", t, app.name);
       t.title = app.name;
       t.addEventListener("click", () => this.openApp(app.id));
@@ -220,7 +225,10 @@ export class Phone {
     this.reset();
     this.body.className = `ph-body ph-app-${id}`;
     const head = el("div", "ph-head", this.body);
-    el("button", "ph-back", head, "‹").addEventListener("click", () => this.home());
+    const back = el("button", "ph-back", head);
+    icon("back", "", back);
+    back.setAttribute("aria-label", "Geri");
+    back.addEventListener("click", () => this.home());
     el("b", "", head, app.name);
     const list = el("div", "ph-list", this.body);
     switch (id) {
@@ -325,7 +333,10 @@ export class Phone {
     this.reset();
     this.body.className = "ph-body ph-app-wallet";
     const head = el("div", "ph-head", this.body);
-    el("button", "ph-back", head, "‹").addEventListener("click", () => this.openApp("wallet"));
+    const back = el("button", "ph-back", head);
+    icon("back", "", back);
+    back.setAttribute("aria-label", "Geri");
+    back.addEventListener("click", () => this.openApp("wallet"));
     el("b", "", head, "Para gönder");
     const list = el("div", "ph-list", this.body);
     const people = this.a.players();
@@ -338,6 +349,7 @@ export class Phone {
     this.chips(list, people.map((p): [string, string] => [String(p.sid), p.name]), String(to), (v) => (to = Number(v)));
     el("h5", "ph-sub", list, "Ne kadar (₺)");
     const amount = el("input", "ph-input", list);
+    amount.inputMode = "numeric";
     amount.type = "number";
     amount.min = "1";
     amount.placeholder = "500";
@@ -360,20 +372,20 @@ export class Phone {
     fn();
   }
 
-  private row(parent: HTMLElement, icon: string, name: string, hint: string, fn: () => void): void {
+  private row(parent: HTMLElement, emoji: string, name: string, hint: string, fn: () => void): void {
     const r = el("button", "ph-row", parent);
-    el("span", "ph-row-ic", r, icon);
+    el("span", "ph-row-ic", r, emoji);
     const mid = el("span", "ph-row-mid", r);
     el("b", "", mid, name);
     if (hint) el("small", "", mid, hint);
-    el("span", "ph-chev", r, "›");
+    icon("chevron", "ph-chev", r);
     r.addEventListener("click", fn);
     this.items.push(r);
   }
 
-  private card(parent: HTMLElement, icon: string, name: string, text: string): void {
+  private card(parent: HTMLElement, emoji: string, name: string, text: string): void {
     const c = el("div", "ph-card", parent);
-    el("span", "ph-row-ic", c, icon);
+    el("span", "ph-row-ic", c, emoji);
     const mid = el("span", "ph-row-mid", c);
     el("b", "", mid, name);
     el("small", "", mid, text);

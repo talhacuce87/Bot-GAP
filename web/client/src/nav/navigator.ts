@@ -1,6 +1,8 @@
 // Navigasyon: hedef (iş hedefi ya da haritada işaretlediğin nokta) için yollar üstünden rota, arabanın üstünde
 // NFSU2 gibi mavi 3B ok (bir sonraki dönüşü gösterir), işaretlenen yerde mavi ışık sütunu ve ekranın üstünde kalan
 // mesafe. Rotadan çıkınca yeniden hesaplanır; işaretlenen yere varınca işaret kalkar.
+import { icon } from "../ui/icons";
+import { region } from "../ui/layout";
 import { el } from "../ui/panel";
 import { JobMarker } from "../world/jobMarker";
 import { NavArrow } from "../world/navArrow";
@@ -51,10 +53,15 @@ export class Navigator {
   private shownText = "";
 
   constructor(hudRoot: HTMLElement, private onArrive: () => void) {
-    this.chip = el("div", "nav-chip", hudRoot);
-    this.chipText = el("span", "", this.chip);
-    const x = el("button", "nav-chip-x", this.chip, "✕");
+    this.chip = el("div", "nav-chip", region(hudRoot, "tc"));
+    icon("navigation", "nav-chip-ic", this.chip);
+    el("span", "nav-chip-label", this.chip, "Hedef");
+    this.chipText = el("b", "", this.chip);
+    const x = el("button", "nav-chip-x", this.chip);
+    x.type = "button";
+    icon("close", "", x);
     x.title = "İşareti kaldır";
+    x.setAttribute("aria-label", "İşareti kaldır");
     x.addEventListener("click", () => this.setWaypoint(null));
   }
 
@@ -105,7 +112,7 @@ export class Navigator {
     this.arrow.update(at, la, scale, f.dt, f.time);
     // İş hedefinin mesafesini iş kartı gösterir; işaret için üstte etiket
     const left = la.left;
-    this.setChip(f.job ? "" : `📍 Hedef · ${left >= 1000 ? `${(left / 1000).toLocaleString("tr-TR", { maximumFractionDigits: 1 })} km` : `${Math.round(left / 10) * 10} m`}`);
+    this.setChip(f.job ? "" : `${left >= 1000 ? `${(left / 1000).toLocaleString("tr-TR", { maximumFractionDigits: 1 })} km` : `${Math.round(left / 10) * 10} m`}`);
   }
 
   /**

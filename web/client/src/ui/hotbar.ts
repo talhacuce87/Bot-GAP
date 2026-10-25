@@ -1,6 +1,7 @@
 // Alttaki hızlı slot (Minecraft gibi): çantanın ilk 6 slotu; 1–6 ile seçilen eşya eline geçer, sol tıkla
 // kullanılır (yenir/içilir). Aynı rakama yeniden basınca el boşalır. Seçili eşyanın adı kısa süre üstünde yazar.
 import { INV, itemDef, type Slot } from "../../../shared/items";
+import { region } from "./layout";
 import { el } from "./panel";
 
 export class Hotbar {
@@ -12,7 +13,7 @@ export class Hotbar {
   selected: number | null = null;
 
   constructor(parent: HTMLElement, private pick: (i: number) => void) {
-    this.root = el("div", "hotbar", parent);
+    this.root = el("div", "hotbar", region(parent, "bc"));
     this.label = el("div", "hotbar-label", this.root);
     const row = el("div", "hotbar-row", this.root);
     for (let i = 0; i < INV.hotbar; i++) {

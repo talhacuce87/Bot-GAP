@@ -1,0 +1,515 @@
+/* ---- Araçlarım ve GAP Galeri: araba kartları ---- */
+.carmenu {
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: radial-gradient(ellipse at 50% 55%, rgba(5, 7, 11, 0.35), rgba(5, 7, 11, 0.78));
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t);
+}
+
+.carmenu.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cm-panel {
+  width: min(1180px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xl);
+  background: linear-gradient(180deg, var(--ink-3), var(--ink-2) 160px);
+  box-shadow: var(--shadow-3), var(--hl);
+  transform: translateY(12px) scale(0.985);
+  transition: transform var(--t-slow) var(--ease-out);
+}
+
+.carmenu.show .cm-panel {
+  transform: none;
+}
+
+.cm-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink-3);
+}
+
+.cm-ic {
+  width: 24px;
+  height: 24px;
+  color: var(--accent);
+}
+
+.cm-titles {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 14px;
+  min-width: 0;
+}
+
+.cm-head b {
+  font: 700 26px/1 var(--font-display);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.cm-head span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cm-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px;
+}
+
+@media (max-width: 1100px) {
+  .cm-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.cm-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--ink-1);
+  color: var(--text);
+  text-align: left;
+  transition: transform var(--t) var(--ease-out), border-color var(--t-fast), box-shadow var(--t);
+}
+
+.cm-card:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--accent-line);
+  transform: translateY(-3px);
+}
+
+.cm-card:disabled {
+  opacity: 0.72;
+}
+
+.cm-card.parked {
+  border-color: var(--accent-line);
+}
+
+.cm-card.locked {
+  opacity: 0.62;
+}
+
+.cm-img {
+  display: grid;
+  place-items: center;
+  height: 150px;
+  background:
+    radial-gradient(ellipse 60% 40% at 50% 82%, rgba(255, 181, 71, 0.12), transparent 70%),
+    radial-gradient(ellipse at 50% 80%, #2a3140, #121720 70%);
+  font-size: 48px;
+}
+
+.cm-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cm-info {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 12px 10px;
+}
+
+.cm-info kbd {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+}
+
+.cm-info b {
+  font: 700 22px/1 var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cm-info small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cm-tags {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.cm-tags span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cm-tags .ic {
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+}
+
+.cm-tags i {
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+}
+
+.cm-plate {
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #f2f2ec;
+  box-shadow: inset 3px 0 0 #1f4fbf;
+  color: #111;
+  font: 700 12px/1.3 var(--font-display);
+  letter-spacing: 0.1em;
+}
+
+.cm-info em {
+  color: var(--accent);
+  font-size: 12.5px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.cm-card.locked em {
+  color: #ffd38f;
+}
+
+.cm-call {
+  margin-top: auto;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font: 700 14px/1 var(--font-display);
+  letter-spacing: 0.16em;
+  text-align: center;
+  text-transform: uppercase;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.cm-card:hover:not(:disabled) .cm-call {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.cm-call.buy {
+  color: var(--money);
+}
+
+.cm-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 18px 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.cm-dismiss {
+  height: 32px;
+  padding: 0 13px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--ink-4);
+  color: var(--text);
+  font: 600 13px/1 var(--font);
+}
+
+.cm-dismiss:hover {
+  background: var(--ink-5);
+}
+
+@media (max-width: 720px) {
+  .cm-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cm-img {
+    height: 110px;
+  }
+
+  .cm-head span {
+    display: none;
+  }
+}
+
+/* ---- GAP Garaj tuning (GTA LS Customs gibi): solda menü, araba ortada döner ---- */
+#hud.tuning-open > :not(.tune):not(.hud-tc),
+#hud.tuning-open .hud-tc > :not(.toasts) {
+  visibility: hidden;
+}
+
+.tune {
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  display: none;
+  color: var(--text);
+}
+
+.tune.show {
+  display: block;
+}
+
+.tune-drag {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.tune-drag:active {
+  cursor: grabbing;
+}
+
+.tune-panel {
+  position: absolute;
+  left: max(18px, env(safe-area-inset-left));
+  top: max(18px, env(safe-area-inset-top));
+  display: flex;
+  flex-direction: column;
+  width: min(380px, calc(100vw - 36px));
+  max-height: calc(100% - 96px);
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xl);
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-3);
+  pointer-events: auto;
+  animation: tune-in var(--t-slow) var(--ease-out);
+}
+
+@keyframes tune-in {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+}
+
+.tune-banner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 96px;
+  padding: 0 20px;
+  overflow: hidden;
+  background:
+    repeating-linear-gradient(-55deg, rgba(0, 0, 0, 0.07) 0 12px, transparent 12px 24px),
+    linear-gradient(110deg, #ffc061, var(--accent-2) 55%, #b4520b);
+  color: var(--accent-ink);
+}
+
+.tune-banner b {
+  font: 700 48px/0.9 var(--font-display);
+  letter-spacing: 0.02em;
+}
+
+.tune-banner span {
+  font: 700 14px/1 var(--font-display);
+  letter-spacing: 0.5em;
+  opacity: 0.85;
+}
+
+.tune-sub {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink-1);
+  color: var(--text-2);
+  font: 700 14px/1 var(--font-display);
+  letter-spacing: 0.1em;
+}
+
+.tune-sub span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tune-sub .ic {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+.tune-sub em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.tune-list {
+  min-height: 0;
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.tune-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text);
+  font: 600 15px/1 var(--font);
+  text-align: left;
+}
+
+.tune-row > span:not(.ic) {
+  flex: 1;
+}
+
+.tune-row b {
+  color: var(--muted);
+  font: 700 14px/1 var(--font-display);
+  letter-spacing: 0.04em;
+}
+
+.tune-ic {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
+.tune-row i {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+}
+
+.tune-row.sel {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.tune-row.sel b,
+.tune-row.sel .tune-ic {
+  color: var(--accent-ink);
+}
+
+.tune-row.sel i {
+  border-color: rgba(0, 0, 0, 0.4);
+}
+
+.tune-row.on b {
+  color: var(--good);
+}
+
+.tune-row.sel.on b {
+  color: #0b5a34;
+}
+
+.tune-desc {
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--ink-1);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.tune-plate {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+}
+
+.tune-plate input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-left: 14px solid #1f4fbf;
+  border-radius: var(--r-sm);
+  background: #f7f7f2;
+  color: #111;
+  font: 700 26px/1 var(--font-display);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.tune-plate button {
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--r);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 700 17px/1 var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Menü tuşları: ekranın sağ altında küçük açıklama */
+.tune-keys {
+  position: absolute;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 16px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--glass-strong);
+  color: var(--text-2);
+  font-size: 12.5px;
+  pointer-events: none;
+}
+
+.tune-keys span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tune-keys kbd {
+  min-width: 20px;
+  height: 20px;
+  font-size: 11px;
+}
