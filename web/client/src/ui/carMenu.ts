@@ -1,7 +1,10 @@
-// 🚗 Araçlarım (GTA'daki kişisel araçlar gibi): Tofaşlar, Linea, Doblo, Passat ve E30 herkeste var. Karta tıkla (ya da 1-7)
-// → o araba kendi tuning'iyle yanına gelir (park halinde); F ile binersin. Park edilen araba görünür, kaldırılabilir.
+// 🚗 Araçlarım (GTA'daki kişisel araçlar gibi): Tofaşlar herkeste var, diğerleri GAP Galeri'den satın alınır. Karta
+// tıkla (ya da 1-7) → o araba kendi tuning'iyle yanına gelir (park halinde); F ile binersin. Park edilen araba görünür,
+// kaldırılabilir. Aynı pencere galeri olarak da açılır: paralı arabalar fiyatı, hızı ve "Satın al" düğmesiyle.
 import * as THREE from "three";
-import { CAR_COLORS, CAR_MODELS, type CarSpec } from "../../../shared/car";
+import { CAR_COLORS, CAR_MODELS, carPerf, type CarSpec } from "../../../shared/car";
+import { CAR_PRICES, carItem } from "../../../shared/shop";
+import { owned } from "../owned";
 import { buildTofas } from "../world/tofas";
 
 export interface CarMenuHooks {
@@ -13,6 +16,8 @@ export interface CarMenuHooks {
   state(): { cars: Record<CarSpec["model"], CarSpec>; parked: { model: CarSpec["model"]; dist: number } | null; driving: CarSpec["model"] | null };
   /** Açılıp kapanınca (dünya girişi durur). */
   modal(open: boolean): void;
+  /** Galeriden satın al. */
+  buy(model: CarSpec["model"]): void;
 }
 
 const TAGLINE: Record<CarSpec["model"], string> = {
@@ -78,6 +83,9 @@ export class CarMenu {
   private cards: HTMLDivElement;
   private foot: HTMLDivElement;
   private thumbs = new Thumbs();
+  private head!: HTMLDivElement;
+  /** Galeri olarak mı açık (paralı arabalar ve fiyatları). */
+  private gallery = false;
   isOpen = false;
 
   constructor(parent: HTMLElement, private hooks: CarMenuHooks) {
@@ -86,6 +94,8 @@ export class CarMenu {
     const panel = document.createElement("div");
     panel.className = "cm-panel";
     panel.innerHTML = '<div class="cm-head"><b>ARAÇLARIM</b><span>Bir araca tıkla: yanına gelsin · F ile bin</span><button class="cm-x" title="Kapat (Esc)">✕</button></div>';
+    this.head = panel.querySelector(".cm-head")!;
+    owned.on(() => this.isOpen && this.render());
     this.cards = document.createElement("div");
     this.cards.className = "cm-cards";
     this.foot = document.createElement("div");
@@ -113,7 +123,10 @@ export class CarMenu {
     else this.open();
   }
 
-  open(): void {
+  open(gallery = false): void {
+    this.gallery = gallery;
+    this.head.querySelector("b")!.textContent = gallery ? "GAP GALERİ" : "ARAÇLARIM";
+    this.head.querySelector("span")!.textContent = gallery ? "Sıfır araçlar · bir kez al, hep senin" : "Bir araca tıkla: yanına gelsin · F ile bin";
     this.isOpen = true;
     this.root.classList.add("show");
     this.hooks.modal(true);
@@ -129,6 +142,7 @@ export class CarMenu {
   }
 
   private pick(model: CarSpec["model"]): void {
+    if (!owned.has(carItem(model))) return;
     this.hooks.call(model);
     this.close();
   }
@@ -136,20 +150,32 @@ export class CarMenu {
   private render(): void {
     const st = this.hooks.state();
     this.cards.replaceChildren(
-      ...CAR_MODELS.map((m, i) => {
+      ...CAR_MODELS.filter((m) => !this.gallery || CAR_PRICES[m.id] > 0).map((m, i) => {
         const spec = st.cars[m.id];
+        const mine = owned.has(carItem(m.id)), price = CAR_PRICES[m.id];
         const card = document.createElement("button");
-        card.className = `cm-card${st.parked?.model === m.id ? " parked" : ""}${st.driving === m.id ? " driving" : ""}`;
+        card.className = `cm-card${st.parked?.model === m.id ? " parked" : ""}${st.driving === m.id ? " driving" : ""}${mine ? "" : " locked"}`;
         const color = CAR_COLORS.find((c) => c.id === spec.color);
         const img = this.thumbs.render(spec);
-        const status = st.driving === m.id ? "🟢 Şu an sürüyorsun" : st.parked?.model === m.id ? `🅿️ Park halinde · ${Math.round(st.parked.dist)} m` : "Garajda";
+        const perf = carPerf(spec);
+        if (this.gallery) {
+          card.innerHTML =
+            `<div class="cm-img">${img ? `<img src="${img}" alt="">` : "🚗"}</div>` +
+            `<div class="cm-info"><b>${m.name.toUpperCase()}</b><small>${TAGLINE[m.id]}</small>` +
+            `<div class="cm-tags"><span>⚡ ${Math.round(perf.top * 3.6)} km/sa</span><span>🏁 ${perf.accel.toFixed(1)} ivme</span>${perf.diesel ? "<span>⛽ Dizel</span>" : ""}</div>` +
+            `<em>${mine ? "✓ Senin" : `${price.toLocaleString("tr-TR")} ₺`}</em></div>` +
+            `<div class="cm-call${mine ? "" : " buy"}">${mine ? "ÇAĞIR" : "SATIN AL"}</div>`;
+          card.addEventListener("click", () => (mine ? this.pick(m.id) : this.hooks.buy(m.id)));
+          return card;
+        }
+        const status = !mine ? `🔒 ${price.toLocaleString("tr-TR")} ₺ · GAP Galeri'de` : st.driving === m.id ? "🟢 Şu an sürüyorsun" : st.parked?.model === m.id ? `🅿️ Park halinde · ${Math.round(st.parked.dist)} m` : "Garajda";
         card.innerHTML =
           `<div class="cm-img">${img ? `<img src="${img}" alt="">` : "🚗"}</div>` +
           `<div class="cm-info"><kbd>${i + 1}</kbd><b>${m.name.toUpperCase()}</b><small>${TAGLINE[m.id]}</small>` +
           `<div class="cm-tags"><span><i style="background:${color?.hex}"></i>${color?.name ?? ""}</span><span class="cm-plate">${spec.plate}</span></div>` +
           `<em>${status}</em></div>` +
           `<div class="cm-call">${st.parked?.model === m.id ? "YANIMA GETİR" : "ÇAĞIR"}</div>`;
-        card.disabled = st.driving !== null;
+        card.disabled = st.driving !== null || !mine;
         card.addEventListener("click", () => this.pick(m.id));
         return card;
       }),

@@ -33,8 +33,9 @@ import { LIVE_TABLES } from "../../shared/liveCasino";
 import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
-import { type CarDents, type CarRadio, carCircles, CAR_ENGINES, CAR_STATS, type CarSpec, DEFAULT_CAR, ENTER_REACH, NO_DENTS, RADIO_RANGE } from "../../shared/car";
+import { type CarDents, type CarRadio, carCircles, CAR_ENGINES, CAR_MODELS, CAR_STATS, type CarSpec, DEFAULT_CAR, ENTER_REACH, NO_DENTS, RADIO_RANGE } from "../../shared/car";
 import { Phone } from "./ui/phone";
+import { GALLERY_SLOTS } from "./world/gallery";
 import { JobHud } from "./ui/jobHud";
 import { JobMarker } from "./world/jobMarker";
 import { type JobKind, type JobView, type TaxiCall } from "../../shared/jobs";
@@ -592,6 +593,9 @@ export class Features {
       },
       job: (kind) => net.send(kind ? { t: "job", op: "start", kind } : { t: "job", op: "stop" }),
       jobCar: () => this.job && this.vehicles.callJob(jobCar(this.job.kind)),
+      gallery: () => this.vehicles.menu.open(true),
+      players: () => [...c.remotes.map.values()].filter((r) => r.hasData && !r.leaving && !r.info.spectator).map((r) => ({ sid: r.info.sid, name: r.info.name })),
+      pay: (sid, amount) => net.send({ t: "pay", sid, amount }),
       taxi: (on) => net.send({ t: "taxi", on }),
       queue: () => this.whud.openQueue(),
       weather: () => c.say("!hava"),
@@ -1341,6 +1345,10 @@ export class Features {
     if (me.seatTable) return [{ key: "f", label: "Masayı aç 🎲", act: `table:${me.seatTable.id}` }];
     if (near(TEA_COUNTER, TEA_COUNTER.r)) return [{ key: "f", label: "Çay söyle 🍵", act: "cay" }];
     for (const [i, n] of world.npcs.entries()) if (near(n.act, n.act.r)) return [{ key: "f", label: n.act.label, act: `npc:${i}` }];
+    // Galerideki platformlar: arabanın yanında incele / satın al
+    for (const s of GALLERY_SLOTS) {
+      if (s.model && near(s, 4.3)) return [{ key: "f", label: `🚗 ${CAR_MODELS.find((m) => m.id === s.model)?.name} · İncele / satın al`, act: "gallery" }];
+    }
     for (const t of TABLES) {
       if (near(t, TABLE_WATCH_R) && !me.seated) return [{ key: "f", label: "Masayı izle 👀 (oynamak için tabureye otur)", act: `table:${t.id}` }];
     }
@@ -1381,6 +1389,10 @@ export class Features {
       net.send({ t: "revive", sid: Number(act.slice(7)) });
       return true;
     }
+    if (act === "gallery") {
+      this.vehicles.menu.open(true);
+      return true;
+    }
     if (act.startsWith("door:")) {
       const [plot, i, j, k] = act.slice(5).split(":").map(Number);
       net.send({ t: "bdoor", plot, i, j, k });
@@ -1404,6 +1416,7 @@ export class Features {
       hud.toast(`${n.name}: "${n.act.line}"`);
       if (n.act.shop) this.c.shopWardrobe(n.act.shop);
       if (n.act.food) this.shopUi.open(n.act.food);
+      if (n.act.gallery) this.vehicles.menu.open(true);
       return true;
     }
     if (act.startsWith("ring-")) {

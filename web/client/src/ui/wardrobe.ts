@@ -1,6 +1,8 @@
 // Gardırop: kıyafet seçimi ve canlı önizleme (ekranı kaplayan pencerede, platformdaki karakter).
 // Kaydet → bot doğrular, odaya botun temizlediği kıyafet yayınlanır. Vazgeç/kapat → kayıtlı kıyafete döner.
 import { LOOK_SLOTS, type Look, type LookColor, type LookSlot, type WardrobeInfo } from "../../../shared/protocol";
+import { lookItem, LOOK_PRICES, lookShop } from "../../../shared/shop";
+import { owned } from "../owned";
 import type { ChibiManifest, ChibiPack } from "../avatars/chibiPack";
 import { type PreviewFocus, type ThumbRegion, WardrobePreview } from "./wardrobePreview";
 
@@ -74,6 +76,8 @@ export interface WardrobeHooks {
   modal(open: boolean): void;
   /** Dünyanın indirdiği chibi paketi (henüz inmediyse null). */
   pack(): ChibiPack | null;
+  /** Satın al (sunucu parayı alır, "owned" ile döner). */
+  buy(item: string): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent?: HTMLElement): HTMLElementTagNameMap[K] {
@@ -124,6 +128,10 @@ export class Wardrobe {
   /** Açılışta kayıtlı kıyafet (Sıfırla buna döner; kart resimleri bunun üzerine giydirilir). */
   private saved: Look = {};
   private info: WardrobeInfo | null = null;
+  /** Dükkânda açıldıysa hangisi (satın alma yalnızca orada). */
+  private shop: WardrobeShop | null = null;
+  /** Satın alınıp giyilmeyi bekleyen kayıt. */
+  private pendingSave = false;
   private dirty = false;
   private query = "";
   private abort = new AbortController();
@@ -247,6 +255,8 @@ export class Wardrobe {
   /** `tab` verilirse o sekmeyle açılır (hair, tops, colors…); `shop` verilirse yalnızca o dükkânın sekmeleri. */
   open(tab?: string, shop?: WardrobeShop): void {
     const s = shop ? SHOP[shop] : null;
+    this.shop = shop ?? null;
+    this.pendingSave = false;
     this.tabs = s ? TABS.filter((x) => s.tabs.includes(x.key)) : TABS;
     this.colorKeys = s ? s.colors : (Object.keys(PALETTES) as LookColor[]);
     this.kickerEl.textContent = s?.kicker ?? "KARAKTER";
@@ -294,11 +304,44 @@ export class Wardrobe {
     this.hooks.modal(false);
   }
 
+  /** Giyilenlerden satın alınmamış ücretli parçalar. */
+  private unowned(look: Look = this.look): string[] {
+    return LOOK_SLOTS.map((s) => look[s]).filter((v): v is string => !!v && !owned.has(lookItem(v))).map(lookItem);
+  }
+
   private save(): void {
     if (!this.info) return;
+    const need = this.unowned();
+    if (need.length) {
+      // Dükkânda: önce satın al, sunucu onaylayınca giy (ownedChanged)
+      if (!this.shop) return;
+      this.pendingSave = true;
+      for (const i of need) this.hooks.buy(i);
+      this.saveBtn.disabled = true;
+      return;
+    }
     this.hooks.save(this.look);
     this.dirty = false;
+    this.pendingSave = false;
     this.hide();
+  }
+
+  /** Satın aldıkların değişti: kartlar ve kaydet düğmesi yenilenir; bekleyen kayıt varsa giyilir. */
+  ownedChanged(): void {
+    if (!this.isOpen || !this.info) return;
+    this.saveBtn.disabled = false;
+    if (this.pendingSave && !this.unowned().length) return this.save();
+    this.updateSaveLabel();
+    this.renderBody();
+  }
+
+  /** Kaydet düğmesi: satın alınacak varsa toplam fiyatı yazar. */
+  private updateSaveLabel(): void {
+    const need = this.unowned();
+    const total = need.reduce((s, i) => s + (LOOK_PRICES[i.slice(5)] ?? 0), 0);
+    this.saveBtn.querySelector(".wd-buy")?.remove();
+    this.saveBtn.classList.toggle("buy", need.length > 0);
+    if (need.length) el("span", "wd-buy", this.saveBtn).textContent = this.shop ? `Satın al ve giy · ${total.toLocaleString("tr-TR")} ₺` : "Önce satın al";
   }
 
   /** Kayıtlı kıyafete dön (pencere açık kalır). */
@@ -335,6 +378,7 @@ export class Wardrobe {
   private setDirty(on: boolean): void {
     this.dirty = on;
     this.panel.classList.toggle("dirty", on);
+    this.updateSaveLabel();
   }
 
   private change(next: Look): void {
@@ -420,9 +464,14 @@ export class Wardrobe {
       const need = id ? this.info!.locked[id] : undefined;
       const locked = need !== undefined && this.info!.level < need;
       const on = (this.look[slot] ?? null) === id;
-      const b = el("button", `wd-card${on ? " on" : ""}${locked ? " locked" : ""}`, wrap);
+      // Ücretli ve alınmamış: dükkânında denenir (fiyatı yazar), başka yerde kilitli
+      const price = id && !owned.has(lookItem(id)) ? (LOOK_PRICES[id] ?? 0) : 0;
+      const sellsHere = !!id && this.shop === lookShop(id);
+      const forSale = price > 0 && !locked;
+      const b = el("button", `wd-card${on ? " on" : ""}${locked || (forSale && !sellsHere) ? " locked" : ""}`, wrap);
       b.style.setProperty("--tint", tint);
-      b.disabled = locked;
+      b.disabled = locked || (forSale && !sellsHere);
+      if (forSale) el("span", "wd-price", b).textContent = sellsHere ? `${price.toLocaleString("tr-TR")} ₺` : `🛒 ${price.toLocaleString("tr-TR")} ₺ · ${lookShop(id!) === "barber" ? "Berberde" : "GAP Moda'da"}`;
       const thumb = el("div", "wd-thumb", b);
       const img = el("img", "", thumb);
       img.alt = "";

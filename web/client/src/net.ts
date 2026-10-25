@@ -1,6 +1,7 @@
 // WebSocket istemcisi: zaman damgalı konum gönderimi (SEND_HZ), snapshot alımı, saat senkronu ve yeniden bağlanma.
 // Konum ve snapshot'lar sunucu açtıysa hızlı yoldan (WebRTC/UDP, rtc.ts), olaylar her zaman WebSocket'ten.
 import { type Act, SEND_HZ } from "../../shared/constants";
+import { owned } from "./owned";
 import type { Shot } from "../../shared/tank";
 import type { CarRadio, ParkedCar, RadioQueueView } from "../../shared/car";
 import type { RingView } from "../../shared/ring";
@@ -466,6 +467,9 @@ export class Net {
       }
       case "econ":
         this.onEcon(ev.wallet);
+        break;
+      case "owned":
+        owned.set(ev.items);
         break;
       case "tbump":
         this.onTbump(ev.id, ev.s);

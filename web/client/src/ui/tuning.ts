@@ -4,6 +4,8 @@
 import {
   CAR_COLORS, CAR_DECALS, CAR_ENGINES, CAR_EXHAUSTS, CAR_HORNS, CAR_LIGHTS, CAR_MODELS, CAR_NEONS, CAR_RIMS, CAR_SPOILERS, carPerf, type CarSpec, validCar,
 } from "../../../shared/car";
+import { itemPrice, modItem } from "../../../shared/shop";
+import { owned } from "../owned";
 import { hornIsTune, Horns } from "./horn";
 import { sfx } from "./sfx";
 
@@ -58,6 +60,8 @@ export interface TuningHooks {
   apply(spec: CarSpec): void;
   /** Menüden çıkıldı. */
   close(): void;
+  /** Modifiye satın al (bir kez, bu araba için). */
+  buy(item: string): void;
 }
 
 const valueOf = (spec: CarSpec, key: keyof CarSpec) => String(spec[key]);
@@ -85,6 +89,8 @@ export class Tuning {
   private cat = 0;
   private sel = 0;
   private plateInput: HTMLInputElement | null = null;
+  /** Satın alınınca takılacak. */
+  private pending: CarSpec | null = null;
   /** Korna önizlemesi (seçeneğin üstünde durunca bir kez çalar). */
   private horns = new Horns();
   private hornTimer = 0;
@@ -114,6 +120,15 @@ export class Tuning {
     keys.innerHTML = "<span><kbd>↑</kbd><kbd>↓</kbd> Seç</span><span><kbd>Enter</kbd> Tak / Gir</span><span><kbd>Esc</kbd> Geri</span><span><kbd>A</kbd><kbd>D</kbd> / sürükle: Döndür</span>";
     this.root.append(this.drag, panel, keys);
     parent.append(this.root);
+    // Satın alma onaylandı: bekleyen parça takılır
+    owned.on(() => {
+      if (!this.isOpen) return;
+      const p = this.pending;
+      if (p && !this.missing(p)) {
+        this.pending = null;
+        this.applyNow(p);
+      } else this.render();
+    });
 
     // Sürükleyerek araba etrafında dön
     let down: { x: number; yaw: number } | null = null;
@@ -226,7 +241,28 @@ export class Tuning {
     this.applyNow(this.candidate());
   }
 
+  /** Arabanın bu kategorideki satın alınmamış parçası (anahtar) — yoksa null. */
+  private missing(spec: CarSpec): string | null {
+    const c = CATEGORIES[this.cat], v = spec[c.key];
+    if (c.key === "plate") return null;
+    const item = modItem(spec.model, c.key, v as string | boolean);
+    return owned.has(item) ? null : item;
+  }
+
+  /** Seçeneğin fiyatı (sahipsen 0). */
+  private price(key: keyof CarSpec, id: string): number {
+    const item = modItem(this.applied.model, key, id === "true" ? true : id === "false" ? false : id);
+    return owned.has(item) ? 0 : (itemPrice(item) ?? 0);
+  }
+
   private applyNow(spec: CarSpec): void {
+    // Satın alınmamış parça: önce satın alınır (sunucu parayı alınca takılır)
+    const need = this.level === 1 ? this.missing(spec) : null;
+    if (need) {
+      this.pending = spec;
+      this.hooks.buy(need);
+      return;
+    }
     if (JSON.stringify(spec) === JSON.stringify(this.applied)) return;
     this.applied = spec;
     this.hooks.apply(spec);
@@ -286,7 +322,10 @@ export class Tuning {
       this.list.append(wrap);
       this.plateInput = input;
     } else {
-      c.options!.forEach((o, i) => this.row(i, o.name, o.id === valueOf(this.applied, c.key) ? "✓ TAKILI" : "", o.hex, o.id === valueOf(this.applied, c.key)));
+      c.options!.forEach((o, i) => {
+        const on = o.id === valueOf(this.applied, c.key), p = this.price(c.key, o.id);
+        this.row(i, o.name, on ? "✓ TAKILI" : p ? `${p.toLocaleString("tr-TR")} ₺` : "✓ SENİN", o.hex, on);
+      });
     }
     this.desc.textContent = c.key === "engine" ? `${c.desc} ${perfLine(this.candidate())}` : c.desc;
   }

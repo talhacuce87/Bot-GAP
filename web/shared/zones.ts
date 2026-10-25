@@ -288,6 +288,8 @@ export function roadDist(x: number, z: number): number {
 
 /** Şehrin yürünür alanı (çevresi tepe). */
 export const CITY = { minX: 384 + CITY_DX, maxX: 548 + CITY_DX, minZ: -120, maxZ: 40 };
+/** GAP Galeri'nin arsası: şehrin doğu ucunda, z=10 caddesinin bittiği yerde (şehre bitişik yürünür alan). */
+export const GALLERY_AREA = { minX: CITY.maxX, maxX: CITY.maxX + 54, minZ: -9, maxZ: 29 };
 /**
  * Şehrin cadde ağı: her biri asfaltın orta çizgisi (a → b), asfalt yarı genişliği ve kaldırım genişliği.
  * Bulvar yolun devamı (dört şerit, ortada refüj).

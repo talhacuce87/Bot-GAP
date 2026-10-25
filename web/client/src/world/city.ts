@@ -57,7 +57,7 @@ export interface CityNpc {
   z: number;
   rot: number;
   outfit: Look;
-  act: { x: number; z: number; r: number; label: string; line: string; fx: "tea" | "sparkle" | "party"; shop?: "barber" | "fashion"; food?: ShopId };
+  act: { x: number; z: number; r: number; label: string; line: string; fx: "tea" | "sparkle" | "party"; shop?: "barber" | "fashion"; food?: ShopId; gallery?: boolean };
 }
 
 export interface City {

@@ -1,5 +1,6 @@
 // GAP Dünyası istemcisi: giriş → dünya → ana döngü.
 import * as THREE from "three";
+import { owned } from "./owned";
 import {
   ACT_COOLDOWN_MS,
   ACT_SPOTS,
@@ -388,7 +389,9 @@ async function start(): Promise<void> {
       hudRoot.classList.toggle("modal-open", open);
     },
     pack: () => chibi.pack,
+    buy: (item) => net.send({ t: "buy", item }),
   }, session.user.name);
+  life.onStop(owned.on(() => wardrobe.ownedChanged()));
   life.onStop(() => wardrobe.dispose());
   net.onWardrobe = (w) => wardrobe.onInfo(w);
   const showStatus = net.onStatus;

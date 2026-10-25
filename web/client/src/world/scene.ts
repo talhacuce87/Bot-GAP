@@ -36,6 +36,7 @@ import { SAKURA, SAKURA_CONFIG, sakuraGarden, type SakuraGarden } from "./sakura
 import { TANK_PARK } from "../../../shared/tank";
 import { villagePaths } from "./walkways";
 import { simitci } from "./simitci";
+import { gallery } from "./gallery";
 import { tiledStatics } from "./tiles";
 import { Occlusion } from "./occlusion";
 
@@ -1129,6 +1130,8 @@ export function buildWorld(opts: WorldOptions = {}): World {
   const pbField = paintballField(b);
   scene.add(pbField.group);
   const vendors = simitci(b);
+  const showroom = gallery(b);
+  scene.add(showroom.group);
   const ring = ringTrack(b);
   scene.add(ring.group);
   const shop = garage(b);
@@ -1286,7 +1289,7 @@ export function buildWorld(opts: WorldOptions = {}): World {
     seats: b.seats,
     carColliders: b.carColliders,
     carWater,
-    npcs: [...town.npcs, ...cas.npcs, ...vendors],
+    npcs: [...town.npcs, ...cas.npcs, ...vendors, ...showroom.npcs],
     ring,
     garage: shop,
     roomAt(x: number, z: number) {

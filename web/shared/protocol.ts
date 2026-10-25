@@ -404,6 +404,8 @@ export type ServerEvent =
   /** Hayat barların (yalnızca sana); bayıldıysan uyanacağın an; hastanede uyandıysan yeni yerin. */
   | { t: "life"; hp: number; hunger: number; thirst: number; energy: number; downed: number; tp?: { x: number; z: number; rot: number }; buffs?: Partial<Record<BuffId, number>> }
   | { t: "downed"; sid: number; on: boolean }
+  /** Satın aldıkların (kıyafet, araba, modifiye; shared/shop anahtarları). */
+  | { t: "owned"; items: string[] }
   /** Çarpılıp savrulan NPC trafik arabasının hâli (çarpan gönderir, herkes aynı savrulmayı görür). */
   | { t: "tbump"; id: number; s: number[] }
   /** Arabanın çarptığı oyuncu (herkese): savrulur, sırtüstü düşer, kalkar (hız m/sn). */
@@ -532,6 +534,10 @@ export type ClientEvent =
   | { t: "taxi"; on: boolean }
   /** GAP Garaj'da arabanı tamir ettir (ücretli). */
   | { t: "repair" }
+  /** Satın al (kıyafet, araba, modifiye; shared/shop anahtarı). */
+  | { t: "buy"; item: string }
+  /** Banka: dünyadaki bir oyuncuya para gönder (₺). */
+  | { t: "pay"; sid: number; amount: number }
   /** Çarptığın NPC trafik arabasının savrulma hâli: kayma (x, z, dönüş), hızları ve sersemlik. */
   | { t: "tbump"; id: number; s: number[] }
   /** Arabayı bir yere bırak (inince ya da çağırınca); null: kaldır. */

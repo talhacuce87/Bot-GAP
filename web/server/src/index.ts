@@ -18,6 +18,8 @@ import { LifeHost } from "./life";
 import { Bags } from "./inventory";
 import { JobHost } from "./jobs";
 import { EVENT_DAILY_MAX, EVENT_REWARDS } from "../../shared/jobs";
+import { itemLabel, itemPrice, lookItem, LOOK_PRICES, ownsCar, stripUnowned, unownedMods } from "../../shared/shop";
+import { LOOK_SLOTS } from "../../shared/protocol";
 import { RingHost, type RingMsg } from "./ring";
 import { LiveHost, type LiveMsg } from "./liveTables";
 import { CASINO, GARAGE } from "../../shared/zones";
@@ -792,8 +794,26 @@ async function onGuestLookMessage(send: (ev: ServerEvent) => void, room: Room, s
 }
 
 /** Gardırop: aç (kayıtlı kıyafet + kilitler) ya da kaydet. Misafirin kıyafeti kaydedilmez. */
+/** Kıyafetin parçaları (sahiplik anahtarları). */
+function lookItems(look: Look): string[] {
+  return LOOK_SLOTS.map((s) => look[s]).filter((v): v is string => !!v).map(lookItem);
+}
+
 async function onLookMessage(ws: WebSocket, room: Room, sid: number, user: SessionUser, guild: string | null, msg: Record<string, unknown>): Promise<void> {
-  const send = (ev: ServerEvent) => ws.send(JSON.stringify(ev));
+  const key = user.guest ? `guest:${user.id}` : user.id;
+  // Gardırop açılınca kayıtlı kıyafetin parçaları senin sayılır (eskiden beri giydiklerin)
+  const send = (ev: ServerEvent) => {
+    if (ev.t === "wardrobe" && !("error" in ev)) {
+      if (economy.grant(key, lookItems(ev.outfit))) ws.send(JSON.stringify({ t: "owned", items: economy.ownedList(key) }));
+    }
+    ws.send(JSON.stringify(ev));
+  };
+  // Kaydetmeden önce: satın alınmamış ücretli parça giyilemez (seviye ödülleri botta)
+  if (msg.t === "outfit") {
+    const look = sanitizeLook(msg.outfit);
+    const missing = look ? lookItems(look).filter((i) => (LOOK_PRICES[i.slice(5)] ?? 0) > 0 && !economy.owns(key, i)) : [];
+    if (missing.length) return send({ t: "notice", text: `🔒 Önce satın al: ${missing.map((i) => i.slice(5)).join(", ")} (berber ya da GAP Moda).` });
+  }
   if (DEV_WARDROBE && (user.guest || !guild || !SHARED_SECRET)) return onDevLookMessage(send, room, sid, user, msg);
   if (user.guest && SHARED_SECRET) return onGuestLookMessage(send, room, sid, user, msg);
   const unavailable = user.guest || !guild ? "👕 Gardırop için dünyaya Discord'dan (ses kanalındaki Activity ile) gir." : !SHARED_SECRET ? "👕 Gardırop şu an kapalı (bot bağlı değil)." : null;
@@ -1074,7 +1094,13 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   if (CLIENT_VERSION) ws.send(JSON.stringify({ t: "version", v: CLIENT_VERSION }));
   // Kayıtlı kıyafet arka planda gelir; o zamana kadar varsayılan karakter çizilir.
   if (!user.guest && opts.guild && SHARED_SECRET) {
-    void fetchLook(botPost, opts.guild, user.id).then((look) => look && room.setLook(sid, look));
+    void fetchLook(botPost, opts.guild, user.id).then((look) => {
+      if (!look) return;
+      room.setLook(sid, look);
+      // Kayıtlı kıyafetin parçaları senin (paralı kıyafete geçişte kimse kaybetmez)
+      const k = user.guest ? `guest:${user.id}` : user.id;
+      if (economy.grant(k, lookItems(look))) ws.send(JSON.stringify({ t: "owned", items: economy.ownedList(k) }));
+    });
   }
   const guestLook = user.guest ? guestLooks.get(user.id) : undefined;
   if (guestLook) room.setLook(sid, guestLook);
@@ -1106,8 +1132,16 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   room.life?.join(sid, walletKey);
   room.bags?.join(sid, walletKey);
   room.jobs?.join(sid, walletKey);
+  // Sahip olunanlar: şu an giydiklerin senin sayılır (paralı kıyafete geçişte kimse kıyafetini kaybetmez)
+  {
+    const look = room.players.get(sid)?.info.look;
+    if (look) economy.grant(walletKey, lookItems(look));
+    ws.send(JSON.stringify({ t: "owned", items: economy.ownedList(walletKey) }));
+  }
   let lastJob = 0;
   let lastBump = 0;
+  let lastBuy = 0;
+  const owns = (item: string) => economy.owns(walletKey, item);
   let lastInv = 0;
   if (room.life) ws.send(JSON.stringify({ t: "wallet", balance: economy.get(walletKey) }));
   let lastFall = 0;
@@ -1228,11 +1262,54 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const now = Date.now();
         if (now - lastCar < 300) return;
         lastCar = now;
-        const car = validCar(msg.car);
+        let car = validCar(msg.car);
         // İş aracı (scooter, taksi) yalnızca o işteyken
         const want = (msg.car as { model?: unknown } | null)?.model;
         if (car && isJobCar(want) && room.jobs?.modelOf(sid) === want) car.model = want;
+        // Satın alınmamış araba sürülmez, alınmamış modifiyeler sökülür
+        if (car && !ownsCar(car.model, owns)) {
+          ws.send(JSON.stringify({ t: "notice", text: "🔒 Bu araba senin değil: GAP Galeri'den satın alabilirsin." }));
+          return;
+        }
+        if (car && !isJobCar(car.model)) {
+          // Paralı modifiyeye geçiş: bu arabaya önceden takılmış parçalar bir kereliğine senin sayılır
+          const legacy = `legacy:${car.model}`;
+          if (!user.guest && !economy.owns(walletKey, legacy)) economy.grant(walletKey, [...unownedMods(car, () => false), legacy]);
+          car = stripUnowned(car, owns);
+        }
         room.setCar(sid, car);
+      } else if (msg?.t === "pay") {
+        // Banka havalesi: dünyadaki oyuncuya (kendine değil), tam sayı, en çok 1.000.000 ₺
+        const now = Date.now();
+        if (now - lastBuy < 500) return;
+        lastBuy = now;
+        const to = room.players.get(msg.sid), amount = msg.amount;
+        if (!to || msg.sid === sid || !Number.isInteger(amount) || amount < 1 || amount > 1_000_000) return;
+        const toKey = to.user.guest ? `guest:${to.user.id}` : to.user.id;
+        if (toKey === walletKey) return;
+        if (!economy.add(walletKey, -amount, { reason: `${to.info.name}'e gönderildi`, icon: "💸" })) {
+          ws.send(JSON.stringify({ t: "notice", text: "💰 Bakiyen yetmiyor." }));
+          return;
+        }
+        economy.add(toKey, amount, { reason: `${user.name} gönderdi`, icon: "💸" });
+        room.sendTo(to.conn, { t: "notice", text: `💸 ${user.name} sana ${amount.toLocaleString("tr-TR")} ₺ gönderdi.` });
+        ws.send(JSON.stringify({ t: "notice", text: `💸 ${to.info.name}'e ${amount.toLocaleString("tr-TR")} ₺ gönderildi.` }));
+      } else if (msg?.t === "buy" && typeof msg.item === "string") {
+        const now = Date.now();
+        if (now - lastBuy < 300) return;
+        lastBuy = now;
+        const price = itemPrice(msg.item);
+        if (price === null || msg.item.length > 80) return;
+        if (price > 0 && !economy.owns(walletKey, msg.item)) {
+          const kind = msg.item.split(":")[0];
+          const icon = kind === "car" ? "🚗" : kind === "mod" ? "🔧" : msg.item.startsWith("look:hair_") || msg.item.startsWith("look:facial_") ? "✂️" : "👕";
+          if (!economy.add(walletKey, -price, { reason: `${itemLabel(msg.item)} satın alındı`, icon })) {
+            ws.send(JSON.stringify({ t: "notice", text: `💰 Bunun için ${price.toLocaleString("tr-TR")} ₺ lazım.` }));
+            return;
+          }
+        }
+        economy.grant(walletKey, [msg.item]);
+        ws.send(JSON.stringify({ t: "owned", items: economy.ownedList(walletKey) }));
       } else if (msg?.t === "tbump") {
         // NPC trafik çarpması: doğrula, diğerlerine aktar (araba istemcide; herkes aynı savrulmayı görsün)
         const now = Date.now();
@@ -1258,6 +1335,13 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const now = Date.now();
         if (now - lastPark < 250) return;
         lastPark = now;
+        // Park edilen araba da: satın alınmamışsa park edilmez, alınmamış modifiyeler sökülür
+        const pk = msg.parked as { car?: unknown } | null;
+        const pc = pk ? validCar(pk.car) : null;
+        if (pk && pc && !isJobCar((pk.car as { model?: unknown } | null)?.model)) {
+          if (!ownsCar(pc.model, owns)) return;
+          pk.car = stripUnowned(pc, owns);
+        }
         room.setParked(sid, msg.parked);
       } else if (msg?.t === "casino" || msg?.t === "bj" || msg?.t === "roulette" || msg?.t === "slot") {
         // Bakiye sorgusu ucuz: sınırsız. Oyun hamleleri çok hızlıysa da yanıt ver (istemci kilidini açsın).

@@ -2,7 +2,7 @@
 // GAP Kurye scooter'ı, taksiciye sarı GAP Taksi). Görev hedefleri yolların üstündeki adlı duraklardır (araba ve
 // yaya varabilir). Ücretler mesafeyle artar; kuryede zamanında teslim bonusu var. Bütün denge değerleri burada.
 import { PLOTS } from "./build";
-import { CASINO, CITY_DX, FAME, GARAGE, GROVE, KAHVEHANE, LAKE, PLAZA, ROADS, STREETS, VILLAGE_ROADS } from "./zones";
+import { CASINO, CITY_DX, GALLERY_AREA, FAME, GARAGE, GROVE, KAHVEHANE, LAKE, PLAZA, ROADS, STREETS, VILLAGE_ROADS } from "./zones";
 
 export type JobKind = "kurye" | "taksi";
 
@@ -88,6 +88,7 @@ export const PLACES: Place[] = [
   place("GAP Market", 445 + CITY_DX, -13.5),
   place("GAP Kahve", 400 + CITY_DX, -70),
   place("GAP AVM", 487 + CITY_DX, -13.5),
+  place("GAP Galeri", GALLERY_AREA.minX + 3, 10, false),
 ];
 
 /** Kurye ücreti (mesafe, m) ve süre sınırı (ms). */

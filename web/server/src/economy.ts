@@ -29,6 +29,8 @@ export class Economy {
   private balances = new Map<string, number>();
   private lives = new Map<string, LifeState>();
   private invs = new Map<string, Slot[]>();
+  /** Satın alınanlar (shared/shop anahtarları: kıyafet, araba, modifiye). */
+  private owned = new Map<string, Set<string>>();
   private history = new Map<string, MoneyTx[]>();
   private days = new Map<string, Day>();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -42,7 +44,7 @@ export class Economy {
     this.ready = file
       ? readFile(file, "utf8")
           .then((t) => {
-            const o = JSON.parse(t) as { balances?: Record<string, number>; lives?: Record<string, LifeState>; history?: Record<string, MoneyTx[]>; invs?: Record<string, Slot[]> };
+            const o = JSON.parse(t) as { balances?: Record<string, number>; lives?: Record<string, LifeState>; history?: Record<string, MoneyTx[]>; invs?: Record<string, Slot[]>; owned?: Record<string, string[]> };
             for (const [k, v] of Object.entries(o.balances ?? {})) if (Number.isFinite(v)) this.balances.set(k, v);
             // Su barından önceki kayıtlarda su yok: dolu başlar
             for (const [k, v] of Object.entries(o.lives ?? {})) if (v && Number.isFinite(v.hp)) this.lives.set(k, { ...v, thirst: Number.isFinite(v.thirst) ? v.thirst : 100 });
@@ -52,6 +54,7 @@ export class Economy {
               v.slice(0, INV.slots).forEach((x, i) => (s[i] = x && itemDef(x.id) && x.n > 0 ? { id: x.id, n: x.n } : null));
               this.invs.set(k, s);
             }
+            for (const [k, v] of Object.entries(o.owned ?? {})) if (Array.isArray(v)) this.owned.set(k, new Set(v.filter((x) => typeof x === "string")));
             for (const [k, v] of Object.entries(o.history ?? {})) if (Array.isArray(v)) this.history.set(k, v.slice(0, ECON.historyMax));
           })
           .catch(() => {})
@@ -120,6 +123,25 @@ export class Economy {
     this.save();
   }
 
+  /** Satın alınmış mı. */
+  owns(key: string, item: string): boolean {
+    return this.owned.get(key)?.has(item) ?? false;
+  }
+
+  /** Sahip yap (satın alma ya da eskiden beri giyilen). */
+  grant(key: string, items: string[]): boolean {
+    let set = this.owned.get(key);
+    if (!set) this.owned.set(key, (set = new Set()));
+    let added = false;
+    for (const i of items) if (!set.has(i)) (set.add(i), (added = true));
+    if (added) this.save();
+    return added;
+  }
+
+  ownedList(key: string): string[] {
+    return [...(this.owned.get(key) ?? [])];
+  }
+
   /** Çanta (kopya). */
   inv(key: string): Slot[] {
     return (this.invs.get(key) ?? emptyInv()).map((s) => (s ? { ...s } : null));
@@ -149,7 +171,7 @@ export class Economy {
       const file = this.file!;
       // Misafirler kalıcı değil
       const keep = <T>(m: Map<string, T>) => Object.fromEntries([...m].filter(([k]) => !guest(k)));
-      const body = JSON.stringify({ balances: keep(this.balances), lives: keep(this.lives), history: keep(this.history), invs: keep(this.invs) });
+      const body = JSON.stringify({ balances: keep(this.balances), lives: keep(this.lives), history: keep(this.history), invs: keep(this.invs), owned: Object.fromEntries([...this.owned].filter(([k]) => !guest(k)).map(([k, v]) => [k, [...v]])) });
       void mkdir(join(file, ".."), { recursive: true })
         .then(() => writeFile(file, body))
         .catch((e) => {

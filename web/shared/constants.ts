@@ -1,5 +1,5 @@
 // İstemci ve sunucunun ortak sabitleri.
-import { CITY, GROVE, inStadium, inVolley, KAHVEHANE, LAKE, ROAD_WALK, roadDist, STADIUM, VOLLEY_HALL } from "./zones";
+import { CITY, GALLERY_AREA, GROVE, inStadium, inVolley, KAHVEHANE, LAKE, ROAD_WALK, roadDist, STADIUM, VOLLEY_HALL } from "./zones";
 import { RACE_AREA } from "./ring";
 import { HOOD_BOX, HOOD_CORNER } from "./build";
 import { MOSQUE_AREA } from "./mosque";
@@ -22,7 +22,8 @@ export const WORLD_BOUNDS = { minX: -135, maxX: 125, minZ: -88, maxZ: 162 };
  */
 export const WORLD_EXTENT = {
   minX: HOOD_BOX.minX,
-  maxX: CITY.maxX,
+  // Doğuda şehrin ucundaki GAP Galeri arsası
+  maxX: Math.max(CITY.maxX, GALLERY_AREA.maxX),
   minZ: Math.min(WORLD_BOUNDS.minZ, CITY.minZ, RACE_AREA.minZ, HOOD_BOX.minZ),
   maxZ: Math.max(WORLD_BOUNDS.maxZ, HOOD_BOX.maxZ, MOSQUE_AREA.maxZ),
 };
@@ -41,6 +42,7 @@ export function outsideWorld(x: number, z: number): number {
   return Math.min(
     outsideRect(WORLD_BOUNDS, x, z),
     outsideRect(CITY, x, z),
+    outsideRect(GALLERY_AREA, x, z),
     outsideRect(RACE_AREA, x, z),
     // GAP Camii: şehrin güney kenarına bitişik
     outsideRect(MOSQUE_AREA, x, z),

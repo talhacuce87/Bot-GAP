@@ -25,6 +25,8 @@ export interface PhoneApps {
   album(): void;
   photo(): void;
   car(): void;
+  /** GAP Galeri (araba satın al). */
+  gallery(): void;
   fireworks(): void;
   tag(mode: "ebelemece" | "saklambac"): void;
   match(): void;
@@ -37,6 +39,9 @@ export interface PhoneApps {
   cosmetics(): void;
   /** Cüzdanı sunucudan iste (gelince showWallet). */
   wallet(): void;
+  /** Banka: dünyadaki oyuncular ve para gönder. */
+  players(): { sid: number; name: string }[];
+  pay(sid: number, amount: number): void;
   /** İşe gir (kind) ya da işten çık (null); işin aracını yanına çağır. */
   job(kind: JobKind | null): void;
   jobCar(): void;
@@ -210,7 +215,6 @@ export class Phone {
   private openApp(id: AppId, focus = 0): void {
     // Doğrudan açılanlar
     if (id === "camera") return this.run(this.a.photo);
-    if (id === "car") return this.run(this.a.car);
     const app = APPS.find((x) => x.id === id)!;
     this.app = id;
     this.reset();
@@ -263,6 +267,7 @@ export class Phone {
         const top = el("div", "ph-balance", list);
         el("small", "", top, "Bakiye");
         el("b", "", top, lira(v?.balance ?? this.balance));
+        this.row(list, "💸", "Para gönder", "Dünyadaki bir arkadaşına havale", () => this.sendScreen());
         if (v) {
           const day = el("div", "ph-day", list);
           el("span", "up", day, `Bugün + ${lira(v.earned)}`);
@@ -278,6 +283,11 @@ export class Phone {
         this.a.wallet();
         break;
       }
+      case "car":
+        this.row(list, "🚗", "Araçlarım", "Arabanı yanına çağır", () => this.run(this.a.car));
+        this.row(list, "🏪", "GAP Galeri", "Doblo, Linea, Passat, E30", () => this.run(this.a.gallery));
+        el("div", "ph-note", list, "GAP Galeri şehrin doğu ucunda (z=10 caddesinin sonu): arabaları yakından görebilirsin.");
+        break;
       case "music":
         this.row(list, "🎵", "Şarkı kuyruğu", "Sinema ve sahnede çalar", () => this.run(this.a.queue));
         this.row(list, "📻", "Araba radyosu", actionLabel("radio"), () => this.run(this.a.radio));
@@ -308,6 +318,40 @@ export class Phone {
         break;
     }
     this.setFocus(Math.min(focus, this.items.length - 1));
+  }
+
+  /** Banka havalesi: kime (dünyadakiler) ve ne kadar. */
+  private sendScreen(): void {
+    this.reset();
+    this.body.className = "ph-body ph-app-wallet";
+    const head = el("div", "ph-head", this.body);
+    el("button", "ph-back", head, "‹").addEventListener("click", () => this.openApp("wallet"));
+    el("b", "", head, "Para gönder");
+    const list = el("div", "ph-list", this.body);
+    const people = this.a.players();
+    if (!people.length) {
+      el("div", "ph-note", list, "Dünyada başka kimse yok.");
+      return;
+    }
+    let to = people[0].sid;
+    el("h5", "ph-sub", list, "Kime");
+    this.chips(list, people.map((p): [string, string] => [String(p.sid), p.name]), String(to), (v) => (to = Number(v)));
+    el("h5", "ph-sub", list, "Ne kadar (₺)");
+    const amount = el("input", "ph-input", list);
+    amount.type = "number";
+    amount.min = "1";
+    amount.placeholder = "500";
+    const send = el("button", "ph-row ph-send", list);
+    el("span", "ph-row-ic", send, "💸");
+    el("b", "ph-row-mid", send, "Gönder");
+    send.addEventListener("click", () => {
+      const n = Math.floor(Number(amount.value));
+      if (!(n >= 1)) return amount.focus();
+      this.a.pay(to, n);
+      this.openApp("wallet");
+    });
+    this.items.push(send);
+    this.setFocus(0);
   }
 
   /** Uygulamayı çalıştır ve telefonu kapat. */

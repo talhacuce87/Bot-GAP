@@ -3,6 +3,7 @@
 // gelir. GAP Garaj'daki parlayan işarete arabayla gelince tuning ekranı açılır; kamera araba etrafında döner ve
 // seçili parçaya bakar (oda duvarlarının içinde kalır).
 import * as THREE from "three";
+import { carItem } from "../../shared/shop";
 import { CAR_HULL_R, CAR_MODELS, carCircles, type CarSpec, ENTER_REACH, isJobCar, type ParkedCar } from "../../shared/car";
 import { GARAGE } from "../../shared/zones";
 import type { Remotes } from "./avatars/remotes";
@@ -75,11 +76,13 @@ export class Vehicles {
         driving: c.me.car ? settings.car.model : null,
       }),
       modal: (open) => c.block(open),
+      buy: (m) => c.net.send({ t: "buy", item: carItem(m) }),
     });
     this.tuning = new Tuning(c.hudRoot, {
       preview: (spec) => (settings.car = spec),
       apply: (spec) => this.applyTune(spec),
       close: () => this.closeTuning(),
+      buy: (item) => c.net.send({ t: "buy", item }),
     });
     c.net.onParked = (sid, parked) => {
       if (sid === c.net.you) this.myParked = parked;

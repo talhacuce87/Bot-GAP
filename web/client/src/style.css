@@ -9416,3 +9416,70 @@ button.cz-bjspot {
 .has-job .toast {
   top: calc(max(10px, env(safe-area-inset-top)) + 112px);
 }
+
+/* ---- Faz 4: fiyatlar, kilitler, galeri, banka ---- */
+.wd-price {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: #1d9e75;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+.wd-card.locked .wd-price {
+  background: rgba(0, 0, 0, 0.72);
+  color: #fac775;
+  font-size: 10px;
+  left: 8px;
+  right: 8px;
+  text-align: center;
+}
+.wd-btn.primary.buy {
+  background: #1d9e75;
+}
+.wd-btn.primary .wd-buy {
+  margin-left: 8px;
+  font-weight: 800;
+}
+.cm-card.locked {
+  opacity: 0.6;
+}
+.cm-card.locked em {
+  color: #fac775;
+}
+.cm-call.buy {
+  background: rgba(29, 158, 117, 0.22);
+  color: #9fe1cb;
+}
+.cm-card:hover:not(:disabled) .cm-call.buy {
+  background: #1d9e75;
+  color: #fff;
+}
+.ph-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 16px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+}
+.ph-input:focus {
+  box-shadow: inset 0 0 0 1.5px #5dcaa5;
+}
+.ph-send {
+  margin-top: 8px;
+  background: #1d9e75 !important;
+}
+.wd-btn.primary.buy > :not(.wd-buy) {
+  display: none;
+}
+.wd-btn.primary.buy .wd-buy {
+  margin-left: 0;
+}
