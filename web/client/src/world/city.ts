@@ -6,6 +6,7 @@
 // Hepsi statik (Builder'ın tek mesh'i); parlayanlar (pencereler, LED, neon, trafik ışıkları) ayrı Basic
 // mesh'lerde. Gece pencereler yanar, gökdelenlerin tepesindeki kırmızı ikaz lambaları yanıp söner.
 import * as THREE from "three";
+import type { ShopId } from "../../../shared/items";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { BOULEVARD_Z, CASINO, CITY, RIVER_BANK, ROAD_HALF, ROAD_PATH, ROAD_WALK, CITY_DX, LINK_ROADS, onAsphalt, polylineDist, roadDist, STREETS, type Street, GARAGE, VILLAGE_ROAD_HALF, VILLAGE_ROADS, villageRoadDist } from "../../../shared/zones";
 import type { Look } from "../../../shared/protocol";
@@ -56,7 +57,7 @@ export interface CityNpc {
   z: number;
   rot: number;
   outfit: Look;
-  act: { x: number; z: number; r: number; label: string; line: string; fx: "tea" | "sparkle" | "party"; shop?: "barber" | "fashion" };
+  act: { x: number; z: number; r: number; label: string; line: string; fx: "tea" | "sparkle" | "party"; shop?: "barber" | "fashion"; food?: ShopId };
 }
 
 export interface City {

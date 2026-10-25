@@ -15,6 +15,7 @@ import { validCar } from "../../shared/car";
 import { Casino, type CasinoMsg, secureRng } from "./casino";
 import { Economy } from "./economy";
 import { LifeHost } from "./life";
+import { Bags } from "./inventory";
 import { RingHost, type RingMsg } from "./ring";
 import { LiveHost, type LiveMsg } from "./liveTables";
 import { CASINO } from "../../shared/zones";
@@ -198,6 +199,7 @@ rooms.onCreate = (room) => {
     });
     room.live = new LiveHost(room, economy.casino(), secureRng);
     room.life = new LifeHost(room, economy);
+    room.bags = new Bags(room, economy, room.life);
   }
 };
 
@@ -1081,6 +1083,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   const conns = moneyConns.get(walletKey) ?? new Set<Conn>();
   moneyConns.set(walletKey, conns.add(conn));
   room.life?.join(sid, walletKey);
+  room.bags?.join(sid, walletKey);
+  let lastInv = 0;
   if (room.life) ws.send(JSON.stringify({ t: "wallet", balance: economy.get(walletKey) }));
   let lastFall = 0;
   let lastRevive = 0;
@@ -1269,6 +1273,15 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
       } else if (msg?.t === "ambulance") {
         room.life?.ambulance(sid);
+      } else if (msg?.t === "shop" || msg?.t === "inv") {
+        const now = Date.now();
+        // Eline almak sık olur (1–6): sınırsız
+        if (!(msg.t === "inv" && msg.op === "hold")) {
+          if (now - lastInv < 120) return;
+          lastInv = now;
+        }
+        const err = msg.t === "shop" ? room.bags?.shop(sid, msg.shop, msg.cart) : room.bags?.handle(sid, msg, now);
+        if (err) ws.send(JSON.stringify({ t: "notice", text: err }));
       } else if (msg?.t === "econ") {
         ws.send(JSON.stringify({ t: "econ", wallet: economy.wallet(walletKey) }));
       } else if (msg?.t === "carlights") {

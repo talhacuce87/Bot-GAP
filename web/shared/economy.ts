@@ -1,6 +1,6 @@
-// Hayat ve ekonomi (RP): can, açlık, enerji ve GAP ₺. Bütün denge değerleri burada (tek yerden ayarlanır).
-// Açlık ve enerji yalnızca oyundayken azalır; koşmak enerjiyi hızlı bitirir, oturmak doldurur. Açlık sıfırken can
-// gider; yüksekten düşmek ve hızlı arabanın çarpması da can götürür. Can sıfırlanınca bayılırsın: arkadaşın
+// Hayat ve ekonomi (RP): can, açlık, su, enerji ve GAP ₺. Bütün denge değerleri burada (tek yerden ayarlanır).
+// Açlık, su ve enerji yalnızca oyundayken azalır (su açlıktan hızlı); koşmak enerjiyi hızlı bitirir, oturmak
+// doldurur. Açlık ya da su sıfırken can gider; yüksekten düşmek ve hızlı arabanın çarpması da can götürür. Can sıfırlanınca bayılırsın: arkadaşın
 // kaldırabilir, yoksa (ya da ambulans çağırırsan) hastanede uyanırsın ve fatura ödersin.
 
 /** Para ve ücretler (GAP ₺). */
@@ -17,13 +17,14 @@ export const ECON = {
 
 /** Hayat barları ve hızları (yüzde; süreler dakika). */
 export const LIFE = {
-  /** Açlık ve enerjinin 100'den 0'a inme süresi (dk). */
+  /** Açlık, su ve enerjinin 100'den 0'a inme süresi (dk). */
   hungerMinutes: 60,
+  thirstMinutes: 40,
   energyMinutes: 90,
   /** Koşarken enerji bu kat hızlı biter; otururken dakikada bu kadar dolar. */
   runFactor: 2,
   seatedEnergyPerMin: 6,
-  /** Açlık sıfırken dakikada giden can; açlık ve enerji bunun üstündeyken dakikada dolan can. */
+  /** Açlık (ya da su) sıfırken dakikada giden can; açlık, su ve enerji bunun üstündeyken dakikada dolan can. */
   starvePerMin: 5,
   regenAbove: 70,
   regenPerMin: 2,
@@ -49,23 +50,27 @@ export const LIFE = {
 export interface LifeState {
   hp: number;
   hunger: number;
+  thirst: number;
   energy: number;
 }
 
-export const FULL_LIFE: LifeState = { hp: 100, hunger: 100, energy: 100 };
+export const FULL_LIFE: LifeState = { hp: 100, hunger: 100, thirst: 100, energy: 100 };
 
 const clamp = (v: number) => Math.max(0, Math.min(100, v));
 
 /** `dt` saniye geçti: açlık ve enerji azalır (koşarken hızlı, otururken enerji dolar), can açlığa göre. */
-export function stepLife(l: LifeState, dt: number, o: { running: boolean; seated: boolean }): LifeState {
+export function stepLife(l: LifeState, dt: number, o: { running: boolean; seated: boolean; tok?: boolean; enerji?: boolean }): LifeState {
   const min = dt / 60;
-  const hunger = clamp(l.hunger - (100 / LIFE.hungerMinutes) * min);
-  const drain = (100 / LIFE.energyMinutes) * min * (o.running ? LIFE.runFactor : 1);
+  // Tok: açlık yarı hızda; enerji içeceği: koşarken enerji bitmez
+  const hunger = clamp(l.hunger - (100 / LIFE.hungerMinutes) * min * (o.tok ? 0.5 : 1));
+  const thirst = clamp(l.thirst - (100 / LIFE.thirstMinutes) * min);
+  const drain = o.enerji && o.running ? 0 : (100 / LIFE.energyMinutes) * min * (o.running ? LIFE.runFactor : 1);
   const energy = clamp(o.seated ? l.energy + LIFE.seatedEnergyPerMin * min : l.energy - drain);
   let hp = l.hp;
   if (hunger <= 0) hp -= LIFE.starvePerMin * min;
-  else if (hunger > LIFE.regenAbove && energy > LIFE.regenAbove) hp += LIFE.regenPerMin * min;
-  return { hp: clamp(hp), hunger, energy };
+  if (thirst <= 0) hp -= LIFE.starvePerMin * min;
+  if (hunger > LIFE.regenAbove && thirst > LIFE.regenAbove && energy > LIFE.regenAbove) hp += LIFE.regenPerMin * min;
+  return { hp: clamp(hp), hunger, thirst, energy };
 }
 
 /** Yüksekten düşmenin canı (düşülen metre). */

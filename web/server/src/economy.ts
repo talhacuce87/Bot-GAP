@@ -4,6 +4,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ECON, FULL_LIFE, type LifeState, type MoneyTx, type WalletView } from "../../shared/economy";
+import { emptyInv, INV, itemDef, type Slot } from "../../shared/items";
 
 interface Day {
   day: string;
@@ -27,6 +28,7 @@ const guest = (key: string) => key.startsWith("guest:");
 export class Economy {
   private balances = new Map<string, number>();
   private lives = new Map<string, LifeState>();
+  private invs = new Map<string, Slot[]>();
   private history = new Map<string, MoneyTx[]>();
   private days = new Map<string, Day>();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -40,9 +42,16 @@ export class Economy {
     this.ready = file
       ? readFile(file, "utf8")
           .then((t) => {
-            const o = JSON.parse(t) as { balances?: Record<string, number>; lives?: Record<string, LifeState>; history?: Record<string, MoneyTx[]> };
+            const o = JSON.parse(t) as { balances?: Record<string, number>; lives?: Record<string, LifeState>; history?: Record<string, MoneyTx[]>; invs?: Record<string, Slot[]> };
             for (const [k, v] of Object.entries(o.balances ?? {})) if (Number.isFinite(v)) this.balances.set(k, v);
-            for (const [k, v] of Object.entries(o.lives ?? {})) if (v && Number.isFinite(v.hp)) this.lives.set(k, v);
+            // Su barından önceki kayıtlarda su yok: dolu başlar
+            for (const [k, v] of Object.entries(o.lives ?? {})) if (v && Number.isFinite(v.hp)) this.lives.set(k, { ...v, thirst: Number.isFinite(v.thirst) ? v.thirst : 100 });
+            for (const [k, v] of Object.entries(o.invs ?? {})) {
+              if (!Array.isArray(v)) continue;
+              const s = emptyInv();
+              v.slice(0, INV.slots).forEach((x, i) => (s[i] = x && itemDef(x.id) && x.n > 0 ? { id: x.id, n: x.n } : null));
+              this.invs.set(k, s);
+            }
             for (const [k, v] of Object.entries(o.history ?? {})) if (Array.isArray(v)) this.history.set(k, v.slice(0, ECON.historyMax));
           })
           .catch(() => {})
@@ -106,7 +115,18 @@ export class Economy {
   }
 
   setLife(key: string, l: LifeState): void {
-    this.lives.set(key, { hp: Math.round(l.hp * 10) / 10, hunger: Math.round(l.hunger * 10) / 10, energy: Math.round(l.energy * 10) / 10 });
+    const r = (v: number) => Math.round(v * 10) / 10;
+    this.lives.set(key, { hp: r(l.hp), hunger: r(l.hunger), thirst: r(l.thirst), energy: r(l.energy) });
+    this.save();
+  }
+
+  /** Çanta (kopya). */
+  inv(key: string): Slot[] {
+    return (this.invs.get(key) ?? emptyInv()).map((s) => (s ? { ...s } : null));
+  }
+
+  setInv(key: string, slots: Slot[]): void {
+    this.invs.set(key, slots);
     this.save();
   }
 
@@ -129,7 +149,7 @@ export class Economy {
       const file = this.file!;
       // Misafirler kalıcı değil
       const keep = <T>(m: Map<string, T>) => Object.fromEntries([...m].filter(([k]) => !guest(k)));
-      const body = JSON.stringify({ balances: keep(this.balances), lives: keep(this.lives), history: keep(this.history) });
+      const body = JSON.stringify({ balances: keep(this.balances), lives: keep(this.lives), history: keep(this.history), invs: keep(this.invs) });
       void mkdir(join(file, ".."), { recursive: true })
         .then(() => writeFile(file, body))
         .catch((e) => {

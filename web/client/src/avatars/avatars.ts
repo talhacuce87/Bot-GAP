@@ -49,6 +49,9 @@ export interface AvatarView {
   vlean?: number;
   vpitch?: number;
   vstance?: "hold" | "cock" | null;
+  /** Elindeki eşya (hızlı slot) ve son yediği/içtiği an (sn, döngü saati). */
+  held?: string | null;
+  eatAt?: number;
   /** Bayıldı (can sıfır): yere yan yatar. */
   downed?: boolean;
   /** İsim etiketi gizli (saklambaçta saklananlar). */
@@ -246,6 +249,13 @@ const DOWN_HALF = 0.6;
 export function bodyY(v: AvatarView): number {
   return (v.baseY ?? 0) + v.jumpY + (v.flags & FLAG_SEATED ? CHIBI_SEAT_LIFT : 0);
 }
+/** Yeme/içme süresi (sn): el ağza gider, durur, iner. */
+export const EAT_TIME = 1.3;
+/** 0..1: yerken elin ağza yakınlığı. */
+export function eatPose(v: AvatarView, time: number): number {
+  const t = v.eatAt === undefined ? -1 : time - v.eatAt;
+  return t < 0 || t > EAT_TIME ? 0 : Math.min(1, t * 6, (EAT_TIME - t) * 5);
+}
 /** Gizlenecek kapsül için sıfır ölçek. */
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 
@@ -424,6 +434,8 @@ export class AvatarRenderer {
     l.pedal = vehicle === 1 && moving ? 11 : 0;
     l.mic = v.mic ? 1 : 0;
     l.grip = v.grip ? 1 : 0;
+    l.hold = v.held && !v.downed && !seated ? 1 : 0;
+    l.eat = eatPose(v, time);
     l.vkind = vw > 0 ? vp!.kind : undefined;
     l.vw = vw;
     l.vu = vd ? Math.min(1, vt / vd) : 0;

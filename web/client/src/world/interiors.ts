@@ -35,24 +35,26 @@ interface Worker {
   fx: CityNpc["act"]["fx"];
   /** Konuşunca açılan dükkân gardırobu (berber: saç, moda: kıyafet). */
   shop?: CityNpc["act"]["shop"];
+  /** Konuşunca açılan yeme-içme dükkânı (sepet). */
+  food?: CityNpc["act"]["food"];
 }
 const outfit = (hair: string, tops: string, bottoms: string, shoes: string, extra: Partial<Look> = {}, skin = "#e0b48a", hairColor = "#2a2522"): Look => ({
   hair, tops, bottoms, shoes, hats: null, glasses: null, facial: null, ...extra, colors: { hair: hairColor, skin },
 });
-const W_ = (npc: string, o: Look, label: string, line: string, fx: Worker["fx"], shop?: Worker["shop"]): Worker => ({ npc, outfit: o, label, line, fx, shop });
+const W_ = (npc: string, o: Look, label: string, line: string, fx: Worker["fx"], shop?: Worker["shop"], food?: Worker["food"]): Worker => ({ npc, outfit: o, label, line, fx, shop, food });
 
 /** Tabelası olan dükkânın teması ve çalışanları. */
 export const SHOPS: Record<string, { theme: Theme; workers: Worker[] }> = {
-  "GAP KAHVE": { theme: "cafe", workers: [W_("Barista Elif", outfit("hair_topuz_orgu", "top_tisort", "bottom_kot", "shoes_sneaker", { hats: "hat_kep" }, "#e8c39e", "#3b2a20"), "Kahve söyle ☕", "Türk kahvesi mi, latte mi? Hemen hazırlıyorum!", "tea")] },
+  "GAP KAHVE": { theme: "cafe", workers: [W_("Barista Elif", outfit("hair_topuz_orgu", "top_tisort", "bottom_kot", "shoes_sneaker", { hats: "hat_kep" }, "#e8c39e", "#3b2a20"), "Kahve söyle ☕", "Türk kahvesi mi, latte mi? Hemen hazırlıyorum!", "tea", undefined, "kahve")] },
   ECZANE: { theme: "pharmacy", workers: [W_("Eczacı Ayşe", outfit("hair_uzun_dalgali", "top_kazak", "bottom_kumas", "shoes_klasik", { glasses: "glasses_yuvarlak" }, "#f0cfae", "#6b4226"), "Eczacıya danış 💊", "Geçmiş olsun! Bol su için, iyi dinlenin.", "sparkle")] },
   BERBER: { theme: "barber", workers: [W_("Berber Cemil", outfit("hair_pompadour", "top_ekose", "bottom_kumas", "shoes_klasik", { facial: "facial_biyik" }, "#d9a77c", "#1f1a17"), "Saçını kestir ✂️", "Sıfır mı, yanlardan biraz mı alalım abi?", "sparkle", "barber")] },
   "GAP BANK": { theme: "bank", workers: [W_("Veznedar Murat", outfit("hair_yan_ayrik", "top_takim", "bottom_kumas", "shoes_klasik", { glasses: "glasses_kalin" }), "Vezneye git 💰", "GAP Coin hesabınız çok yakında açılıyor!", "sparkle")] },
-  "GAP MARKET": { theme: "market", workers: [W_("Kasiyer Zeynep", outfit("hair_kuyruk_orgu", "top_tisort", "bottom_kot", "shoes_sneaker", {}, "#f2d0b0", "#8a5a2b"), "Kasaya git 🛒", "Poşet ister misiniz? Bir de kampanyamız var!", "party")] },
+  "GAP MARKET": { theme: "market", workers: [W_("Kasiyer Zeynep", outfit("hair_kuyruk_orgu", "top_tisort", "bottom_kot", "shoes_sneaker", {}, "#f2d0b0", "#8a5a2b"), "Kasaya git 🛒", "Poşet ister misiniz? Bir de kampanyamız var!", "party", undefined, "market")] },
   "OTEL GAP": { theme: "hotel", workers: [W_("Resepsiyonist Can", outfit("hair_joleli", "top_smokin", "bottom_smokin_alt", "shoes_klasik", {}, "#e5bf98", "#1a1512"), "Resepsiyon 🛎️", "Hoş geldiniz! Odalarımız çok yakında hizmetinizde.", "sparkle")] },
   "GAP AVM": {
     theme: "mall",
     workers: [
-      W_("Burgerci Mert", outfit("hair_kisa_doku", "top_tisort", "bottom_kargo", "shoes_sneaker", { hats: "hat_kep_ters" }, "#d8a47a", "#4a3020"), "Burger söyle 🍔", "Bir GAP Burger, bol soslu, hemen geliyor!", "party"),
+      W_("Burgerci Mert", outfit("hair_kisa_doku", "top_tisort", "bottom_kargo", "shoes_sneaker", { hats: "hat_kep_ters" }, "#d8a47a", "#4a3020"), "Burger söyle 🍔", "Bir GAP Burger, bol soslu, hemen geliyor!", "party", undefined, "burger"),
       W_("Güvenlik Kemal", outfit("hair_kirpi", "top_takim", "bottom_kumas", "shoes_klasik", { glasses: "glasses_pilot" }, "#c99b74", "#1a1512"), "Danışma ℹ️", "Mağazalar iki yanda, yemek katı en arkada. İyi alışverişler!", "sparkle"),
       W_("Satış Danışmanı Selin", outfit("hair_uzun_kivircik", "top_crop", "bottom_etek", "shoes_topuklu", {}, "#efc9a4", "#8a3b2b"), "Kıyafet dene 👗", "Yeni sezon geldi! Beğendiğini dene, kasaya gerek yok 😉", "sparkle", "fashion"),
     ],
@@ -100,7 +102,7 @@ function frame(kit: Kit, x: number, z: number, face: number) {
     sign: (text: string, w: number, h: number, lx: number, y: number, lz: number, lry = 0) => kit.sign(text, w, h, m(lx, y, lz, lry)),
     npc: (wk: Worker, lx: number, lz: number, lrot: number, ax: number, az: number) => {
       const [px, pz] = at(lx, lz), [qx, qz] = at(ax, az);
-      kit.npc({ name: wk.npc, x: px, z: pz, rot: face + lrot, outfit: wk.outfit, act: { x: qx, z: qz, r: 2.3, label: wk.label, line: wk.line, fx: wk.fx, shop: wk.shop } });
+      kit.npc({ name: wk.npc, x: px, z: pz, rot: face + lrot, outfit: wk.outfit, act: { x: qx, z: qz, r: 2.3, label: wk.label, line: wk.line, fx: wk.fx, shop: wk.shop, food: wk.food } });
     },
   };
 }

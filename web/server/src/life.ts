@@ -4,6 +4,7 @@
 // yanındaki kaldırabilir; kimse kaldırmazsa ya da ambulans çağırırsa hastanede uyanır ve fatura öder.
 import { FLAG_RUNNING, FLAG_SEATED } from "../../shared/constants";
 import { carHitDamage, ECON, fallDamage, LIFE, type LifeState, stepLife } from "../../shared/economy";
+import { BUFFS, type BuffId, type ItemDef } from "../../shared/items";
 import type { ServerEvent } from "../../shared/protocol";
 import { SPAWN } from "../../shared/zones";
 import type { Economy } from "./economy";
@@ -41,6 +42,8 @@ export class LifeHost {
   private hits = new Map<string, number>();
   /** Süren kaldırmalar: bayılan → kaldıran ve bitiş anı. */
   private reviving = new Map<number, { by: number; until: number }>();
+  /** Süreli etkiler (hesaba bağlı: çıkıp girince sürer): bittiği an. */
+  private buffs = new Map<string, Partial<Record<BuffId, number>>>();
 
   constructor(private room: LifeRoom, private eco: Economy) {}
 
@@ -77,7 +80,8 @@ export class LifeHost {
         if (now >= x.downed) this.hospital(sid, now);
         continue;
       }
-      x.l = stepLife(x.l, dt, { running: (p.state.flags & FLAG_RUNNING) !== 0, seated: (p.state.flags & FLAG_SEATED) !== 0 || !!p.info.ride });
+      const b = this.activeBuffs(x.key, now);
+      x.l = stepLife(x.l, dt, { running: (p.state.flags & FLAG_RUNNING) !== 0, seated: (p.state.flags & FLAG_SEATED) !== 0 || !!p.info.ride, tok: !!b.tok, enerji: !!b.enerji });
       if (x.l.hp <= 0) this.down(sid, now);
       this.send(sid, now);
     }
@@ -85,6 +89,33 @@ export class LifeHost {
       this.savedAt = now;
       for (const x of this.e.values()) this.eco.setLife(x.key, x.l);
     }
+  }
+
+  /** Yedi/içti: barlar dolar, etkisi başlar. Bayılmışsa yiyemez (false). */
+  feed(sid: number, use: NonNullable<ItemDef["use"]>, now = Date.now()): boolean {
+    const x = this.e.get(sid);
+    if (!x || x.downed) return false;
+    const c = (v: number) => Math.max(0, Math.min(100, v));
+    x.l = { hp: c(x.l.hp + (use.hp ?? 0)), hunger: c(x.l.hunger + (use.hunger ?? 0)), thirst: c(x.l.thirst + (use.thirst ?? 0)), energy: c(x.l.energy + (use.energy ?? 0)) };
+    if (use.buff) {
+      const b = this.buffs.get(x.key) ?? {};
+      b[use.buff] = now + BUFFS[use.buff].ms;
+      this.buffs.set(x.key, b);
+    }
+    this.send(sid, now, true);
+    return true;
+  }
+
+  keyOf(sid: number): string | null {
+    return this.e.get(sid)?.key ?? null;
+  }
+
+  /** Süren etkiler (bitmişleri atar). */
+  activeBuffs(key: string, now = Date.now()): Partial<Record<BuffId, number>> {
+    const b = this.buffs.get(key);
+    if (!b) return {};
+    for (const k of Object.keys(b) as BuffId[]) if (b[k]! <= now) delete b[k];
+    return b;
   }
 
   /** Can götür (düşme, çarpma). */
@@ -227,10 +258,10 @@ export class LifeHost {
   private send(sid: number, now: number, force = false, tp?: { x: number; z: number; rot: number }): void {
     const x = this.e.get(sid), p = this.room.players.get(sid);
     if (!x || !p) return;
-    const ch = Math.abs(x.l.hp - x.sent.hp) >= 0.5 || Math.abs(x.l.hunger - x.sent.hunger) >= 0.5 || Math.abs(x.l.energy - x.sent.energy) >= 0.5;
+    const ch = Math.abs(x.l.hp - x.sent.hp) >= 0.5 || Math.abs(x.l.hunger - x.sent.hunger) >= 0.5 || Math.abs(x.l.thirst - x.sent.thirst) >= 0.5 || Math.abs(x.l.energy - x.sent.energy) >= 0.5;
     if (!force && !ch && now - x.sentAt < 5000) return;
     x.sent = { ...x.l };
     x.sentAt = now;
-    this.room.sendTo(p.conn, { t: "life", hp: Math.round(x.l.hp), hunger: Math.round(x.l.hunger), energy: Math.round(x.l.energy), downed: x.downed, tp });
+    this.room.sendTo(p.conn, { t: "life", hp: Math.round(x.l.hp), hunger: Math.round(x.l.hunger), thirst: Math.round(x.l.thirst), energy: Math.round(x.l.energy), downed: x.downed, tp, buffs: { ...this.activeBuffs(x.key, now) } });
   }
 }

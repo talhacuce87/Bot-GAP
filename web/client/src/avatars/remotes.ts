@@ -43,6 +43,10 @@ export class Remote implements AvatarView {
   get downed(): boolean {
     return !!this.info.downed;
   }
+  get held(): string | null {
+    return this.info.held ?? null;
+  }
+  eatAt = -1;
   x = 0;
   z = 0;
   rot = 0;

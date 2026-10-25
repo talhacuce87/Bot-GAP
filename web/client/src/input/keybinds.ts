@@ -40,6 +40,8 @@ export type Action =
   | "horn"
   | "flash"
   | "net"
+  | "inventory"
+  | "emotes"
   | "fbPass"
   | "fbShoot"
   | "fbLob"
@@ -76,14 +78,14 @@ const VOLLEY: readonly Action[] = [
 
 /** Tek seferlik kısayollar (menü, fotoğraf, araç, stadyumda futbol, voleybol…): Input bunları sıraya alır, oyun tüketir. */
 export const HOTKEYS: readonly Action[] = [
-  "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "map", "car", "radio", "net",
+  "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "map", "car", "radio", "net", "inventory", "emotes",
   ...FOOTBALL, ...VOLLEY, "pbReload", "pbLeave",
 ];
 
 /** Her takımda ayarlanabilen eylemler (sırasıyla panelde). */
 export const PROFILE_ACTIONS: Record<Profile, readonly Action[]> = {
   world: [
-    "forward", "back", "left", "right", "run", "jump", "shiftlock", "sit", "actF", "actG", "wardrobe", "zoomIn", "zoomOut",
+    "forward", "back", "left", "right", "run", "jump", "shiftlock", "sit", "actF", "actG", "wardrobe", "inventory", "emotes", "zoomIn", "zoomOut",
     "menu", "quests", "card", "album", "photo", "camera", "vehicle", "five", "hug", "accept", "build", "map", "car", "radio", "horn", "flash", "net",
   ],
   stadium: [...FOOTBALL, "forward", "back", "left", "right", "run", "jump", "shiftlock", "zoomIn", "zoomOut", "menu", "camera", "net"],
@@ -125,6 +127,8 @@ export const ACTION_NAMES: Record<Action, string> = {
   horn: "Korna (arabada, basılı tut)",
   flash: "Selektör / uzun far (arabada)",
   net: "Ağ paneli",
+  inventory: "Çanta (envanter)",
+  emotes: "Emote çarkı (basılı tut)",
   fbPass: "Pas",
   fbShoot: "Şut (basılı tut: sert)",
   fbLob: "Aşırtma (basılı tut)",
@@ -186,6 +190,8 @@ export const DEFAULT_BINDS: Record<Action, [Bind, Bind]> = {
   horn: ["KeyE", ""],
   flash: ["KeyX", ""],
   net: ["F3", ""],
+  inventory: ["KeyI", ""],
+  emotes: ["Backquote", ""],
   fbPass: ["", ""],
   fbShoot: ["", ""],
   fbLob: ["", ""],
@@ -299,7 +305,7 @@ export const PAINTBALL_BINDS: Record<Action, [Bind, Bind]> = {
 
 const DEFAULTS: Record<Profile, Record<Action, [Bind, Bind]>> = { world: DEFAULT_BINDS, stadium: STADIUM_BINDS, volley: VOLLEY_BINDS, paintball: PAINTBALL_BINDS };
 
-/** Atanamaz tuşlar: sohbet, menü kapatma, emote ve sol/sağ tık (seçim ve kamera). */
+/** Atanamaz tuşlar: sohbet, menü kapatma, hızlı slot (1–6) ve sol/sağ tık (seçim ve kamera). */
 export const RESERVED = new Set(["Enter", "NumpadEnter", "Escape", "Mouse0", "Mouse2", ...[1, 2, 3, 4, 5, 6].map((n) => `Digit${n}`)]);
 /** Voleybol salonunda ve paintball maçında sol tık ve rakamlar da atanabilir (emote yok, sol tık vuruş/ateş). */
 const VOLLEY_FREE = new Set(["Mouse0", ...[1, 2, 3, 4, 5, 6].map((n) => `Digit${n}`)]);
@@ -413,7 +419,7 @@ const KEY_NAMES: Record<string, string> = {
   CapsLock: "Caps Lock",
   Tab: "Tab",
   Backspace: "Backspace",
-  Backquote: "`",
+  Backquote: '"',
 };
 
 /** Ekranda gösterilecek ad ("" → "—"). */

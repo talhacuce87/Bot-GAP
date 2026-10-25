@@ -38,6 +38,13 @@ import { Hub } from "./ui/hub";
 import { WorldMap } from "./ui/worldMap";
 import { LifeHud, type MapDot } from "./ui/lifeHud";
 import { LIFE } from "../../shared/economy";
+import { itemDef, type ItemId, KAFEIN_SPEED } from "../../shared/items";
+import { ShopUi } from "./ui/shopUi";
+import { InventoryUi } from "./ui/inventoryUi";
+import { Hotbar } from "./ui/hotbar";
+import { EmoteWheel } from "./ui/emoteWheel";
+import { HeldItems } from "./world/heldItems";
+import { eatPose } from "./avatars/avatars";
 import { button, el, Panel } from "./ui/panel";
 import { canvasToJpeg, PhotoMode } from "./ui/photo";
 import { ProfileUi } from "./ui/profile";
@@ -162,6 +169,13 @@ export class Features {
   /** Hayat barları, minimap, GAP ₺ ve yaralı kartı. */
   private lifeHud: LifeHud;
   private dots: MapDot[] = [];
+  /** Yeme-içme: dükkân, çanta (I), hızlı slot (1–6), eldeki eşyalar ve emote çarkı ("). */
+  private shopUi: ShopUi;
+  private inv: InventoryUi;
+  private hotbar: Hotbar;
+  private wheel: EmoteWheel;
+  private held = new HeldItems();
+  private buffs: Partial<Record<string, number>> = {};
   private bloodAt = 0;
   /** Şu an kaldırdığın (0: yok). */
   private revivingTarget = 0;
@@ -431,7 +445,50 @@ export class Features {
       ambulance: () => net.send({ t: "ambulance" }),
       base: () => this.map.minimapBase(),
     });
-    net.onMoney = (balance, tx) => this.lifeHud.setMoney(balance, tx);
+    net.onMoney = (balance, tx) => {
+      this.lifeHud.setMoney(balance, tx);
+      this.shopUi.setBalance(balance);
+    };
+    this.shopUi = new ShopUi(hudRoot, {
+      buy: (shop, cart) => net.send({ t: "shop", shop, cart }),
+      closed: () => {},
+    });
+    this.inv = new InventoryUi(hudRoot, {
+      op: (op, slot) => net.send({ t: "inv", op, slot }),
+      move: (from, to) => net.send({ t: "inv", op: "move", from, to }),
+      give: (slot, sid) => net.send({ t: "inv", op: "give", slot, sid }),
+      nearest: () => {
+        let best: { sid: number; name: string } | null = null, bd = 3;
+        for (const r of c.remotes.map.values()) {
+          const d = Math.hypot(r.x - me.x, r.z - me.z);
+          if (r.hasData && !r.leaving && !r.info.spectator && d < bd) (best = { sid: r.info.sid, name: r.info.name }), (bd = d);
+        }
+        return best;
+      },
+      pack: () => c.chibi?.pack ?? null,
+      look: () => me.outfit ?? null,
+    }, c.session.user.name);
+    this.hotbar = new Hotbar(hudRoot, (i) => this.selectSlot(i));
+    this.wheel = new EmoteWheel(hudRoot);
+    world.scene.add(this.held.group);
+    net.onInv = (slots) => {
+      hudRoot.classList.add("has-inv");
+      this.inv.setSlots(slots);
+      this.hotbar.setSlots(slots);
+      this.shopUi.bought();
+      me.held = this.hotbar.held()?.id ?? null;
+    };
+    net.onEat = (sid, item) => {
+      const t = performance.now() / 1000;
+      if (sid === net.you) me.eatAt = t;
+      else {
+        const r = c.remotes.map.get(sid);
+        if (r) r.eatAt = t;
+      }
+      if (sid === net.you) sfx.pop();
+      const d = itemDef(item);
+      if (sid === net.you && d) hud.toast(`${d.icon} ${d.name} ${d.cat === "drink" ? "içtin" : "yedin"}.`);
+    };
     net.onEcon = (w) => this.lifeHud.showWallet(w);
     net.onReviving = (by, target, until) => {
       this.revivingTarget = until && by === net.you ? target : 0;
@@ -441,6 +498,9 @@ export class Features {
     net.onLife = (ev) => {
       hudRoot.classList.add("has-life");
       this.lifeHud.setLife(ev, ev.downed);
+      this.buffs = ev.buffs ?? {};
+      this.lifeHud.setBuffs(this.buffs);
+      this.inv.setBuffs(this.buffs, net.serverNow());
       const was = me.downed;
       me.downed = ev.downed > 0;
       // Enerji bitince koşamazsın
@@ -1042,6 +1102,26 @@ export class Features {
   // Yakındaki etkileşimler
   // ---------------------------------------------------------------------------
 
+  /** Hızlı slot seç (aynısına yeniden basınca el boşalır); sunucu herkese eldekini söyler. */
+  private selectSlot(i: number): void {
+    const next = this.hotbar.selected === i ? null : i;
+    this.hotbar.select(next);
+    this.c.me.held = this.hotbar.held()?.id ?? null;
+    this.c.net.send({ t: "inv", op: "hold", slot: next });
+  }
+
+  /** Avatarların elindeki eşyalar (yerken el ağza). */
+  private updateHeld(): void {
+    const { me, remotes } = this.c;
+    const t = performance.now() / 1000;
+    this.held.begin();
+    if (me.held && !me.hidden && !me.car && !me.downed && !me.seated) this.held.place(me, me.held as ItemId, eatPose(me, t));
+    for (const r of remotes.map.values()) {
+      if (!r.info.held || !r.hasData || r.leaving || r.info.downed || r.info.car || r.info.ride || r.alpha < 0.5) continue;
+      this.held.place(r, r.info.held, eatPose(r, t));
+    }
+  }
+
   /** Minimap işaretleri (oyuncular, bayılanlar, park ettiğin araba) ve yaralı sayacı. */
   private updateLife(serverNow: number): void {
     const { me, remotes } = this.c;
@@ -1173,6 +1253,7 @@ export class Features {
       emoteFx.emit(me.x, 0, me.z, FX_CELL[n.act.fx], now / 1000, undefined, 2);
       hud.toast(`${n.name}: "${n.act.line}"`);
       if (n.act.shop) this.c.shopWardrobe(n.act.shop);
+      if (n.act.food) this.shopUi.open(n.act.food);
       return true;
     }
     if (act.startsWith("ring-")) {
@@ -1213,6 +1294,7 @@ export class Features {
     }
     switch (act) {
       case "cay":
+        this.shopUi.open("cay");
         net.send({ t: "act", a: "cay" });
         emoteFx.emit(me.x, 0, me.z, FX_CELL.tea, now / 1000, undefined, 2);
         this.teaMaker.emote = 0;
@@ -1319,8 +1401,26 @@ export class Features {
     if (input.consumeKey("build")) this.build.toggle();
     if (input.consumeKey("map")) this.map.toggle();
     if (this.build.active) {
-      const e = input.consumeEmote();
+      const e = input.consumeSlot();
       if (e >= 0) this.build.pickSlot(e);
+    } else {
+      const e = input.consumeSlot();
+      if (e >= 0) this.selectSlot(e);
+    }
+    if (input.consumeKey("inventory")) this.inv.toggle();
+    // Emote çarkı: basılı tutunca açılır, bırakınca seçilen yapılır
+    if (input.consumeKey("emotes") && !this.wheel.open) {
+      if (document.pointerLockElement && !input.touch) document.exitPointerLock();
+      this.wheel.show();
+    }
+    if (this.wheel.open && !input.heldAction("emotes")) {
+      const e = this.wheel.hide();
+      if (e >= 0) input.triggerEmote(e);
+    }
+    // Kısa sol tık: eldeki eşyayı ye/iç
+    if (input.consumeClick() && !me.downed && !me.car) {
+      const s = this.hotbar.held();
+      if (s && itemDef(s.id)?.use && this.hotbar.selected !== null) this.c.net.send({ t: "inv", op: "use", slot: this.hotbar.selected });
     }
     if (input.consumeKey("photo")) this.photo.toggle();
     if (input.consumeKey("quests")) this.profile.toggleQuests();
@@ -1352,6 +1452,7 @@ export class Features {
     });
     this.vehicles.update(dt, time);
     this.updateLife(serverNow);
+    this.updateHeld();
 
     // Saat: kişisel ayar > sinema modu (gündüzse) > dünyanın saati (!saat) > gerçek saat
     let hour: number | null = settings.clock === "auto" ? this.worldClock : CLOCK_HOURS[settings.clock];
@@ -1433,7 +1534,7 @@ export class Features {
     const ball = pitch.ball;
     const owner = pitch.owner;
     // Topla koşan biraz yavaş (FIFA/PES gibi): savunma yetişebilsin
-    me.speedMul = owner === net.you ? 0.88 : 1;
+    me.speedMul = (owner === net.you ? 0.88 : 1) * ((this.buffs.kafein ?? 0) > net.serverNow() ? KAFEIN_SPEED : 1);
     const canKick = (owner === net.you || (owner === 0 && Math.hypot(ball.x - me.x, ball.z - me.z) <= KICK_REACH + 0.6)) && !me.seated && !me.vehicle;
     other.setAim(null);
     pitch.setAim(

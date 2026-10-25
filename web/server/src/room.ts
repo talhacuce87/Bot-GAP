@@ -34,6 +34,7 @@ import type { RingHost } from "./ring";
 import type { LiveHost } from "./liveTables";
 import { RadioQueues } from "./radioQueue";
 import type { LifeHost } from "./life";
+import type { Bags } from "./inventory";
 
 const PET_IDS = new Set<string>(PETS.map((p) => p.id));
 const SKIN_IDS = new Set<string>(SKINS.map((s) => s.id));
@@ -120,6 +121,8 @@ export class Room {
   live: LiveHost | null = null;
   /** Hayat barları (savaş odasında yok). */
   life: LifeHost | null = null;
+  /** Çantalar (savaş odasında yok). */
+  bags: Bags | null = null;
   /** Oyuncuların radyo sıraları. */
   readonly radioQ = new RadioQueues(this);
   /** Görev/sayaç olayı (botta): sunucu bağlar; tank isabeti, savaşta vuruş ve galibiyet buradan. */
@@ -192,6 +195,7 @@ export class Room {
     this.ejectRiders(sid);
     this.radioQ.leave(sid);
     this.life?.leave(sid);
+    this.bags?.leave(sid);
     this.players.delete(sid);
     this.battle?.leave(sid);
     this.games?.leave(sid);

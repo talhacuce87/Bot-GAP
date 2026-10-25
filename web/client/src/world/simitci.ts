@@ -50,7 +50,7 @@ export function simitci(b: Builder): CityNpc[] {
       z: wz,
       rot,
       outfit: { hair: "hair_kisa_doku", tops: "top_tisort", bottoms: "bottom_kot", shoes: "shoes_klasik", hats: null, glasses: null, facial: null, colors: { hair: "#3b2f2a", skin: "#d9a77c" } },
-      act: { x: ax, z: az, r: 2, label: "Simit al 🥯", line: "Taze simit, sıcak simit! Çayını da kahvehanede iç.", fx: "sparkle" },
+      act: { x: ax, z: az, r: 2, label: "Simit al 🥯", line: "Taze simit, sıcak simit! Çayını da kahvehanede iç.", fx: "sparkle", food: "simit" },
     },
   ];
 }

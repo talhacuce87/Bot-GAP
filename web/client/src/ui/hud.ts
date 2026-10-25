@@ -88,17 +88,18 @@ export class Hud {
     }
     this.hint.textContent =
       `${move.every((m) => m.length === 1) ? move.join("") : move.join("/")}: yürü • ${k("run")}: koş • ${k("jump")}: zıpla • ` +
-      `${k("sit")}: otur • ${k("actF")}/${k("actG")}: etkileşim • 1–6: emote • ${k("wardrobe")}: gardırop • ` +
+      `${k("sit")}: otur • ${k("actF")}/${k("actG")}: etkileşim • 1–6: hızlı slot • ${k("emotes")} basılı: emote • ${k("inventory")}: çanta • ${k("wardrobe")}: gardırop • ` +
       `${k("shiftlock")}: shift lock • Enter: sohbet`;
   }
 
   /** Sağ kenarda emote düğmeleri (masaüstünde 1–6 tuşları da çalışır). */
   emoteBar(touch: boolean, onEmote: (i: number) => void): void {
-    const bar = el("div", "emotes", this.root);
+    // Masaüstünde emote çarkı (") var: düğmeler yalnızca dokunmatikte
+    const bar = el("div", touch ? "emotes" : "emotes desk", this.root);
     EMOTES.forEach((em, i) => {
       const b = el("button", "emote-btn", bar);
       b.textContent = em.emoji;
-      b.title = touch ? em.name : `${em.name} (${i + 1})`;
+      b.title = em.name;
       b.addEventListener("click", () => onEmote(i));
     });
   }

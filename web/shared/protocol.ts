@@ -11,6 +11,7 @@ import type { TavlaMove, TavlaState } from "./games/tavla";
 import type { TableKind } from "./zones";
 import type { CarRadio, CarSpec, ParkedCar, RadioQueueView } from "./car";
 import type { MoneyTx, WalletView } from "./economy";
+import type { BuffId, ItemId, ShopId, Slot } from "./items";
 import type { BjView, RouletteBet } from "./casino";
 import type { RingView } from "./ring";
 import type { BjBets, LiveTableView } from "./liveCasino";
@@ -62,6 +63,8 @@ export interface PlayerInfo {
   ride?: { d: number; s: number } | null;
   /** Bayıldı (can sıfır): yerde yatar, yanındakiler kaldırabilir. */
   downed?: boolean;
+  /** Elindeki eşya (hızlı slot). */
+  held?: ItemId | null;
   /** Arabasının hasarı (0 yok – 3 ağır): duman ve kararmış boya. */
   dmg?: number;
 }
@@ -396,10 +399,15 @@ export type ServerEvent =
   /** GAP ₺: bakiye; açıklamalı işlemse bildirim kartı. */
   | { t: "wallet"; balance: number; tx?: MoneyTx | null }
   /** Hayat barların (yalnızca sana); bayıldıysan uyanacağın an; hastanede uyandıysan yeni yerin. */
-  | { t: "life"; hp: number; hunger: number; energy: number; downed: number; tp?: { x: number; z: number; rot: number } }
+  | { t: "life"; hp: number; hunger: number; thirst: number; energy: number; downed: number; tp?: { x: number; z: number; rot: number }; buffs?: Partial<Record<BuffId, number>> }
   | { t: "downed"; sid: number; on: boolean }
   /** Kaldırma başladı (biten an, sunucu saati) ya da bitti/iptal (0): kaldırana ve kaldırılana. */
   | { t: "reviving"; by: number; target: number; until: number }
+  /** Çantan (yalnızca sana). */
+  | { t: "inv"; slots: Slot[] }
+  /** Birinin elindeki eşya değişti; biri bir şey yedi/içti (herkese). */
+  | { t: "held"; sid: number; item: ItemId | null }
+  | { t: "eat"; sid: number; item: ItemId }
   /** Cüzdan paneli. */
   | { t: "econ"; wallet: WalletView }
   /** Canlı casino masası (oturan ve izleyenlere, değişince). */
@@ -501,6 +509,13 @@ export type ClientEvent =
   | { t: "revive"; sid: number }
   | { t: "ambulance" }
   | { t: "econ"; op: "wallet" }
+  /** Dükkândan sepeti al; çanta işlemleri (kullan, taşı, at, arkadaşa ver, eline al). */
+  | { t: "shop"; shop: ShopId; cart: { id: ItemId; n: number }[] }
+  | { t: "inv"; op: "get" }
+  | { t: "inv"; op: "use" | "drop"; slot: number }
+  | { t: "inv"; op: "move"; from: number; to: number }
+  | { t: "inv"; op: "give"; slot: number; sid: number }
+  | { t: "inv"; op: "hold"; slot: number | null }
   /** Arabayı bir yere bırak (inince ya da çağırınca); null: kaldır. */
   | { t: "park"; parked: ParkedCar | null }
   | { t: "ring"; op: "join"; slot: number }

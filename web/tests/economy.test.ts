@@ -10,12 +10,17 @@ describe("hayat barları", () => {
     expect(stepLife(FULL_LIFE, 30 * 60, { running: false, seated: false }).hunger).toBeCloseTo(50);
     expect(stepLife(FULL_LIFE, 45 * 60, { running: false, seated: false }).energy).toBeCloseTo(50);
     expect(stepLife(FULL_LIFE, 45 * 60, { running: true, seated: false }).energy).toBeCloseTo(0);
-    expect(stepLife({ hp: 100, hunger: 100, energy: 40 }, 60, { running: false, seated: true }).energy).toBeCloseTo(40 + LIFE.seatedEnergyPerMin);
+    expect(stepLife({ hp: 100, hunger: 100, thirst: 100, energy: 40 }, 60, { running: false, seated: true }).energy).toBeCloseTo(40 + LIFE.seatedEnergyPerMin);
+  });
+
+  it("su açlıktan hızlı biter (40 dk); susuzken de can gider", () => {
+    expect(stepLife(FULL_LIFE, 20 * 60, { running: false, seated: false }).thirst).toBeCloseTo(50);
+    expect(stepLife({ hp: 50, hunger: 50, thirst: 0, energy: 50 }, 60, { running: false, seated: false }).hp).toBeCloseTo(50 - LIFE.starvePerMin);
   });
 
   it("açlık sıfırken can gider; doyken can dolar", () => {
-    expect(stepLife({ hp: 50, hunger: 0, energy: 50 }, 60, { running: false, seated: false }).hp).toBeCloseTo(50 - LIFE.starvePerMin);
-    expect(stepLife({ hp: 50, hunger: 100, energy: 100 }, 60, { running: false, seated: false }).hp).toBeGreaterThan(50);
+    expect(stepLife({ hp: 50, hunger: 0, thirst: 50, energy: 50 }, 60, { running: false, seated: false }).hp).toBeCloseTo(50 - LIFE.starvePerMin);
+    expect(stepLife({ hp: 50, hunger: 100, thirst: 100, energy: 100 }, 60, { running: false, seated: false }).hp).toBeGreaterThan(50);
   });
 
   it("düşme ve çarpma canı", () => {
@@ -148,7 +153,7 @@ describe("hayat sunucusu", () => {
   it("koşarken enerji hızlı gider, otururken dolar", () => {
     const { r, add, last, players } = room();
     const e = new Economy(null);
-    e.setLife("a", { hp: 100, hunger: 100, energy: 50 });
+    e.setLife("a", { hp: 100, hunger: 100, thirst: 100, energy: 50 });
     const h = new LifeHost(r, e);
     add(1);
     h.join(1, "a", 0);

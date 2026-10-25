@@ -32,6 +32,13 @@ export class Input {
   private jump = false;
   private act: "f" | "g" | null = null;
   private emote = -1;
+  /** Kısa sol tık (sürüklemeden): eldeki eşyayı kullan. */
+  private clicked = false;
+  private clickAt = 0;
+  private clickX = 0;
+  private clickY = 0;
+  /** 1–6: hızlı slot (inşa modunda blok). */
+  private slot = -1;
   /** Tek seferlik dünya kısayolları (keybinds HOTKEYS): menü, fotoğraf, araç, beşlik… */
   private hot = new Set<Action>();
 
@@ -80,9 +87,9 @@ export class Input {
         else if (acts.includes("actG")) this.act = "g";
         return;
       }
-      // Rakam emote; voleybolda bir eyleme atandıysa o eylem
+      // Rakam hızlı slot; voleybolda bir eyleme atandıysa o eylem
       const d = /^Digit([1-6])$/.exec(e.code);
-      if (d && !actionsOf(e.code).length) this.emote = Number(d[1]) - 1;
+      if (d && !actionsOf(e.code).length) this.slot = Number(d[1]) - 1;
       // Atanmış tuş: Space/oklar sayfayı kaydırmasın, odaktaki düğmeyi tetiklemesin
       if (this.press(e.code)) e.preventDefault();
     }, { signal });
@@ -252,6 +259,13 @@ export class Input {
       else if (e.button === 0) this.jump = true; // sol tık: ateş
       if (this.locked) return;
     }
+    // Fare kilitliyken (shift lock) sol tık da kısa tık sayılır
+    if (e.button === 0 && !this.wantLock) {
+      this.clickAt = performance.now();
+      this.clickX = e.clientX;
+      this.clickY = e.clientY;
+      if (this.locked) this.clicked = true;
+    }
     if (this.locked) return;
     this.mouseDown = true;
     this.lastX = e.clientX;
@@ -280,6 +294,8 @@ export class Input {
 
   private onMouseUp(e: MouseEvent): void {
     this.held.delete(`Mouse${e.button}`);
+    if (e.button === 0 && !this.locked && this.clickAt && performance.now() - this.clickAt < 300 && Math.hypot(e.clientX - this.clickX, e.clientY - this.clickY) < 6) this.clicked = true;
+    if (e.button === 0) this.clickAt = 0;
     if (e.button === 3 || e.button === 4) e.preventDefault();
     if ((e.buttons & 3) === 0) this.mouseDown = false;
     if (e.button === 2 && this.dragLock) {
@@ -407,7 +423,21 @@ export class Input {
     return a;
   }
 
-  /** 1–6 tuşu ya da ekrandaki emote düğmesi; yoksa -1. */
+  /** Kısa sol tık (oyun alanına, sürüklemeden) bu kare oldu mu. */
+  consumeClick(): boolean {
+    const c = this.clicked;
+    this.clicked = false;
+    return c;
+  }
+
+  /** 1–6 tuşu (hızlı slot / inşa bloğu); yoksa -1. */
+  consumeSlot(): number {
+    const s = this.slot;
+    this.slot = -1;
+    return s;
+  }
+
+  /** Emote çarkı ya da ekrandaki emote düğmesi; yoksa -1. */
   consumeEmote(): number {
     const e = this.emote;
     this.emote = -1;

@@ -198,7 +198,7 @@ export class SettingsPanel {
         ? "Paintball maçındayken geçerli. Sol tık atamak için bekleyen kutuya sol tıkla."
         : stadium
         ? "Stadyumdayken geçerli; dünyaya dönünce dünya tuşları geri gelir. Koş tuşu basılıyken müdahale: kayarak müdahale."
-        : "Sağ tık basılı: kamera (imleç yerinde kalır) • 1–6: emote • Enter: sohbet",
+        : "Sağ tık basılı: kamera (imleç yerinde kalır) • 1–6: hızlı slot (sol tık: kullan) • Enter: sohbet",
     );
     for (const a of PROFILE_ACTIONS[profile]) {
       const r = this.row(ACTION_NAMES[a]);

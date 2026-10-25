@@ -201,6 +201,9 @@ export class Player implements AvatarView, PlayerState {
   rideMeters = 0;
   /** Hız çarpanı (topla koşarken biraz yavaş: top sürmek bedava değil). */
   speedMul = 1;
+  /** Elindeki eşya (hızlı slot) ve son yediği an. */
+  held: string | null = null;
+  eatAt = -1;
   /** Sahnede (karaoke): sahne alanında kalır, sahne yüksekliğinde çizilir. */
   onStage = false;
   /** Fotoğraf modunda kamera daha uzağa açılır. */

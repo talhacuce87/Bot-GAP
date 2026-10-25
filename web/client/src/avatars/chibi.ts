@@ -40,6 +40,9 @@ export interface LimbPose {
   mic: number;
   /** 0..1 bilek güreşi: aynı kol öne, masaya uzanır. */
   grip: number;
+  /** 0..1 elde eşya (sağ kol hafif öne) ve yemek/içmek (el ağza). */
+  hold?: number;
+  eat?: number;
   /** Voleybol hareketi: tür, ağırlık (0..1, girip çıkar) ve ilerleme (0..1, smaçta kol savurma). */
   vkind?: VolleyPose;
   vw?: number;
@@ -328,6 +331,11 @@ export function setLimbs(a: THREE.Vector2[], p: LimbPose): void {
   if (p.grip > 0) {
     a[3].x = -1.45 * p.grip;
     a[3].y = -0.45 * p.grip;
+  }
+  if (p.hold) a[3].x = a[3].x * (1 - p.hold) - 0.9 * p.hold;
+  if (p.eat) {
+    a[3].x += (-2.3 - a[3].x) * p.eat;
+    a[3].y += (0.5 - a[3].y) * p.eat;
   }
   if (p.dance > 0) {
     const w = Math.sin(p.time * 8);

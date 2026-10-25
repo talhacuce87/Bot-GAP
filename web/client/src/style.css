@@ -8462,3 +8462,579 @@ button.cz-bjspot {
   width: 0;
   background: #5dcaa5;
 }
+
+/* ---- Yeme-içme dükkânı: ürün kartları + sepet ---- */
+.gpanel.shop-panel {
+  width: min(560px, calc(100vw - 20px));
+}
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+.shop-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 12px 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: transform 0.12s, background 0.12s;
+}
+.shop-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-2px);
+}
+.shop-card:active {
+  transform: scale(0.97);
+}
+.shop-ic {
+  font-size: 38px;
+  line-height: 1.1;
+}
+.shop-card b {
+  font-size: 13px;
+}
+.shop-fx {
+  font-size: 10.5px;
+  color: #fac775;
+  text-align: center;
+  min-height: 26px;
+}
+.shop-price {
+  font-weight: 700;
+  color: #9fe1cb;
+}
+.shop-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  color: #04342c;
+  background: #5dcaa5;
+  display: none;
+}
+.shop-badge.on {
+  display: block;
+}
+.shop-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.shop-cart {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 30px;
+  align-items: center;
+}
+.shop-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+.shop-chip {
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.09);
+  cursor: pointer;
+}
+.shop-pay {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.shop-pay b {
+  font-size: 18px;
+}
+.shop-pay b.short {
+  color: #f09595;
+}
+.shop-pay-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 18px;
+  font: inherit;
+  font-weight: 700;
+  color: #fff;
+  background: #1d9e75;
+  cursor: pointer;
+}
+.shop-pay-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---- Çanta (I) ---- */
+.gpanel.inv-panel {
+  width: min(860px, calc(100vw - 20px));
+}
+.inv-wrap {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
+}
+.inv-char {
+  position: relative;
+  display: grid;
+  grid-template-columns: 46px 1fr 46px;
+  grid-template-rows: auto 46px 1fr 46px auto;
+  gap: 6px;
+  min-height: 420px;
+  padding: 10px;
+  border-radius: 14px;
+  background: radial-gradient(circle at 50% 55%, #2b3a52, #141a24 72%);
+}
+.inv-name {
+  grid-column: 1 / 4;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.inv-stage {
+  grid-column: 2;
+  grid-row: 2 / 5;
+  position: relative;
+  min-height: 330px;
+}
+.inv-eq {
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  opacity: 0.55;
+}
+.inv-eq-hat {
+  grid-column: 1;
+  grid-row: 2;
+}
+.inv-eq-top {
+  grid-column: 1;
+  grid-row: 3;
+  align-self: center;
+}
+.inv-eq-bag {
+  grid-column: 3;
+  grid-row: 2;
+}
+.inv-eq-bottom {
+  grid-column: 3;
+  grid-row: 3;
+  align-self: center;
+}
+.inv-eq-shoes {
+  grid-column: 1;
+  grid-row: 4;
+}
+.inv-buffs {
+  grid-column: 1 / 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: center;
+  min-height: 24px;
+}
+.inv-buff {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(239, 159, 39, 0.18);
+  color: #fac775;
+}
+.inv-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.inv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.inv-tabs {
+  display: flex;
+  gap: 4px;
+}
+.inv-tab {
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+.inv-tab.on {
+  background: #1d9e75;
+}
+.inv-kg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 110px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+.inv-kg-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.inv-kg-bar i {
+  display: block;
+  height: 100%;
+  background: #5dcaa5;
+}
+.inv-kg-bar i.full {
+  background: #ef9f27;
+}
+.inv-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+.inv-hot {
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(93, 202, 165, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(93, 202, 165, 0.25);
+}
+.inv-hot-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.inv-slot {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  touch-action: none;
+}
+.inv-slot.sel {
+  box-shadow: inset 0 0 0 2px #5dcaa5;
+}
+.inv-slot.dim .inv-item {
+  opacity: 0.25;
+}
+.inv-slot.dragging .inv-item {
+  opacity: 0.3;
+}
+.inv-key {
+  position: absolute;
+  left: 5px;
+  top: 3px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.inv-item {
+  position: relative;
+  font-size: 28px;
+  cursor: grab;
+}
+.inv-n,
+.hotbar-item b {
+  position: absolute;
+  right: -10px;
+  bottom: -6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+.inv-ghost {
+  position: fixed;
+  z-index: 1000;
+  font-size: 34px;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(1.15);
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
+}
+.inv-detail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.inv-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.inv-detail-ic {
+  font-size: 40px;
+}
+.inv-detail-mid {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.inv-detail-mid small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.inv-fx {
+  font-size: 12px;
+  color: #fac775;
+}
+.inv-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.inv-btns button {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.inv-btns button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.inv-btns .inv-use {
+  background: #1d9e75;
+  color: #fff;
+}
+.inv-btns .inv-drop {
+  color: #f09595;
+}
+@media (max-width: 720px) {
+  .inv-wrap {
+    grid-template-columns: 1fr;
+  }
+  .inv-char {
+    min-height: 300px;
+  }
+  .inv-stage {
+    min-height: 220px;
+  }
+}
+
+/* ---- Alttaki hızlı slot (Minecraft gibi) ---- */
+.hotbar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 24px);
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.has-inv .hotbar {
+  display: flex;
+}
+.hotbar-label {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(12, 16, 24, 0.75);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.hotbar-label.show {
+  opacity: 1;
+}
+.hotbar-row {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(12, 16, 24, 0.6);
+}
+.hotbar-slot {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.hotbar-slot.on {
+  box-shadow: inset 0 0 0 2px #fff;
+  background: rgba(255, 255, 255, 0.14);
+  transform: translateY(-3px);
+}
+.hotbar-slot small {
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.hotbar-item {
+  position: relative;
+  font-size: 24px;
+}
+.has-inv .acts {
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 104px);
+}
+/* Minimap ve hızlı slot varken sohbet sol tarafta minimapin üstünde */
+.has-life.has-inv .chat {
+  left: max(10px, env(safe-area-inset-left));
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 236px);
+  width: min(340px, calc(100vw - 20px));
+}
+
+/* ---- Süren etkiler (minimapin üstünde) ---- */
+.life-buffs {
+  display: flex;
+  gap: 4px;
+}
+.life-buff {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  background: rgba(12, 16, 24, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(239, 159, 39, 0.5);
+  pointer-events: auto;
+}
+
+/* ---- Emote çarkı (Fortnite gibi) ---- */
+.emote-wheel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s, transform 0.12s;
+}
+.emote-wheel.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.ew-seg {
+  fill: rgba(12, 16, 24, 0.72);
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 1.5;
+  transition: fill 0.1s;
+}
+.ew-seg.on {
+  fill: rgba(29, 158, 117, 0.85);
+  stroke: #9fe1cb;
+}
+.ew-emoji {
+  font-size: 34px;
+  text-anchor: middle;
+}
+.ew-name {
+  position: absolute;
+  font-weight: 700;
+  font-size: 15px;
+  text-shadow: 0 1px 3px #000;
+}
+.ew-hint {
+  position: absolute;
+  bottom: -26px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.shop-foot {
+  position: sticky;
+  bottom: 0;
+  padding-bottom: 4px;
+  background: rgb(18, 24, 36);
+}
+.has-inv .emotes.desk {
+  display: none;
+}
+.hotbar-item,
+.inv-item {
+  position: static;
+}
+.inv-n,
+.hotbar-item b {
+  right: 5px;
+  bottom: 2px;
+}
+.gpanel .shop-pay-btn {
+  background: #1d9e75;
+  color: #fff;
+}
+.inv-grid {
+  grid-template-columns: repeat(8, 52px);
+  justify-content: start;
+}
+.inv-grid.inv-hot {
+  grid-template-columns: repeat(6, 52px);
+  justify-self: start;
+  width: max-content;
+}
+.inv-char {
+  min-height: 360px;
+}
+.inv-stage {
+  min-height: 270px;
+}
+@media (max-width: 720px) {
+  .inv-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+.life-row.thirst {
+  --c: #4fc3f7;
+}

@@ -5,6 +5,7 @@ import type { Shot } from "../../shared/tank";
 import type { CarRadio, ParkedCar, RadioQueueView } from "../../shared/car";
 import type { RingView } from "../../shared/ring";
 import type { MoneyTx, WalletView } from "../../shared/economy";
+import type { ItemId, Slot } from "../../shared/items";
 import type { BattleState } from "../../shared/protocol";
 import type { PlotState } from "../../shared/build";
 import type { VBall, VolleyEv, VolleyState } from "../../shared/volley";
@@ -104,6 +105,10 @@ export class Net {
   /** Biri bayıldı ya da kalktı (sen de olabilirsin). */
   onDowned: (sid: number, on: boolean) => void = () => {};
   onEcon: (w: WalletView) => void = () => {};
+  /** Çantan; birinin elindeki eşya (sen de olabilirsin); biri yedi/içti. */
+  onInv: (slots: Slot[]) => void = () => {};
+  onHeld: (sid: number, item: ItemId | null) => void = () => {};
+  onEat: (sid: number, item: ItemId) => void = () => {};
   /** Kaldırma başladı (biten an) ya da bitti/iptal (0); sen kaldıran ya da kaldırılansın. */
   onReviving: (by: number, target: number, until: number) => void = () => {};
   /** Bir arabanın radyosu değişti (kendininki dahil). */
@@ -453,6 +458,18 @@ export class Net {
       }
       case "econ":
         this.onEcon(ev.wallet);
+        break;
+      case "inv":
+        this.onInv(ev.slots);
+        break;
+      case "held": {
+        const r = this.remotes.map.get(ev.sid);
+        if (r) r.info.held = ev.item;
+        this.onHeld(ev.sid, ev.item);
+        break;
+      }
+      case "eat":
+        this.onEat(ev.sid, ev.item);
         break;
       case "reviving":
         this.onReviving(ev.by, ev.target, ev.until);
