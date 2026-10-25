@@ -20,6 +20,18 @@ const SEEK_COOLDOWN = 2.5;
 const BACKOFF_WINDOW = 12;
 const BACKOFF_MAX = 4;
 
+/**
+ * Perdede oynayacak kaynak. Sunucunun aktardığı YouTube/Twitch/Kick (relay) gömülü oynatıcı yerine
+ * kendi origin'imizden video olarak oynar; `proxyFiles` ise doğrudan dosyalar da sunucudan geçer.
+ */
+export function screenSource(src: Source, base: string, watchId: string | null, proxyFiles: boolean): Source {
+  if (!watchId) return src;
+  if (src.kind === "file") return proxyFiles ? { ...src, url: `${base}/media/${watchId}/p?u=${encodeURIComponent(src.url)}` } : src;
+  if (!src.relay) return src;
+  const { hls, live } = src.relay;
+  return { kind: "file", url: `${base}/media/${watchId}/relay.${hls ? "m3u8" : "mp4"}`, hls, live };
+}
+
 function sameSource(a: Source | null, b: Source | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
