@@ -3,7 +3,7 @@
 // seviye ödülü kıyafetler (botun kilitledikleri) satılmaz, seviyeyle açılır. Bütün fiyatlar burada.
 //
 // Sahip olunanlar dize anahtarlarla saklanır: "look:<parça>", "car:<model>", "mod:<model>:<alan>:<değer>".
-import { CAR_MODELS, type CarModel, type CarSpec, DEFAULT_CAR } from "./car";
+import { CAR_MODELS, type CarModel, type CarSpec, DEFAULT_CAR, isBike } from "./car";
 
 /** Kıyafet ve saç fiyatları (₺); listede olmayan parça bedava (başlangıç seti ya da seviye ödülü). */
 export const LOOK_PRICES: Record<string, number> = {
@@ -36,8 +36,11 @@ export const lookShop = (id: string): "barber" | "fashion" => (id.startsWith("ha
 
 /** Araba fiyatları (₺): ilk üçü bedava. */
 export const CAR_PRICES: Record<(typeof CAR_MODELS)[number]["id"], number> = {
-  sahin: 0, dogan: 0, kartal: 0, doblo: 25_000, linea: 32_000, passat: 55_000, e30: 85_000,
+  sahin: 0, dogan: 0, kartal: 0, doblo: 25_000, linea: 32_000, passat: 55_000, e30: 85_000, scooter: 1_000,
 };
+
+/** Modifiye fiyat çarpanı: motorlarda parçalar yarı fiyat (50 ₺'ye yuvarlanır). */
+const modScale = (model: string) => (isBike(model) ? 0.5 : 1);
 
 /** Modifiye fiyatları (₺, araba başına bir kez): alan → değer → fiyat; varsayılan değer bedava. */
 export const MOD_PRICES: Partial<Record<keyof CarSpec, Record<string, number>>> = {
@@ -65,11 +68,12 @@ export function itemPrice(item: string): number | null {
   if (kind === "car") return a in CAR_PRICES ? CAR_PRICES[a as keyof typeof CAR_PRICES] : null;
   if (kind === "mod" && a in CAR_PRICES) {
     const field = b as keyof CarSpec;
-    if (field in MOD_FLAG_PRICES) return c === "true" ? (MOD_FLAG_PRICES[field] ?? 0) : null;
+    const scaled = (p: number) => Math.round((p * modScale(a)) / 50) * 50;
+    if (field in MOD_FLAG_PRICES) return c === "true" ? scaled(MOD_FLAG_PRICES[field] ?? 0) : null;
     const t = MOD_PRICES[field];
     if (!t) return null;
     if (c === String(DEFAULT_CAR[field])) return 0;
-    return c in t ? t[c] : null;
+    return c in t ? scaled(t[c]) : null;
   }
   return null;
 }

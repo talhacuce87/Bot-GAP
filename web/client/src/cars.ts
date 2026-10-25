@@ -5,7 +5,7 @@
 // ışık yok: yolda ışık lekesi taklit eder.
 import * as THREE from "three";
 import { FLAG_SEATED } from "../../shared/constants";
-import { type CarDents, type CarSpec, NO_DENTS } from "../../shared/car";
+import { type CarDents, type CarSpec, isBike, NO_DENTS } from "../../shared/car";
 import type { AvatarView } from "./avatars/avatars";
 import { wetEnv } from "./world/geo";
 import { type LampField, MAX_CARS } from "./world/lamps";
@@ -110,7 +110,7 @@ export class Cars {
     if (!e || e.key !== key) {
       if (e) this.drop(sid);
       const mesh = this.take(key, spec);
-      e = { key, model: spec.model, motor: spec.model === "motor", mesh, seen: true, x, z, rot, steer: 0, lit: false, vel: 0, acc: 0, yr: 0, skid: null, smokeAt: 0, roll: 0, pitch: 0 };
+      e = { key, model: spec.model, motor: isBike(spec.model), mesh, seen: true, x, z, rot, steer: 0, lit: false, vel: 0, acc: 0, yr: 0, skid: null, smokeAt: 0, roll: 0, pitch: 0 };
       this.entries.set(sid, e);
     }
     e.seen = true;
@@ -214,7 +214,7 @@ export class Cars {
   }
 
   private build(spec: CarSpec): TofasMesh {
-    const mesh = spec.model === "motor" ? buildMotor(spec) : buildTofas(spec);
+    const mesh = isBike(spec.model) ? buildMotor(spec) : buildTofas(spec);
     this.scene.add(mesh.group);
     return mesh;
   }

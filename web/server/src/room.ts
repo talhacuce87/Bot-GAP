@@ -25,7 +25,7 @@ import {
 } from "../../shared/protocol";
 import { GARAGE, GARAGE_KEEP_CLEAR, inStadium, inVolley, SPAWN } from "../../shared/zones";
 import { inPbField } from "../../shared/paintball";
-import { CAR_MAX_SPEED, type CarRadio, type CarSpec, ENTER_REACH, isJobCar, NO_DENTS, validDents, type ParkedCar, PARK_REACH, RIDE_SEATS, validCar } from "../../shared/car";
+import { CAR_MAX_SPEED, type CarRadio, type CarSpec, ENTER_REACH, isBike, isJobCar, NO_DENTS, validDents, type ParkedCar, PARK_REACH, RIDE_SEATS, validCar } from "../../shared/car";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
@@ -396,7 +396,7 @@ export class Room {
     const d = this.players.get(driver);
     if (!d || !d.info.car || driver === sid) return "🚗 Bu arabanın sürücüsü yok.";
     if (p.info.car || p.info.jailed || this.tank.driver === sid) return "🚗 Önce arabandan in.";
-    if (d.info.car.model === "motor") return "🛵 Kurye scooter'ına yolcu binmez.";
+    if (isBike(d.info.car.model)) return "🛵 Scooter'a yolcu binmez.";
     if (Math.hypot(p.state.x - d.state.x, p.state.z - d.state.z) > ENTER_REACH + 2) return "🚗 Arabaya yaklaş.";
     const taken = new Set([...this.players.values()].filter((q) => q.info.ride?.d === driver).map((q) => q.info.ride!.s));
     const seat = [1, 2, 3].find((s) => s <= RIDE_SEATS && !taken.has(s));

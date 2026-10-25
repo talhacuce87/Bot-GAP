@@ -40,7 +40,7 @@ import {
   TURRET_TOP,
   TURRET_TURN,
 } from "../../shared/tank";
-import { CAR_BOOST, CAR_BRAKE, CAR_HANDBRAKE, CAR_REVERSE, carCircles, carHullOf, carPerf, type CarStats } from "../../shared/car";
+import { CAR_BOOST, CAR_BRAKE, CAR_HANDBRAKE, CAR_REVERSE, carCircles, carHullOf, carPerf, isBike, type CarStats } from "../../shared/car";
 import { type AvatarView, KO_UP } from "./avatars/avatars";
 import type { Input } from "./input/input";
 import { LEDGE } from "./world/colliders";
@@ -97,15 +97,15 @@ const DRIFT_YAW = 2.1;
 const BOUNCE = 0.28;
 const WALL_FRICTION = 0.2;
 const SPIN_DAMP = 2.2;
-export const CAR_MASS: Partial<Record<string, number>> = { motor: 0.3, doblo: 1.35, taksi: 1.35, passat: 1.3, linea: 1.15, kartal: 1.05, e30: 1 };
+export const CAR_MASS: Partial<Record<string, number>> = { motor: 0.3, scooter: 0.3, doblo: 1.35, taksi: 1.35, passat: 1.3, linea: 1.15, kartal: 1.05, e30: 1 };
 /** Modellerin yarı boyu ve yarı eni (m): araba arabaya çarpışmada dikdörtgen. */
 export const CAR_DIMS: Record<string, { hl: number; hw: number }> = {
   sahin: { hl: 2.15, hw: 0.86 }, dogan: { hl: 2.15, hw: 0.86 }, kartal: { hl: 2.2, hw: 0.86 }, linea: { hl: 2.3, hw: 0.88 },
-  doblo: { hl: 2.15, hw: 0.9 }, taksi: { hl: 2.15, hw: 0.9 }, passat: { hl: 2.35, hw: 0.88 }, e30: { hl: 2.15, hw: 0.83 }, motor: { hl: 0.95, hw: 0.38 },
+  doblo: { hl: 2.15, hw: 0.9 }, taksi: { hl: 2.15, hw: 0.9 }, passat: { hl: 2.35, hw: 0.88 }, e30: { hl: 2.15, hw: 0.83 }, motor: { hl: 0.95, hw: 0.38 }, scooter: { hl: 0.95, hw: 0.38 },
 };
 /** Engellere karşı gövde: boyunca dizili daireler (merkezden uzaklıkları) ve yarıçapları. */
 function carHull(model: string): { r: number; offs: number[] } {
-  return model === "motor" ? { r: 0.4, offs: [-0.55, 0.55] } : { r: 0.88, offs: [-1.25, 0, 1.25] };
+  return isBike(model) ? { r: 0.4, offs: [-0.55, 0.55] } : { r: 0.88, offs: [-1.25, 0, 1.25] };
 }
 /**
  * Arabanın gövdesini engellerden çıkarırken verilen ayak yüksekliği (yerdekiyle aynı; ayırt etmek için): dinamik

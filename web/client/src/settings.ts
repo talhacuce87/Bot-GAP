@@ -133,9 +133,10 @@ function load(): Settings {
   if (!RENDER_SCALES.includes(s.renderScale)) s.renderScale = 0;
   s.car = validCar(s.car) ?? { ...DEFAULT_CAR };
   // Model başına tuning: eski kayıtta yalnızca tek araba vardı (o modelin ayarı olur, diğerleri onun boyasıyla)
-  const cars = (s.cars ?? {}) as Partial<Record<string, unknown>>;
+  // Kayıtta olmayan yeni model (ör. scooter) sıfır gelir; hiç model kaydı yoksa eski tek arabanın görünümü
+  const cars = (s.cars ?? {}) as Partial<Record<string, unknown>>, fresh = !Object.keys(cars).length;
   s.cars = Object.fromEntries(
-    CAR_MODELS.map((m) => [m.id, validCar(cars[m.id]) ?? (s.car.model === m.id ? { ...s.car } : { ...s.car, model: m.id })]),
+    CAR_MODELS.map((m) => [m.id, validCar(cars[m.id]) ?? (s.car.model === m.id ? { ...s.car } : fresh ? { ...s.car, model: m.id } : { ...DEFAULT_CAR, model: m.id })]),
   ) as Settings["cars"];
   for (const m of CAR_MODELS) s.cars[m.id].model = m.id;
   // Eski bağlantılar: ?low ve ?nobloom kayıtlı ayarı bu oturum için ezer

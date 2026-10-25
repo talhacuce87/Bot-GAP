@@ -74,6 +74,7 @@ const SHAPES: Record<CarSpec["model"], Shape> = {
   // İş araçları: taksi Doblo gövdesiyle kurulur, scooter ayrı (motor.ts); yer tutucu
   taksi: TOFAS,
   motor: TOFAS,
+  scooter: TOFAS,
 };
 
 const TIRE_W = 0.19;
@@ -83,7 +84,7 @@ const TRIM = "#1b1c1f";
 const CHROME = "#cfd3d8";
 const RUBBER = "#121315";
 
-const MODEL_NAMES: Record<CarSpec["model"], string> = { sahin: "ŞAHİN", dogan: "DOĞAN SLX", kartal: "KARTAL", linea: "LINEA", doblo: "DOBLÒ", passat: "PASSAT", e30: "316i", taksi: "DOBLÒ", motor: "GAP" };
+const MODEL_NAMES: Record<CarSpec["model"], string> = { sahin: "ŞAHİN", dogan: "DOĞAN SLX", kartal: "KARTAL", linea: "LINEA", doblo: "DOBLÒ", passat: "PASSAT", e30: "316i", taksi: "DOBLÒ", motor: "GAP", scooter: "GAP" };
 /** Bagajın solundaki ikinci yazı (motor). */
 const ENGINE_BADGE: Partial<Record<CarSpec["model"], string>> = { linea: "1.3 MULTIJET", passat: "TDI", doblo: "1.3 MULTIJET" };
 
@@ -109,7 +110,7 @@ function roundGlow(): THREE.CanvasTexture {
 /** Bir kez üretilen dokular: yumuşak ışık hâlesi (neon) ve yumuşak gölge. */
 let glowTex: THREE.CanvasTexture | null = null;
 let shadowTex: THREE.CanvasTexture | null = null;
-function softTexture(kind: "glow" | "shadow"): THREE.CanvasTexture {
+export function softTexture(kind: "glow" | "shadow"): THREE.CanvasTexture {
   const cached = kind === "glow" ? glowTex : shadowTex;
   if (cached) return cached;
   const c = document.createElement("canvas");
@@ -142,7 +143,7 @@ function labelTexture(draw: (g: CanvasRenderingContext2D) => void, w = 256, h = 
   return tex;
 }
 
-function plateTexture(text: string): THREE.CanvasTexture {
+export function plateTexture(text: string): THREE.CanvasTexture {
   return labelTexture((g) => {
     g.fillStyle = "#111";
     g.fillRect(0, 0, 256, 56);

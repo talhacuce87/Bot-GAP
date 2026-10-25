@@ -1,5 +1,5 @@
 // Navigasyon oku (NFSU2 gibi): arabanın üstünde süzülen, kalın ve parlak mavi 3B ok. Rotada biraz ilerideki
-// noktaya (bir sonraki dönüş) yumuşakça döner; ucu hafif öne eğik, hafifçe yukarı aşağı salınır. Yürürken başının
+// noktaya (bir sonraki dönüş) yumuşakça döner; neredeyse düz durur, hafifçe yukarı aşağı salınır. Yürürken başının
 // üstünde, daha küçük. Hep görünür (binalar ve ağaçlar örtmez).
 import * as THREE from "three";
 
@@ -7,7 +7,7 @@ const TOP = "#5ad8ff";
 const SIDE = "#1066c4";
 const GLOW = "#8fe6ff";
 /** Okun boyu çarpanı (şekil ~1,2 m): arabanın üstünde uzaktan okunsun. */
-const SIZE = 1.7;
+const SIZE = 1.3;
 
 function arrowShape(): THREE.Shape {
   // +y ucu: kalın gövde ve geniş baş (ölçü: m)
@@ -42,8 +42,8 @@ export class NavArrow {
     glow.scale.setScalar(1.18);
     glow.renderOrder = 20;
     this.tilt.add(glow, body);
-    // Ucu öne eğik: arkadan bakan kamera üst yüzü görür
-    this.tilt.rotation.x = 0.42;
+    // Neredeyse düz (NFSU2 gibi): hafif öne eğik, arkadan bakan kamera üst yüzü görür; yandan bakınca yamuk durmaz
+    this.tilt.rotation.x = 0.12;
     this.group.add(this.tilt);
     this.group.visible = false;
   }

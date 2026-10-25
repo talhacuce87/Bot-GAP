@@ -33,7 +33,7 @@ import { LIVE_TABLES } from "../../shared/liveCasino";
 import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
-import { type CarDents, type CarRadio, carCircles, CAR_ENGINES, CAR_MODELS, CAR_STATS, type CarSpec, DEFAULT_CAR, ENTER_REACH, isJobCar, NO_DENTS, RADIO_RANGE } from "../../shared/car";
+import { type CarDents, type CarRadio, carCircles, CAR_ENGINES, CAR_MODELS, CAR_STATS, type CarSpec, DEFAULT_CAR, ENTER_REACH, isBike, isJobCar, NO_DENTS, RADIO_RANGE } from "../../shared/car";
 import { Phone } from "./ui/phone";
 import { GALLERY_SLOTS } from "./world/gallery";
 import { JobHud } from "./ui/jobHud";
@@ -1001,7 +1001,7 @@ export class Features {
     if (me.car || me.seated || me.vehicle || this.myRide) return null;
     for (const r of remotes.map.values()) {
       // Scooter'a yolcu binmez (sunucu da reddeder)
-      if (!r.hasData || !r.info.car || r.leaving || r.info.car.model === "motor") continue;
+      if (!r.hasData || !r.info.car || r.leaving || isBike(r.info.car.model)) continue;
       const [fx, fz, bx, bz] = carCircles(r.x, r.z, r.rot);
       const ex = bx - fx, ez = bz - fz, l2 = ex * ex + ez * ez || 1;
       const t = Math.max(0, Math.min(1, ((me.x - fx) * ex + (me.z - fz) * ez) / l2));
@@ -1283,7 +1283,8 @@ export class Features {
     const hideArrow = this.vehicles.tuning.isOpen || !!me.driving || me.onStage || me.jailed || this.photo.active || (!me.car && (me.hidden || !!this.myRide));
     this.nav.update(me, {
       job: this.job?.target ?? null,
-      roof: settings.car.model === "motor" ? 1.55 : roofOf(settings.car.model),
+      // Scooter'da sürücünün isim etiketinin üstü
+      roof: isBike(settings.car.model) ? 1.75 : roofOf(settings.car.model),
       firstPerson: settings.firstPerson,
       hideArrow,
       groundAt: (x, z) => world.colliders.groundAt(x, z, 0.4),
@@ -2220,11 +2221,13 @@ export class Features {
     // Hasarlı arabalardan duman (2: açık gri, 3: kara)
     if (time - this.smokeAt > 0.12) {
       this.smokeAt = time;
-      const puff = (x: number, z: number, rot: number, d: number) => {
-        if (d >= 2) this.smoke.emit(x + Math.sin(rot) * 1.7, 1.1, z + Math.cos(rot) * 1.7, time, d === 3 ? 0.9 : 0.3);
+      // Duman motorun yerinden: arabada kaputtan, motorda selenin altından
+      const puff = (x: number, z: number, rot: number, d: number, model: CarSpec["model"]) => {
+        const ahead = isBike(model) ? 0 : 1.7;
+        if (d >= 2) this.smoke.emit(x + Math.sin(rot) * ahead, 1.1, z + Math.cos(rot) * ahead, time, d === 3 ? 0.9 : 0.3);
       };
-      if (me.car) puff(me.x, me.z, me.rot, this.carDamage);
-      for (const r of remotes.map.values()) if (r.hasData && r.info.car && Math.hypot(r.x - me.x, r.z - me.z) < 120) puff(r.x, r.z, r.rot, r.info.dmg ?? 0);
+      if (me.car) puff(me.x, me.z, me.rot, this.carDamage, settings.car.model);
+      for (const r of remotes.map.values()) if (r.hasData && r.info.car && Math.hypot(r.x - me.x, r.z - me.z) < 120) puff(r.x, r.z, r.rot, r.info.dmg ?? 0, r.info.car.model);
     }
     this.smoke.update(time, camera);
   }

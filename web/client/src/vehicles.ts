@@ -44,7 +44,7 @@ export interface VehicleContext {
 const UP = new THREE.Vector3(0, 1, 0);
 /** "…'e bin" (yönelme hâli, okunuşa göre). */
 const TO: Record<CarSpec["model"], string> = {
-  sahin: "Şahin'e", dogan: "Doğan SLX'e", kartal: "Kartal'a", linea: "Linea'ya", doblo: "Doblo'ya", passat: "Passat'a", e30: "E30'a", motor: "Scooter'a", taksi: "Taksiye",
+  sahin: "Şahin'e", dogan: "Doğan SLX'e", kartal: "Kartal'a", linea: "Linea'ya", doblo: "Doblo'ya", passat: "Passat'a", e30: "E30'a", motor: "Scooter'a", scooter: "Scooter'a", taksi: "Taksiye",
 };
 
 /** Park halindeki arabaların çizildiği en uzak mesafe. */

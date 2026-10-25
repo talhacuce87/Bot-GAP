@@ -254,3 +254,23 @@ describe("Room · park halindeki araba", () => {
     expect(validCar({ ...DEFAULT_CAR })).toEqual(DEFAULT_CAR);
   });
 });
+
+describe("Kişisel scooter", () => {
+  it("1.000 ₺, motor modifiyeleri yarı fiyat; spoiler, çıkartma, cam filmi, basıklık düşer; yolcu almaz", async () => {
+    const { itemPrice, CAR_PRICES } = await import("../shared/shop");
+    const { isBike } = await import("../shared/car");
+    expect(CAR_PRICES.scooter).toBe(1000);
+    expect(itemPrice("car:scooter")).toBe(1000);
+    expect(itemPrice("mod:scooter:neon:mavi")).toBe(2000);
+    expect(itemPrice("mod:sahin:neon:mavi")).toBe(4000);
+    expect(isBike("scooter") && isBike("motor") && !isBike("sahin")).toBe(true);
+    const c = validCar({ model: "scooter", color: "kirmizi", spoiler: "buyuk", decal: "alev", tint: true, low: true, neon: "mor" })!;
+    expect(c).toMatchObject({ model: "scooter", color: "kirmizi", spoiler: "yok", decal: "yok", tint: false, low: false, neon: "mor" });
+    const room = new Room("g:test");
+    const a = new FakeConn(), b = new FakeConn();
+    const sa = room.join({ id: "a", name: "a", avatar: null, guest: true }, a, 0);
+    const sb = room.join({ id: "b", name: "b", avatar: null, guest: true }, b, 0);
+    room.setCar(sa, c);
+    expect(room.ride(sb, sa)).toMatch(/yolcu binmez/);
+  });
+});

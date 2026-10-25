@@ -10,6 +10,7 @@ export const CAR_MODELS = [
   { id: "doblo", name: "Doblo" },
   { id: "passat", name: "Passat 1.9 TDI" },
   { id: "e30", name: "BMW E30" },
+  { id: "scooter", name: "Scooter" },
 ] as const;
 export const CAR_COLORS = [
   { id: "beyaz", name: "Beyaz", hex: "#f1efe7" },
@@ -98,6 +99,15 @@ export const JOB_CAR_MODELS = [
 export type CarModel = Id<typeof CAR_MODELS> | Id<typeof JOB_CAR_MODELS>;
 export const isJobCar = (m: unknown): m is Id<typeof JOB_CAR_MODELS> => JOB_CAR_MODELS.some((x) => x.id === m);
 
+/**
+ * İki tekerlekliler (kurye ve kişisel scooter; yeni motorlar buraya eklenir): küçük gövde, yolcu almaz, sürücü
+ * selede görünür; spoiler, çıkartma, cam filmi ve basık süspansiyon yoktur.
+ */
+export const BIKE_MODELS: readonly CarModel[] = ["motor", "scooter"];
+export const isBike = (m: unknown): boolean => BIKE_MODELS.includes(m as CarModel);
+/** Motorlarda olmayan modifiyeler (tuning menüsünde çıkmaz, sunucu varsayılana döndürür). */
+export const BIKE_NO_MODS: readonly (keyof CarSpec)[] = ["spoiler", "decal", "tint", "low"];
+
 export interface CarSpec {
   model: CarModel;
   color: Id<typeof CAR_COLORS>;
@@ -160,6 +170,8 @@ export interface CarStats {
 export const CAR_STATS: Record<CarModel, CarStats> = {
   // Scooter: çevik ve hızlı kalkar, son sürati düşük
   motor: { top: 21, accel: 12.5, turn: 1.3, grip: 1.1, drift: 0.1, pitch: 1.5, diesel: false },
+  // Kişisel scooter: kuryeninkiyle aynı; motor modifiyesiyle açılır
+  scooter: { top: 21, accel: 12.5, turn: 1.3, grip: 1.1, drift: 0.1, pitch: 1.5, diesel: false },
   // Taksi Doblo: dizel, ağır
   taksi: { top: 23, accel: 8.6, turn: 0.94, grip: 0.92, drift: 0.2, pitch: 0.75, diesel: true },
   sahin: { top: CAR_SPEED, accel: 10, turn: 1, grip: 1, drift: 0.6, pitch: 1, diesel: false },
@@ -227,7 +239,7 @@ export function validCar(v: unknown): CarSpec | null {
   if (!v || typeof v !== "object") return null;
   const c = v as Record<string, unknown>;
   const plate = typeof c.plate === "string" ? c.plate.toLocaleUpperCase("tr-TR").replace(/\s+/g, " ").trim().slice(0, 10) : "";
-  return {
+  const out: CarSpec = {
     // İş araçları burada düşer (sunucu işteyse ayrıca izin verir)
     model: pick(CAR_MODELS, c.model, "sahin"),
     color: pick(CAR_COLORS, c.color, DEFAULT_CAR.color),
@@ -243,11 +255,14 @@ export function validCar(v: unknown): CarSpec | null {
     low: c.low === true,
     plate: PLATE.test(plate) ? plate : DEFAULT_CAR.plate,
   };
+  // Motorda spoiler, çıkartma, cam filmi, basık süspansiyon olmaz
+  if (isBike(out.model)) for (const k of BIKE_NO_MODS) (out as unknown as Record<string, unknown>)[k] = DEFAULT_CAR[k];
+  return out;
 }
 
 /** Modelin gövdesi: iki dairenin yarıçapı ve merkezden uzaklığı (scooter araba kadar yer kaplamaz). */
 export function carHullOf(model: string): { r: number; off: number } {
-  return model === "motor" ? { r: 0.42, off: 0.5 } : { r: CAR_HULL_R, off: CAR_HULL_OFFSET };
+  return isBike(model) ? { r: 0.42, off: 0.5 } : { r: CAR_HULL_R, off: CAR_HULL_OFFSET };
 }
 
 /** Arabanın ön ve arka çarpışma dairelerinin merkezleri (ön x, z, arka x, z); `off` modelin gövdesinden. */

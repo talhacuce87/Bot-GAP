@@ -2,9 +2,10 @@
 // tıkla (ya da 1-7) → o araba kendi tuning'iyle yanına gelir (park halinde); F ile binersin. Park edilen araba görünür,
 // kaldırılabilir. Aynı pencere galeri olarak da açılır: paralı arabalar fiyatı, hızı ve "Satın al" düğmesiyle.
 import * as THREE from "three";
-import { CAR_COLORS, CAR_MODELS, carPerf, type CarSpec } from "../../../shared/car";
+import { CAR_COLORS, CAR_MODELS, carPerf, type CarSpec, isBike } from "../../../shared/car";
 import { CAR_PRICES, carItem } from "../../../shared/shop";
 import { owned } from "../owned";
+import { buildMotor } from "../world/motor";
 import { buildTofas } from "../world/tofas";
 
 export interface CarMenuHooks {
@@ -29,6 +30,7 @@ const TAGLINE: Record<CarSpec["model"], string> = {
   passat: "Sakal Passat · chip'le uçak olur",
   e30: "Arkadan itiş · el freniyle drift kralı",
   motor: "GAP Kurye · arkada teslimat kutusu",
+  scooter: "Trafikte sıyrılır · park derdi yok",
   taksi: "Sarı Doblo · tepede TAKSİ tabelası",
 };
 
@@ -56,7 +58,11 @@ class Thumbs {
         this.camera.position.set(5.4, 2.0, 5.0);
         this.camera.lookAt(0, 0.55, 0);
       }
-      const car = buildTofas(spec);
+      const bike = isBike(spec.model);
+      const car = bike ? buildMotor(spec) : buildTofas(spec);
+      // Motor küçük: kamera yaklaşır
+      this.camera.position.set(...((bike ? [2.7, 1.35, 2.5] : [5.4, 2.0, 5.0]) as [number, number, number]));
+      this.camera.lookAt(0, bike ? 0.5 : 0.55, 0);
       car.setNight(0.5);
       car.group.rotation.y = -0.25;
       this.scene.add(car.group);

@@ -81,7 +81,7 @@ export class Navigator {
     }
     const now = performance.now();
     const moved = !this.dest || Math.hypot(dest.x - this.dest.x, dest.z - this.dest.z) > 1;
-    let la = this.route ? lookAhead(this.route, me.x, me.z, 0) : null;
+    let la = this.route ? lookAhead(this.track(this.route), me.x, me.z, 0) : null;
     if (moved || !this.route || (la && la.off > OFF_ROUTE && now - this.routedAt > 1200)) {
       this.graph ??= new RoadGraph(worldRoads());
       this.route = this.graph.route(me.x, me.z, dest.x, dest.z);
@@ -90,12 +90,13 @@ export class Navigator {
     }
     const route = this.route!;
     const ahead = me.car ? 14 + Math.abs(me.car.v) * 0.9 : 8;
-    la = lookAhead(route, me.x, me.z, ahead);
+    la = lookAhead(this.track(route), me.x, me.z, ahead);
     // Ok: arabanın üstünde biraz önde (birinci şahısta camın önünde), yürürken başının üstünde küçük
     const fx = Math.sin(me.rot), fz = Math.cos(me.rot);
     let at: { x: number; y: number; z: number } | null = null, scale = 1;
     if (!f.hideArrow) {
-      if (me.car) at = f.firstPerson ? { x: me.x + fx * 6, y: 2.2, z: me.z + fz * 6 } : { x: me.x + fx * 0.6, y: f.roof + 1.35, z: me.z + fz * 0.6 };
+      // Tam aracın üstünde, isim etiketinin üstünde (öne kaydırılınca yandan bakınca kayık görünüyordu)
+      if (me.car) at = f.firstPerson ? { x: me.x + fx * 6, y: 2.2, z: me.z + fz * 6 } : { x: me.x, y: f.roof + 1.1, z: me.z };
       else {
         at = { x: me.x, y: me.baseY + 2.9, z: me.z };
         scale = 0.5;
@@ -105,6 +106,14 @@ export class Navigator {
     // İş hedefinin mesafesini iş kartı gösterir; işaret için üstte etiket
     const left = la.left;
     this.setChip(f.job ? "" : `📍 Hedef · ${left >= 1000 ? `${(left / 1000).toLocaleString("tr-TR", { maximumFractionDigits: 1 })} km` : `${Math.round(left / 10) * 10} m`}`);
+  }
+
+  /**
+   * Okun izlediği yol: rotanın ilk noktası hesaplandığı andaki yerin. O nokta yolun gerisinde kalabilir (en yakın
+   * düğüm arkadaysa ok bir an geriyi gösterirdi); ok rotanın yol kısmına bağlanır.
+   */
+  private track(route: P[]): P[] {
+    return route.length > 2 ? route.slice(1) : route;
   }
 
   private setChip(text: string): void {

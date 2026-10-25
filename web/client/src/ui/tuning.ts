@@ -2,7 +2,7 @@
 // üstünde durunca araba anında o hâliyle görünür, Enter takar. Kamera seçili kategorinin parçasına döner (jant →
 // ön tekerlek, spoiler → arka, plaka → arka plaka…); fareyle sürükleyerek ya da A/D ile araba etrafında dönülür.
 import {
-  CAR_COLORS, CAR_DECALS, CAR_ENGINES, CAR_EXHAUSTS, CAR_HORNS, CAR_LIGHTS, CAR_MODELS, CAR_NEONS, CAR_RIMS, CAR_SPOILERS, carPerf, type CarSpec, normalPlate, validCar,
+  CAR_COLORS, CAR_DECALS, CAR_ENGINES, CAR_EXHAUSTS, CAR_HORNS, CAR_LIGHTS, CAR_MODELS, CAR_NEONS, CAR_RIMS, CAR_SPOILERS, BIKE_NO_MODS, carPerf, type CarSpec, isBike, normalPlate, validCar,
 } from "../../../shared/car";
 import { itemPrice, modItem } from "../../../shared/shop";
 import { owned } from "../owned";
@@ -68,8 +68,10 @@ export interface TuningHooks {
   repair(): void;
 }
 
-/** Kategori listesinin sonundaki satırlar: tamir ve çıkış. */
-const REPAIR = CATEGORIES.length, EXIT = CATEGORIES.length + 1;
+/** Motorlarda kamera: araba için ayarlanan bakış noktaları küçük gövdeye sıkıştırılır, daha yakından bakılır. */
+function bikeCam(c: CamPreset): CamPreset {
+  return { ...c, tx: c.tx * 0.3, ty: Math.min(1.1, c.ty * 0.85 + 0.12), tz: c.tz * 0.45, dist: c.dist * 0.55 };
+}
 const REPAIR_DESC = "Göçükler, kırık farlar, duman ve motorun kaybettiği güç: hepsi sıfırlanır. Hafif çizikler bedava silinir.";
 
 const valueOf = (spec: CarSpec, key: keyof CarSpec) => String(spec[key]);
@@ -93,6 +95,9 @@ export class Tuning {
   private list: HTMLDivElement;
   private desc: HTMLDivElement;
   private applied!: CarSpec;
+  /** Bu arabanın kategorileri (motorda spoiler, çıkartma, cam filmi, süspansiyon yok). */
+  private cats: Category[] = CATEGORIES;
+  private bike = false;
   private level: 0 | 1 = 0;
   private cat = 0;
   private sel = 0;
@@ -163,8 +168,8 @@ export class Tuning {
   /** Kamera ön ayarı: kategori listesindeyken genel görünüm, içerideyken o parçanın görünümü. */
   get cam(): CamPreset {
     // Listede gezinirken de kamera üstünde durulan parçaya döner (GTA'daki gibi)
-    if (this.level === 1) return CATEGORIES[this.cat].cam;
-    return this.sel < CATEGORIES.length ? CATEGORIES[this.sel].cam : OVERVIEW;
+    const c = this.level === 1 ? this.cats[this.cat].cam : this.sel < this.cats.length ? this.cats[this.sel].cam : OVERVIEW;
+    return this.bike ? bikeCam(c) : c;
   }
 
   /** Kare başına: A/D ile dönüş. */
@@ -175,13 +180,24 @@ export class Tuning {
     }
   }
 
+  /** Kategori listesinin sonundaki satırlar: tamir ve çıkış. */
+  private get repairRow(): number {
+    return this.cats.length;
+  }
+
+  private get exitRow(): number {
+    return this.cats.length + 1;
+  }
+
   open(spec: CarSpec): void {
     this.applied = { ...spec };
+    this.bike = isBike(spec.model);
+    this.cats = this.bike ? CATEGORIES.filter((c) => !BIKE_NO_MODS.includes(c.key)) : CATEGORIES;
     this.level = 0;
     this.cat = 0;
     // Hasarlı geldiysen imleç Tamir'de başlar
     const w = this.hooks.wear();
-    this.sel = w.level || w.dented ? REPAIR : 0;
+    this.sel = w.level || w.dented ? this.repairRow : 0;
     this.yaw = 0;
     this.isOpen = true;
     this.root.classList.add("show");
@@ -207,7 +223,7 @@ export class Tuning {
   }
 
   private rows(): number {
-    return this.level === 0 ? EXIT + 1 : (CATEGORIES[this.cat].options?.length ?? 1);
+    return this.level === 0 ? this.exitRow + 1 : (this.cats[this.cat].options?.length ?? 1);
   }
 
   private move(d: number): void {
@@ -221,7 +237,7 @@ export class Tuning {
 
   /** Seçili seçenekle araba (takmadan). */
   private candidate(): CarSpec {
-    const c = CATEGORIES[this.cat], o = c.options?.[this.sel];
+    const c = this.cats[this.cat], o = c.options?.[this.sel];
     if (!o) return this.applied;
     const v = o.id === "true" ? true : o.id === "false" ? false : o.id;
     return validCar({ ...this.applied, [c.key]: v }) ?? this.applied;
@@ -230,7 +246,7 @@ export class Tuning {
   private previewSel(): void {
     const spec = this.candidate();
     this.hooks.preview(spec);
-    if (CATEGORIES[this.cat].key === "horn") {
+    if (this.cats[this.cat].key === "horn") {
       window.clearTimeout(this.hornTimer);
       this.horns.start(-1, spec.horn, 0.8);
       if (!hornIsTune(spec.horn)) this.hornTimer = window.setTimeout(() => this.horns.release(-1), 450);
@@ -239,8 +255,8 @@ export class Tuning {
 
   private enter(): void {
     if (this.level === 0) {
-      if (this.sel === EXIT) return this.close();
-      if (this.sel === REPAIR) {
+      if (this.sel === this.exitRow) return this.close();
+      if (this.sel === this.repairRow) {
         const w = this.hooks.wear();
         if (!w.busy && (w.level || w.dented)) this.hooks.repair();
         else sfx.tick(1);
@@ -248,7 +264,7 @@ export class Tuning {
       }
       this.cat = this.sel;
       this.level = 1;
-      const c = CATEGORIES[this.cat];
+      const c = this.cats[this.cat];
       this.sel = Math.max(0, c.options?.findIndex((o) => o.id === valueOf(this.applied, c.key)) ?? 0);
       this.yaw = 0;
       sfx.chip();
@@ -257,7 +273,7 @@ export class Tuning {
       if (c.key === "plate") requestAnimationFrame(() => this.plateInput?.focus());
       return;
     }
-    const c = CATEGORIES[this.cat];
+    const c = this.cats[this.cat];
     if (c.key === "plate") {
       // Geçersiz yazı sessizce "34 GAP 34"e dönmesin: uyar, takma
       const plate = normalPlate(this.plateInput?.value ?? this.applied.plate);
@@ -274,7 +290,7 @@ export class Tuning {
 
   /** Arabanın bu kategorideki satın alınmamış parçası (anahtar) — yoksa null. */
   private missing(spec: CarSpec): string | null {
-    const c = CATEGORIES[this.cat], v = spec[c.key];
+    const c = this.cats[this.cat], v = spec[c.key];
     if (c.key === "plate") return null;
     const item = modItem(spec.model, c.key, v as string | boolean);
     return owned.has(item) ? null : item;
@@ -290,7 +306,7 @@ export class Tuning {
     // Satın alınmamış parça: önce satın alınır (sunucu parayı alınca takılır)
     const need = this.level === 1 ? this.missing(spec) : null;
     if (need) {
-      const key = CATEGORIES[this.cat].key;
+      const key = this.cats[this.cat].key;
       this.pending = { key, value: spec[key], item: need };
       this.hooks.buy(need);
       return;
@@ -319,19 +335,19 @@ export class Tuning {
     this.plateInput = null;
     if (this.level === 0) {
       this.sub.innerHTML = `<span>${model.toUpperCase()} · KATEGORİLER</span><em>${this.sel + 1}/${this.rows()}</em>`;
-      CATEGORIES.forEach((c, i) => {
+      this.cats.forEach((c, i) => {
         const cur = c.options?.find((o) => o.id === valueOf(this.applied, c.key));
         this.row(i, `${c.icon} ${c.label}`, cur?.name ?? this.applied.plate, cur?.hex, false);
       });
       const w = this.hooks.wear();
       const state = w.busy ? "Tamir ediliyor…" : w.level ? `${w.fee.toLocaleString("tr-TR")} ₺` : w.dented ? "Bedava" : "✓ Sağlam";
-      this.row(REPAIR, `🔧 Tamir${w.level ? ` · ${["", "hafif", "orta", "ağır"][w.level]} hasar` : ""}`, state, undefined, false);
-      this.row(EXIT, "🚪 Garajdan çık", "", undefined, false);
-      this.desc.textContent = this.sel < CATEGORIES.length ? CATEGORIES[this.sel].desc : this.sel === REPAIR ? REPAIR_DESC : "Tuning'i bitir ve arabayla dışarı sür.";
+      this.row(this.repairRow, `🔧 Tamir${w.level ? ` · ${["", "hafif", "orta", "ağır"][w.level]} hasar` : ""}`, state, undefined, false);
+      this.row(this.exitRow, "🚪 Garajdan çık", "", undefined, false);
+      this.desc.textContent = this.sel < this.cats.length ? this.cats[this.sel].desc : this.sel === this.repairRow ? REPAIR_DESC : "Tuning'i bitir ve arabayla dışarı sür.";
       if (this.sel === 0) this.desc.textContent += ` ${perfLine(this.applied)}`;
       return;
     }
-    const c = CATEGORIES[this.cat];
+    const c = this.cats[this.cat];
     this.sub.innerHTML = `<span>${c.icon} ${c.label.toUpperCase()}</span><em>${this.sel + 1}/${this.rows()}</em>`;
     if (c.key === "plate") {
       const wrap = document.createElement("div");

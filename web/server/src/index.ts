@@ -11,7 +11,7 @@ import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
 import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
-import { isJobCar, NO_DENTS, validCar } from "../../shared/car";
+import { isBike, isJobCar, NO_DENTS, validCar } from "../../shared/car";
 import { Casino, type CasinoMsg, secureRng } from "./casino";
 import { Economy } from "./economy";
 import { LifeHost } from "./life";
@@ -1317,8 +1317,9 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         }
         if (car && !isJobCar(car.model)) {
           // Paralı modifiyeye geçiş: bu arabaya önceden takılmış parçalar bir kereliğine senin sayılır
+          // (Motorlar ücretli modifiyeden sonra geldi: onlara eski parça hakkı yok)
           const legacy = `legacy:${car.model}`;
-          if (!user.guest && !economy.owns(walletKey, legacy)) economy.grant(walletKey, [...unownedMods(car, () => false), legacy]);
+          if (!user.guest && !isBike(car.model) && !economy.owns(walletKey, legacy)) economy.grant(walletKey, [...unownedMods(car, () => false), legacy]);
           car = stripUnowned(car, owns);
         }
         room.setCar(sid, car);
