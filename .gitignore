@@ -73,3 +73,4 @@ chibi_asset_pack_v8/
 
 # Dünya sunucusunun yerel verisi (casino test coin bakiyeleri)
 web/data/
+.claude/worktrees/

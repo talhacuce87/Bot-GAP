@@ -1,6 +1,6 @@
 // Sinema videosunu sunucu üzerinden aktarır: Activity, dış video sunucularına erişemez ama kendi
-// origin'imizden (/.proxy/media/...) gelen videoyu oynatır. Yalnızca doğrudan dosya ve HLS (TRT vb.);
-// YouTube/Twitch/Kick aktarılmaz (kullanım koşulları; tarayıcıda izlenir).
+// origin'imizden (/.proxy/media/...) gelen videoyu oynatır. Doğrudan dosya, HLS (TRT vb.) ve yt-dlp'nin
+// çözdüğü YouTube/Twitch/Kick akışları (relay.ts).
 //
 // Güvenlik: kullanıcının verdiği linki sunucu çeker, bu yüzden özel/iç ağ adresleri (127.x, 10.x,
 // 172.16-31.x, 192.168.x, 169.254.x, Docker servis adları…) engellenir, yönlendirmeler tek tek denetlenir
@@ -116,7 +116,12 @@ interface CacheEntry {
   body: Buffer;
   type: string;
   expires: number;
+  /** Bayt aralığı yanıtıysa Content-Range. */
+  range?: string;
 }
+
+/** Önbelleğe alınabilen kapalı aralık (HLS BYTERANGE parçaları); "bytes=0-" gibi açık uçlu olmaz. */
+const BOUNDED_RANGE = /^bytes=\d+-\d+$/;
 
 export interface ProxyStats {
   /** Toplam gönderilen bayt. */
@@ -148,11 +153,14 @@ export class MediaProxy {
     private resolve: Lookup = dnsLookup,
   ) {}
 
-  /** Sinemanın kaynağı değişince izinli origin'ler sıfırlanır (oynat/duraklatta korunur). */
-  allow(watchId: string, sourceUrl: string): void {
+  /**
+   * Sinemanın kaynağı değişince izinli origin'ler sıfırlanır (oynat/duraklatta korunur).
+   * `extra`: kaynakla birlikte izin verilen adresler (YouTube'da görüntü ve ses ayrı sunuculardan gelir).
+   */
+  allow(watchId: string, sourceUrl: string, extra: string[] = []): void {
     if (this.sources.get(watchId) === sourceUrl) return;
     this.sources.set(watchId, sourceUrl);
-    this.origins.set(watchId, new Set([new URL(sourceUrl).origin]));
+    this.origins.set(watchId, new Set([sourceUrl, ...extra].map((u) => new URL(u).origin)));
   }
 
   forget(watchId: string): void {
@@ -187,11 +195,11 @@ export class MediaProxy {
     return null;
   }
 
-  private remember(key: string, body: Buffer, type: string, ttl: number): void {
+  private remember(key: string, body: Buffer, type: string, ttl: number, range?: string): void {
     if (body.length > SEGMENT_CACHE_MAX) return;
     const old = this.cache.get(key);
     if (old) this.cacheBytes -= old.body.length;
-    this.cache.set(key, { body, type, expires: Date.now() + ttl });
+    this.cache.set(key, { body, type, expires: Date.now() + ttl, range });
     this.cacheBytes += body.length;
     const now = Date.now();
     for (const [k, e] of this.cache) {
@@ -201,8 +209,10 @@ export class MediaProxy {
     }
   }
 
-  private send(res: ServerResponse, status: number, type: string, body: Buffer, cache: string): void {
-    res.writeHead(status, { "Content-Type": type, "Content-Length": body.length, "Cache-Control": cache, "Access-Control-Allow-Origin": "*" });
+  private send(res: ServerResponse, status: number, type: string, body: Buffer, cache: string, range?: string): void {
+    const headers: Record<string, string | number> = { "Content-Type": type, "Content-Length": body.length, "Cache-Control": cache, "Access-Control-Allow-Origin": "*" };
+    if (range) headers["Content-Range"] = range;
+    res.writeHead(status, headers);
     res.end(body);
     this.count(body.length);
   }
@@ -221,13 +231,14 @@ export class MediaProxy {
       res.writeHead(403).end();
       return;
     }
-    const key = url.toString();
+    const bounded = !!range && BOUNDED_RANGE.test(range);
+    const key = bounded ? `${url}|${range}` : url.toString();
     const isPlaylist = /\.m3u8$/i.test(url.pathname);
     this.requests++;
-    const hit = !range ? this.cache.get(key) : undefined;
+    const hit = !range || bounded ? this.cache.get(key) : undefined;
     if (hit && hit.expires > Date.now()) {
       this.hits++;
-      return this.send(res, 200, hit.type, hit.body, isPlaylist ? "no-cache" : "public, max-age=30");
+      return this.send(res, hit.range ? 206 : 200, hit.type, hit.body, isPlaylist ? "no-cache" : "public, max-age=30", hit.range);
     }
 
     this.active++;
@@ -250,6 +261,13 @@ export class MediaProxy {
         const body = Buffer.from(await upstream.arrayBuffer());
         this.remember(key, body, type, SEGMENT_TTL_MS);
         return this.send(res, 200, type, body, "public, max-age=30");
+      }
+      // Bayt aralıklı parça (YouTube): aynı aralığı isteyen izleyicilere de bellekten
+      const contentRange = upstream.headers.get("content-range");
+      if (bounded && upstream.status === 206 && contentRange && Number.isFinite(length) && length <= SEGMENT_CACHE_MAX) {
+        const body = Buffer.from(await upstream.arrayBuffer());
+        this.remember(key, body, type, SEGMENT_TTL_MS, contentRange);
+        return this.send(res, 206, type, body, "public, max-age=30", contentRange);
       }
       // Büyük dosya (mp4): olduğu gibi akıt, sarma için Range geçer
       const headers: Record<string, string> = { "Content-Type": type, "Accept-Ranges": "bytes", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" };

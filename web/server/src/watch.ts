@@ -141,23 +141,43 @@ export async function detectHlsLive(url: string, get: (u: string) => Promise<str
  * Link → kaynak + başlık; desteklenmiyorsa null. YouTube başlığı oEmbed'den alınır (alınamazsa kaynağın
  * adı). oEmbed videonun gömülü oynatılamadığını (401/403: sahibi kapatmış) ya da olmadığını (404)
  * söylerse hata döner: yoksa herkesin perdesinde boş/hatalı oynatıcı kalır.
+ *
+ * `relay` verilirse (sinemaya yüklerken) YouTube/Twitch/Kick sunucu üzerinden aktarılmaya çalışılır;
+ * olursa kaynak `relay` ile işaretlenir ve gömme yasağı engel olmaz (video gömülü oynatıcıda açılmaz).
  */
-export async function resolveMedia(url: string): Promise<{ source: Source; title: string } | { error: string } | null> {
+export async function resolveMedia(
+  url: string,
+  relay?: (s: Source) => Promise<{ hls: boolean; live: boolean; title: string | null } | null>,
+): Promise<{ source: Source; title: string } | { error: string } | null> {
   const source = parseMediaUrl(url);
   if (!source) return null;
   if (source.kind === "file" && source.hls && source.live === undefined) source.live = await detectHlsLive(source.url);
   let title = describeSource(source);
-  if (source.kind === "youtube") {
-    try {
-      const r = await fetch(`https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v=${source.id}`, {
-        signal: AbortSignal.timeout(4000),
-      });
-      if (r.status === 401 || r.status === 403) return { error: "Bu YouTube videosu başka sitelerde oynatılamıyor (sahibi kapatmış). Başka bir video dene." };
-      if (r.status === 404 || r.status === 400) return { error: "Bu YouTube videosu bulunamadı (silinmiş ya da gizli olabilir)." };
-      if (r.ok) title = String(((await r.json()) as { title?: string }).title || title).slice(0, 120);
-    } catch {
-      // başlıksız da oynar
-    }
+  const [relayed, embed] = await Promise.all([source.kind !== "file" && relay ? relay(source) : null, source.kind === "youtube" ? youtubeOEmbed(source.id) : null]);
+  if (relayed && source.kind !== "file") {
+    source.relay = { hls: relayed.hls, live: relayed.live };
+    if (relayed.title && source.kind !== "kick" && source.kind !== "twitch") title = relayed.title;
+    else if (relayed.title) title = `${describeSource(source)} · ${relayed.title}`.slice(0, 120);
   }
+  if (embed && "error" in embed && !(relayed && embed.status !== 404)) return { error: embed.error };
+  if (embed && "title" in embed) title = embed.title;
   return { source, title };
+}
+
+/** YouTube oEmbed: başlık ya da gömülemez/bulunamadı hatası; ulaşılamazsa null. */
+async function youtubeOEmbed(id: string): Promise<{ title: string } | { error: string; status: number } | null> {
+  try {
+    const r = await fetch(`https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v=${id}`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (r.status === 401 || r.status === 403) return { status: r.status, error: "Bu YouTube videosu başka sitelerde oynatılamıyor (sahibi kapatmış). Başka bir video dene." };
+    if (r.status === 404 || r.status === 400) return { status: 404, error: "Bu YouTube videosu bulunamadı (silinmiş ya da gizli olabilir)." };
+    if (r.ok) {
+      const t = String(((await r.json()) as { title?: string }).title || "").slice(0, 120);
+      return t ? { title: t } : null;
+    }
+  } catch {
+    // başlıksız da oynar
+  }
+  return null;
 }

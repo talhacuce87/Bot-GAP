@@ -137,7 +137,7 @@ export class WatchPanel {
 
   /** Sunucudan durum geldi: başlık ve kimin ne yaptığı. */
   onState(s: WatchState): void {
-    const kick = s.source?.kind === "kick" ? s.source.channel : "";
+    const kick = s.source?.kind === "kick" && !s.source.relay ? s.source.channel : ""; // aktarılan Kick normal video gibi sesli
     if (kick && kick !== this.kickHint) {
       this.kickHint = kick;
       this.notice("Kick: ses için 🍿 İzlemeye başla'ya bas. Yine gelmezse 🖱 ile oynatıcıdaki hoparlöre tıkla.");

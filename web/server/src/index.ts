@@ -30,8 +30,9 @@ import { CHAT_COOLDOWN_MS, CHAT_HISTORY, CINEMA_COOLDOWN_MS, cleanChat, parseCom
 import { type BotPost, fetchLook, fetchWardrobe, OUTFIT_COOLDOWN_MS, sanitizeLook, saveLook, WARDROBE_COOLDOWN_MS } from "./looks";
 import { type Conn, type JoinOptions, type Room, Rooms } from "./room";
 import { type FastLink, setupRtc } from "./rtc";
-import { MediaProxy } from "./mediaProxy";
-import type { Source } from "../../shared/media";
+import { MediaProxy, proxyRef } from "./mediaProxy";
+import { keepYtDlpFresh, masterPlaylist, mediaPlaylist, type Relay, relayUrls, Relays } from "./relay";
+import { parseMediaUrl, type Source } from "../../shared/media";
 import { resolveMedia, type Watch, Watches } from "./watch";
 import { type Share, SHARE_MIME, Shares } from "./share";
 import { WorldGames } from "./games/world";
@@ -40,6 +41,31 @@ import { Builds, flushBuilds } from "./games/build";
 
 /** Sinema videosu (dosya/HLS) sunucu üzerinden: Activity'de perdede oynar. */
 const mediaProxy = new MediaProxy();
+const relays = new Relays();
+if (process.env.NODE_ENV === "production") keepYtDlpFresh();
+/** Sinemaya yüklerken: YouTube/Twitch/Kick'i sunucudan aktarmayı dener (resolveMedia'ya verilir). */
+const relayOf = async (s: Source) => {
+  const r = await relays.prepare(s);
+  return r ? { hls: r.plan.kind !== "mp4", live: r.plan.kind === "hls" && r.plan.live, title: r.title } : null;
+};
+
+/**
+ * Sinemanın videosu proxy'den geçebilsin diye izinli adresleri ayarlar. Dosyada null, sunucunun aktardığı
+ * kaynakta aktarma; proxy'den geçmeyen (gömülü oynatıcıdaki) kaynakta false.
+ */
+async function allowMedia(w: Watch): Promise<Relay | null | false> {
+  const src = w.state.source;
+  if (src?.kind === "file") {
+    mediaProxy.allow(w.id, src.url);
+    return null;
+  }
+  if (!src?.relay) return false;
+  const r = await relays.get(src);
+  if (!r) return false;
+  const [first, ...rest] = relayUrls(r.plan);
+  mediaProxy.allow(w.id, first, rest);
+  return r;
+}
 
 /** İzleme odasının tarayıcı adresi. */
 function watchLink(w: Watch): string {
@@ -522,13 +548,24 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return w ? json(res, 200, { id: w.id, title: w.state.title }) : json(res, 404, { error: "not found" });
   }
 
-  const media = /^\/media\/([\w-]{6,16})\/p$/.exec(path);
+  // /media/<sinema>/p?u=… (aktarılan her şey), relay.m3u8 / relay-v0.m3u8 / relay-a.m3u8 / relay.mp4 (relay.ts)
+  const media = /^\/media\/([\w-]{6,16})\/(p|relay\.m3u8|relay-(?:v\d|a)\.m3u8|relay\.mp4)$/.exec(path);
   if (media && method === "GET") {
     const w = watches.get(media[1]);
-    if (!w || w.state.source?.kind !== "file") return json(res, 404, { error: "not found" });
-    mediaProxy.allow(w.id, w.state.source.url);
-    const u = new URL(req.url || "/", "http://x").searchParams.get("u");
-    return mediaProxy.handle(res, w.id, u, typeof req.headers.range === "string" ? req.headers.range : undefined);
+    const relay = w ? await allowMedia(w) : false;
+    if (!w || relay === false) return json(res, 404, { error: "not found" });
+    const file = media[2];
+    const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
+    if (file === "p") return mediaProxy.handle(res, w.id, new URL(req.url || "/", "http://x").searchParams.get("u"), range);
+    const plan = relay?.plan;
+    if (plan?.kind === "mp4" && file === "relay.mp4") return mediaProxy.handle(res, w.id, plan.url, range);
+    if (plan?.kind === "hls" && file === "relay.m3u8") return mediaProxy.handle(res, w.id, plan.url, undefined);
+    if (plan?.kind !== "dash" || file === "relay.mp4") return json(res, 404, { error: "not found" });
+    const track = file === "relay.m3u8" ? null : file === "relay-a.m3u8" ? plan.audio : plan.video[Number(file[7])];
+    if (file !== "relay.m3u8" && !track) return json(res, 404, { error: "not found" });
+    res.writeHead(200, { "Content-Type": "application/vnd.apple.mpegurl", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
+    res.end(track ? mediaPlaylist(track, proxyRef) : masterPlaylist(plan.video, plan.audio));
+    return;
   }
 
   if (path === "/internal/stats" && method === "GET") {
@@ -581,7 +618,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (path === "/internal/watch" && method === "POST") {
     if (!secretMatches(req.headers["x-world-secret"])) return json(res, 404, { error: "not found" });
     const body = await readJson(req);
-    const media = typeof body.url === "string" ? await resolveMedia(body.url) : null;
+    const media = typeof body.url === "string" ? await resolveMedia(body.url, relayOf) : null;
     if (!media) return json(res, 400, { error: "unsupported" });
     if ("error" in media) return json(res, 400, { error: "unsupported", reason: media.error });
     const guild = typeof body.guild === "string" && /^\d{5,20}$/.test(body.guild) ? body.guild : null;
@@ -725,7 +762,10 @@ function onWatchMessage(ws: WebSocket, room: Room, w: Watch, user: SessionUser, 
   } else if (msg.t === "wload" && typeof msg.url === "string" && msg.url.length < 2048) {
     if (now - limiter.last < 3000) return;
     limiter.last = now;
-    void resolveMedia(msg.url).then((media) => {
+    // yt-dlp birkaç saniye sürer: linki gönderen beklediğini bilsin
+    const kind = parseMediaUrl(msg.url)?.kind;
+    if (kind && kind !== "file") ws.send(JSON.stringify({ t: "notice", text: "⏳ Video sunucuda hazırlanıyor…" }));
+    void resolveMedia(msg.url, relayOf).then((media) => {
       if (!media || "error" in media) {
         ws.send(JSON.stringify({ t: "notice", text: media?.error ?? "Bu link açılamıyor. YouTube, Twitch, Kick ya da .mp4/.webm/.m3u8 linki dene." }));
         return;
@@ -856,7 +896,7 @@ function loadCinema(key: string, media: { source: Source; title: string }, guild
 
 /** Sinemayı açar ya da videosunu herkes için değiştirir. */
 async function openCinema(link: string, guild: string | null, by: string, key: string): Promise<{ url: string; title: string; reused: boolean } | { error: string }> {
-  const media = await resolveMedia(link);
+  const media = await resolveMedia(link, relayOf);
   if (!media) return { error: "Bu link açılamıyor. YouTube, Twitch, Kick, tabii (TRT) ya da .mp4/.webm/.m3u8 linki dene." };
   if ("error" in media) return media;
   const reused = !!cinemaOf(key)?.state.source;

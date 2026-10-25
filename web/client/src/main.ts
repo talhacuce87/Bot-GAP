@@ -49,7 +49,7 @@ import { openYoutubeTest } from "./ui/youtube";
 import { ScreenSender } from "./share/sender";
 import { ShareViewer } from "./share/viewer";
 import { ScreenVideo } from "./watch/screen";
-import { WatchSync } from "./watch/sync";
+import { screenSource, WatchSync } from "./watch/sync";
 import { WatchPanel } from "./ui/watchPanel";
 import { CinemaSign } from "./world/cinemaSign";
 import { SEAT_H } from "./world/builder";
@@ -355,7 +355,7 @@ async function start(): Promise<void> {
       fullscreen: screen.canFullscreen ? () => void screen.toggleFullscreen() : null,
     });
     net.onWatch = (s) => {
-      sync.apply(s);
+      sync.apply(s.source ? { ...s, source: screenSource(s.source, session.base, session.watchId ?? null, false) } : s);
       panel.onState(s);
       musicOn = !!s.source && s.playing;
     };
@@ -472,9 +472,9 @@ async function start(): Promise<void> {
   hudRoot.append(battleBtn);
   if (session.mode !== "watch") {
     hud.cinemaButton(openCinema);
-    // Dosya/HLS (TRT, .m3u8, .mp4) sunucu üzerinden aktarılır ve perdede oynar. YouTube/Twitch/Kick
-    // tarayıcıda doğrudan perdede oynar; yalnızca Activity'de oynatılamaz (Discord bu sitelere erişimi
-    // engeller): orada perde "Şimdi oynuyor" tabelası olur, video tarayıcıda izlenir.
+    // Dosya/HLS (TRT, .m3u8, .mp4) ve sunucunun yt-dlp ile çözdüğü YouTube/Twitch/Kick sunucu üzerinden
+    // aktarılır ve perdede oynar. Çözülemeyen YouTube/Twitch/Kick tarayıcıda gömülü oynatıcıyla oynar;
+    // Activity'de oynatılamaz (Discord bu sitelere erişimi engeller): perde "Şimdi oynuyor" tabelası olur.
     // ScreenVideo, CinemaSign'dan önce kurulur: ikisi de perdenin özgün malzemesini saklar.
     const sign = (cinemaSign = new CinemaSign(world.screen, session.base));
     let inWorld: { sync: WatchSync; panel: WatchPanel } | null = null;
@@ -483,7 +483,8 @@ async function start(): Promise<void> {
       const src = s.source;
       cinemaOn = !!src;
       musicOn = !!src && s.playing;
-      const onScreen = !!src && (src.kind === "file" ? !!id : session.mode !== "discord");
+      // Sunucunun aktardığı YouTube/Twitch/Kick de dosya gibi Activity'de perdede oynar
+      const onScreen = !!src && (src.kind === "file" || src.relay ? !!id : session.mode !== "discord");
       if (src && onScreen) {
         sign.set(null);
         if (!inWorld) {
@@ -498,8 +499,7 @@ async function start(): Promise<void> {
           watch = { sync, screen, panel };
           sync.setSuppressed(viewer !== null); // paylaşım sürüyorsa sinema sessiz başlar
         }
-        const source = src.kind === "file" ? { ...src, url: `${session.base}/media/${id}/p?u=${encodeURIComponent(src.url)}` } : src;
-        inWorld.sync.apply({ ...s, source });
+        inWorld.sync.apply({ ...s, source: screenSource(src, session.base, id, true) });
         inWorld.panel.onState(s);
         inWorld.panel.setVisible(true);
         hudRoot.classList.add("has-watch");

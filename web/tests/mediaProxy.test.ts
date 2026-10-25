@@ -135,4 +135,22 @@ describe("MediaProxy", () => {
     await proxy.handle(res(after), "w1", "https://cdn.example/seg1.ts", undefined);
     expect(after.status).toBe(403);
   });
+
+  it("kapalı bayt aralığını (HLS BYTERANGE) bir kez çeker, 206 ile önbellekten dağıtır", async () => {
+    const calls: string[] = [];
+    const fetcher: Fetcher = async (url, init) => {
+      calls.push(`${url}|${init.headers.Range}`);
+      return new Response("PARCA", { status: 206, headers: { "content-type": "video/mp4", "content-length": "5", "content-range": "bytes 10-14/100" } });
+    };
+    const proxy = new MediaProxy(fetcher, publicDns);
+    proxy.allow("w1", "https://a.googlevideo.example/videoplayback?id=1", ["https://b.googlevideo.example/videoplayback?id=2"]);
+    for (let i = 0; i < 2; i++) {
+      const r = fakeRes();
+      await proxy.handle(res(r), "w1", "https://b.googlevideo.example/videoplayback?id=2", "bytes=10-14");
+      expect(r.status).toBe(206);
+      expect(r.headers["Content-Range"]).toBe("bytes 10-14/100");
+      expect(r.body.toString()).toBe("PARCA");
+    }
+    expect(calls).toEqual(["https://b.googlevideo.example/videoplayback?id=2|bytes=10-14"]);
+  });
 });

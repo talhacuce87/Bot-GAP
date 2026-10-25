@@ -1,16 +1,22 @@
 // Watch party kaynakları: hangi linkin nasıl oynatılacağını belirler (istemci ve sunucu ortak).
 
+/**
+ * Sunucu bu kaynağı aktarıyor (yt-dlp): perdede gömülü oynatıcı yerine sunucudan gelen akış oynar.
+ * `hls`: /media/<sinema>/relay.m3u8, değilse /media/<sinema>/relay.mp4. `live`: canlı yayın.
+ */
+export type Relayed = { hls: boolean; live: boolean };
+
 export type Source =
-  | { kind: "youtube"; id: string; start: number }
-  | { kind: "twitch"; channel: string }
-  | { kind: "twitch-vod"; video: string; start: number }
-  | { kind: "kick"; channel: string }
+  | { kind: "youtube"; id: string; start: number; relay?: Relayed }
+  | { kind: "twitch"; channel: string; relay?: Relayed }
+  | { kind: "twitch-vod"; video: string; start: number; relay?: Relayed }
+  | { kind: "kick"; channel: string; relay?: Relayed }
   /** `live`: bitişi olmayan HLS (canlı yayın); sunucu çalma listesine bakarak belirler. `label`: görünen ad. */
   | { kind: "file"; url: string; hls: boolean; live?: boolean; label?: string };
 
 /** Canlı yayınlar herkes için zaten aynı anda akar: konum senkronu ve sarma yoktur. */
 export function isLive(s: Source): boolean {
-  return s.kind === "twitch" || s.kind === "kick" || (s.kind === "file" && !!s.live);
+  return s.kind === "twitch" || s.kind === "kick" || (s.kind === "file" ? !!s.live : !!s.relay?.live);
 }
 
 /**

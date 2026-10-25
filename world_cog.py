@@ -613,7 +613,7 @@ class WorldCog(commands.Cog):
             "guild": str(guild_id),
             "by": {"id": str(author.id), "name": getattr(author, "display_name", author.name)},
             "url": url,
-        })
+        }, timeout=60)  # YouTube/Twitch/Kick sunucuda yt-dlp ile çözülür: birkaç saniye sürebilir
         if r.status_code == 400:
             try:
                 return {"error": r.json().get("reason")}
