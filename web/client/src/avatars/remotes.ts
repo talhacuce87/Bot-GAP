@@ -303,7 +303,13 @@ export class Remotes {
   /** Tofaşa bindi (araba) ya da indi (null). */
   setCar(sid: number, car: PlayerInfo["car"]): void {
     const r = this.map.get(sid);
-    if (r) r.info.car = car;
+    if (!r) return;
+    r.info.car = car;
+    // İnince sunucu hasarı unutur (ayrıca duyurmaz): sonraki arabası eskisinin göçükleriyle görünmesin
+    if (!car) {
+      r.info.dmg = 0;
+      r.info.dents = null;
+    }
   }
 
   /** Park halindeki arabası değişti. */

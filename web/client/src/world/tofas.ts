@@ -220,6 +220,12 @@ export interface TofasMesh {
   dispose(): void;
 }
 
+/** Tavanın yerden yüksekliği (taksi tepe lambasıyla): içindekinin isim etiketi bunun üstünde durur. */
+export function roofOf(model: CarSpec["model"]): number {
+  const sh = SHAPES[model === "taksi" ? "doblo" : model] ?? TOFAS;
+  return sh.ROOF + (model === "taksi" ? 0.32 : 0.1);
+}
+
 export function buildTofas(spec: CarSpec): TofasMesh {
   const body: THREE.BufferGeometry[] = [];
   const glow: THREE.BufferGeometry[] = [];

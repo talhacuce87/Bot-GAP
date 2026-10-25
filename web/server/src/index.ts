@@ -1157,6 +1157,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   const limiter = { last: 0 };
   let lastEmote = 0;
   let lastCar = 0;
+  let lastDmg = 0;
+  let lastRepair = 0;
   let lastCarFx = 0;
   let lastPark = 0;
   let lastRadio = 0;
@@ -1303,6 +1305,8 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         if (now - lastCar < 300) return;
         lastCar = now;
         let car = validCar(msg.car);
+        // Baygınken arabaya binilmez
+        if (car && room.life?.isDowned(sid)) return;
         // İş aracı (scooter, taksi) yalnızca o işteyken
         const want = (msg.car as { model?: unknown } | null)?.model;
         if (car && isJobCar(want) && room.jobs?.modelOf(sid) === want) car.model = want;
@@ -1358,18 +1362,30 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         lastBump = now;
         room.broadcast({ t: "tbump", id: msg.id, s: msg.s.map((v: number) => Math.round(v * 100) / 100) }, sid);
       } else if (msg?.t === "repair") {
+        // Hasar ve tamir arabaya binme mesajından ayrı sınırlanır (binip hemen hasar bildirince yutulmasın)
         const now = Date.now();
-        if (now - lastCar < 300) return;
-        lastCar = now;
-        const p = room.players.get(sid), lvl = p?.info.dmg ?? 0;
-        if (!p?.info.car || !lvl || Math.hypot(p.state.x - GARAGE.spot.x, p.state.z - GARAGE.spot.z) > 6) return;
+        if (now - lastRepair < 300) return;
+        lastRepair = now;
+        // Seviye: sunucunun bildiği ya da istemcinin söylediği (hasar bildirimi tamirden hemen önce yutulmuş olabilir);
+        // düşüğü söyleyip ucuza tamir ettirilemez
+        const p = room.players.get(sid), said = Number.isInteger(msg.d) && msg.d >= 0 && msg.d <= 3 ? (msg.d as number) : 0;
+        const lvl = Math.max(p?.info.dmg ?? 0, said);
+        const done = (ok: boolean) => ws.send(JSON.stringify({ t: "repaired", ok }));
+        if (!p?.info.car || isJobCar(p.info.car.model) || Math.hypot(p.state.x - GARAGE.spot.x, p.state.z - GARAGE.spot.z) > 6) {
+          ws.send(JSON.stringify({ t: "notice", text: "🔧 Tamir için arabanla GAP Garaj'daki işaretin üstünde ol." }));
+          return done(false);
+        }
         const fee = ECON.repairFee[lvl] ?? 0;
-        if (!economy.add(walletKey, -fee, { reason: "GAP Garaj tamiri", icon: "🔧" })) ws.send(JSON.stringify({ t: "notice", text: `🔧 Tamir için ${fee} ₺ lazım.` }));
-        else room.setCarDamage(sid, 0, NO_DENTS);
+        if (fee > 0 && !economy.add(walletKey, -fee, { reason: "GAP Garaj tamiri", icon: "🔧" })) {
+          ws.send(JSON.stringify({ t: "notice", text: `🔧 Tamir için ${fee.toLocaleString("tr-TR")} ₺ lazım.` }));
+          return done(false);
+        }
+        room.setCarDamage(sid, 0, NO_DENTS);
+        done(true);
       } else if (msg?.t === "cardmg") {
         const now = Date.now();
-        if (now - lastCar < 300) return;
-        lastCar = now;
+        if (now - lastDmg < 150) return;
+        lastDmg = now;
         room.setCarDamage(sid, msg.d, msg.z);
       } else if (msg?.t === "park") {
         const now = Date.now();

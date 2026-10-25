@@ -70,6 +70,8 @@ export interface AvatarView {
   pb?: { pitch: number; crouch: number } | null;
   /** Yalnızca gövde çizilmez, isim etiketi kalır (Tofaştaki sürücü: kabine sığmaz, etiket tavanın üstünde). */
   bodyHidden?: boolean;
+  /** İsim etiketinin yerden yüksekliği (arabada: tavanın üstü; Doblo, taksi yüksek). Yoksa gövdeye göre. */
+  nameAt?: number;
 }
 
 /** İkili etkileşim animasyonunun süresi (sn). */
@@ -474,7 +476,8 @@ export class AvatarRenderer {
     this.body.setMatrixAt(i, asChibi || v.hidden || v.bodyHidden ? HIDDEN : this.m);
     this.body.setColorAt(i, v.color);
 
-    this.m.makeTranslation(v.x, y + (v.downed || (ko && ko.k > 0.5) ? DOWN_NAME_Y : NAME_Y) * s + (vehicle === 1 ? 0.25 : 0), v.z);
+    const nameY = v.nameAt ?? y + (v.downed || (ko && ko.k > 0.5) ? DOWN_NAME_Y : NAME_Y) * s + (vehicle === 1 ? 0.25 : 0);
+    this.m.makeTranslation(v.x, nameY, v.z);
     this.name.setMatrixAt(i, this.m);
     // Havadayken gölge küçülür: yükseklik hissi.
     const sh = 0.95 * s * Math.max(0.45, 1 - v.jumpY * 0.45);

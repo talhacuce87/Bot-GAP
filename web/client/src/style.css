@@ -9483,3 +9483,44 @@ button.cz-bjspot {
 .wd-btn.primary.buy .wd-buy {
   margin-left: 0;
 }
+
+/* Navigasyon: haritada işaretlenen hedefe kalan yol (ekranın üstünde ortada; iş kartı varken o gösterir) */
+.nav-chip {
+  position: absolute;
+  left: 50%;
+  top: calc(max(10px, env(safe-area-inset-top)) + 4px);
+  transform: translate(-50%, -12px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 13px;
+  border-radius: 999px;
+  background: rgba(8, 20, 34, 0.88);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(54, 200, 255, 0.55);
+  color: #d8f4ff;
+  font: 700 14px system-ui, sans-serif;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+}
+.nav-chip.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+.nav-chip-x {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(54, 200, 255, 0.18);
+  color: #d8f4ff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.nav-chip-x:hover {
+  background: rgba(54, 200, 255, 0.35);
+}
+.has-job .nav-chip {
+  display: none;
+}

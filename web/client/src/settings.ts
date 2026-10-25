@@ -1,7 +1,7 @@
 // İstemci ayarları: cihazda (localStorage) saklanır, herkesin kendi ekranını etkiler.
 // Grafik ön ayarı alanları birlikte doldurur; tek tek değiştirilen alan ön ayarı "özel" yapar.
 
-import { CAR_MODELS, type CarSpec, DEFAULT_CAR, validCar } from "../../shared/car";
+import { CAR_MODELS, type CarSpec, DEFAULT_CAR, isJobCar, validCar } from "../../shared/car";
 
 const KEY = "gap-settings";
 
@@ -146,6 +146,8 @@ function load(): Settings {
 }
 
 export const settings: Settings = load();
+/** Kaydedilen araba: iş aracı (taksi, scooter) kaydedilmez, işe girmeden önceki araban kalır. */
+let ownCar = settings.car;
 const listeners = new Set<(s: Settings, changed: (keyof Settings)[]) => void>();
 
 /** Değişiklikleri uygular, saklar ve dinleyicilere bildirir. */
@@ -154,7 +156,8 @@ export function updateSettings(patch: Partial<Settings>): void {
   if (!changed.length) return;
   Object.assign(settings, patch);
   try {
-    localStorage.setItem(KEY, JSON.stringify(settings));
+    if (!isJobCar(settings.car.model)) ownCar = settings.car;
+    localStorage.setItem(KEY, JSON.stringify({ ...settings, car: ownCar }));
   } catch {
     // depolama kapalı: yalnızca bu oturumda geçerli
   }

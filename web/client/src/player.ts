@@ -40,7 +40,7 @@ import {
   TURRET_TOP,
   TURRET_TURN,
 } from "../../shared/tank";
-import { CAR_BOOST, CAR_BRAKE, CAR_HANDBRAKE, CAR_REVERSE, carCircles, carPerf, type CarStats } from "../../shared/car";
+import { CAR_BOOST, CAR_BRAKE, CAR_HANDBRAKE, CAR_REVERSE, carCircles, carHullOf, carPerf, type CarStats } from "../../shared/car";
 import { type AvatarView, KO_UP } from "./avatars/avatars";
 import type { Input } from "./input/input";
 import { LEDGE } from "./world/colliders";
@@ -764,7 +764,7 @@ export class Player implements AvatarView, PlayerState {
     this.x += (fx * c.v - fz * c.slip) * dt;
     this.z += (fz * c.v + fx * c.slip) * dt;
     // Su: araba girmez (otoban köprüsünün yanından nehre, şelale havuzuna, göle); duvar gibi durur
-    const [wx1, wz1, wx2, wz2] = carCircles(this.x, this.z, this.rot);
+    const [wx1, wz1, wx2, wz2] = carCircles(this.x, this.z, this.rot, carHullOf(settings.car.model).off);
     const water = this.world.carWater;
     if (water && (water(wx1, wz1) || water(wx2, wz2))) {
       const speed = Math.hypot(c.v, c.slip);

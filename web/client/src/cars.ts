@@ -10,7 +10,7 @@ import type { AvatarView } from "./avatars/avatars";
 import { wetEnv } from "./world/geo";
 import { type LampField, MAX_CARS } from "./world/lamps";
 import type { Skids } from "./world/skids";
-import { buildTofas, type TofasMesh } from "./world/tofas";
+import { buildTofas, roofOf, type TofasMesh } from "./world/tofas";
 import { buildMotor, MOTOR_SEAT_Y } from "./world/motor";
 
 /** Koltuklar (0 sürücü sol ön, 1 sağ ön, 2 sol arka, 3 sağ arka): merkezden yana ve arkaya; oturma yüzeyi alçak. */
@@ -20,6 +20,7 @@ const SEAT_DROP = -0.58;
 interface Entry {
   key: string;
   /** Kurye scooter'ı: sürücü selede görünür. */
+  model: CarSpec["model"];
   motor: boolean;
   mesh: TofasMesh;
   seen: boolean;
@@ -109,7 +110,7 @@ export class Cars {
     if (!e || e.key !== key) {
       if (e) this.drop(sid);
       const mesh = this.take(key, spec);
-      e = { key, motor: spec.model === "motor", mesh, seen: true, x, z, rot, steer: 0, lit: false, vel: 0, acc: 0, yr: 0, skid: null, smokeAt: 0, roll: 0, pitch: 0 };
+      e = { key, model: spec.model, motor: spec.model === "motor", mesh, seen: true, x, z, rot, steer: 0, lit: false, vel: 0, acc: 0, yr: 0, skid: null, smokeAt: 0, roll: 0, pitch: 0 };
       this.entries.set(sid, e);
     }
     e.seen = true;
@@ -249,12 +250,12 @@ export class Cars {
    * Arabadaki oyuncunun avatarı: sürücü koltuğunda. Çizgi karakter oturunca bile Tofaşın tavanından yüksek
    * (kabine sığdırınca bacakları arabanın altından sarkıyordu); gövde çizilmez, isim etiketi tavanın üstünde kalır.
    */
-  seat(sid: number, v: AvatarView, seat = 0, car: { x: number; z: number; rot: number } = v): AvatarView {
+  seat(sid: number, v: AvatarView, seat = 0, car: { x: number; z: number; rot: number } = v, driver = sid): AvatarView {
     let s = this.seated.get(sid);
     if (!s) this.seated.set(sid, (s = { ...v }));
     Object.assign(s, v);
     // Scooter: sürücü ortada, selede oturur ve görünür
-    const motor = this.entries.get(sid)?.motor ?? false;
+    const motor = this.entries.get(driver)?.motor ?? false;
     const [side, back] = motor ? [0, -0.28] : (SEATS[seat] ?? SEATS[0]);
     const c = Math.cos(car.rot), sn = Math.sin(car.rot);
     s.x = car.x + c * side + sn * back;
@@ -262,9 +263,12 @@ export class Cars {
     s.rot = car.rot;
     s.flags = FLAG_SEATED;
     s.bodyHidden = !motor;
+    // İsim tavanın üstünde (yüksek araçta da görünsün; arka koltuktakiler biraz daha yukarıda, üst üste binmesin)
+    const model = this.entries.get(driver)?.model;
+    s.nameAt = motor || !model ? undefined : roofOf(model) + 0.42 + (seat >= 2 ? 0.3 : seat === 1 ? 0.15 : 0);
     s.baseY = motor ? MOTOR_SEAT_Y - 0.5 : SEAT_DROP;
     // Scooter virajda yatınca sürücü de onunla yatar (motor.ts: gövde −roll·4 döner; avatarda vlean·0.55)
-    s.vlean = motor ? (-this.entries.get(sid)!.roll * 4) / 0.55 : 0;
+    s.vlean = motor ? (-this.entries.get(driver)!.roll * 4) / 0.55 : 0;
     s.jumpY = 0;
     s.lift = 0;
     return s;

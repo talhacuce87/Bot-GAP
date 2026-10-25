@@ -323,6 +323,8 @@ export const CASINO = { x: 466 + CITY_DX, z: -78, hw: 17, hd: 13, h: 12, floor2:
  * içerideki parlayan işarete (`spot`, araba batıya bakar) gelince tuning ekranı açılır.
  */
 export const GARAGE = { x: 493 + CITY_DX, z: -99, w: 14, d: 24, h: 6.5, door: 3.2, spot: { x: 493.5 + CITY_DX, z: -99, rot: -Math.PI / 2 } };
+/** Garaj işaretinin bu kadar yakınına araba park edilmez (yoksa işareti kapatır, kimse tuning'e giremez). */
+export const GARAGE_KEEP_CLEAR = 3.6;
 
 /** VIP katının ön kenarı (z): bunun kuzeyi kat. */
 export const CASINO_MEZZ_Z = CASINO.z - CASINO.hd + 9;

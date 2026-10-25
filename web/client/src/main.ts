@@ -244,7 +244,11 @@ async function start(): Promise<void> {
     reloadOnce(v);
   };
   net.onNotice = (text) => hud.toast(text);
-  net.onTeleport = (x, z, rot) => me.teleport(x, z, rot);
+  // Yeniden bağlanınca sunucu kaldığın yere koyar: zaten oradaysan arabadan indirmez
+  net.onTeleport = (x, z, rot) => {
+    if (me.car && Math.hypot(x - me.x, z - me.z) < 3) return;
+    me.teleport(x, z, rot);
+  };
   net.onJail = (jailed, x, z, rot) => {
     const was = me.jailed;
     me.jailed = jailed;
@@ -893,7 +897,7 @@ async function start(): Promise<void> {
     };
     const rider = (sid: number, v: AvatarView, ride: { d: number; s: number } | null | undefined): AvatarView => {
       const car = ride ? carOf(ride.d) : null;
-      return car ? cars.seat(sid, v, ride!.s, car) : v;
+      return car ? cars.seat(sid, v, ride!.s, car, ride!.d) : v;
     };
     avatars.begin(camera.position);
     if (!me.driving && !me.hideAvatar) avatars.push(me.car ? cars.seat(net.you, me) : rider(net.you, me, features.myRide), time, true);

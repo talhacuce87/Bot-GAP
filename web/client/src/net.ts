@@ -171,6 +171,8 @@ export class Net {
   onPedhit: (id: number, vx: number, vz: number, by: number) => void = () => {};
   /** Bir arabanın hasar seviyesi değişti. */
   onCarDamage: (sid: number, d: number) => void = () => {};
+  /** GAP Garaj tamirinin sonucu. */
+  onRepaired: (ok: boolean) => void = () => {};
   onCarFx: (sid: number, k: "horn" | "flash", on: boolean) => void = () => {};
 
   private ws: WebSocket | null = null;
@@ -636,6 +638,9 @@ export class Net {
         this.onCarDamage(ev.sid, ev.d);
         break;
       }
+      case "repaired":
+        this.onRepaired(ev.ok);
+        break;
       case "quest":
         this.onQuest(ev.completed);
         break;

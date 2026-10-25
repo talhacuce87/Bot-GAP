@@ -1,11 +1,12 @@
 // Odanın yarış yöneticisi: oturumu (shared/race) oyunculara bağlar. Grid'e geçme, başlatma ve ayrılma
 // istekleri; konumlardan tur sayımı; faz değişince ve yarışta saniyede iki kez durum yayını; bitince ödüller.
+import { isJobCar } from "../../shared/car";
 import { type RingView, RingSession } from "../../shared/ring";
 import type { ServerEvent } from "../../shared/protocol";
 
 /** Yarış yöneticisinin odadan istedikleri (test için arayüz). */
 export interface RingRoom {
-  players: { get(sid: number): { info: { name: string; car?: unknown; spectator?: boolean }; state: { x: number; z: number } } | undefined };
+  players: { get(sid: number): { info: { name: string; car?: { model: string } | null; spectator?: boolean }; state: { x: number; z: number } } | undefined };
   broadcast(ev: ServerEvent): void;
 }
 
@@ -39,6 +40,7 @@ export class RingHost {
     let err: string | null = null;
     if (msg.op === "join") {
       if (!p.info.car) return "🏁 Yarışmak için önce Tofaşına bin.";
+      if (isJobCar(p.info.car.model)) return "🏁 İş aracıyla yarışılmaz: kendi arabanla gel.";
       err = this.session.join(sid, p.info.name, Number(msg.slot), p.state.x, p.state.z);
     } else if (msg.op === "start") {
       err = this.session.start(sid, Number(msg.laps), now, (id) => this.room.players.get(id)?.state ?? null);

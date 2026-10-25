@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { CAR_BOOST, CAR_ENGINES, CAR_HULL_R, CAR_MAX_SPEED, CAR_MODELS, CAR_SPEED, carPerf, DEFAULT_CAR, validCar } from "../shared/car";
+import { CAR_BOOST, CAR_ENGINES, CAR_HULL_R, CAR_MAX_SPEED, CAR_MODELS, CAR_SPEED, carPerf, DEFAULT_CAR, NO_DENTS, validCar } from "../shared/car";
 import { PLAYER_RADIUS } from "../shared/constants";
 import type { ServerEvent } from "../shared/protocol";
 import { type Conn, Room } from "../server/src/room";
@@ -222,6 +222,29 @@ describe("Room · park halindeki araba", () => {
     room.setCar(sa, car);
     expect(p.info.parked).toBeNull();
     expect(b.text.some((e) => e.t === "parked" && e.sid === sa && e.parked === null)).toBe(true);
+  });
+
+  it("göçükleriyle park edilir (geçersiz hasar düşer); iş aracı göçüksüz park eder ve hasar almaz", () => {
+    const room = new Room("g:test");
+    const a = new FakeConn();
+    const sa = room.join({ id: "a", name: "a", avatar: null, guest: true }, a, 0);
+    const p = room.players.get(sa)!;
+    const car = validCar({ model: "sahin" })!;
+    const dents = { f: 2, r: 0, l: 1, rt: 0, hl: 1 };
+    room.setParked(sa, { car, x: p.state.x + 3, z: p.state.z, rot: 0, dmg: 2, dents });
+    expect(p.info.parked?.dmg).toBe(2);
+    expect(p.info.parked?.dents).toEqual(dents);
+    room.setParked(sa, { car, x: p.state.x + 3, z: p.state.z, rot: 0, dmg: 9, dents: { f: 7 } });
+    expect(p.info.parked?.dmg).toBeUndefined();
+    expect(p.info.parked?.dents).toBeUndefined();
+    // İş aracı: işte değilken model düşer; işteyken bile hasar 0
+    room.setCar(sa, { ...car, model: "taksi" });
+    room.setCarDamage(sa, 3, dents);
+    expect(p.info.dmg ?? 0).toBe(0);
+    expect(p.info.dents ?? NO_DENTS).toEqual(NO_DENTS);
+    room.setCar(sa, car);
+    room.setCarDamage(sa, 3, dents);
+    expect(p.info.dmg).toBe(3);
   });
 
   it("eski kayıttaki arabaya far ve egzoz varsayılan olarak eklenir", () => {

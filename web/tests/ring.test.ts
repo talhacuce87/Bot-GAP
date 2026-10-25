@@ -158,13 +158,16 @@ describe("yarış sunucusu", () => {
     const { RingHost } = await import("../server/src/ring");
     const sent: unknown[] = [];
     const players = new Map([
-      [1, { info: { name: "A", car: {} as unknown }, state: { x: GRID[0].x, z: GRID[0].z } }],
-      [2, { info: { name: "B", car: null as unknown }, state: { x: GRID[1].x, z: GRID[1].z } }],
+      [1, { info: { name: "A", car: { model: "sahin" } as { model: string } | null }, state: { x: GRID[0].x, z: GRID[0].z } }],
+      [2, { info: { name: "B", car: null as { model: string } | null }, state: { x: GRID[1].x, z: GRID[1].z } }],
     ]);
     const paid: [number, number][] = [];
     const host = new RingHost({ players, broadcast: (ev) => sent.push(ev) }, (sid, amount) => paid.push([sid, amount]), () => 0);
     expect(host.handle(2, { t: "ring", op: "join", slot: 1 }, 0)).toMatch(/Tofaş/);
-    players.get(2)!.info.car = {};
+    // İş aracıyla yarışılmaz
+    players.get(2)!.info.car = { model: "taksi" };
+    expect(host.handle(2, { t: "ring", op: "join", slot: 1 }, 0)).toMatch(/İş aracı/);
+    players.get(2)!.info.car = { model: "e30" };
     expect(host.handle(1, { t: "ring", op: "join", slot: 0 }, 0)).toBeNull();
     expect(host.handle(2, { t: "ring", op: "join", slot: 1 }, 0)).toBeNull();
     expect(host.handle(1, { t: "ring", op: "start", laps: 1 }, 0)).toBeNull();

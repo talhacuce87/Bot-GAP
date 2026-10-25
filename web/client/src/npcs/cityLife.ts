@@ -2,6 +2,7 @@
 // Features her kare `update` çağırır: benzetim sabit adımla (~30 Hz, FixedStep) ilerler, çizim her kare son iki
 // adımın arasından. Kediler evcil hayvan çizicisiyle (Companions) görünmez bir yürüyüşçünün peşinden gider.
 import * as THREE from "three";
+import { carHullOf } from "../../../shared/car";
 import { FLAG_RUNNING, FLAG_SEATED, FLAG_WALKING, outsideWorld, vehicleOf } from "../../../shared/constants";
 import type { ClientEvent, Look } from "../../../shared/protocol";
 import { CASINO, KAHVEHANE, PLAZA, SAKURA_SPOT } from "../../../shared/zones";
@@ -166,7 +167,7 @@ export class CityLife {
     }
     if (this.prev.size > remotes.map.size + 8) for (const sid of this.prev.keys()) if (!remotes.map.has(sid)) this.prev.delete(sid);
 
-    const myCar: MyCar | null = me.car ? { x: me.x, z: me.z, rot: me.rot, v: me.car.v } : null;
+    const myCar: MyCar | null = me.car ? { x: me.x, z: me.z, rot: me.rot, v: me.car.v, hull: carHullOf(settings.car.model) } : null;
     const cam = { x: f.camera.x, z: f.camera.z };
     this.traffic.step(f.serverMs, dt, cam, f.hour, this.mul, this.trafficMovers);
     // Yayalar NPC arabalardan da kaçar (yakındakiler)

@@ -474,7 +474,9 @@ export type ServerEvent =
   /** Araba bir NPC yayaya çarptı: herkes savrulup düşmesini görür (`by` çarpan). */
   | { t: "pedhit"; id: number; vx: number; vz: number; by: number }
   /** Arabanın hasar seviyesi değişti (0–3). */
-  | { t: "cardmg"; sid: number; d: number; z?: CarDents | null };
+  | { t: "cardmg"; sid: number; d: number; z?: CarDents | null }
+  /** GAP Garaj tamirinin sonucu (yalnızca isteyene): yapıldı mı (para yetmediyse ya da garajda değilse hayır). */
+  | { t: "repaired"; ok: boolean };
 
 /** İstemcinin gönderdiği JSON olaylar. */
 export type ClientEvent =
@@ -532,8 +534,8 @@ export type ClientEvent =
   | { t: "job"; op: "start"; kind: JobKind }
   | { t: "job"; op: "stop" }
   | { t: "taxi"; on: boolean }
-  /** GAP Garaj'da arabanı tamir ettir (ücretli). */
-  | { t: "repair" }
+  /** GAP Garaj'da arabanı tamir ettir (ücretli): `d` bildiğim hasar seviyesi (sunucu bildiğinden düşüğünü kabul etmez). */
+  | { t: "repair"; d?: number }
   /** Satın al (kıyafet, araba, modifiye; shared/shop anahtarı). */
   | { t: "buy"; item: string }
   /** Banka: dünyadaki bir oyuncuya para gönder (₺). */

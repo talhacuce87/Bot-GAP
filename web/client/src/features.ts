@@ -33,7 +33,7 @@ import { LIVE_TABLES } from "../../shared/liveCasino";
 import type { Hud } from "./ui/hud";
 import { RadioPanel } from "./ui/radioPanel";
 import { RadioMixer, type RadioSource } from "./radio";
-import { type CarDents, type CarRadio, carCircles, CAR_ENGINES, CAR_MODELS, CAR_STATS, type CarSpec, DEFAULT_CAR, ENTER_REACH, NO_DENTS, RADIO_RANGE } from "../../shared/car";
+import { type CarDents, type CarRadio, carCircles, CAR_ENGINES, CAR_MODELS, CAR_STATS, type CarSpec, DEFAULT_CAR, ENTER_REACH, isJobCar, NO_DENTS, RADIO_RANGE } from "../../shared/car";
 import { Phone } from "./ui/phone";
 import { GALLERY_SLOTS } from "./world/gallery";
 import { JobHud } from "./ui/jobHud";
@@ -71,6 +71,8 @@ import type { ChibiLayer } from "./avatars/chibi";
 import { EngineSounds, type EngineSource } from "./ui/engine";
 import { Horns } from "./ui/horn";
 import { CarSmoke } from "./world/carSmoke";
+import { NAV_COLOR, Navigator } from "./nav/navigator";
+import { roofOf } from "./world/tofas";
 
 /** Yakındaki etkileşim (F/G düğmesi). */
 export interface FeatureAct {
@@ -176,6 +178,8 @@ export class Features {
   /** İş: görev kartı, dünyadaki hedef işareti, bekleyen NPC müşteri ve taksi çağrıları. */
   private jobHud: JobHud;
   private jobMarker = new JobMarker();
+  /** Navigasyon: hedefe rota, arabanın üstünde 3B ok, haritada işaretlenen yer. */
+  private nav: Navigator;
   private job: JobView | null = null;
   private calls: TaxiCall[] = [];
   private jobNpc: AvatarView | null = null;
@@ -268,6 +272,10 @@ export class Features {
   private cityLife: CityLife;
   /** Kendi arabanın hasarı (0–3.99; seviye tam kısmı): çarptıkça artar, garajda onarılır. */
   private damage = 0;
+  /** Hasar araba başına: Şahin'in göçüğü Passat'a geçmez (yukarıdakiler `wearModel`'inki, ötekiler burada). */
+  private wear = new Map<string, { damage: number; zones: { f: number; r: number; l: number; rt: number }; dents: CarDents }>();
+  private wearModel: CarSpec["model"] = DEFAULT_CAR.model;
+  private wearTimer = 0;
   private engines = new EngineSounds();
   private engineSources: EngineSource[] = [];
   private prevCars = new Map<number, { x: number; z: number }>();
@@ -308,6 +316,8 @@ export class Features {
       // Kıvılcım/💥 çarpılan yerde (yerel → dünya)
       const cs = Math.cos(me.rot), sn = Math.sin(me.rot);
       c.emoteFx.emit(me.x + lx * cs + lz * sn, 0.6, me.z - lx * sn + lz * cs, FX_CELL.splat, performance.now() / 1000, undefined, 1);
+      // İş araçları (kurye scooter'ı, taksi) hasar almaz
+      if (isJobCar(settings.car.model)) return;
       const before = this.carDamage;
       this.damage = Math.min(3.99, this.damage + Math.max(0, speed - 3) / 18);
       // Göçük: çarpılan taraf (ön/arka uçlar, yanlar); farlar sert önden çarpmada kırılır
@@ -319,7 +329,7 @@ export class Features {
       const changed = JSON.stringify(next) !== JSON.stringify(this.dents);
       this.dents = next;
       if (this.carDamage !== before || changed) {
-        net.send({ t: "cardmg", d: this.carDamage, z: this.dents });
+        this.sendWear();
         if (this.carDamage === 3 && before !== 3) hud.toast("💨 Araban ağır hasarlı! GAP Garaj'da onarılır.");
       }
     };
@@ -466,6 +476,11 @@ export class Features {
       toast: (t) => hud.toast(t),
       quests: (d) => this.questToast(d),
     });
+    this.nav = new Navigator(hudRoot, () => {
+      sfx.win(false);
+      hud.toast("📍 Hedefe vardın!");
+    });
+    world.scene.add(this.nav.arrow.group, this.nav.marker.group);
     this.map = new WorldMap(hudRoot, c.input.touch, {
       me: () => ({ x: c.me.x, z: c.me.z, rot: c.me.rot }),
       others: function* () {
@@ -480,6 +495,17 @@ export class Features {
         ...(this.job?.target ? [{ x: this.job.target.x, z: this.job.target.z, label: this.job.target.name, color: "#ef9f27" }] : []),
         ...this.calls.map((k) => ({ x: k.x, z: k.z, label: `🚕 ${k.name}`, color: "#fac775" })),
       ],
+      // Haritada işaretlenen hedef ve rota (navigasyon)
+      waypoint: () => this.nav.waypoint,
+      setWaypoint: (p) => {
+        this.nav.setWaypoint(p);
+        if (p) {
+          sfx.chip();
+          hud.toast(this.job?.target ? "📍 Hedef işaretlendi (iş bitince ok oraya döner)." : "📍 Hedef işaretlendi: oku takip et!");
+        }
+      },
+      route: () => this.nav.route,
+      navColor: NAV_COLOR,
     });
     this.lifeHud = new LifeHud(hudRoot, {
       openWallet: () => net.send({ t: "econ", op: "wallet" }),
@@ -531,11 +557,18 @@ export class Features {
       const d = itemDef(item);
       if (sid === net.you && d) hud.toast(`${d.icon} ${d.name} ${d.cat === "drink" ? "içtin" : "yedin"}.`);
     };
-    net.onCarDamage = (sid, d) => {
-      if (sid !== net.you || d !== 0 || this.carDamage === 0) return;
-      this.damage = 0;
-      this.clearDents(false);
-      hud.toast("🔧 Araban onarıldı.");
+    // GAP Garaj tamirinin sonucu (para yetmediyse sunucu ayrıca söyler)
+    net.onRepaired = (ok) => {
+      this.repairAsked = false;
+      if (ok) {
+        window.clearTimeout(this.wearTimer);
+        this.wearTimer = 0;
+        this.damage = 0;
+        this.clearDents(false);
+        sfx.win(false);
+        hud.toast("🔧 Araban tertemiz! Göçükler düzeldi, motor eski gücünde.");
+      }
+      this.vehicles.tuning.refresh();
     };
     // Arabanın çarptığı oyuncu: savrulur, sırtüstü düşer, ~2 sn yatar, kalkar (herkes görür)
     net.onRunover = (sid, vx, vz) => {
@@ -571,6 +604,8 @@ export class Features {
       me.noRun = ev.energy <= 0;
       if (me.downed && !was) {
         if (me.seated) me.standUpNow();
+        // Baygın araba sürülmez: araba olduğu yerde kalır
+        this.vehicles.knockOut();
         hud.toast("🩸 Bayıldın! Arkadaşın kaldırabilir ya da ambulans çağır.");
       }
       if (ev.tp) me.teleport(ev.tp.x, ev.tp.z, ev.tp.rot);
@@ -683,6 +718,9 @@ export class Features {
       block: (on) => c.input.setBlocked(on),
       racing: () => this.racing,
       sparkle: (x, z) => c.emoteFx.emit(x, 0, z, FX_CELL.sparkle, performance.now() / 1000, undefined, 4),
+      wearOf: (model) => this.wearOf(model),
+      repair: () => this.repairCar(),
+      repairBusy: () => this.repairAsked,
     });
     // Mahalle blokları ve park halindeki arabalar birlikte çarpışır
     world.colliders.extra = {
@@ -835,8 +873,12 @@ export class Features {
     const prevWelcome = net.onStatus;
     net.onStatus = (s) => {
       prevWelcome(s);
-      if (s === "online") this.sendCosmetics();
-      else this.vehicles.reset();
+      if (s === "online") {
+        this.sendCosmetics();
+        // Arabadaysan sunucuya yeniden söyle (hasarıyla birlikte)
+        this.vehicles.resync();
+        this.hadCar = false;
+      } else this.vehicles.reset();
     };
 
     // 3B'de bir avatara tıklayınca oyuncu kartı (sürükleme değilse)
@@ -958,7 +1000,8 @@ export class Features {
     const { me, remotes } = this.c;
     if (me.car || me.seated || me.vehicle || this.myRide) return null;
     for (const r of remotes.map.values()) {
-      if (!r.hasData || !r.info.car) continue;
+      // Scooter'a yolcu binmez (sunucu da reddeder)
+      if (!r.hasData || !r.info.car || r.leaving || r.info.car.model === "motor") continue;
       const [fx, fz, bx, bz] = carCircles(r.x, r.z, r.rot);
       const ex = bx - fx, ez = bz - fz, l2 = ex * ex + ez * ez || 1;
       const t = Math.max(0, Math.min(1, ((me.x - fx) * ex + (me.z - fz) * ez) / l2));
@@ -1018,7 +1061,8 @@ export class Features {
       return [{ key: "g", label: "Gridden çık", act: "ring-leave" }];
     }
     if (mine && (phase === "lights" || phase === "racing") && mine.total === null && !mine.dnf) return [];
-    if (phase === "idle" || phase === "lobby") {
+    // İş aracıyla (scooter, taksi) yarışılmaz
+    if ((phase === "idle" || phase === "lobby") && !isJobCar(settings.car.model)) {
       const taken = new Set(r?.racers.map((x) => x.slot) ?? []);
       let best = -1, bestD = GRID_REACH;
       GRID.forEach((g, i) => {
@@ -1233,6 +1277,21 @@ export class Features {
     }
   }
 
+  /** Navigasyon oku ve rotası (iş hedefi ya da haritadaki işaret). */
+  private updateNav(dt: number, time: number): void {
+    const { me, world } = this.c;
+    const hideArrow = this.vehicles.tuning.isOpen || !!me.driving || me.onStage || me.jailed || this.photo.active || (!me.car && (me.hidden || !!this.myRide));
+    this.nav.update(me, {
+      job: this.job?.target ?? null,
+      roof: settings.car.model === "motor" ? 1.55 : roofOf(settings.car.model),
+      firstPerson: settings.firstPerson,
+      hideArrow,
+      groundAt: (x, z) => world.colliders.groundAt(x, z, 0.4),
+      dt,
+      time,
+    });
+  }
+
   /** Avatarların elindeki eşyalar (yerken el ağza). */
   private updateHeld(): void {
     const { me, remotes } = this.c;
@@ -1270,7 +1329,51 @@ export class Features {
     const had = this.dents.f || this.dents.r || this.dents.l || this.dents.rt || this.dents.hl;
     this.zones = { f: 0, r: 0, l: 0, rt: 0 };
     this.dents = { ...NO_DENTS };
-    if (had && send) this.c.net.send({ t: "cardmg", d: 0, z: this.dents });
+    if (had && send) this.sendWear();
+  }
+
+  /**
+   * Hasarı sunucuya gönderir: sunucu sık mesajı yok sayar (arabaya biner binmez ya da art arda çarpınca), bu yüzden
+   * kısa bir bekleyişle en son hâl tek mesajda gider.
+   */
+  private sendWear(): void {
+    window.clearTimeout(this.wearTimer);
+    this.wearTimer = window.setTimeout(() => {
+      this.wearTimer = 0;
+      if (this.c.me.car) this.c.net.send({ t: "cardmg", d: this.carDamage, z: this.dents });
+    }, 350);
+  }
+
+  /** GAP Garaj tamiri (tuning menüsünden): hafif çizik bedava silinir, hasar ücretli (sunucu parayı alıp sıfırlar). */
+  private repairCar(): void {
+    const { me, net, hud } = this.c;
+    if (!me.car || this.repairAsked) return;
+    if (this.carDamage === 0) {
+      this.damage = 0;
+      this.clearDents();
+      sfx.chip();
+      hud.toast("🧽 Çizikler silindi (bedava).");
+      return this.vehicles.tuning.refresh();
+    }
+    this.repairAsked = true;
+    net.send({ t: "repair", d: this.carDamage });
+  }
+
+  /** Başka modele geçildi: o modelin hasarı yüklenir (iş aracı hep sağlam). */
+  private swapWear(model: CarSpec["model"]): void {
+    this.wear.set(this.wearModel, { damage: this.damage, zones: { ...this.zones }, dents: { ...this.dents } });
+    const w = isJobCar(model) ? undefined : this.wear.get(model);
+    this.wearModel = model;
+    this.damage = w?.damage ?? 0;
+    this.zones = w ? { ...w.zones } : { f: 0, r: 0, l: 0, rt: 0 };
+    this.dents = w ? { ...w.dents } : { ...NO_DENTS };
+  }
+
+  /** Bir modelin hasarı (park halindeki araba da göçüğüyle görünsün). */
+  private wearOf(model: CarSpec["model"]): { dmg: number; dents: CarDents } {
+    if (model === this.wearModel) return { dmg: this.carDamage, dents: { ...this.dents } };
+    const w = isJobCar(model) ? undefined : this.wear.get(model);
+    return w ? { dmg: Math.floor(w.damage), dents: { ...w.dents } } : { dmg: 0, dents: { ...NO_DENTS } };
   }
 
   /** Minimap işaretleri (oyuncular, bayılanlar, park ettiğin araba) ve yaralı sayacı. */
@@ -1292,7 +1395,9 @@ export class Features {
     for (const k of this.calls) d.push({ x: k.x, z: k.z, kind: "call" });
     const goal = this.job?.target;
     if (goal) d.push({ x: goal.x, z: goal.z, kind: "target" });
-    this.lifeHud.frame(me, d, serverNow);
+    const wp = this.nav.waypoint;
+    if (wp && !goal) d.push({ x: wp.x, z: wp.z, kind: "waypoint" });
+    this.lifeHud.frame(me, d, serverNow, this.nav.route);
   }
 
   acts(): FeatureAct[] {
@@ -1617,6 +1722,7 @@ export class Features {
     this.updateLife(serverNow);
     this.updateHeld();
     this.updateJob(serverNow);
+    this.updateNav(dt, time);
 
     // Saat: kişisel ayar > sinema modu (gündüzse) > dünyanın saati (!saat) > gerçek saat
     let hour: number | null = settings.clock === "auto" ? this.worldClock : CLOCK_HOURS[settings.clock];
@@ -2055,20 +2161,11 @@ export class Features {
   private updateCarFx(time: number, dt: number): void {
     const { me, net, remotes, camera } = this.c;
     this.fxTime = time;
-    // Arabaya binince hasarı herkese bildir; garajda onar
-    if (me.car && !this.hadCar && (this.carDamage || this.dents.f || this.dents.r || this.dents.l || this.dents.rt || this.dents.hl)) net.send({ t: "cardmg", d: this.carDamage, z: this.dents });
+    // Hasar araba başına; arabaya binince hasarı herkese bildir; garajda onar
+    if (settings.car.model !== this.wearModel) this.swapWear(settings.car.model);
+    if (me.car && !this.hadCar && (this.carDamage || this.dents.f || this.dents.r || this.dents.l || this.dents.rt || this.dents.hl)) this.sendWear();
     this.hadCar = !!me.car;
-    // Garajda: hafif çizik bedava silinir, hasar ücretle onarılır (sunucu parayı alıp hasarı sıfırlar)
-    if (this.vehicles.tuning.isOpen && this.damage > 0 && !this.repairAsked) {
-      if (this.carDamage === 0) {
-        this.damage = 0;
-        this.clearDents();
-      }
-      else {
-        this.repairAsked = true;
-        net.send({ t: "repair" });
-      }
-    }
+    // Garajdan çıkınca (cevap gelmediyse de) tamir beklemesi biter
     if (!this.vehicles.tuning.isOpen) this.repairAsked = false;
     me.carWear = me.car ? this.carDamage : 0;
     // Hız göstergesi: arabadayken (GAP Ring yarışında yarışın göstergesi çıkar)
@@ -2112,7 +2209,8 @@ export class Features {
     for (const r of remotes.map.values()) {
       if (!r.hasData || !r.info.car) continue;
       const p = this.prevCars.get(r.info.sid);
-      const sp = p && dt > 0 ? Math.hypot(r.x - p.x, r.z - p.z) / dt : 0;
+      // Işınlanma/yeniden binişte (bir karede metrelerce) motor bağırmasın
+      const sp0 = p && dt > 0 ? Math.hypot(r.x - p.x, r.z - p.z) / dt : 0, sp = sp0 > 60 ? 0 : sp0;
       if (p) [p.x, p.z] = [r.x, r.z];
       else this.prevCars.set(r.info.sid, { x: r.x, z: r.z });
       add(r.x, r.z, sp, 0.4, false, r.info.car);

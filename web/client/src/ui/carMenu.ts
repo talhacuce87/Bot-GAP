@@ -109,7 +109,8 @@ export class CarMenu {
     });
     addEventListener("keydown", (e) => {
       if (!this.isOpen || e.target instanceof HTMLInputElement) return;
-      const i = CAR_MODELS.findIndex((_, k) => e.code === `Digit${k + 1}`);
+      // Rakamlar Araçlarım'daki sırayla (galeride numara yok)
+      const i = this.gallery ? -1 : CAR_MODELS.findIndex((_, k) => e.code === `Digit${k + 1}`);
       if (e.code === "Escape") this.close();
       else if (i >= 0) this.pick(CAR_MODELS[i].id);
       else return;

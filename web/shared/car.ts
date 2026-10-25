@@ -125,6 +125,9 @@ export interface ParkedCar {
   x: number;
   z: number;
   rot: number;
+  /** Hasarı ve göçükleri (park edince de görünür; binince geri gelir). */
+  dmg?: number;
+  dents?: CarDents | null;
 }
 /** Arabayı bu kadar uzağa park edebilir/çağırabilirsin (sunucu, oyuncunun konumuna göre). */
 export const PARK_REACH = 10;
@@ -209,6 +212,11 @@ export const CAR_HULL_R = 0.92;
 export const CAR_HULL_OFFSET = 1.15;
 
 const PLATE = /^[0-9A-ZÇĞİÖŞÜ ]{1,10}$/;
+/** Plaka yazısını düzeltir (büyük harf, tek boşluk); geçersizse null. */
+export function normalPlate(v: string): string | null {
+  const p = v.toLocaleUpperCase("tr-TR").replace(/\s+/g, " ").trim().slice(0, 10);
+  return PLATE.test(p) ? p : null;
+}
 
 function pick<T extends readonly { id: string }[]>(list: T, v: unknown, def: Id<T>): Id<T> {
   return typeof v === "string" && list.some((o) => o.id === v) ? (v as Id<T>) : def;
@@ -237,9 +245,14 @@ export function validCar(v: unknown): CarSpec | null {
   };
 }
 
-/** Arabanın ön ve arka çarpışma dairelerinin merkezleri (ön x, z, arka x, z). */
-export function carCircles(x: number, z: number, h: number): [number, number, number, number] {
-  const s = Math.sin(h) * CAR_HULL_OFFSET, c = Math.cos(h) * CAR_HULL_OFFSET;
+/** Modelin gövdesi: iki dairenin yarıçapı ve merkezden uzaklığı (scooter araba kadar yer kaplamaz). */
+export function carHullOf(model: string): { r: number; off: number } {
+  return model === "motor" ? { r: 0.42, off: 0.5 } : { r: CAR_HULL_R, off: CAR_HULL_OFFSET };
+}
+
+/** Arabanın ön ve arka çarpışma dairelerinin merkezleri (ön x, z, arka x, z); `off` modelin gövdesinden. */
+export function carCircles(x: number, z: number, h: number, off = CAR_HULL_OFFSET): [number, number, number, number] {
+  const s = Math.sin(h) * off, c = Math.cos(h) * off;
   return [x + s, z + c, x - s, z - c];
 }
 

@@ -10,7 +10,7 @@ import { BUFFS, type BuffId } from "../../../shared/items";
 export interface MapDot {
   x: number;
   z: number;
-  kind: "player" | "downed" | "car" | "target" | "call";
+  kind: "player" | "downed" | "car" | "target" | "call" | "waypoint";
 }
 
 export interface MinimapBase {
@@ -26,6 +26,9 @@ const ICONS = {
   thirst: `<svg viewBox="0 0 24 24"><path d="M12 2.5s-6.5 7.3-6.5 12a6.5 6.5 0 0 0 13 0c0-4.7-6.5-12-6.5-12z"/></svg>`,
   energy: `<svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>`,
 };
+
+/** Navigasyon rotasının rengi (navigator NAV_COLOR ile aynı). */
+const NAV_LINE = "#36c8ff";
 
 /** Minimapin gösterdiği genişlik (m). */
 const VIEW_M = 120;
@@ -169,7 +172,7 @@ export class LifeHud {
   }
 
   /** Kare başına: minimap (saniyede ~12) ve bayılma sayacı. `rot`: avatarın baktığı açı. */
-  frame(me: { x: number; z: number; rot: number }, dots: MapDot[], serverNow: number): void {
+  frame(me: { x: number; z: number; rot: number }, dots: MapDot[], serverNow: number, route: readonly [number, number][] | null = null): void {
     if (this.downedUntil) {
       const left = Math.max(0, this.downedUntil - serverNow);
       const s = Math.ceil(left / 1000);
@@ -183,10 +186,10 @@ export class LifeHud {
     const now = performance.now();
     if (now - this.lastDraw < 80) return;
     this.lastDraw = now;
-    this.drawMap(me, dots);
+    this.drawMap(me, dots, route);
   }
 
-  private drawMap(me: { x: number; z: number; rot: number }, dots: MapDot[]): void {
+  private drawMap(me: { x: number; z: number; rot: number }, dots: MapDot[], route: readonly [number, number][] | null): void {
     const c = this.mm, g = c.getContext("2d")!;
     const w = c.width, h = c.height, s = w / VIEW_M;
     g.fillStyle = "#16202a";
@@ -203,17 +206,29 @@ export class LifeHud {
     }
     const P = (x: number, z: number): [number, number] => [w / 2 + (x - me.x) * s, h / 2 + (z - me.z) * s];
     const r = w / 95;
+    // Navigasyon rotası (GPS çizgisi): koyu kenarlı mavi
+    if (route && route.length > 1) {
+      g.lineCap = g.lineJoin = "round";
+      for (const [color, width] of [["rgba(4, 30, 60, 0.75)", r * 2.4], [NAV_LINE, r * 1.3]] as const) {
+        g.strokeStyle = color;
+        g.lineWidth = width;
+        g.beginPath();
+        route.forEach(([x, z], i) => (i ? g.lineTo(...P(x, z)) : g.moveTo(...P(x, z))));
+        g.stroke();
+      }
+    }
     for (const d of dots) {
       let [x, y] = P(d.x, d.z);
-      // Hedef (iş) minimapin dışındaysa kenarda, yönünü gösteren üçgen (GTA gibi)
-      if (d.kind === "target" && (x < r * 3 || y < r * 3 || x > w - r * 3 || y > h - r * 3)) {
+      const goal = d.kind === "target" || d.kind === "waypoint", tint = d.kind === "waypoint" ? NAV_LINE : "#ef9f27";
+      // Hedef (iş ya da işaret) minimapin dışındaysa kenarda, yönünü gösteren üçgen (GTA gibi)
+      if (goal && (x < r * 3 || y < r * 3 || x > w - r * 3 || y > h - r * 3)) {
         const dx = x - w / 2, dy = y - h / 2, k = Math.min((w / 2 - r * 3) / Math.abs(dx || 1e-6), (h / 2 - r * 3) / Math.abs(dy || 1e-6));
         x = w / 2 + dx * k;
         y = h / 2 + dy * k;
         g.save();
         g.translate(x, y);
         g.rotate(Math.atan2(dy, dx));
-        g.fillStyle = "#ef9f27";
+        g.fillStyle = tint;
         g.strokeStyle = "rgba(0,0,0,0.5)";
         g.lineWidth = r * 0.4;
         g.beginPath();
@@ -240,13 +255,13 @@ export class LifeHud {
       if (d.kind === "car") {
         g.fillStyle = "#85b7eb";
         g.fillRect(x - r * 1.4, y - r * 2, r * 2.8, r * 4);
-      } else if (d.kind === "target") {
-        g.strokeStyle = "#ef9f27";
+      } else if (goal) {
+        g.strokeStyle = tint;
         g.lineWidth = r * 0.9;
         g.beginPath();
         g.arc(x, y, r * 2.6, 0, Math.PI * 2);
         g.stroke();
-        g.fillStyle = "#ef9f27";
+        g.fillStyle = tint;
         g.beginPath();
         g.arc(x, y, r, 0, Math.PI * 2);
         g.fill();

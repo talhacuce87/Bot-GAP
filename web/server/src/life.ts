@@ -2,6 +2,7 @@
 // düşer (koşarken hızlı, otururken enerji dolar), açlık sıfırken can gider. Yüksekten düşme (istemci bildirir,
 // sınırlı) ve hızlı arabanın yayaya çarpması (sunucu konumlardan bulur) can götürür. Can sıfırlanınca bayılır:
 // yanındaki kaldırabilir; kimse kaldırmazsa ya da ambulans çağırırsa hastanede uyanır ve fatura öder.
+import { CAR_MAX_SPEED } from "../../shared/car";
 import { FLAG_RUNNING, FLAG_SEATED } from "../../shared/constants";
 import { carHitDamage, ECON, fallDamage, LIFE, type LifeState, stepLife } from "../../shared/economy";
 import { BUFFS, type BuffId, type ItemDef } from "../../shared/items";
@@ -145,6 +146,8 @@ export class LifeHost {
     if (!prev || now - prev.at > 500 || now <= prev.at) return;
     const v = Math.hypot(x - prev.x, z - prev.z) / ((now - prev.at) / 1000);
     const ux = (x - prev.x) / (Math.hypot(x - prev.x, z - prev.z) || 1), uz = (z - prev.z) / (Math.hypot(x - prev.x, z - prev.z) || 1);
+    // Arabanın en yüksek hızından fazlası sürüş değil yer değiştirme (garaj işaretine, yarış gridine oturtma)
+    if (v > CAR_MAX_SPEED * 1.15) return;
     const dmg = carHitDamage(v);
     if (!dmg) return;
     for (const [other, q] of this.room.players) {

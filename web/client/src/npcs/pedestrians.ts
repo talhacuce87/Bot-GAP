@@ -5,7 +5,7 @@
 // Arabanın çarptığı yaya sunucu üzerinden herkese duyurulur ("pedhit").
 // GTA gibi: asfalt boyunca giden patikalar yolun kenarına kayar; karşıya geçecek yaya kaldırımda durup arabaya
 // bakar, yol boşsa geçer; geçerken araba gelirse koşar (bekleme yerel: çizelgesine biraz hızlı yürüyerek yetişir).
-import { CAR_HULL_R, carCircles } from "../../../shared/car";
+import { carCircles } from "../../../shared/car";
 import type { ClientEvent } from "../../../shared/protocol";
 import { CHIBI_SEAT_LIFT } from "../avatars/avatars";
 import type { CrowdPose, CrowdRenderer } from "../avatars/crowd";
@@ -111,6 +111,8 @@ export interface MyCar {
   z: number;
   rot: number;
   v: number;
+  /** Gövde (scooter küçük). */
+  hull: { r: number; off: number };
 }
 
 /** Oturulabilecek bank. */
@@ -734,8 +736,8 @@ export class Pedestrians {
 
       // Arabanla çarptın mı: sunucuya bildir (o herkese duyurur)
       if (myCar && p.kind !== "sit" && Math.abs(myCar.v) > HIT_SPEED && !dn && time - (this.lastHit.get(i) ?? -Infinity) > HIT_COOLDOWN) {
-        const [fx, fz, bx, bz] = carCircles(myCar.x, myCar.z, myCar.rot);
-        const r = CAR_HULL_R + 0.3;
+        const [fx, fz, bx, bz] = carCircles(myCar.x, myCar.z, myCar.rot, myCar.hull.off);
+        const r = myCar.hull.r + 0.3;
         if (Math.hypot(x - fx, z - fz) < r || Math.hypot(x - bx, z - bz) < r) {
           this.lastHit.set(i, time);
           const vx = Math.sin(myCar.rot) * myCar.v, vz = Math.cos(myCar.rot) * myCar.v;

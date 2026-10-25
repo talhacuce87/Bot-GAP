@@ -23,9 +23,9 @@ import {
   writeSnapshotEntry,
   writeSnapshotHeader,
 } from "../../shared/protocol";
-import { inStadium, inVolley, SPAWN } from "../../shared/zones";
+import { GARAGE, GARAGE_KEEP_CLEAR, inStadium, inVolley, SPAWN } from "../../shared/zones";
 import { inPbField } from "../../shared/paintball";
-import { CAR_MAX_SPEED, type CarRadio, type CarSpec, ENTER_REACH, isJobCar, validDents, type ParkedCar, PARK_REACH, RIDE_SEATS, validCar } from "../../shared/car";
+import { CAR_MAX_SPEED, type CarRadio, type CarSpec, ENTER_REACH, isJobCar, NO_DENTS, validDents, type ParkedCar, PARK_REACH, RIDE_SEATS, validCar } from "../../shared/car";
 import { clampElev, computeShot, DEFAULT_ELEV, FIRE_COOLDOWN_MS, TANK_PARK, TANK_REACH, TANK_RETURN_MS } from "../../shared/tank";
 import type { SessionUser } from "./auth";
 import { Battle } from "./battle";
@@ -323,6 +323,11 @@ export class Room {
   setCarDamage(sid: number, d: unknown, z?: unknown): void {
     const p = this.players.get(sid);
     if (!p || !p.info.car || !Number.isInteger(d) || (d as number) < 0 || (d as number) > 3) return;
+    // İş araçları hasar almaz
+    if (isJobCar(p.info.car.model)) {
+      d = 0;
+      z = NO_DENTS;
+    }
     const dents = z === undefined ? (p.info.dents ?? null) : validDents(z);
     if (p.info.dmg === d && JSON.stringify(dents) === JSON.stringify(p.info.dents ?? null)) return;
     p.info.dmg = d as number;
@@ -343,9 +348,16 @@ export class Room {
       const x = Number(o.x), z = Number(o.z), rot = Number(o.rot);
       if (!car || ![x, z, rot].every(Number.isFinite)) return;
       if (Math.hypot(x - p.state.x, z - p.state.z) > PARK_REACH) return;
+      if (Math.hypot(x - GARAGE.spot.x, z - GARAGE.spot.z) < GARAGE_KEEP_CLEAR) return;
       const at = { x, z };
       clampToWorld(at, 1);
       parked = { car, x: at.x, z: at.z, rot };
+      // Göçükleriyle park eder (iş araçları hep sağlam)
+      const dmg = o.dmg, dents = validDents(o.dents);
+      if (!isJobCar(car.model)) {
+        if (Number.isInteger(dmg) && (dmg as number) > 0 && (dmg as number) <= 3) parked.dmg = dmg as number;
+        if (dents && (dents.f || dents.r || dents.l || dents.rt || dents.hl)) parked.dents = dents;
+      }
     }
     if (!parked && !p.info.parked) return;
     p.info.parked = parked;
@@ -425,6 +437,8 @@ export class Room {
       if (jailed === p.info.jailed) continue;
       if (jailed && this.tank.driver === sid) this.exitTank(sid);
       if (jailed && p.info.car) this.setCar(sid, null);
+      // Yolcuysa da iner (yoksa istemci onu sürücünün yanında tutar: zindandan kaçar)
+      if (jailed && p.info.ride) this.ride(sid, null);
       p.info.jailed = jailed;
       Object.assign(p.state, jailed ? JAIL_SPAWN : RELEASE_SPAWN);
       p.state.flags = 0;
@@ -443,6 +457,8 @@ export class Room {
   teleport(sid: number, x: number, z: number, rot: number, now = Date.now()): number {
     const p = this.players.get(sid);
     if (!p) return 0;
+    // Yolcu başka yere taşındı (hastane, savaş): yolculuk biter, yoksa istemci onu arabada tutar
+    if (p.info.ride) this.ride(sid, null);
     Object.assign(p.state, { x, z, rot });
     p.sampledAt = sampleTime(0, p.sampledAt, now);
     p.lastUpdate = now;

@@ -79,6 +79,11 @@ export interface WorldMapHost {
   owner(plot: number): string | null;
   /** İş hedefi ve taksi çağrıları gibi işaretler. */
   marks?(): Iterable<{ x: number; z: number; label: string; color: string }>;
+  /** Navigasyon: işaretlenen hedef, işaretle/kaldır (null), rota ve rengi. */
+  waypoint?(): { x: number; z: number } | null;
+  setWaypoint?(p: { x: number; z: number } | null): void;
+  route?(): readonly [number, number][] | null;
+  navColor?: string;
 }
 
 export class WorldMap {
@@ -93,6 +98,8 @@ export class WorldMap {
   private raf = 0;
   private pointers = new Map<number, [number, number]>();
   private pinch = 0;
+  /** Tıklama mı sürükleme mi: basılan yer ve an. */
+  private press: { x: number; y: number; at: number; moved: boolean } | null = null;
 
   constructor(root: HTMLElement, touch: boolean, private host: WorldMapHost) {
     const b = el("button", "wardrobe-btn map-btn", root, "🗺️");
@@ -106,7 +113,8 @@ export class WorldMap {
     button(bar, "⤢ Tümü", () => this.fit());
     button(bar, "+", () => this.zoomAt(1.4));
     button(bar, "−", () => this.zoomAt(1 / 1.4));
-    el("span", "map-hint", bar, touch ? "Sürükle: kaydır · İki parmak: yakınlaştır" : "Sürükle: kaydır · Tekerlek: yakınlaştır");
+    if (host.setWaypoint) button(bar, "✕ İşareti kaldır", () => host.setWaypoint!(null));
+    el("span", "map-hint", bar, touch ? "Dokun: hedef işaretle · Sürükle: kaydır · İki parmak: yakınlaştır" : "Tıkla: hedef işaretle · Sürükle: kaydır · Tekerlek: yakınlaştır");
     this.listen();
     this.terrain.prepareInBackground();
   }
@@ -175,13 +183,16 @@ export class WorldMap {
     }, { passive: false });
     c.addEventListener("pointerdown", (e) => {
       c.setPointerCapture(e.pointerId);
-      this.pointers.set(e.pointerId, local(e));
+      const at = local(e);
+      this.pointers.set(e.pointerId, at);
+      this.press = this.pointers.size === 1 ? { x: at[0], y: at[1], at: performance.now(), moved: false } : null;
     });
     c.addEventListener("pointermove", (e) => {
       const prev = this.pointers.get(e.pointerId);
       if (!prev) return;
       const now = local(e);
       this.pointers.set(e.pointerId, now);
+      if (this.press && Math.hypot(now[0] - this.press.x, now[1] - this.press.y) > 6) this.press.moved = true;
       if (this.pointers.size === 1) {
         this.view.x += now[0] - prev[0];
         this.view.y += now[1] - prev[1];
@@ -195,7 +206,17 @@ export class WorldMap {
       this.pointers.delete(e.pointerId);
       this.pinch = 0;
     };
-    c.addEventListener("pointerup", up);
+    c.addEventListener("pointerup", (e) => {
+      const p = this.press;
+      this.press = null;
+      up(e);
+      // Kısa dokunuş (sürüklemeden): hedef işaretle; işaretin üstüne dokunmak kaldırır
+      if (!p || p.moved || performance.now() - p.at > 450 || !this.host.setWaypoint) return;
+      const { s, x, y } = this.view, dpr = c.width / Math.max(1, c.getBoundingClientRect().width);
+      const wx = AREA.minX + (p.x - x) / s, wz = AREA.minZ + (p.y - y) / s, cur = this.host.waypoint?.();
+      if (cur && Math.hypot(cur.x - wx, cur.z - wz) * s < 14 * dpr) this.host.setWaypoint(null);
+      else this.host.setWaypoint({ x: wx, z: wz });
+    });
     c.addEventListener("pointercancel", up);
     addEventListener("resize", () => {
       if (!this.panel.isOpen) return;
@@ -250,6 +271,36 @@ export class WorldMap {
       g.fill();
       g.stroke();
       if (s > 2.5) text(o.name, X(o.x), Z(o.z) - 10 * dpr, 10, 600);
+    }
+    // Navigasyon rotası ve işaretlenen hedef (iğne)
+    const nav = this.host.navColor ?? "#36c8ff", route = this.host.route?.();
+    if (route && route.length > 1) {
+      g.lineCap = g.lineJoin = "round";
+      for (const [color, width] of [["rgba(4, 30, 60, 0.7)", 7], [nav, 4]] as const) {
+        g.strokeStyle = color;
+        g.lineWidth = width * dpr;
+        g.beginPath();
+        route.forEach(([wx, wz], i) => (i ? g.lineTo(X(wx), Z(wz)) : g.moveTo(X(wx), Z(wz))));
+        g.stroke();
+      }
+    }
+    const wp = this.host.waypoint?.();
+    if (wp) {
+      const px = X(wp.x), pz = Z(wp.z), q = 9 * dpr;
+      g.fillStyle = nav;
+      g.strokeStyle = "#ffffff";
+      g.lineWidth = 2 * dpr;
+      g.beginPath();
+      g.moveTo(px, pz);
+      g.bezierCurveTo(px - q * 0.9, pz - q * 1.1, px - q, pz - q * 2.2, px, pz - q * 2.3);
+      g.bezierCurveTo(px + q, pz - q * 2.2, px + q * 0.9, pz - q * 1.1, px, pz);
+      g.fill();
+      g.stroke();
+      g.fillStyle = "#ffffff";
+      g.beginPath();
+      g.arc(px, pz - q * 1.55, q * 0.35, 0, Math.PI * 2);
+      g.fill();
+      text("Hedef", px, pz - q * 3, 11);
     }
     // İşaretler (iş hedefi: elmas ve adı)
     for (const k of this.host.marks?.() ?? []) {
