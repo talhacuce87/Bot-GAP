@@ -148,11 +148,11 @@ export class LivePokerView implements GameView {
       bar.countdown(v.endsAt, POKER.startMs);
     } else if (v.phase === "showdown") {
       const w = v.winners.map((x) => `${name(x.seat)} +${fmt(x.amount)}${x.best ? ` (${x.best})` : ""}`).join(" · ");
-      bar.status(v.winners.length > 1 ? "POT BÖLÜŞÜLDÜ" : `${name(v.winners[0]?.seat ?? 0).toUpperCase()} KAZANDI`, w, "win");
+      bar.status(v.winners.length > 1 ? "POT BÖLÜŞÜLDÜ" : `${name(v.winners[0]?.seat ?? 0).toLocaleUpperCase("tr-TR")} KAZANDI`, w, "win");
       bar.countdown(v.endsAt, POKER.showMs);
     } else {
       const me = this.myTurn();
-      bar.status(me ? "SIRA SENDE" : `${name(v.toAct).toUpperCase()} DÜŞÜNÜYOR`, `${PHASE_TR[v.phase]} · el #${v.hand} · körler ${v.blinds[0]}/${v.blinds[1]}`, me ? "bet" : "closed");
+      bar.status(me ? "SIRA SENDE" : `${name(v.toAct).toLocaleUpperCase("tr-TR")} DÜŞÜNÜYOR`, `${PHASE_TR[v.phase]} · el #${v.hand} · körler ${v.blinds[0]}/${v.blinds[1]}`, me ? "bet" : "closed");
       bar.countdown(v.turnEndsAt, POKER.turnMs);
     }
     bar.seats(v.seats.map((x, i) => x && { name: x.name, bet: x.stack, me: i === this.mySeat(), won: x.won, active: v.toAct === i }));

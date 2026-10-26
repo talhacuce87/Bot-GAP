@@ -324,7 +324,7 @@ export class LiveBlackjackView implements GameView {
       this.bar.countdown(s.endsAt, LIVE_T.bjInsurance);
     } else if (s.phase === "play") {
       const me = this.myTurn();
-      this.bar.status(me ? "SIRA SENDE" : `${name(s.active).toUpperCase()} OYNUYOR`, me ? "Kart çek, dur, ikiye katla ya da böl" : "Bahisler kapandı", me ? "bet" : "closed");
+      this.bar.status(me ? "SIRA SENDE" : `${name(s.active).toLocaleUpperCase("tr-TR")} OYNUYOR`, me ? "Kart çek, dur, ikiye katla ya da böl" : "Bahisler kapandı", me ? "bet" : "closed");
       this.bar.countdown(s.turnEndsAt, LIVE_T.bjTurn);
     } else if (s.phase === "dealer") {
       this.bar.status("KRUPİYE OYNUYOR", "Kartlar açılıyor", "closed");

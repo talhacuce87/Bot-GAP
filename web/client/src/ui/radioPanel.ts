@@ -4,7 +4,8 @@
 import type { RadioQueueView } from "../../../shared/car";
 import { actionLabel } from "../input/keybinds";
 import { settings, updateSettings } from "../settings";
-import { button, el, Panel } from "./panel";
+import { type IconName, icon } from "./icons";
+import { button, el, Panel, paintRange } from "./panel";
 
 export type RadioOp = "next" | "prev" | "shuffle" | "repeat" | "jump" | "remove" | "clear" | "stop" | "play";
 
@@ -35,7 +36,7 @@ export class RadioPanel {
     root: HTMLElement,
     private a: { add(url: string): void; op(op: RadioOp, i?: number): void; mix(sid: number, vol: number, muted: boolean): void },
   ) {
-    this.panel = new Panel(root, "📻 RADYO", "hub-panel radio-panel");
+    this.panel = new Panel(root, "Radyo", "hub-panel radio-panel", "radio");
   }
 
   get isOpen(): boolean {
@@ -85,7 +86,7 @@ export class RadioPanel {
     this.ctrlEl = el("div", "radio-ctrl", body);
     if (this.inCar) {
       const row = el("div", "radio-row", body);
-      const input = el("input", "radio-input", row);
+      const input = el("input", "field radio-input", row);
       input.placeholder = "YouTube / Spotify şarkı ya da çalma listesi linki…";
       const add = () => {
         const url = input.value.trim();
@@ -95,8 +96,8 @@ export class RadioPanel {
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") add();
       });
-      button(row, "＋ Sıraya ekle", add, "radio-play");
-    } else el("div", "settings-note hub-note radio-lock", body, `🚗 Radyoyu arabadan kontrol edebilirsin (${actionLabel("car")}). İnince çalmaya devam eder.`);
+      button(row, "Sıraya ekle", add, "radio-play");
+    } else el("div", "settings-note hub-note radio-lock", body, `Radyoyu arabadan kontrol edebilirsin (${actionLabel("car")}). İnince çalmaya devam eder.`);
     el("h4", "settings-section", body, "Sıra");
     this.queueEl = el("div", "radio-queue", body);
     el("h4", "settings-section", body, "Çalan radyolar");
@@ -107,7 +108,11 @@ export class RadioPanel {
     vol.min = "0";
     vol.max = "100";
     vol.value = String(Math.round(settings.radioVolume * 100));
-    vol.addEventListener("input", () => updateSettings({ radioVolume: Number(vol.value) / 100 }));
+    paintRange(vol);
+    vol.addEventListener("input", () => {
+      paintRange(vol);
+      updateSettings({ radioVolume: Number(vol.value) / 100 });
+    });
     el("div", "settings-note hub-note", body, `Etraftakiler arabana yaklaştıkça şarkıyı daha yüksek duyar. Radyo: ${actionLabel("radio")}`);
     this.renderNow();
     this.renderQueue();
@@ -122,17 +127,19 @@ export class RadioPanel {
     const c = this.ctrlEl;
     c.replaceChildren();
     const has = !!q?.items.length, lock = !this.inCar;
-    const b = (label: string, title: string, on: () => void, ok = true, cls = "") => {
-      const x = button(c, label, on, `radio-btn ${cls}`);
+    const b = (name: IconName, title: string, on: () => void, ok = true, cls = "") => {
+      const x = button(c, "", on, `radio-btn ${cls}`);
+      icon(name, "", x);
       x.title = title;
+      x.setAttribute("aria-label", title);
       x.disabled = lock || !ok;
     };
-    b("🔀", "Karıştır", () => this.a.op("shuffle"), has, q?.shuffle ? "on" : "");
-    b("⏮", "Önceki / başa sar", () => this.a.op("prev"), has);
-    b(q?.playing ? "⏹" : "▶", q?.playing ? "Durdur" : "Çal", () => this.a.op(q?.playing ? "stop" : "play"), has, "main");
-    b("⏭", "Sonraki", () => this.a.op("next"), has);
+    b("shuffle", "Karıştır", () => this.a.op("shuffle"), has, q?.shuffle ? "on" : "");
+    b("skipBack", "Önceki / başa sar", () => this.a.op("prev"), has);
+    b(q?.playing ? "stop" : "play", q?.playing ? "Durdur" : "Çal", () => this.a.op(q?.playing ? "stop" : "play"), has, "main");
+    b("skipForward", "Sonraki", () => this.a.op("next"), has);
     const rep = q?.repeat ?? "off";
-    b(rep === "one" ? "🔂" : "🔁", rep === "off" ? "Tekrar: kapalı" : rep === "all" ? "Tekrar: liste" : "Tekrar: şarkı", () => this.a.op("repeat"), has, rep !== "off" ? "on" : "");
+    b(rep === "one" ? "repeatOne" : "repeat", rep === "off" ? "Tekrar: kapalı" : rep === "all" ? "Tekrar: liste" : "Tekrar: şarkı", () => this.a.op("repeat"), has, rep !== "off" ? "on" : "");
   }
 
   private renderQueue(): void {
@@ -147,7 +154,8 @@ export class RadioPanel {
       const t = el("button", "radio-itemtitle", row, `${i === q.index && q.playing ? "▶ " : `${i + 1}. `}${it.title}`);
       t.disabled = !this.inCar;
       t.addEventListener("click", () => this.a.op("jump", i));
-      const x = el("button", "radio-itemx", row, "✕");
+      const x = el("button", "radio-itemx", row);
+      icon("close", "", x);
       x.title = "Sıradan çıkar";
       x.disabled = !this.inCar;
       x.addEventListener("click", () => this.a.op("remove", i));
@@ -169,9 +177,10 @@ export class RadioPanel {
       const row = el("div", `radio-member${r.muted ? " muted" : ""}${r.heard ? " heard" : ""}`, box);
       const head = el("div", "radio-memberhead", row);
       el("b", "", head, r.own ? `${r.name} (sen)` : r.name);
-      el("span", "radio-membersong", head, `🎵 ${r.title}${r.heard || r.own ? "" : " · uzakta"}`);
+      el("span", "radio-membersong", head, `${r.title}${r.heard || r.own ? "" : " · uzakta"}`);
       const ctl = el("div", "radio-memberctl", row);
-      const mute = el("button", "radio-mute", ctl, r.muted ? "🔇" : "🔊");
+      const mute = el("button", "radio-mute", ctl);
+      icon(r.muted ? "speakerOff" : "speaker", "", mute);
       mute.title = r.muted ? "Sesi aç" : "Sesi kapat";
       const vol = el("input", "radio-volume", ctl);
       vol.type = "range";
@@ -179,8 +188,10 @@ export class RadioPanel {
       vol.max = "100";
       vol.value = String(Math.round(r.vol * 100));
       vol.disabled = r.muted;
+      paintRange(vol);
       mute.addEventListener("click", () => this.a.mix(r.sid, r.vol, !r.muted));
       vol.addEventListener("input", () => {
+        paintRange(vol);
         r.vol = Number(vol.value) / 100;
         this.a.mix(r.sid, r.vol, false);
       });

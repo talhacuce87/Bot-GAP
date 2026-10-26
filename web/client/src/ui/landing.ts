@@ -1,6 +1,8 @@
 // Tarayıcıdan ana adrese gelen için giriş ekranı: Discord ile giriş ya da isimle misafir. Seçim yapılınca
 // kapanır; Discord seçilirse sayfa Discord'un onay ekranına gider (dönüşte çerezle doğrudan girilir).
 
+import { iconHtml } from "./icons";
+
 export type LandingChoice = { kind: "discord" } | { kind: "guest"; name: string };
 
 export function showLanding(opts: { discord: boolean; guests: boolean; failed: boolean; name: string }): Promise<LandingChoice> {
@@ -9,15 +11,14 @@ export function showLanding(opts: { discord: boolean; guests: boolean; failed: b
     root.className = "landing";
     root.innerHTML = `
       <div class="landing-card">
-        <div class="landing-logo">🌍</div>
-        <h1>GAP Dünyası</h1>
+        <div class="landing-brand"><span class="landing-mark">GAP</span><span class="landing-word">Dünyası</span></div>
         <p class="landing-sub">Arkadaşlarınla aynı dünyada: sinema, halı saha, kahvehane, mahallede kendi evin.</p>
         ${opts.failed ? `<p class="landing-err">Discord girişi tamamlanamadı, tekrar dene.</p>` : ""}
-        ${opts.discord ? `<button class="landing-discord" type="button">Discord ile giriş yap</button>` : ""}
+        ${opts.discord ? `<button class="landing-discord" type="button">${iconHtml("discord")}Discord ile giriş yap</button>` : ""}
         ${opts.discord && opts.guests ? `<div class="landing-or"><span>ya da</span></div>` : ""}
         ${opts.guests ? `
           <form class="landing-guest">
-            <input name="name" maxlength="24" placeholder="Adın" autocomplete="nickname" />
+            <input class="field" name="name" maxlength="24" placeholder="Adın" autocomplete="nickname" />
             <button type="submit">Misafir olarak gir</button>
           </form>
           <p class="landing-note">Misafirler gezip oynayabilir; XP, ev ve kıyafet kaydı için Discord ile gir.</p>` : ""}

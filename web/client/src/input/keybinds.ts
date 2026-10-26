@@ -392,9 +392,10 @@ export function onBinds(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
-/** Bu tuşa atanmış eylemler. */
+/** Bu tuşa atanmış eylemler. Boş tuş (bazı sanal klavyelerin kodsuz olayı) hiçbir eylemi tetiklemez. */
 export function actionsOf(bind: Bind): Action[] {
   const out: Action[] = [];
+  if (!bind) return out;
   for (const a of Object.keys(binds) as Action[]) if (binds[a].includes(bind)) out.push(a);
   return out;
 }

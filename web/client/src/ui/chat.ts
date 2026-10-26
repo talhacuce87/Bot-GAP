@@ -1,6 +1,7 @@
 // Oyun içi sohbet: Enter ile yaz, Esc ile çık. "!" ile başlayan mesajlar komuttur (cevap yalnızca sana).
 // Metin her zaman textContent ile yazılır (HTML yorumlanmaz).
 import type { ChatLine } from "../../../shared/protocol";
+import { region, toolButton } from "./layout";
 
 const MAX_LINES = 60;
 /** Bu kadar süre yeni mesaj gelmezse sohbet soluklaşır (odaktayken hep görünür). */
@@ -33,11 +34,11 @@ export class Chat {
     private hooks: ChatHooks,
     touch: boolean,
   ) {
-    this.root = el("div", "chat", hud);
+    this.root = el("div", "chat", region(hud, "bl"));
     this.log = el("div", "chat-log", this.root);
     this.input = el("input", "chat-input", this.root);
     this.input.maxLength = 200;
-    this.input.placeholder = touch ? "Mesaj yaz… (!yardım)" : "Enter: mesaj yaz · !yardım";
+    this.input.placeholder = touch ? "Mesaj yaz… (!yardım)" : "Sohbet için Enter · komutlar: !yardım";
     this.input.enterKeyHint = "send";
 
     this.input.addEventListener("keydown", (e) => {
@@ -56,7 +57,12 @@ export class Chat {
       }
     });
     this.input.addEventListener("focus", () => this.wake(true));
-    this.input.addEventListener("blur", () => this.wake());
+    this.input.addEventListener("blur", () => {
+      this.root.classList.remove("open");
+      this.wake();
+    });
+    // Dokunmatikte sohbet araç çubuğundan açılır (dar ekranda yazı kutusu gizli, joystick alanı boş kalsın)
+    if (touch) toolButton(hud, { icon: "chat", label: "Sohbet", group: 0, order: 5, onClick: () => this.focus() });
     this.root.addEventListener("pointerdown", () => this.wake());
 
     // Enter (bir giriş kutusunda değilken) sohbeti açar
@@ -69,6 +75,7 @@ export class Chat {
   }
 
   focus(prefill = ""): void {
+    this.root.classList.add("open");
     if (prefill && !this.input.value) this.input.value = prefill;
     this.input.focus();
     const n = this.input.value.length;

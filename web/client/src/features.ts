@@ -6,7 +6,7 @@ import { FLAG_RUNNING, FLAG_WALKING, vehicleOf, type Vehicle } from "../../share
 import type { KickKind, MatchState } from "../../shared/protocol";
 import { assistedShot, attackSide, FINISH_RANGE, goalView } from "../../shared/football";
 import { CASINO, DJ_BOOTH, DOCK, type Field, inStadium, KICK_REACH, PITCH, POND_AREA, RACE_HOUSE, STADIUM_PITCH, STAGE, STAGE_STEPS, TABLE_WATCH_R, TABLES, TEA_COUNTER, TEA_MAKER } from "../../shared/zones";
-import { type Action, actionLabel, onBinds, profile, setProfile } from "./input/keybinds";
+import { type Action, setProfile } from "./input/keybinds";
 import { RaceClient } from "./race";
 import { MosqueClient } from "./mosque";
 import { PaintballClient } from "./paintball";
@@ -50,6 +50,8 @@ import { EmoteWheel } from "./ui/emoteWheel";
 import { HeldItems } from "./world/heldItems";
 import { eatPose } from "./avatars/avatars";
 import { button, el, Panel } from "./ui/panel";
+import { icon } from "./ui/icons";
+import { modeButton, region } from "./ui/layout";
 import { canvasToJpeg, PhotoMode } from "./ui/photo";
 import { ProfileUi } from "./ui/profile";
 import { falloff, sfx } from "./ui/sfx";
@@ -216,10 +218,10 @@ export class Features {
   private scores: [[number, number], [number, number]] = [[0, 0], [0, 0]];
   /** Basılı tutulan vuruş: tuş, tür ve geçen süre (sn). */
   private charge: { key: Action; kind: "shot" | "lob" | "power"; t: number } | null = null;
-  /** Stadyum: son çalım/müdahale anı (sn), tuş ipucu şeridi, stadyumda mıyız. */
+  /** Stadyum: son çalım/müdahale anı (sn), tuşlar düğmesi, stadyumda mıyız. */
   private lastSkill = -Infinity;
   private lastTackle = -Infinity;
-  private fbHelp: HTMLDivElement;
+  private fbKeys: HTMLButtonElement;
   /** Yön tuşu yokken çalım sırayla iki yana. */
   private skillSide: -1 | 1 = 1;
   /** Stadyum: takım menüsü (B), dünyaya dön ve takım düğmeleri. */
@@ -254,6 +256,7 @@ export class Features {
   myRide: { d: number; s: number } | null = null;
   /** Yakında çalan şarkının etiketi. */
   private radioChip: HTMLDivElement;
+  private radioChipText: HTMLElement;
   private down = { x: 0, y: 0, at: 0 };
   private proj = new THREE.Vector3();
   private casino: CasinoUi;
@@ -267,6 +270,7 @@ export class Features {
   private casinoSeat: { game: NonNullable<Seat["game"]>; at: number } | null = null;
   /** Casinonun içindeyken bakiye etiketi. */
   private casinoChip: HTMLDivElement;
+  private casinoChipText: HTMLElement;
   private inCasino = false;
   /** NPC yayalar, güvercinler, sokak kedileri. */
   private cityLife: CityLife;
@@ -308,7 +312,7 @@ export class Features {
     this.speedo = document.createElement("canvas");
     this.speedo.className = "drive-speedo";
     this.speedo.width = this.speedo.height = 150 * Math.min(2, devicePixelRatio || 1);
-    hudRoot.append(this.speedo);
+    region(hudRoot, "br").append(this.speedo);
     // Arabayla sert çarpma: ses, 💥, hasar (seviye değişince herkese)
     me.onCrash = (speed, lx = 0, lz = 2) => {
       const k = Math.min(1, speed / 14);
@@ -385,8 +389,7 @@ export class Features {
     world.scene.add(this.rings);
     if (this.leaves.mesh) world.scene.add(this.leaves.mesh);
     c.life.onStop(() => this.fireworks.dispose());
-    // Tuşlar değişince stadyum ipucu yenilenir; dünyadan çıkınca (savaş modu) dünya tuşları
-    c.life.onStop(onBinds(() => this.renderFbHelp()));
+    // Dünyadan çıkınca (savaş modu) dünya tuşları
     c.life.onStop(() => setProfile("world"));
     this.race = new RaceClient({
       scene: world.scene,
@@ -697,9 +700,10 @@ export class Features {
       this.calls = calls;
       if (calls.length > had) hud.toast(`🚕 Yeni taksi çağrısı: ${calls[calls.length - 1].name} (haritada sarı)`);
     };
-    this.radioChip = document.createElement("div");
-    this.radioChip.className = "radio-chip";
-    hudRoot.append(this.radioChip);
+    // Yakında çalan radyo: üstte ortada küçük etiket
+    this.radioChip = el("div", "radio-chip", region(hudRoot, "tc"));
+    icon("music", "", this.radioChip);
+    this.radioChipText = el("span", "", this.radioChip);
     c.life.onStop(() => this.radio.dispose());
     this.casino = new CasinoUi(hudRoot, net, {
       onClose: () => me.standUpNow(),
@@ -707,12 +711,12 @@ export class Features {
     });
     this.raceHud = new RingHud(hudRoot, () => net.send({ t: "ring", op: "leave" }));
     net.onRing = (r) => this.onRace(r);
-    this.casinoChip = document.createElement("div");
-    this.casinoChip.className = "radio-chip cz-hudchip";
-    hudRoot.append(this.casinoChip);
+    this.casinoChip = el("div", "radio-chip cz-hudchip", region(hudRoot, "tc"));
+    icon("coins", "", this.casinoChip);
+    this.casinoChipText = el("span", "", this.casinoChip);
     net.onCasino = (ev) => {
       this.casino.event(ev);
-      if (this.inCasino) this.casinoChip.textContent = `💰 ${fmt(this.casino.balance)} ₺ · Oynamak için bir tabureye otur`;
+      if (this.inCasino) this.casinoChipText.textContent = `${fmt(this.casino.balance)} ₺ · Oynamak için bir tabureye otur`;
     };
     // Reddedilen hamle bildirim olarak gelir: oyun ekranı beklemeyi bıraksın
     const notice = net.onNotice;
@@ -762,16 +766,11 @@ export class Features {
       const d = Math.hypot(x - c.camera.position.x, z - c.camera.position.z);
       sfx.firework(delay, 0.4 + 0.6 * falloff(d * 0.5), (x - c.camera.position.x) / 40);
     };
-    // Stadyumda tuş ipucu: geçerli atamalarla (ayarlardan değişince yenilenir)
-    this.fbHelp = document.createElement("div");
-    this.fbHelp.className = "fb-help";
-    hudRoot.append(this.fbHelp);
-    // Stadyum: tank oyunundaki gibi sol üstte dünyaya dön ve takım düğmeleri; B ile takım menüsü
-    this.fbExit = el("button", "battle-exit fb-exit", hudRoot, "🏠 Dünyaya dön");
-    this.fbExit.addEventListener("click", () => this.goHome());
-    this.fbTeamBtn = el("button", "battle-switch", hudRoot, "⚽ Takım");
-    this.fbTeamBtn.addEventListener("click", () => this.toggleTeams());
-    this.teamPanel = new Panel(hudRoot, "⚽ TAKIM SEÇ", "fb-team-panel");
+    // Stadyum: sol üstte dünyaya dön, takım (B) ve tuşlar (ekranda tuş şeridi yok: Ayarlar → Tuşlar açılır)
+    this.fbExit = modeButton(hudRoot, { icon: "house", label: "Dünyaya dön", toggle: true, onClick: () => this.goHome() });
+    this.fbTeamBtn = modeButton(hudRoot, { icon: "users", label: "Takım", toggle: true, onClick: () => this.toggleTeams() });
+    this.fbKeys = modeButton(hudRoot, { icon: "keyboard", label: "Tuşlar", toggle: true, onClick: () => dispatchEvent(new Event("gap:keys")) });
+    this.teamPanel = new Panel(hudRoot, "Takım seç", "fb-team-panel", "users");
 
     net.onBall = (b) => {
       this.pitchOf(b.f).setBall(b, net.serverNow());
@@ -1046,7 +1045,7 @@ export class Features {
     }
     if (top) {
       const who = top.sid === net.you ? "Radyon" : `${this.nameOf(top.sid)}'in Tofaşı`;
-      this.radioChip.textContent = `🎵 ${top.title} · ${who}`;
+      this.radioChipText.textContent = `${top.title} · ${who}`;
       this.radioChip.style.opacity = String(Math.min(1, 0.35 + top.gain));
       this.radioChip.classList.add("show");
     } else this.radioChip.classList.remove("show");
@@ -1905,31 +1904,18 @@ export class Features {
     world.flash(this.weatherFx.flash);
   }
 
-  /** Stadyuma girdi/çıktı: tuş takımı, ipucu şeridi ve yarım kalan vuruş. */
+  /** Stadyuma girdi/çıktı: tuş takımı, mod düğmeleri ve yarım kalan vuruş. */
   private enterArena(on: boolean): void {
     this.inArena = on;
     setProfile(on ? "stadium" : "world");
     this.charge = null;
     this.whud.setPower(null);
     const keys = on && !this.c.input.touch;
-    this.fbHelp.classList.toggle("show", keys);
+    this.fbKeys.classList.toggle("show", keys);
     this.fbExit.classList.toggle("show", on);
     this.fbTeamBtn.classList.toggle("show", on);
     if (!on) this.teamPanel.close();
-    if (keys) {
-      this.renderFbHelp();
-      this.c.hud.toast("🏟️ Stadyumdasın! Futbol tuşları geçerli (alttaki şeritte). Değiştirmek için ⌨️ Tuşlar.");
-    }
-  }
-
-  /** Stadyum tuş ipucu: geçerli atamalarla. */
-  renderFbHelp(): void {
-    if (profile !== "stadium") return;
-    const k = (a: Action) => `<b>${actionLabel(a)}</b>`;
-    this.fbHelp.innerHTML =
-      `${k("fbPass")} Pas · ${k("fbShoot")} Şut · ${k("fbPower")} Power · ${k("fbLob")} Aşırtma · ${k("fbSkill")} Çalım · ${k("fbRainbow")} Rainbow · ` +
-      `${k("fbTackle")} Müdahale · ${k("run")}+${k("fbTackle")} Kayarak · ${k("fbTeam")} Takım <button type="button">⌨️ Tuşlar</button>`;
-    this.fbHelp.querySelector("button")?.addEventListener("click", () => dispatchEvent(new Event("gap:keys")));
+    if (keys) this.c.hud.toast("🏟️ Stadyumdasın! Futbol tuşları geçerli: sol üstteki Tuşlar'dan bakabilirsin.");
   }
 
   /** Stadyumdan salondaki sahaya (maçtaysa maçtan da çıkar). */
@@ -2123,7 +2109,6 @@ export class Features {
    */
   private updateCarControls(): void {
     const { me, net, input } = this.c;
-    this.c.hud.setDriving(!!me.car);
     const can = !!me.car && !this.vehicles.modalOpen;
     const horn = can && input.heldAction("horn"), flash = can && input.heldAction("flash");
     if (horn !== this.hornDown) {

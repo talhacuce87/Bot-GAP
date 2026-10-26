@@ -16,7 +16,7 @@ export class ShopUi {
   private balance = 0;
 
   constructor(parent: HTMLElement, private a: { buy(shop: ShopId, cart: { id: ItemId; n: number }[]): void; closed(): void }) {
-    this.panel = new Panel(parent, "", "shop-panel");
+    this.panel = new Panel(parent, "", "shop-panel", "storefront");
     this.panel.onClose = () => a.closed();
     this.grid = el("div", "shop-grid", this.panel.body);
     this.foot = el("div", "shop-foot", this.panel.body);

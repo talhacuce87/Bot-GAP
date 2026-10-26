@@ -1001,7 +1001,7 @@ export class RouletteView implements GameView {
       g.save();
       g.rotate(i * SEG);
       g.fillStyle = this.landed === n && !this.spinning ? "#1b1206" : "#fff";
-      g.font = `bold ${Math.round(R * 0.085)}px system-ui, sans-serif`;
+      g.font = `bold ${Math.round(R * 0.085)}px Barlow, system-ui, sans-serif`;
       g.textAlign = "center";
       g.textBaseline = "middle";
       g.fillText(String(n), 0, -(outer - (outer - inner) * 0.24));

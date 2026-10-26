@@ -1,0 +1,151 @@
+/* ---- Giriş ekranı (tarayıcıdan ana adrese gelen): Discord ile ya da misafir ---- */
+.landing {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 30%, rgba(255, 181, 71, 0.1), transparent 70%),
+    linear-gradient(180deg, #0d131c, var(--ink-0));
+  color: var(--text);
+}
+
+/* Arkada eğik yol şeritleri */
+.landing::before {
+  content: "";
+  position: absolute;
+  inset: -20% -10%;
+  background: repeating-linear-gradient(-62deg, transparent 0 120px, rgba(255, 255, 255, 0.025) 120px 122px);
+  mask-image: radial-gradient(ellipse at 50% 40%, #000, transparent 70%);
+  pointer-events: none;
+}
+
+.landing-card {
+  position: relative;
+  width: min(400px, 100%);
+  padding: 30px 26px 24px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xl);
+  background: linear-gradient(180deg, var(--ink-3), var(--ink-2));
+  box-shadow: var(--shadow-3), var(--hl);
+  text-align: center;
+  animation: ui-in var(--t-slow) var(--ease-out);
+}
+
+.landing-brand {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.landing-mark {
+  padding: 2px 10px 0;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 700 46px/1 var(--font-display);
+  letter-spacing: 0.04em;
+}
+
+.landing-word {
+  font: 700 46px/1 var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.landing-sub,
+.landing-note {
+  margin: 0 0 20px;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.landing-note {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.landing-err {
+  margin: -6px 0 16px;
+  color: #ff9a9a;
+  font-size: 13px;
+}
+
+.landing-discord,
+.landing-guest button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 46px;
+  border: 0;
+  border-radius: var(--r-lg);
+  font: 700 15px/1 var(--font);
+  transition: filter var(--t-fast), transform var(--t-fast);
+}
+
+.landing-discord:hover,
+.landing-guest button:hover {
+  filter: brightness(1.08);
+}
+
+.landing-discord:active,
+.landing-guest button:active {
+  transform: translateY(1px);
+}
+
+/* Discord'un kendi rengi (marka düğmesi) */
+.landing-discord {
+  background: #5865f2;
+  color: #fff;
+}
+
+.landing-discord .ic {
+  width: 22px;
+  height: 22px;
+}
+
+.landing-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  color: var(--faint);
+  font: 700 12px/1 var(--font-display);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.landing-or::before,
+.landing-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line-2);
+}
+
+.landing-guest {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.landing-guest .field {
+  height: 46px;
+  border-radius: var(--r-lg);
+  font-size: 15px;
+  text-align: center;
+}
+
+.landing-guest button {
+  background: var(--accent);
+  color: var(--accent-ink);
+}

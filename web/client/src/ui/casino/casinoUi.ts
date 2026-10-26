@@ -9,6 +9,7 @@ import { LiveBlackjackView } from "./liveBlackjackView";
 import { LivePokerView } from "./livePokerView";
 import { RouletteView } from "./rouletteView";
 import { SlotView } from "./slotView";
+import { iconHtml } from "../icons";
 
 export type GameKind = "blackjack" | "roulette" | "slot" | "poker";
 export type CasinoEvent = Extract<ServerEvent, { t: "wallet" | "bj" | "roulette" | "slot" | "live" }>;
@@ -34,7 +35,7 @@ export interface CasinoCtx {
   toast(text: string): void;
 }
 
-const TITLES: Record<GameKind, string> = { blackjack: "♠ BLACKJACK", roulette: "🎡 RULET", slot: "🎰 GAP SLOT", poker: "♣ TEXAS HOLD'EM" };
+const TITLES: Record<GameKind, string> = { blackjack: "♠ BLACKJACK", roulette: "◎ RULET", slot: "◆ GAP SLOT", poker: "♣ TEXAS HOLD'EM" };
 
 /** Canlı masa: masa numarası ve oturulan koltuk (null: izleyici). */
 export interface LiveSeat {
@@ -76,11 +77,11 @@ export class CasinoUi {
     this.titleEl.className = "cz-title";
     const bal = document.createElement("div");
     bal.className = "cz-balance";
-    bal.innerHTML = '💰 <b>0</b> <span>₺</span>';
+    bal.innerHTML = '<span class="cz-cur">₺</span><b>0</b>';
     this.balEl = bal.querySelector("b")!;
     const close = (this.closeBtn = document.createElement("button"));
     close.className = "cz-close";
-    close.textContent = "Kalk ✕";
+    close.innerHTML = `${iconHtml("signOut")}<span>Kalk</span>`;
     close.title = "Masadan kalk (Esc)";
     close.addEventListener("click", () => this.leave());
     head.append(this.titleEl, bal, close);
@@ -132,7 +133,7 @@ export class CasinoUi {
     this.live = live;
     this.liveSeen = false;
     this.titleEl.innerHTML = live ? `<i class="cz-live-dot"></i>CANLI ${TITLES[kind]}` : TITLES[kind];
-    this.closeBtn.textContent = live?.seat === null ? "Ayrıl ✕" : "Kalk ✕";
+    this.closeBtn.innerHTML = `${iconHtml("signOut")}<span>${live?.seat === null ? "Ayrıl" : "Kalk"}</span>`;
     this.closeBtn.title = live?.seat === null ? "İzlemeyi bırak (Esc)" : "Masadan kalk (Esc)";
     const lc: LiveCtx | null = live && { ...live, me: () => this.net.you, now: () => this.net.serverNow() };
     this.view =

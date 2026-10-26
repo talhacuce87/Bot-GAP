@@ -296,7 +296,7 @@ export class BoardGameUi {
       this.hits.push({ x, y, w: C, h: C, hit: { kind: "sq", i } });
     }
     // Kenar harfleri
-    g.font = "600 11px system-ui, sans-serif";
+    g.font = "600 11px Barlow, system-ui, sans-serif";
     g.fillStyle = "rgba(40, 25, 10, 0.75)";
     g.textAlign = "left";
     g.textBaseline = "top";
@@ -436,7 +436,7 @@ export class BoardGameUi {
 
   private count(x: number, y: number, n: number): void {
     const g = this.g;
-    g.font = "700 16px system-ui, sans-serif";
+    g.font = "700 16px Barlow, system-ui, sans-serif";
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.fillStyle = "#e33";
@@ -545,19 +545,19 @@ export class BoardGameUi {
     if (!tl) {
       // Sahte okey: yonca işareti
       g.fillStyle = "#2b8a4a";
-      g.font = `700 ${h * 0.45}px system-ui, sans-serif`;
+      g.font = `700 ${h * 0.45}px Barlow, system-ui, sans-serif`;
       g.fillText("♣", x + w / 2, y + h * 0.48);
       return;
     }
     g.fillStyle = TILE_COLORS[tl.color];
-    g.font = `800 ${h * 0.45}px system-ui, sans-serif`;
+    g.font = `800 ${h * 0.45}px Barlow, system-ui, sans-serif`;
     g.fillText(String(tl.num), x + w / 2, y + h * 0.42);
     g.beginPath();
     g.arc(x + w / 2, y + h * 0.78, 3.5, 0, Math.PI * 2);
     g.fill();
     if (tl.color === s.okey.color && tl.num === s.okey.num) {
       g.fillStyle = "#f2a500";
-      g.font = "700 12px system-ui, sans-serif";
+      g.font = "700 12px Barlow, system-ui, sans-serif";
       g.fillText("★", x + w - 8, y + 9);
     }
   }
@@ -568,7 +568,7 @@ export class BoardGameUi {
     g.fillRect(0, 0, W, H);
     if (!s) {
       g.fillStyle = "rgba(255,255,255,0.85)";
-      g.font = "600 20px system-ui, sans-serif";
+      g.font = "600 20px Barlow, system-ui, sans-serif";
       g.textAlign = "center";
       g.fillText("2–4 kişi oturunca oyunu başlatın", W / 2, H / 2);
       return;
@@ -583,7 +583,7 @@ export class BoardGameUi {
       const p = (base + k) % n;
       const [x, y] = spots[k - 1];
       g.fillStyle = s.turn === p && s.winner === null ? "#f2c230" : "rgba(255,255,255,0.9)";
-      g.font = "700 15px system-ui, sans-serif";
+      g.font = "700 15px Barlow, system-ui, sans-serif";
       g.textAlign = "center";
       g.fillText(`${nameOf(p)} · ${s.counts[p]} taş`, x, y);
       const top = s.discards[p][s.discards[p].length - 1];
@@ -599,7 +599,7 @@ export class BoardGameUi {
       g.stroke();
     }
     g.fillStyle = "#333";
-    g.font = "700 14px system-ui, sans-serif";
+    g.font = "700 14px Barlow, system-ui, sans-serif";
     g.textAlign = "center";
     g.fillText(`${s.pileCount}`, W / 2 - 31, H / 2 - 40);
     const myTurn = me >= 0 && s.turn === me && s.winner === null && !s.draw;
@@ -611,7 +611,7 @@ export class BoardGameUi {
     this.hits.push({ x: W / 2 - 66, y: H / 2 - 80, w: 60, h: 78, hit: { kind: "pile" } });
     this.tile(W / 2 + 10, H / 2 - 74, s.indicator, s, 44, 60);
     g.fillStyle = "rgba(255,255,255,0.85)";
-    g.font = "600 12px system-ui, sans-serif";
+    g.font = "600 12px Barlow, system-ui, sans-serif";
     g.fillText("Gösterge", W / 2 + 32, H / 2 - 82);
     g.fillText(`Okey: ${OKEY_COLORS[s.okey.color]} ${s.okey.num}`, W / 2, H / 2 + 6);
     // Soldakinin attığı (alınabilir) ve benim attıklarım
@@ -675,7 +675,7 @@ export class BoardGameUi {
     g.fillStyle = "rgba(0,0,0,0.6)";
     g.fillRect(0, this.H / 2 - 28, this.W, 56);
     g.fillStyle = "#fff";
-    g.font = "800 24px system-ui, sans-serif";
+    g.font = "800 24px Barlow, system-ui, sans-serif";
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.fillText(text, this.W / 2, this.H / 2);

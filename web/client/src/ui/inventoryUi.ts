@@ -5,17 +5,19 @@
 import type { Look } from "../../../shared/protocol";
 import { BUFFS, type BuffId, INV, invKg, type ItemCat, itemDef, type Slot, useText } from "../../../shared/items";
 import type { ChibiPack } from "../avatars/chibiPack";
+import { type IconName, icon } from "./icons";
+import { toolButton } from "./layout";
 import { el, Panel } from "./panel";
 import { WardrobePreview } from "./wardrobePreview";
 
 type Tab = "all" | ItemCat;
 const TABS: [Tab, string][] = [["all", "Hepsi"], ["food", "Yiyecek"], ["drink", "İçecek"], ["item", "Eşya"]];
-const EQUIP: [string, string, string][] = [
-  ["hat", "🧢", "Şapka"],
-  ["top", "👕", "Üst"],
-  ["bag", "🎒", "Çanta"],
-  ["bottom", "👖", "Alt"],
-  ["shoes", "👟", "Ayakkabı"],
+const EQUIP: [string, IconName, string][] = [
+  ["hat", "cap", "Şapka"],
+  ["top", "shirt", "Üst"],
+  ["bag", "backpack", "Çanta"],
+  ["bottom", "pants", "Alt"],
+  ["shoes", "sneaker", "Ayakkabı"],
 ];
 
 export interface InvHooks {
@@ -45,7 +47,8 @@ export class InventoryUi {
   private dropArmed = -1;
 
   constructor(parent: HTMLElement, private h: InvHooks, playerName: string) {
-    this.panel = new Panel(parent, "🎒 ÇANTA", "inv-panel");
+    toolButton(parent, { icon: "backpack", label: "Çanta", action: matchMedia("(pointer: coarse)").matches ? undefined : "inventory", group: 0, order: 3, onClick: () => this.toggle() });
+    this.panel = new Panel(parent, "Çanta", "inv-panel", "backpack");
     this.panel.onClose = () => this.preview.stop();
     const wrap = el("div", "inv-wrap", this.panel.body);
 
@@ -54,9 +57,9 @@ export class InventoryUi {
     el("div", "inv-name", left, playerName || "GAP");
     const stage = el("div", "inv-stage", left);
     this.preview = new WardrobePreview(stage, () => h.pack());
-    for (const [k, icon, name] of EQUIP) {
+    for (const [k, ic, name] of EQUIP) {
       const e = el("div", `inv-eq inv-eq-${k}`, left);
-      el("span", "", e, icon);
+      icon(ic, "", e);
       e.title = `${name} · kıyafet mağazasıyla gelecek`;
     }
     this.buffBox = el("div", "inv-buffs", left);

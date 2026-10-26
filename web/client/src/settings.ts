@@ -169,8 +169,10 @@ export function applyPreset(p: Preset): void {
   updateSettings({ preset: p, ...PRESETS[p] });
 }
 
+/** Ayarlar penceresindekileri varsayılana döndürür; araba, evcil hayvan, kamuflaj ve duvar kağıdı seçimleri kalır. */
 export function resetSettings(): void {
-  updateSettings(defaults());
+  const { car, cars, pet, skin, pbSkin, phoneWall } = settings;
+  updateSettings({ ...defaults(), car, cars, pet, skin, pbSkin, phoneWall });
 }
 
 /** Ayar değişince çağrılır; dönen işlev dinlemeyi bırakır (mod değişince). */
