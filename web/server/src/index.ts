@@ -1180,6 +1180,13 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
     if (look) economy.grant(walletKey, lookItems(look));
     ws.send(JSON.stringify({ t: "owned", items: economy.ownedList(walletKey) }));
   }
+  // Arabaların kayıtlı hasarı (yenileyince de göçükler yerinde)
+  ws.send(JSON.stringify({ t: "wear", cars: economy.wear(walletKey) }));
+  /** Şu an sürdüğü (iş aracı olmayan) arabanın hasarını kaydet. */
+  const saveWear = () => {
+    const p = room.players.get(sid), car = p?.info.car;
+    if (car && !isJobCar(car.model)) economy.setWear(walletKey, car.model, p.info.dmg ?? 0, p.info.dents ?? null);
+  };
   let lastJob = 0;
   let lastBump = 0;
   let lastBuy = 0;
@@ -1382,12 +1389,14 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
           return done(false);
         }
         room.setCarDamage(sid, 0, NO_DENTS);
+        saveWear();
         done(true);
       } else if (msg?.t === "cardmg") {
         const now = Date.now();
         if (now - lastDmg < 150) return;
         lastDmg = now;
         room.setCarDamage(sid, msg.d, msg.z);
+        saveWear();
       } else if (msg?.t === "park") {
         const now = Date.now();
         if (now - lastPark < 250) return;

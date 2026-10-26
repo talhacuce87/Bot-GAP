@@ -3,7 +3,7 @@
 import { type Act, SEND_HZ } from "../../shared/constants";
 import { owned } from "./owned";
 import type { Shot } from "../../shared/tank";
-import type { CarRadio, ParkedCar, RadioQueueView } from "../../shared/car";
+import type { CarDents, CarRadio, ParkedCar, RadioQueueView } from "../../shared/car";
 import type { RingView } from "../../shared/ring";
 import type { MoneyTx, WalletView } from "../../shared/economy";
 import type { ItemId, Slot } from "../../shared/items";
@@ -173,6 +173,8 @@ export class Net {
   onCarDamage: (sid: number, d: number) => void = () => {};
   /** GAP Garaj tamirinin sonucu. */
   onRepaired: (ok: boolean) => void = () => {};
+  /** Arabaların kayıtlı hasarı (girişte). */
+  onWear: (cars: Record<string, { d: number; z: CarDents | null }>) => void = () => {};
   onCarFx: (sid: number, k: "horn" | "flash", on: boolean) => void = () => {};
 
   private ws: WebSocket | null = null;
@@ -640,6 +642,9 @@ export class Net {
       }
       case "repaired":
         this.onRepaired(ev.ok);
+        break;
+      case "wear":
+        this.onWear(ev.cars);
         break;
       case "quest":
         this.onQuest(ev.completed);

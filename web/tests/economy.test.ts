@@ -166,3 +166,31 @@ describe("hayat sunucusu", () => {
     expect(last(1).energy).toBeGreaterThan(run);
   });
 });
+
+describe("araba hasarı kaydı", () => {
+  it("model başına saklanır, sağlam olunca silinir; dosyadan geri okunur (misafir hariç)", async () => {
+    const { mkdtemp, readFile, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const e = new Economy(null);
+    const z = { f: 2, r: 0, l: 1, rt: 0, hl: 1 };
+    e.setWear("u1", "sahin", 2, z);
+    e.setWear("u1", "passat", 0, { f: 1, r: 0, l: 0, rt: 0, hl: 0 });
+    expect(e.wear("u1")).toEqual({ sahin: { d: 2, z }, passat: { d: 0, z: { f: 1, r: 0, l: 0, rt: 0, hl: 0 } } });
+    e.setWear("u1", "passat", 0, { f: 0, r: 0, l: 0, rt: 0, hl: 0 });
+    expect(Object.keys(e.wear("u1"))).toEqual(["sahin"]);
+    // Dosya: yazılanı yeni sunucu okur; bozuk kayıt düşer
+    const dir = await mkdtemp(join(tmpdir(), "gap-wear-"));
+    const file = join(dir, "economy.json");
+    await writeFile(file, JSON.stringify({ wears: { u1: { sahin: { d: 2, z }, e30: { d: 9, z: { f: "x" } } } } }));
+    const back = new Economy(file);
+    await back.ready;
+    expect(back.wear("u1")).toEqual({ sahin: { d: 2, z } });
+    back.setWear("guest:9", "sahin", 1, z);
+    back.setWear("u1", "dogan", 3, null);
+    await new Promise((r) => setTimeout(r, 2300));
+    const saved = JSON.parse(await readFile(file, "utf8"));
+    expect(saved.wears.u1.dogan).toEqual({ d: 3, z: null });
+    expect(saved.wears["guest:9"]).toBeUndefined();
+  });
+});

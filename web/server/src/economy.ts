@@ -1,8 +1,10 @@
-// Ekonomi deposu: GAP ₺ bakiyeleri, hayat barları (can/açlık/enerji), cüzdan geçmişi ve günlük kazanç/harcama.
+// Ekonomi deposu: GAP ₺ bakiyeleri, hayat barları (can/açlık/enerji), cüzdan geçmişi, günlük kazanç/harcama ve
+// arabaların hasarı (model başına: yenileyince araba tertemiz gelmesin, tamir parasından kaçılmasın).
 // Dünya sunucusunun veri dosyasında (Docker volume) Discord hesabına bağlı saklanır; misafirlerinki ("guest:"
 // anahtarlı) yalnızca bellekte, oturum boyunca. Para değişince dinleyen (sunucu) oyuncuya bildirim gönderir.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { type CarDents, validDents } from "../../shared/car";
 import { ECON, FULL_LIFE, type LifeState, type MoneyTx, type WalletView } from "../../shared/economy";
 import { emptyInv, INV, itemDef, type Slot } from "../../shared/items";
 
@@ -22,6 +24,12 @@ export interface TxInfo {
   casino?: boolean;
 }
 
+/** Bir arabanın kayıtlı hasarı. */
+export interface CarWear {
+  d: number;
+  z: CarDents | null;
+}
+
 const today = (now = Date.now()) => new Date(now + 3 * 3600_000).toISOString().slice(0, 10);
 const guest = (key: string) => key.startsWith("guest:");
 
@@ -32,6 +40,8 @@ export class Economy {
   /** Satın alınanlar (shared/shop anahtarları: kıyafet, araba, modifiye). */
   private owned = new Map<string, Set<string>>();
   private history = new Map<string, MoneyTx[]>();
+  /** Arabaların hasarı: model → seviye (0–3) ve göçükler. Sağlamlar tutulmaz. */
+  private wears = new Map<string, Record<string, CarWear>>();
   private days = new Map<string, Day>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private warned = false;
@@ -44,7 +54,7 @@ export class Economy {
     this.ready = file
       ? readFile(file, "utf8")
           .then((t) => {
-            const o = JSON.parse(t) as { balances?: Record<string, number>; lives?: Record<string, LifeState>; history?: Record<string, MoneyTx[]>; invs?: Record<string, Slot[]>; owned?: Record<string, string[]> };
+            const o = JSON.parse(t) as { balances?: Record<string, number>; lives?: Record<string, LifeState>; history?: Record<string, MoneyTx[]>; invs?: Record<string, Slot[]>; owned?: Record<string, string[]>; wears?: Record<string, Record<string, unknown>> };
             for (const [k, v] of Object.entries(o.balances ?? {})) if (Number.isFinite(v)) this.balances.set(k, v);
             // Su barından önceki kayıtlarda su yok: dolu başlar
             for (const [k, v] of Object.entries(o.lives ?? {})) if (v && Number.isFinite(v.hp)) this.lives.set(k, { ...v, thirst: Number.isFinite(v.thirst) ? v.thirst : 100 });
@@ -56,6 +66,17 @@ export class Economy {
             }
             for (const [k, v] of Object.entries(o.owned ?? {})) if (Array.isArray(v)) this.owned.set(k, new Set(v.filter((x) => typeof x === "string")));
             for (const [k, v] of Object.entries(o.history ?? {})) if (Array.isArray(v)) this.history.set(k, v.slice(0, ECON.historyMax));
+            for (const [k, v] of Object.entries(o.wears ?? {})) {
+              const cars: Record<string, CarWear> = {};
+              for (const [m, w] of Object.entries(v ?? {})) {
+                const x = w as { d?: unknown; z?: unknown } | null;
+                const d = x?.d, z = validDents(x?.z);
+                // Bozuk kayıt (seviye 0–3 değil) düşer
+                if (!Number.isInteger(d) || (d as number) < 0 || (d as number) > 3) continue;
+                if (d || z) cars[m] = { d: d as number, z };
+              }
+              if (Object.keys(cars).length) this.wears.set(k, cars);
+            }
           })
           .catch(() => {})
       : Promise.resolve();
@@ -123,6 +144,26 @@ export class Economy {
     this.save();
   }
 
+  /** Arabaların hasarı (model → seviye, göçükler; kopya). */
+  wear(key: string): Record<string, CarWear> {
+    return { ...(this.wears.get(key) ?? {}) };
+  }
+
+  /** Bir modelin hasarını kaydet (sağlamsa silinir). */
+  setWear(key: string, model: string, d: number, z: CarDents | null): void {
+    const cars = this.wears.get(key) ?? {}, cur = cars[model];
+    const dented = !!z && (z.f || z.r || z.l || z.rt || z.hl);
+    if (!d && !dented) {
+      if (!cur) return;
+      delete cars[model];
+    } else {
+      if (cur && cur.d === d && JSON.stringify(cur.z) === JSON.stringify(dented ? z : null)) return;
+      cars[model] = { d, z: dented ? { ...z! } : null };
+    }
+    this.wears.set(key, cars);
+    this.save();
+  }
+
   /** Satın alınmış mı. */
   owns(key: string, item: string): boolean {
     return this.owned.get(key)?.has(item) ?? false;
@@ -171,7 +212,7 @@ export class Economy {
       const file = this.file!;
       // Misafirler kalıcı değil
       const keep = <T>(m: Map<string, T>) => Object.fromEntries([...m].filter(([k]) => !guest(k)));
-      const body = JSON.stringify({ balances: keep(this.balances), lives: keep(this.lives), history: keep(this.history), invs: keep(this.invs), owned: Object.fromEntries([...this.owned].filter(([k]) => !guest(k)).map(([k, v]) => [k, [...v]])) });
+      const body = JSON.stringify({ balances: keep(this.balances), lives: keep(this.lives), history: keep(this.history), invs: keep(this.invs), owned: Object.fromEntries([...this.owned].filter(([k]) => !guest(k)).map(([k, v]) => [k, [...v]])), wears: keep(this.wears) });
       void mkdir(join(file, ".."), { recursive: true })
         .then(() => writeFile(file, body))
         .catch((e) => {

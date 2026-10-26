@@ -557,6 +557,13 @@ export class Features {
       const d = itemDef(item);
       if (sid === net.you && d) hud.toast(`${d.icon} ${d.name} ${d.cat === "drink" ? "içtin" : "yedin"}.`);
     };
+    // Arabaların kayıtlı hasarı: sayfa açılınca bir kez (yeniden bağlanınca yerel hâl daha yeni)
+    let wearLoaded = false;
+    net.onWear = (cars) => {
+      if (wearLoaded) return;
+      wearLoaded = true;
+      this.loadWear(cars);
+    };
     // GAP Garaj tamirinin sonucu (para yetmediyse sunucu ayrıca söyler)
     net.onRepaired = (ok) => {
       this.repairAsked = false;
@@ -1358,6 +1365,21 @@ export class Features {
     }
     this.repairAsked = true;
     net.send({ t: "repair", d: this.carDamage });
+  }
+
+  /** Sunucudaki kayıtlı hasarı yükler (F5'ten sonra göçükler yerinde, motor gücü düşük). */
+  private loadWear(cars: Record<string, { d: number; z: CarDents | null }>): void {
+    for (const [model, w] of Object.entries(cars)) {
+      if (isJobCar(model)) continue;
+      const z = w.z ?? NO_DENTS;
+      // Seviye ve göçük taraf başına tam sayı geldi: biriken kesir sıfırdan başlar
+      const entry = { damage: w.d, zones: { f: z.f, r: z.r, l: z.l, rt: z.rt }, dents: { ...z } };
+      if (model === this.wearModel) {
+        this.damage = entry.damage;
+        this.zones = entry.zones;
+        this.dents = entry.dents;
+      } else this.wear.set(model, entry);
+    }
   }
 
   /** Başka modele geçildi: o modelin hasarı yüklenir (iş aracı hep sağlam). */

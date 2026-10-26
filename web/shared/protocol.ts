@@ -476,7 +476,9 @@ export type ServerEvent =
   /** Arabanın hasar seviyesi değişti (0–3). */
   | { t: "cardmg"; sid: number; d: number; z?: CarDents | null }
   /** GAP Garaj tamirinin sonucu (yalnızca isteyene): yapıldı mı (para yetmediyse ya da garajda değilse hayır). */
-  | { t: "repaired"; ok: boolean };
+  | { t: "repaired"; ok: boolean }
+  /** Arabalarının kayıtlı hasarı (girişte, yalnızca sahibine): model → seviye ve göçükler. */
+  | { t: "wear"; cars: Record<string, { d: number; z: CarDents | null }> };
 
 /** İstemcinin gönderdiği JSON olaylar. */
 export type ClientEvent =
