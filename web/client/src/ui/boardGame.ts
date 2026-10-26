@@ -1,5 +1,6 @@
 // Kahvehane masası ekranı: satranç, tavla, okey tahtası ve bilek güreşi (canvas), oyunu başlat / pes et / kalk düğmeleri.
 // Yasal hamleler paylaşılan kurallardan (shared/games) gösterilir; asıl doğrulama sunucuda.
+import { listen } from "../mode";
 import { bilekLean } from "../../../shared/games/bilek";
 import { type ChessMove, type ChessState, inCheck, legalMoves } from "../../../shared/games/chess";
 import { COLORS as OKEY_COLORS, tileOf } from "../../../shared/games/okey";
@@ -59,10 +60,10 @@ export class BoardGameUi {
     this.canvas.addEventListener("pointerdown", (e) => this.down(e));
     this.canvas.addEventListener("pointermove", (e) => this.move(e));
     this.canvas.addEventListener("pointerup", (e) => this.up(e));
-    addEventListener("resize", () => this.isOpen && this.render());
+    listen("resize", () => this.isOpen && this.render());
     // Bilek güreşinde SPACE basıştır (panel kapalıyken de): oyuncu taburede kalsın (zıplayıp kalkmasın),
     // panel düğmesi tıklanmasın. Oyun bittikten hemen sonraki basışlar da yutulur (kalkmak için yürü/E).
-    addEventListener(
+    listen(
       "keydown",
       (e) => {
         if (e.code !== "Space" || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;

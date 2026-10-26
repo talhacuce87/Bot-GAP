@@ -5,6 +5,7 @@ import * as THREE from "three";
 import type { Look } from "../../../shared/protocol";
 import { CHIBI_SCALE, ChibiLayer, type LimbPose } from "../avatars/chibi";
 import { type ChibiPack, lookKey } from "../avatars/chibiPack";
+import { revealAll } from "../world/geo";
 
 const FOV = 28;
 /**
@@ -193,19 +194,62 @@ export class WardrobePreview {
     this.queue.length = 0;
   }
 
-  start(): void {
-    if (!this.renderer) {
-      try {
-        this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
-      } catch {
-        this.status.textContent = "Önizleme açılamadı (WebGL).";
-        return;
-      }
-      this.renderer.toneMapping = THREE.NeutralToneMapping;
-      this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-      this.thumbTarget = new THREE.WebGLRenderTarget(THUMB_PX, THUMB_PX, { samples: 4 });
-      this.thumbTarget.texture.colorSpace = THREE.SRGBColorSpace;
+  /** Bağlam ve küçük resim hedefi (ilk gerektiğinde); açılamazsa false. */
+  private ensureRenderer(): boolean {
+    if (this.renderer) return true;
+    try {
+      this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
+    } catch {
+      this.status.textContent = "Önizleme açılamadı (WebGL).";
+      return false;
     }
+    // Shader hata denetimi her programda derlemenin bitmesini bekletir (getProgramInfoLog): yalnızca geliştirmede
+    this.renderer.debug.checkShaderErrors = import.meta.env.DEV;
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.thumbTarget = new THREE.WebGLRenderTarget(THUMB_PX, THUMB_PX, { samples: 4 });
+    this.thumbTarget.texture.colorSpace = THREE.SRGBColorSpace;
+    return true;
+  }
+
+  /** Paket indiyse karakter katmanlarına bağlar ve boyu ölçer (bir kez). */
+  private adopt(): void {
+    const pack = this.getPack();
+    if (!pack || this.layer.pack) return;
+    this.layer.usePack(pack);
+    this.thumbLayer.usePack(pack);
+    const geo = pack.build(null);
+    geo.computeBoundingBox();
+    this.height = geo.boundingBox!.max.y * CHIBI_SCALE;
+    geo.dispose();
+    this.camY = this.camDist = 0;
+  }
+
+  /**
+   * Panel açılmadan önce, oyun boştayken: bağlamı kurar ve shader'ları eşzamansız derler. Yoksa ilk açılışta bağlam
+   * kurulumu ve program derlemesi ana iş parçacığını (çanta, gardırop) saniyeler boyunca kilitler.
+   */
+  async prewarm(): Promise<void> {
+    if (!this.ensureRenderer() || !this.getPack()) return;
+    const r = this.renderer!;
+    this.adopt();
+    await Promise.all([this.layer.warm([{ look: null, lod: 0 }]), this.thumbLayer.warm([{ look: null, lod: 0 }])]);
+    // Küçük resimler sahne hedefine, panel tuvale çizer: programlar ikisi için de hazırlanır.
+    // Karakter yuvaları boşken gizli: derleme yalnızca görünürleri gezer, o yüzden geçici açılır.
+    const show = [revealAll(this.scene), revealAll(this.thumbScene)];
+    const prev = r.getRenderTarget();
+    try {
+      await r.compileAsync(this.scene, this.camera).catch(() => undefined);
+      r.setRenderTarget(this.thumbTarget);
+      await r.compileAsync(this.thumbScene, this.thumbCam).catch(() => undefined);
+    } finally {
+      r.setRenderTarget(prev);
+      for (const undo of show) undo();
+    }
+  }
+
+  start(): void {
+    if (!this.ensureRenderer()) return;
     this.yaw = this.targetYaw = 0;
     this.zoom = 1;
     this.spin = 0;
@@ -213,7 +257,7 @@ export class WardrobePreview {
     this.camY = this.camDist = 0;
     this.last = performance.now();
     this.fit();
-    this.renderer.setAnimationLoop((t) => this.frame(t));
+    this.renderer!.setAnimationLoop((t) => this.frame(t));
   }
 
   stop(): void {
@@ -244,16 +288,7 @@ export class WardrobePreview {
     const renderer = this.renderer!;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
-    const pack = this.getPack();
-    if (pack && !this.layer.pack) {
-      this.layer.usePack(pack);
-      this.thumbLayer.usePack(pack);
-      const geo = pack.build(null);
-      geo.computeBoundingBox();
-      this.height = geo.boundingBox!.max.y * CHIBI_SCALE;
-      geo.dispose();
-      this.camY = this.camDist = 0;
-    }
+    this.adopt();
     this.status.textContent = this.layer.pack ? "" : "Karakter yükleniyor…";
     if (this.layer.pack) {
       for (let n = 0; n < THUMBS_PER_FRAME && this.queue.length; n++) this.renderThumb(this.queue.shift()!);

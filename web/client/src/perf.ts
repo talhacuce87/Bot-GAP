@@ -130,3 +130,68 @@ export class FrameLimiter {
     return true;
   }
 }
+
+/** Bir takılma: kare süresi ve nerede uzadığı. */
+export interface Hitch {
+  /** Önceki kareden bu yana geçen süre (ms). */
+  dt: number;
+  /** Bu karede JS'in simülasyon ve çizim komutları süreleri; dt'den çok küçükse bekleme ekran kartında ya da tarayıcıda (GC, derleme). */
+  sim: number;
+  draw: number;
+  /** Bu karede yeni derlenen shader programı, kurulan geometri ve doku sayısı. */
+  programs: number;
+  geometries: number;
+  textures: number;
+  /** Aynı anda tarayıcının bildirdiği uzun görev süresi (0 yok): ana iş parçacığı kilitlendi, GC ya da yükleme. */
+  long: number;
+  at: number;
+}
+
+const HITCH_MS = 45;
+const KEEP = 40;
+
+/**
+ * Takılma kaydı: `HITCH_MS`'yi aşan kareleri ve nedenini ipuçlarıyla saklar (yalnızca ölçüm, davranışı değiştirmez).
+ * Konsolda `gapHitches()` ya da debug göstergesinde son takılma görünür.
+ */
+export class HitchLog {
+  readonly list: Hitch[] = [];
+  total = 0;
+  private programs = 0;
+  private geometries = 0;
+  private textures = 0;
+  private lastLong = 0;
+
+  constructor(private renderer: THREE.WebGLRenderer) {
+    // Tarayıcının "uzun görev"i (50 ms+ ana iş parçacığı kilidi): GC ve doku/shader yüklemesi de burada görünür
+    try {
+      new PerformanceObserver((l) => l.getEntries().forEach((e) => (this.lastLong = e.duration))).observe({ entryTypes: ["longtask"] });
+    } catch {
+      /* desteklenmiyor */
+    }
+  }
+
+  /** Her kare sonunda; arka plandan dönüş gibi uç değerleri (>1 sn) yok sayar. */
+  frame(dt: number, sim: number, draw: number): void {
+    const info = this.renderer.info;
+    const programs = info.programs?.length ?? 0;
+    const { geometries, textures } = info.memory;
+    if (dt > HITCH_MS && dt < 1000) {
+      this.total++;
+      this.list.push({ dt, sim, draw, programs: programs - this.programs, geometries: geometries - this.geometries, textures: textures - this.textures, long: this.lastLong, at: performance.now() });
+      this.lastLong = 0;
+      if (this.list.length > KEEP) this.list.shift();
+    }
+    this.programs = programs;
+    this.geometries = geometries;
+    this.textures = textures;
+  }
+
+  /** Son takılmanın tek satırı: `83 ms (sim 3, çizim 70, +2 shader)`. */
+  describe(): string {
+    const h = this.list[this.list.length - 1];
+    if (!h) return "takılma yok";
+    const hint = [h.programs > 0 && `+${h.programs} shader`, h.geometries > 0 && `+${h.geometries} geo`, h.textures > 0 && `+${h.textures} doku`, h.long > 0 && `uzun görev ${h.long.toFixed(0)} ms`].filter(Boolean).join(" ");
+    return `${this.total} takılma, son ${h.dt.toFixed(0)} ms (sim ${h.sim.toFixed(0)}, çizim ${h.draw.toFixed(0)}${hint ? ", " + hint : ""})`;
+  }
+}

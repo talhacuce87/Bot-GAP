@@ -1,5 +1,6 @@
 // İzleme odası kontrolleri: herkes oynat/durdur/sar ve link değiştirebilir.
 // Kare başına DOM'a dokunulmaz; süre göstergesi saniyede 4 kez güncellenir.
+import { listen } from "../mode";
 import type { WatchState } from "../../../shared/protocol";
 import type { WatchSync } from "../watch/sync";
 import { icon, iconHtml } from "./icons";
@@ -133,8 +134,8 @@ export class WatchPanel {
       removeEventListener("keydown", unlock, true);
     };
     this.start.addEventListener("click", unlock);
-    addEventListener("pointerdown", unlock, true);
-    addEventListener("keydown", unlock, true);
+    listen("pointerdown", unlock, true);
+    listen("keydown", unlock, true);
   }
 
   /** Activity'de sinema yalnızca dosya/HLS oynarken görünür (YouTube vb. tarayıcıda izlenir). */

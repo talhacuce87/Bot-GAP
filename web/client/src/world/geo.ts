@@ -14,6 +14,31 @@ export function rng(seed: number): () => number {
 
 const tmpColor = new THREE.Color();
 
+/**
+ * Ön derleme/yükleme için: gizli nesneleri (iç mekânlar, örtülen karolar) geçici olarak görünür yapar. three.js
+ * `compile` yalnızca görünür nesneleri gezer; yoksa casino, garaj gibi yerlerin shader'ları, geometrisi ve dokuları
+ * ilk girişte derlenip yüklenir ve oyun takılır. `uncull`: görüş alanı dışındakiler de çizilsin (geometri GPU'ya
+ * şimdi yüklensin). Dönen işlev eski durumu geri getirir.
+ */
+export function revealAll(root: THREE.Object3D, uncull = false): () => void {
+  const hidden: THREE.Object3D[] = [];
+  const culled: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    if (!o.visible) {
+      o.visible = true;
+      hidden.push(o);
+    }
+    if (uncull && o.frustumCulled) {
+      o.frustumCulled = false;
+      culled.push(o);
+    }
+  });
+  return () => {
+    for (const o of hidden) o.visible = false;
+    for (const o of culled) o.frustumCulled = true;
+  };
+}
+
 /** Geometriyi index'siz, uv'siz hale getirip dönüştürür ve tek renge boyar. */
 export function part(
   geo: THREE.BufferGeometry,

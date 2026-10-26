@@ -10,15 +10,34 @@ export interface ModeLife {
   onStop(fn: () => void): void;
 }
 
-let current: { life: ModeLife; stops: (() => void)[] } | null = null;
+let current: { life: ModeLife; stops: (() => void)[]; abort: AbortController } | null = null;
 let starter: ((battle: boolean) => void) | null = null;
 
 /** Yeni mod başlarken çağrılır; önceki mod (varsa) durdurulmuş olmalı. */
 export function beginMode(): ModeLife {
   const stops: (() => void)[] = [];
   const life: ModeLife = { active: true, onStop: (fn) => stops.push(fn) };
-  current = { life, stops };
+  current = { life, stops, abort: new AbortController() };
   return life;
+}
+
+/**
+ * Pencereye/belgeye mod ömrü boyunca dinleyici: mod durunca kaldırılır. Her mod başlangıcında yeniden kurulan arayüz
+ * ve dünya parçaları bunu kullanır; yoksa dünya ↔ tank geçişinde eski kopyalar tuşlara tepki vermeye ve eski
+ * arayüz ağacını bellekte tutmaya devam eder. Modül düzeyinde tek sefer kurulanlar (ses kilidi vb.) düz addEventListener kullanır.
+ */
+function withLife(opts?: boolean | AddEventListenerOptions): AddEventListenerOptions {
+  const o = typeof opts === "boolean" ? { capture: opts } : { ...opts };
+  if (current && !o.signal) o.signal = current.abort.signal;
+  return o;
+}
+export function listen<K extends keyof WindowEventMap>(type: K, fn: (e: WindowEventMap[K]) => void, opts?: boolean | AddEventListenerOptions): void;
+export function listen(type: string, fn: (e: Event) => void, opts?: boolean | AddEventListenerOptions): void;
+export function listen(type: string, fn: (e: never) => void, opts?: boolean | AddEventListenerOptions): void {
+  addEventListener(type, fn as EventListener, withLife(opts));
+}
+export function listenDoc<K extends keyof DocumentEventMap>(type: K, fn: (e: DocumentEventMap[K]) => void, opts?: boolean | AddEventListenerOptions): void {
+  document.addEventListener(type, fn as EventListener, withLife(opts));
 }
 
 /** Çalışan modu durdurur (hatalar diğer durdurma işlerini engellemez). */
@@ -27,6 +46,7 @@ export function stopMode(): void {
   current = null;
   if (!c) return;
   c.life.active = false;
+  c.abort.abort();
   for (const fn of c.stops.reverse()) {
     try {
       fn();

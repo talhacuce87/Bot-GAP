@@ -374,7 +374,7 @@ export class Hud {
     this.net?.update(now);
   }
 
-  updateDebug(now: number, s: PerfStats, rtt: number, avatars: number): void {
+  updateDebug(now: number, s: PerfStats, rtt: number, avatars: number, hitch = ""): void {
     if (!this.debugText || now - this.lastDebug < 500) return;
     this.lastDebug = now;
     this.debugText.textContent =
@@ -382,6 +382,6 @@ export class Hud {
       `cpu ${s.cpuMs.toFixed(2)} ms\n` +
       `draw ${s.calls}  tri ${(s.triangles / 1000).toFixed(1)}k\n` +
       `ölçek ${s.scale.toFixed(2)}  dpr ${devicePixelRatio}\n` +
-      `ping ${rtt.toFixed(0)} ms  avatar ${avatars}`;
+      `ping ${rtt.toFixed(0)} ms  avatar ${avatars}` + (hitch ? `\n${hitch}` : "");
   }
 }

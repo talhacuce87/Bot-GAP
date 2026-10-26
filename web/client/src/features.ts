@@ -201,6 +201,10 @@ export class Features {
   /** Yeme-içme: dükkân, çanta (I), hızlı slot (1–6), eldeki eşyalar ve emote çarkı ("). */
   private shopUi: ShopUi;
   private inv: InventoryUi;
+  /** Boşta hazırlık (çanta önizlemesi): ilk açılışta takılma olmasın. */
+  prewarmInventory(): Promise<void> {
+    return this.inv.prewarm();
+  }
   private hotbar: Hotbar;
   private wheel: EmoteWheel;
   private held = new HeldItems();

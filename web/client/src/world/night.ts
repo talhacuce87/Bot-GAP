@@ -1,6 +1,7 @@
 // Gece: lambalar çevresini gerçekten aydınlatır, zeminde sıcak ışık havuzları, ağaçlıklarda ateş böcekleri, gökte ay.
 // Gerçek ışık yalnızca oyuncuya en yakın birkaç lambada (havuzdaki PointLight'lar oraya taşınır);
 // uzaktakiler ucuz toplamalı zemin lekesiyle aydınlanır. Işık sayısı sabit kalır: shader yeniden derlenmez.
+import { listen } from "../mode";
 import * as THREE from "three";
 import { timeUniform } from "./geo";
 
@@ -141,7 +142,7 @@ function fireflies(swarms: [number, number, number][], opacity: { value: number 
   p.frustumCulled = false;
   p.matrixAutoUpdate = false;
   p.renderOrder = 6;
-  addEventListener("resize", () => (material.uniforms.uScale.value = innerHeight / 2));
+  listen("resize", () => (material.uniforms.uScale.value = innerHeight / 2));
   return p;
 }
 

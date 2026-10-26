@@ -2,6 +2,7 @@
 // yollar ya da arsalar değişince harita da kendiliğinden güncel kalır. Zemin katmanı ilk açılışta bir kez
 // çizilir; üstünde her karede arsa sahipleri, oyuncular ve senin yerin (ok, baktığın yöne). Sürükle: kaydır,
 // tekerlek ya da iki parmak: yakınlaştır. Işınlanılan odalar (stadyum, voleybol) haritada yok.
+import { listen } from "../mode";
 import { MOSQUE } from "../../../shared/mosque";
 import { PB_FIELD } from "../../../shared/paintball";
 import { CASINO, CAVE, CITY, FAME, GARAGE, GROVE, HALL, KAHVEHANE, LAKE, LINK_ROADS, PLAZA, RACE_HOUSE, ROAD_HALF, ROAD_PATH, SAKURA_SPOT, STAGE, STREETS, VILLAGE_ROAD_HALF, VILLAGE_ROADS, WATERFALL } from "../../../shared/zones";
@@ -224,7 +225,7 @@ export class WorldMap {
       else this.host.setWaypoint({ x: wx, z: wz });
     });
     c.addEventListener("pointercancel", up);
-    addEventListener("resize", () => {
+    listen("resize", () => {
       if (!this.panel.isOpen) return;
       this.resize();
       this.fit();

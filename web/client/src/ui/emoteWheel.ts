@@ -1,6 +1,7 @@
 // Emote çarkı (Fortnite gibi): tuşu basılı tutunca ekranın ortasında altı dilimli çark açılır; fareyi bir dilime
 // götürüp tuşu bırakınca o emote yapılır. Ortada kalırsan (ölü bölge) hiçbiri seçilmez. Fare kilitliyse (shift
 // lock) farenin hareketi, değilse imlecin ortaya göre yeri seçer.
+import { listen } from "../mode";
 import { EMOTES } from "../../../shared/constants";
 import { el } from "./panel";
 
@@ -46,7 +47,7 @@ export class EmoteWheel {
     this.root.append(svg);
     this.name = el("div", "ew-name", this.root);
     el("div", "ew-hint", this.root, "Fareyi götür · bırak");
-    addEventListener("mousemove", (e) => {
+    listen("mousemove", (e) => {
       if (!this.open) return;
       if (document.pointerLockElement) {
         this.vx = Math.max(-R_OUT, Math.min(R_OUT, this.vx + e.movementX));

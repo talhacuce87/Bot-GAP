@@ -1,5 +1,6 @@
 // Havai fişek: roket yükselir, patlar, kıvılcımlar çekimle düşüp söner. Herkes aynı tohumla aynı gösteriyi görür.
 // Tek Points nesnesi; her patlama attribute'lara bir kez yazılır, hareket tamamen vertex shader'da.
+import { listen } from "../mode";
 import * as THREE from "three";
 import { rng, timeUniform } from "./geo";
 
@@ -91,7 +92,7 @@ export class Fireworks {
       blending: THREE.AdditiveBlending,
       fog: false,
     });
-    addEventListener("resize", () => (material.uniforms.uScale.value = innerHeight / 2));
+    listen("resize", () => (material.uniforms.uScale.value = innerHeight / 2));
     this.points = new THREE.Points(g, material);
     this.points.frustumCulled = false;
     this.points.renderOrder = 8;

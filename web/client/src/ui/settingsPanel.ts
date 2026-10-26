@@ -1,6 +1,7 @@
 // Ayarlar penceresi: solda kategoriler (Grafik, Performans, Ses, Kamera, Tuşlar, Oyun), sağda seçilen kategorinin
 // ayarları. Değişiklik anında uygulanır ve cihazda saklanır; sahne kurulurken okunanlar için "Uygula" dünyayı yeniden
 // yükler. Araç çubuğundaki dişliyle, telefondaki Ayarlar uygulamasıyla ya da modlardaki "Tuşlar" düğmesiyle açılır.
+import { listen } from "../mode";
 import {
   applyPreset,
   type Preset,
@@ -141,7 +142,7 @@ export class SettingsPanel {
       if (e.key === "Escape") this.close();
     });
     this.root.addEventListener("keyup", (e) => e.stopPropagation());
-    addEventListener("keydown", (e) => {
+    listen("keydown", (e) => {
       if (e.key === "Escape" && this.isOpen && !this.capture && this.root.isConnected) this.close();
     });
     // Stadyuma girip çıkınca geçerli tuş takımı değişir: açıksa yeniden çiz
@@ -149,9 +150,9 @@ export class SettingsPanel {
       if (this.isOpen && !this.capture) this.render();
     });
     // Telefondaki Ayarlar uygulaması
-    addEventListener("gap:settings", () => this.open());
+    listen("gap:settings", () => this.open());
     // Modlardaki "Tuşlar" düğmesi: pencere Tuşlar sekmesinde açılır
-    addEventListener("gap:keys", () => this.open(this.keyboard ? "keys" : undefined));
+    listen("gap:keys", () => this.open(this.keyboard ? "keys" : undefined));
   }
 
   get isOpen(): boolean {

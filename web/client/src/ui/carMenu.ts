@@ -1,6 +1,7 @@
 // 🚗 Araçlarım (GTA'daki kişisel araçlar gibi): Tofaşlar herkeste var, diğerleri GAP Galeri'den satın alınır. Karta
 // tıkla (ya da 1-7) → o araba kendi tuning'iyle yanına gelir (park halinde); F ile binersin. Park edilen araba görünür,
 // kaldırılabilir. Aynı pencere galeri olarak da açılır: paralı arabalar fiyatı, hızı ve "Satın al" düğmesiyle.
+import { listen } from "../mode";
 import * as THREE from "three";
 import { CAR_COLORS, CAR_MODELS, carPerf, type CarSpec, isBike } from "../../../shared/car";
 import { CAR_PRICES, carItem } from "../../../shared/shop";
@@ -36,20 +37,49 @@ const TAGLINE: Record<CarSpec["model"], string> = {
   taksi: "Sarı Doblo · tepede TAKSİ tabelası",
 };
 
-/** Kart görselleri: tek bir gizli WebGL sahnesinde çizilir, resme dönüştürülür (menü açıkken). */
+/**
+ * Kart görselleri: tek bir gizli WebGL sahnesinde çizilir. Menü açılırken hepsini bir karede kurmak, çizmek ve PNG'ye
+ * çevirmek oyunu donduruyordu: bu yüzden sıraya girer, kare başına bir araç çizilir, PNG kodlama tarayıcının kendi
+ * iş parçacığında (`toBlob`) olur ve hazır olan kart yerinde dolar. Sıra bitince bağlam kapatılır.
+ */
 class Thumbs {
   private renderer: THREE.WebGLRenderer | null = null;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(30, 16 / 9, 0.1, 50);
   private cache = new Map<string, string>();
+  private queue: { key: string; spec: CarSpec }[] = [];
+  private raf = 0;
+  /** Bir görsel hazır olunca (anahtar, adres). */
+  onReady: (key: string, url: string) => void = () => {};
 
-  render(spec: CarSpec): string {
-    const key = JSON.stringify(spec);
+  static key(spec: CarSpec): string {
+    return JSON.stringify(spec);
+  }
+
+  /** Hazırsa adresi; değilse sıraya alır ve boş döner (hazır olunca `onReady`). */
+  get(spec: CarSpec): string {
+    const key = Thumbs.key(spec);
     const hit = this.cache.get(key);
     if (hit) return hit;
+    if (!this.queue.some((j) => j.key === key)) this.queue.push({ key, spec });
+    if (!this.raf) this.raf = requestAnimationFrame(this.pump);
+    return "";
+  }
+
+  private pump = (): void => {
+    this.raf = 0;
+    const job = this.queue.shift();
+    if (!job) return this.dispose();
+    this.draw(job.key, job.spec);
+    this.raf = requestAnimationFrame(this.pump);
+  };
+
+  private draw(key: string, spec: CarSpec): void {
     try {
       if (!this.renderer) {
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+        // Shader hata denetimi her programda derlemenin bitmesini bekletir: yalnızca geliştirmede
+        this.renderer.debug.checkShaderErrors = import.meta.env.DEV;
         this.renderer.setPixelRatio(1);
         this.renderer.setSize(480, 270, false);
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -57,8 +87,6 @@ class Thumbs {
         const sun = new THREE.DirectionalLight("#fff4e0", 2.6);
         sun.position.set(4, 7, 5);
         this.scene.add(sun);
-        this.camera.position.set(5.4, 2.0, 5.0);
-        this.camera.lookAt(0, 0.55, 0);
       }
       const bike = isBike(spec.model);
       const car = bike ? buildMotor(spec) : buildTofas(spec);
@@ -69,17 +97,25 @@ class Thumbs {
       car.group.rotation.y = -0.25;
       this.scene.add(car.group);
       this.renderer.render(this.scene, this.camera);
-      const url = this.renderer.domElement.toDataURL("image/png");
+      // toBlob çizimin o anki halini hemen alır, kodlama sonra arka planda biter
+      this.renderer.domElement.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        this.cache.set(key, url);
+        this.onReady(key, url);
+      }, "image/png");
       this.scene.remove(car.group);
       car.dispose();
-      this.cache.set(key, url);
-      return url;
     } catch {
-      return "";
+      // bu araç görselsiz kalır (kartta 🚗)
     }
   }
 
+  /** Bekleyenleri bırakır ve bağlamı kapatır; hazır olanlar önbellekte kalır. */
   dispose(): void {
+    cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    this.queue.length = 0;
     this.renderer?.dispose();
     this.renderer?.forceContextLoss();
     this.renderer = null;
@@ -91,6 +127,8 @@ export class CarMenu {
   private cards: HTMLDivElement;
   private foot: HTMLDivElement;
   private thumbs = new Thumbs();
+  /** Görseli bekleyen kartların resim kutuları (hazır olunca yerinde dolar). */
+  private slots = new Map<string, HTMLElement>();
   private head!: HTMLDivElement;
   /** Galeri olarak mı açık (paralı arabalar ve fiyatları). */
   private gallery = false;
@@ -104,6 +142,14 @@ export class CarMenu {
     panel.innerHTML = `<div class="cm-head">${iconHtml("car", "cm-ic")}<div class="cm-titles"><b>Araçlarım</b><span>Bir araca tıkla: yanına gelsin · F ile bin</span></div><button class="gp-x cm-x" title="Kapat (Esc)" aria-label="Kapat">${iconHtml("close")}</button></div>`;
     this.head = panel.querySelector(".cm-head")!;
     owned.on(() => this.isOpen && this.render());
+    this.thumbs.onReady = (key, url) => {
+      const slot = this.slots.get(key);
+      if (!slot?.isConnected) return;
+      const img = document.createElement("img");
+      img.alt = "";
+      img.src = url;
+      slot.replaceChildren(img);
+    };
     this.cards = document.createElement("div");
     this.cards.className = "cm-cards";
     this.foot = document.createElement("div");
@@ -115,7 +161,7 @@ export class CarMenu {
     this.root.addEventListener("pointerdown", (e) => {
       if (e.target === this.root) this.close();
     });
-    addEventListener("keydown", (e) => {
+    listen("keydown", (e) => {
       if (!this.isOpen || e.target instanceof HTMLInputElement) return;
       // Rakamlar Araçlarım'daki sırayla (galeride numara yok)
       const i = this.gallery ? -1 : CAR_MODELS.findIndex((_, k) => e.code === `Digit${k + 1}`);
@@ -160,6 +206,7 @@ export class CarMenu {
 
   private render(): void {
     const st = this.hooks.state();
+    this.slots.clear();
     this.cards.replaceChildren(
       ...CAR_MODELS.filter((m) => !this.gallery || CAR_PRICES[m.id] > 0).map((m, i) => {
         const spec = st.cars[m.id];
@@ -167,7 +214,7 @@ export class CarMenu {
         const card = document.createElement("button");
         card.className = `cm-card${st.parked?.model === m.id ? " parked" : ""}${st.driving === m.id ? " driving" : ""}${mine ? "" : " locked"}`;
         const color = CAR_COLORS.find((c) => c.id === spec.color);
-        const img = this.thumbs.render(spec);
+        const img = this.thumbs.get(spec);
         const perf = carPerf(spec);
         if (this.gallery) {
           card.innerHTML =
@@ -176,6 +223,7 @@ export class CarMenu {
             `<div class="cm-tags"><span>${iconHtml("gauge")} ${Math.round(perf.top * 3.6)} km/sa</span><span>${iconHtml("lightning")} ${perf.accel.toFixed(1)} ivme</span>${perf.diesel ? "<span>Dizel</span>" : ""}</div>` +
             `<em>${mine ? "Senin" : `${price.toLocaleString("tr-TR")} ₺`}</em></div>` +
             `<div class="cm-call${mine ? "" : " buy"}">${mine ? "ÇAĞIR" : "SATIN AL"}</div>`;
+          if (!img) this.slots.set(Thumbs.key(spec), card.querySelector<HTMLElement>(".cm-img")!);
           card.addEventListener("click", () => (mine ? this.pick(m.id) : this.hooks.buy(m.id)));
           return card;
         }
@@ -186,6 +234,7 @@ export class CarMenu {
           `<div class="cm-tags"><span><i style="background:${color?.hex}"></i>${color?.name ?? ""}</span><span class="cm-plate">${spec.plate}</span></div>` +
           `<em>${status}</em></div>` +
           `<div class="cm-call">${st.parked?.model === m.id ? "YANIMA GETİR" : "ÇAĞIR"}</div>`;
+        if (!img) this.slots.set(Thumbs.key(spec), card.querySelector<HTMLElement>(".cm-img")!);
         card.disabled = st.driving !== null || !mine;
         card.addEventListener("click", () => this.pick(m.id));
         return card;

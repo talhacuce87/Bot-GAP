@@ -2,6 +2,7 @@
 // dizilir; böylece görev kartı, bildirim, etkileşim düğmesi, hızlı slot gibi parçalar hiçbir zaman üst üste binmez.
 // Sağ üstte tek araç çubuğu (para + kısayol düğmeleri, seyrek kullanılanlar "Diğer" menüsünde); açılır pencereler
 // aynı anda tek tane açık kalır.
+import { listen } from "../mode";
 import { type Action, actionLabel, onBinds } from "../input/keybinds";
 import { type IconName, icon } from "./icons";
 
@@ -113,10 +114,10 @@ export function toolMenuItem(root: HTMLElement, o: { icon: IconName; label: stri
       btn.classList.toggle("open", show);
       btn.classList.remove("pulse");
     });
-    addEventListener("pointerdown", (e) => {
+    listen("pointerdown", (e) => {
       if (menu.classList.contains("show") && !w.contains(e.target as Node)) close();
     }, true);
-    addEventListener("keydown", (e) => {
+    listen("keydown", (e) => {
       if (e.key === "Escape" && menu.classList.contains("show")) close();
     });
   }

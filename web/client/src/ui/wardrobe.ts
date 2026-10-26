@@ -1,5 +1,6 @@
 // Gardırop: kıyafet seçimi ve canlı önizleme (ekranı kaplayan pencerede, platformdaki karakter).
 // Kaydet → bot doğrular, odaya botun temizlediği kıyafet yayınlanır. Vazgeç/kapat → kayıtlı kıyafete döner.
+import { listen } from "../mode";
 import { LOOK_SLOTS, type Look, type LookColor, type LookSlot, type WardrobeInfo } from "../../../shared/protocol";
 import { lookItem, LOOK_PRICES, lookShop } from "../../../shared/shop";
 import { owned } from "../owned";
@@ -217,7 +218,7 @@ export class Wardrobe {
 
     // Açma tuşu Input'ta (ayarlanabilir; pencere açıkken de yalnızca o çalışır). Buradakiler pencere tuşları.
     const signal = this.abort.signal;
-    addEventListener("keydown", (e) => {
+    listen("keydown", (e) => {
       if (!this.isOpen || e.target instanceof HTMLInputElement) return;
       const spin = { KeyA: -1, ArrowLeft: -1, KeyD: 1, ArrowRight: 1 }[e.code];
       if (spin) this.preview.setSpin(spin);
@@ -228,7 +229,7 @@ export class Wardrobe {
       else return;
       e.preventDefault();
     }, { signal });
-    addEventListener("keyup", (e) => {
+    listen("keyup", (e) => {
       if (/^(KeyA|KeyD|ArrowLeft|ArrowRight)$/.test(e.code)) this.preview.setSpin(0);
     }, { signal });
   }
@@ -247,6 +248,11 @@ export class Wardrobe {
   }
 
   /** `tab` verilirse o sekmeyle açılır (hair, tops, colors…); `shop` verilirse yalnızca o dükkânın sekmeleri. */
+  /** Karakter önizlemesini boşta hazırlar (bkz. WardrobePreview.prewarm). */
+  prewarm(): Promise<void> {
+    return this.preview.prewarm();
+  }
+
   open(tab?: string, shop?: WardrobeShop): void {
     const s = shop ? SHOP[shop] : null;
     this.shop = shop ?? null;

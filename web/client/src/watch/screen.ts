@@ -1,6 +1,7 @@
 // Videoyu 3D perdeye yerleştirir: oynatıcı DOM'da, CSS3DRenderer ile perdenin tam üstüne,
 // WebGL canvas'ın ARKASINA konur. Perde WebGL'de saydam bir "delik" olarak çizilir; video oradan görünür.
 // Önünden geçen avatarlar derinlik testiyle videonun üstünde kalır. GPU'ya ek maliyeti yoktur.
+import { listen } from "../mode";
 import * as THREE from "three";
 import { CSS3DObject, CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 
@@ -59,7 +60,7 @@ export class ScreenVideo {
     el.className = "screen-layer";
     document.body.prepend(el); // canvas'ın arkasında
     this.resize();
-    addEventListener("resize", () => this.resize());
+    listen("resize", () => this.resize());
   }
 
   private resize(): void {

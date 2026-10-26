@@ -321,6 +321,14 @@ export class PostFx {
   }
 
   /**
+   * Fotoğraf modunun alan derinliği için derinlik geçişini bir kez (küçük hedefe) çizer. `compile` geçersiz kılma
+   * malzemesini görmez: bu programlar ancak gerçek bir çizimle derlenir, yoksa ilk fotoğrafta oyun takılır.
+   */
+  warmDepth(): void {
+    this.renderDepth(8);
+  }
+
+  /**
    * Bir kare çizer. `env`: gün ışığı, gece lambaları, gün batımı (DayNight). `scale`: çözünürlük ölçeği
    * (1'de büyütme geçişi yok, uber doğrudan tuvale yazar).
    * Gündüz parıltı yalnızca HDR parlaklıkta (güneş diski) çalışır; gece lambalar ve ateş saçar.

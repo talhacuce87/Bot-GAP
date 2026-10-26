@@ -1,5 +1,6 @@
 // Ortak açılır panel: başlık şeridi (simge, başlık, kapat), gövde. Ekranın ortasında açılır, arkası kararır; aynı
 // anda tek panel açık kalır (yenisi açılınca öncekiler kapanır). Açıkken tuşlar oyuna gitmez; Esc kapatır.
+import { listen } from "../mode";
 import { type IconName, icon, stripEmoji } from "./icons";
 import { modalClosed, modalOpened } from "./layout";
 
@@ -63,7 +64,7 @@ export class Panel {
     });
     this.root.addEventListener("keyup", (e) => e.stopPropagation());
     // Odak panelin dışındayken de Esc kapatsın (mod değişince eski panel DOM'dan çıkar, yok sayılır)
-    window.addEventListener("keydown", (e) => {
+    listen("keydown", (e) => {
       if (e.key === "Escape" && this.isOpen && this.root.isConnected) this.close();
     });
   }

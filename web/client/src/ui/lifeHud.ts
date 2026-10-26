@@ -2,6 +2,7 @@
 // GAP ₺ (değişince ne için kazandığını/harcadığını yazan bildirim kartı). Paraya tıklayınca cüzdan: bugünkü kazanç
 // ve harcama, son işlemler. Can sıfırlanınca "yaralı" kartı: kırmızı kenar, kalan süre, arkadaşın kaldırabilir ya
 // da E ile ambulans çağırırsın.
+import { listen } from "../mode";
 import { ECON, LIFE, type LifeState, lira, type MoneyTx, type WalletView } from "../../../shared/economy";
 import { type IconName, icon } from "./icons";
 import { region, setToolTip } from "./layout";
@@ -95,7 +96,7 @@ export class LifeHud {
     const amb = el("button", "", hints, `E · Ambulans (${lira(ECON.hospitalFee)})`);
     amb.type = "button";
     amb.addEventListener("click", () => this.a.ambulance());
-    addEventListener("keydown", (e) => {
+    listen("keydown", (e) => {
       if (this.downedUntil && e.code === "KeyE" && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) this.a.ambulance();
     });
     this.prog = el("div", "revive-prog", bc);

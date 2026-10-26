@@ -2,6 +2,7 @@
 // edilir. Oklarla uygulamalar arasında gezilir, Enter açar, Backspace geri (ana ekranda kapatır), Esc kapatır;
 // fareyle de tıklanır. Eski menünün (M) yerini alır: haritanın, inşanın ve diğer kısayollu şeylerin kendi tuşu var,
 // telefonda yalnızca kısayolu olmayanlar ve yeni uygulamalar (işler, cüzdan, mesajlar) durur.
+import { listen } from "../mode";
 import { lira, type WalletView } from "../../../shared/economy";
 import { JOB_PAY, JOBS, type JobKind, type JobView } from "../../../shared/jobs";
 import { PETS, SKINS } from "../../../shared/protocol";
@@ -94,7 +95,7 @@ export class Phone {
     this.body = el("div", "ph-body", this.screen);
     el("div", "ph-home-bar", this.screen).addEventListener("click", () => (this.app ? this.home() : this.close()));
     // Açıkken oklar, Enter ve Backspace telefona (yürüme WASD ile sürer)
-    addEventListener("keydown", (e) => this.onKey(e), true);
+    listen("keydown", (e) => this.onKey(e), true);
     this.paintWall();
   }
 

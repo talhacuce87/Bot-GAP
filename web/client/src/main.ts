@@ -37,7 +37,7 @@ import { onBinds } from "./input/keybinds";
 import { Net } from "./net";
 import { installMenuItem, warnSoftwareRenderer } from "./pwa";
 import { loadLastPos, resumable, saveLastPos } from "./lastPos";
-import { FrameLimiter, PerfGovernor } from "./perf";
+import { FrameLimiter, HitchLog, PerfGovernor } from "./perf";
 import { Player } from "./player";
 import { lowPowerDevice as lowPower, onSettings, settings, updateSettings } from "./settings";
 import { Bubbles } from "./ui/bubbles";
@@ -61,8 +61,9 @@ import { PostFx } from "./world/post";
 import { Upscaler } from "./world/upscale";
 import { buildWorld, SCREEN_W, SCREEN_Z, type Season } from "./world/scene";
 import { cacheShadows } from "./world/shadowCache";
+import { revealAll } from "./world/geo";
 import { runBattle } from "./battle";
-import { beginMode, setModeStarter, stopMode, switchMode, wantsBattle } from "./mode";
+import { beginMode, listen, listenDoc, setModeStarter, stopMode, switchMode, wantsBattle } from "./mode";
 import { Features } from "./features";
 import { aimRay, ShellFx, TankView } from "./world/tank";
 
@@ -123,6 +124,8 @@ async function start(): Promise<void> {
   const perf = new PerfGovernor(renderer, Math.min(devicePixelRatio, settings.maxDpr), true);
   perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap, settings.renderScale);
   const limiter = new FrameLimiter();
+  const hitches = new HitchLog(renderer);
+  Object.assign(window, { gapHitches: () => (console.table(hitches.list), hitches.describe()) });
   // Kare başına elle sıfırlanır: son işlem açıkken birden çok geçişin çizimleri de sayılsın.
   renderer.info.autoReset = false;
   // Durağan gölge düşürenler önbellekten: her kare yalnızca hareketliler gölge haritasına çizilir (?debug&golgeOnbellek=0: kapalı)
@@ -284,7 +287,7 @@ async function start(): Promise<void> {
     if (!me.jailed && !me.fps && net.status === "online") saveLastPos({ x: me.x, z: me.z, rot: me.rot });
   };
   const posTimer = window.setInterval(savePos, 3000);
-  addEventListener("pagehide", savePos);
+  listen("pagehide", savePos);
   life.onStop(() => {
     window.clearInterval(posTimer);
     removeEventListener("pagehide", savePos);
@@ -773,12 +776,12 @@ async function start(): Promise<void> {
     },
   });
   if (params.has("debug") && params.get("namaz")) features.mosque.debugPose(params.get("namaz")!);
-  if (params.has("debug")) Object.assign(window, { gapFeatures: features, gapRenderScene: renderScene });
+  if (params.has("debug")) Object.assign(window, { gapFeatures: features, gapRenderScene: renderScene, gapCars: cars, gapSettings: settings });
   // NPC trafik de gece far ışığı alır (en yakınlar, oyuncu arabalarıyla birlikte)
   cars.extra = { list: () => features.npcHeadlights(), get night() { return world.env.lights; } };
   if (practiceTrack !== null) features.race.requestPractice(Number(practiceTrack) || 0, Number(params.get("botlar") ?? 3) || 0, params.has("oto"), params.has("lobi"));
 
-  addEventListener("resize", () => {
+  listen("resize", () => {
     if (!life.active) return;
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
@@ -967,9 +970,12 @@ async function start(): Promise<void> {
 
     // Binaların örttüğü karolar ve dükkân içleri bu kare çizilmez (kameranın son konumuyla)
     world.cull(camera);
+    const t1 = performance.now();
     renderScene(dt);
-    perf.frame(dtMs, performance.now() - t0);
-    hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1);
+    const t2 = performance.now();
+    perf.frame(dtMs, t2 - t0);
+    hitches.frame(dtMs, t1 - t0, t2 - t1);
+    hud.updateDebug(now, perf.stats, net.rtt, remotes.map.size + 1, hitches.describe());
     if (input.consumeKey("net")) updateSettings({ showNet: !settings.showNet });
     hud.updateNet(now);
   };
@@ -979,7 +985,7 @@ async function start(): Promise<void> {
     last = performance.now();
     renderer.setAnimationLoop(frame);
   };
-  document.addEventListener("visibilitychange", () => {
+  listenDoc("visibilitychange", () => {
     if (!life.active) return;
     if (document.hidden) renderer.setAnimationLoop(null);
     else run();
@@ -988,6 +994,7 @@ async function start(): Promise<void> {
   // kurulmasın, programları da aşağıda derlensin. Paket çok geç inerse (yavaş bağlantı) beklenmez, sonra işçide kurulur.
   const warmAt = performance.now();
   cars.prewarm(settings.car);
+  cars.warmModels(settings.car);
   await Promise.race([chibiReady, new Promise((r) => setTimeout(r, 8000))]);
   const packAt = performance.now();
   await features.prewarmNpcs();
@@ -996,17 +1003,38 @@ async function start(): Promise<void> {
   // Sahnedeki shader'lar yükleme ekranı açıkken ve paralel derlenir; yoksa ilk karede ~70 program sırayla
   // derlenir ve ekran saniyelerce donar
   // Son işlem açıksa sahne onun hedefine çizilir: shader'lar o hedefe göre derlenmeli
-  if ((settings.bloom || settings.grade || settings.godrays) && !screen.isActive) {
-    post ??= new PostFx(renderer, world.scene, camera, settings.antialias ? 4 : 0);
-    await post.compile().catch(() => undefined);
-  } else {
-    await renderer.compileAsync(world.scene, camera).catch(() => undefined);
+  // Gizli iç mekânlar (casino, garaj, kahvehane...) da görünür sayılır: yoksa ilk girişte shader derlenir, geometri ve
+  // doku GPU'ya yüklenir ve oyun takılır. Zayıf cihazda yalnızca programlar (bellek için her şey yüklenmez).
+  // Gece lambası yaması malzemelerin program anahtarını değiştirir (world.update 2 sn'de bir uygular): önce uygulanmazsa
+  // derlenenler birkaç saniye sonra geçersiz kalır ve yeniden derlenir.
+  world.lamps?.patchScene(world.scene);
+  const reveal = revealAll(world.scene, !lowPower);
+  try {
+    if ((settings.bloom || settings.grade || settings.godrays) && !screen.isActive) {
+      post ??= new PostFx(renderer, world.scene, camera, settings.antialias ? 4 : 0);
+      await post.compile().catch(() => undefined);
+      // Fotoğraf modunun derinlik geçişi programları da (bkz. PostFx.warmDepth)
+      post.warmDepth();
+    } else {
+      await renderer.compileAsync(world.scene, camera).catch(() => undefined);
+    }
+    if (!life.active) return;
+    // Gölge derinliği ve son işlem geçişlerinin programları ilk çizimde bağlanır: yükleme ekranı açıkken olsun
+    renderScene(0);
+  } finally {
+    reveal();
   }
-  if (!life.active) return;
-  // Gölge derinliği ve son işlem geçişlerinin programları ilk çizimde bağlanır: yükleme ekranı açıkken olsun
-  renderScene(0);
   run();
   loading.remove();
+  // Çanta ve gardırobun karakter önizlemesi (ayrı WebGL bağlamı + shader'lar) oyun boştayken hazırlanır: ilk açılışta
+  // ana iş parçacığı saniyelerce kilitlenmesin. Biri bitince öbürü; oyun başlangıcı da yavaşlamasın diye geç.
+  setTimeout(async () => {
+    for (const ui of [wardrobe, { prewarm: () => features.prewarmInventory() }]) {
+      if (!life.active) return;
+      await ui.prewarm().catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }, 5000);
 }
 
 /** Dünya ↔ savaş: çalışan mod durur, sayfa yenilenmeden diğeri başlar (Discord Activity'de yenileme güvenilir değil). */

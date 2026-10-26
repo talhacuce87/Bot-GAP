@@ -1,5 +1,6 @@
 // Oyun içi sohbet: Enter ile yaz, Esc ile çık. "!" ile başlayan mesajlar komuttur (cevap yalnızca sana).
 // Metin her zaman textContent ile yazılır (HTML yorumlanmaz).
+import { listen } from "../mode";
 import type { ChatLine } from "../../../shared/protocol";
 import { region, toolButton } from "./layout";
 
@@ -66,7 +67,7 @@ export class Chat {
     this.root.addEventListener("pointerdown", () => this.wake());
 
     // Enter (bir giriş kutusunda değilken) sohbeti açar
-    addEventListener("keydown", (e) => {
+    listen("keydown", (e) => {
       if (e.key !== "Enter" || e.repeat || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       e.preventDefault();
       this.focus();

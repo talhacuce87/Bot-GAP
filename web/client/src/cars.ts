@@ -5,7 +5,7 @@
 // ışık yok: yolda ışık lekesi taklit eder.
 import * as THREE from "three";
 import { FLAG_SEATED } from "../../shared/constants";
-import { type CarDents, type CarSpec, isBike, NO_DENTS } from "../../shared/car";
+import { CAR_MODELS, type CarDents, type CarSpec, isBike, NO_DENTS } from "../../shared/car";
 import type { AvatarView } from "./avatars/avatars";
 import { wetEnv } from "./world/geo";
 import { type LampField, MAX_CARS } from "./world/lamps";
@@ -75,6 +75,8 @@ export class Cars {
   private entries = new Map<number, Entry>();
   /** Kurulmuş ama şu an kimsenin binmediği arabalar (görünüm anahtarıyla). */
   private spare = new Map<string, TofasMesh>();
+  /** Her modelden bir gizli araba (bkz. warmModels). */
+  private anchors: TofasMesh[] = [];
   private seated = new Map<number, AvatarView>();
   private night = 0;
   private focus = { x: 0, z: 0 };
@@ -215,6 +217,8 @@ export class Cars {
 
   private build(spec: CarSpec): TofasMesh {
     const mesh = isBike(spec.model) ? buildMotor(spec) : buildTofas(spec);
+    // Gece lambası yaması şimdi: world.update 2 sn sonra uygular, o zamana kadar yamasız program derlenir (takılma)
+    this.opts.lamps?.patchScene(mesh.group);
     this.scene.add(mesh.group);
     return mesh;
   }
@@ -274,7 +278,26 @@ export class Cars {
     return s;
   }
 
+  /**
+   * Her modelden gizli bir araba kurar ve tutar (yükleme ekranında): başkası ilk kez o modelle girince shader derlenmesin,
+   * geometri yüklenmesin. Malzemeler yaşadığı için three.js programları silmez; ön derleme (görünmezleri de gezer)
+   * bunları kapsar.
+   */
+  warmModels(base: CarSpec): void {
+    if (this.anchors.length) return;
+    for (const m of CAR_MODELS) {
+      const mesh = this.build({ ...base, model: m.id });
+      mesh.group.visible = false;
+      this.anchors.push(mesh);
+    }
+  }
+
   dispose(): void {
     for (const sid of [...this.entries.keys()]) this.drop(sid);
+    for (const a of this.anchors) {
+      this.scene.remove(a.group);
+      a.dispose();
+    }
+    this.anchors.length = 0;
   }
 }

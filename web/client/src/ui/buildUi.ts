@@ -2,6 +2,7 @@
 // 1–6 blok seçer, R döndürür, X silgi, Esc çıkar. Yalnızca kendi arsanda; arsan yoksa boş arsa alınır
 // (boş bir arsanın üstündeysen o). Arsası olan, üstünde durduğu boş arsaya evini taşıyabilir.
 // İnşa modu kapalıyken de bir arsanın üstündeysen üstte kimin arsası olduğu yazar.
+import { listen } from "../mode";
 import * as THREE from "three";
 import { blockDef, cellKey, inPlot, PLOTS } from "../../../shared/build";
 import { type BuildHit, type BuildWorld, PALETTE } from "../world/buildWorld";
@@ -92,7 +93,7 @@ export class BuildMode {
       if (Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 6 || performance.now() - this.down.at > 500) return;
       this.apply();
     });
-    addEventListener("keydown", (e) => {
+    listen("keydown", (e) => {
       if (!this.active || e.repeat || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.code === "KeyR") this.rotate();
       else if (e.code === "KeyX") this.setErase(!this.erase);

@@ -2,6 +2,7 @@
 // süren etkiler; sağda sekmeli slot ızgarası, ağırlık barı ve en altta hızlı slot sırası (1–6, Minecraft gibi).
 // Eşyalar sürükle-bırakla taşınır (aynı eşya birleşir); tıklanan eşyanın kartı: kullan, yanındakine ver, at.
 // Dolap gelince ızgaranın yanına ikinci bir ızgara olarak açılacak.
+import { listen } from "../mode";
 import type { Look } from "../../../shared/protocol";
 import { BUFFS, type BuffId, INV, invKg, type ItemCat, itemDef, type Slot, useText } from "../../../shared/items";
 import type { ChibiPack } from "../avatars/chibiPack";
@@ -86,9 +87,14 @@ export class InventoryUi {
     for (let i = 0; i < INV.hotbar; i++) this.cell(hot, i);
     this.detail = el("div", "inv-detail", right);
 
-    addEventListener("pointermove", (e) => this.dragMove(e));
-    addEventListener("pointerup", (e) => this.dragEnd(e));
+    listen("pointermove", (e) => this.dragMove(e));
+    listen("pointerup", (e) => this.dragEnd(e));
     this.render();
+  }
+
+  /** Karakter önizlemesini boşta hazırlar (bkz. WardrobePreview.prewarm). */
+  prewarm(): Promise<void> {
+    return this.preview.prewarm();
   }
 
   get isOpen(): boolean {
