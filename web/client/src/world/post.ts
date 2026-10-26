@@ -67,6 +67,9 @@ const UBER_FRAGMENT = /* glsl */ `
   uniform float uVignette;
   uniform vec3 uLift;
   uniform float uFilter;
+  // Gece sinema görünümü (0 gündüz/filtreli, 1 gece) ve film greninin kare tohumu
+  uniform float uCine;
+  uniform float uSeed;
   in vec2 vUv;
   out vec4 outColor;
   const int N = 30;
@@ -162,6 +165,13 @@ const UBER_FRAGMENT = /* glsl */ `
     c = max(mix(vec3(l), c, uSat), 0.0) * uTint;
     // Gölgelere hafif renk (gece mavi, akşam mor): düz siyah yerine
     c += uLift * (1.0 - smoothstep(0.0, 0.25, l));
+    // Gece: gölgeler yeşil-turkuaza, lamba ve ateş ışığı sıcağa kayar, en koyular biraz çöker
+    // (düz lacivert gece yerine kamp ateşi fotoğrafı gibi)
+    if (uCine > 0.0) {
+      float L = lum(c);
+      vec3 split = mix(vec3(0.8, 0.98, 0.92), vec3(1.14, 1.0, 0.8), smoothstep(0.03, 0.5, L));
+      c = mix(c, c * split * mix(0.72, 1.0, smoothstep(0.0, 0.12, L)), uCine);
+    }
     // Fotoğraf filtreleri: 1 sıcak, 2 soğuk, 3 siyah-beyaz, 4 sepya, 5 nostalji
     if (uFilter > 0.5) {
       float L = lum(c);
@@ -198,6 +208,11 @@ const UBER_FRAGMENT = /* glsl */ `
     #ifdef SRGB_TRANSFER
       outColor = sRGBTransferOETF(outColor);
     #endif
+    // Film greni (gece): ekran uzayında, her kare farklı
+    if (uCine > 0.0) {
+      float n = fract(sin(dot(gl_FragCoord.xy + uSeed, vec2(12.9898, 78.233))) * 43758.5453);
+      outColor.rgb += (n - 0.5) * 0.045 * uCine;
+    }
   }
 `;
 
@@ -285,6 +300,8 @@ export class PostFx {
       uVignette: { value: 0.4 },
       uLift: { value: new THREE.Vector3(0, 0, 0) },
       uFilter: { value: 0 },
+      uCine: { value: 0 },
+      uSeed: { value: 0 },
     });
   }
 
@@ -339,9 +356,12 @@ export class PostFx {
     const filter = o.filter ?? 0;
     u.uGrade.value = o.grade || filter > 0 ? 1 : 0;
     u.uFilter.value = filter;
-    u.uVignette.value = filter ? 0.65 : 0.4;
+    u.uCine.value = 0;
     if (u.uGrade.value) {
       const night = 1 - env.day;
+      u.uCine.value = filter ? 0 : night;
+      u.uSeed.value = Math.random() * 512;
+      u.uVignette.value = filter ? 0.65 : 0.4 + 0.25 * night;
       (u.uTint.value as THREE.Vector3).copy(TINT_DAY).lerp(TINT_NIGHT, night).lerp(TINT_DUSK, Math.min(1, env.dusk * 1.3));
       (u.uLift.value as THREE.Vector3).copy(LIFT_NIGHT).multiplyScalar(night).addScaledVector(LIFT_DUSK, env.dusk);
       u.uSat.value = 1.0 + 0.1 * env.day;

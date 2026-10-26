@@ -46,6 +46,23 @@ const _q = new THREE.Quaternion();
 const _s = new THREE.Vector3();
 const _y = new THREE.Vector3(0, 1, 0);
 
+/**
+ * Direkler arasında sarkan ampul zinciri: `n - 1` ampul (sinüs sarkmasıyla) ve onları taşıyan ince kablo.
+ * Ampuller "bulb" propu (gece parlar); kablo ampul tepelerinden geçer.
+ */
+export function bulbChain(
+  b: { add(g: THREE.BufferGeometry): void; prop(kind: "bulb", m: THREE.Matrix4): void },
+  ax: number, az: number, bx: number, bz: number, top: number, sag: number, n: number,
+): void {
+  const at = (t: number) => new THREE.Vector3(ax + (bx - ax) * t, top - Math.sin(t * Math.PI) * sag, az + (bz - az) * t);
+  for (let i = 1; i < n; i++) {
+    const p = at(i / n);
+    b.prop("bulb", mat(p.x, p.y, p.z, 0, 0.3));
+  }
+  const pts = Array.from({ length: 13 }, (_, i) => at(i / 12).add(new THREE.Vector3(0, 0.07, 0)));
+  b.add(part(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 12, 0.012, 3), "#1d1a17"));
+}
+
 export function mat(x = 0, y = 0, z = 0, ry = 0, sx = 1, sy = sx, sz = sx): THREE.Matrix4 {
   return new THREE.Matrix4().compose(_p.set(x, y, z), _q.setFromAxisAngle(_y, ry), _s.set(sx, sy, sz));
 }

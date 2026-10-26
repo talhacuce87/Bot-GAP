@@ -322,6 +322,7 @@ const MIME: Record<string, string> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -332,7 +333,7 @@ const MIME: Record<string, string> = {
   ".map": "application/json",
 };
 // .bin: chibi karakter paketi (~5.8 MB → ~2.9 MB gzip, ~2.4 MB brotli)
-const COMPRESSIBLE = new Set([".html", ".js", ".css", ".json", ".svg", ".map", ".bin", ".obj"]);
+const COMPRESSIBLE = new Set([".html", ".js", ".css", ".json", ".webmanifest", ".svg", ".map", ".bin", ".obj"]);
 // Sıkıştırma libuv iş parçacıklarında: senkron gzip büyük pakette olay döngüsünü (oyun simülasyonunu) ~200 ms kilitliyordu
 const gzipAsync = promisify(gzip);
 const brotliAsync = promisify(brotliCompress);

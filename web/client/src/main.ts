@@ -35,6 +35,7 @@ import { login, type Session } from "./discord";
 import { Input } from "./input/input";
 import { onBinds } from "./input/keybinds";
 import { Net } from "./net";
+import { installMenuItem, warnSoftwareRenderer } from "./pwa";
 import { loadLastPos, resumable, saveLastPos } from "./lastPos";
 import { FrameLimiter, PerfGovernor } from "./perf";
 import { Player } from "./player";
@@ -476,6 +477,8 @@ async function start(): Promise<void> {
   let cinemaOn = false;
   // Tank savaşı: aynı odanın savaş odası (izleme odasından da); geçiş sayfa yenilenmeden
   toolMenuItem(hudRoot, { icon: "sword", label: "Tank savaşı", order: 3, onClick: () => switchMode(true) });
+  life.onStop(installMenuItem(hudRoot));
+  warnSoftwareRenderer(renderer, hudRoot);
   if (session.mode !== "watch") {
     hud.cinemaButton(openCinema);
     // Dosya/HLS (TRT, .m3u8, .mp4) ve sunucunun yt-dlp ile çözdüğü YouTube/Twitch/Kick sunucu üzerinden

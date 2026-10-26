@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { DOCK, GROVE as GROVE_AT, LAKE, onAsphalt, PLAZA } from "../../../shared/zones";
 import type { Builder } from "./builder";
-import { flatMat, mat, part, timeUniform } from "./geo";
+import { bulbChain, flatMat, mat, part, timeUniform } from "./geo";
 
 const STONE = "#6f7378";
 const STONE_DARK = "#55595f";
@@ -213,12 +213,7 @@ export function grove(b: Builder): { signAt: THREE.Matrix4; coals: THREE.Mesh; s
   }
   for (let s = 0; s < posts.length; s++) {
     const [ax, az] = posts[s], [bx, bz] = posts[(s + 1) % posts.length];
-    const n = Math.round(Math.hypot(bx - ax, bz - az) * 2);
-    for (let i = 1; i < n; i++) {
-      const t = i / n;
-      const sag = Math.sin(t * Math.PI) * 0.55;
-      b.prop("bulb", mat(ax + (bx - ax) * t, 2.7 - sag, az + (bz - az) * t, 0, 0.3));
-    }
+    bulbChain(b, ax, az, bx, bz, 2.7, 0.55, Math.round(Math.hypot(bx - ax, bz - az) * 2));
   }
 
   // Sık orman halkası, meydana bakan tarafta giriş boşluğu

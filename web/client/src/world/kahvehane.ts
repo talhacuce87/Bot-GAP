@@ -3,7 +3,7 @@
 import * as THREE from "three";
 import { KAHVEHANE, TABLES, TEA_COUNTER } from "../../../shared/zones";
 import type { Builder } from "./builder";
-import { flatMat, mat, part } from "./geo";
+import { bulbChain, flatMat, mat, part } from "./geo";
 
 const WOOD = "#8a5f35";
 const WOOD_DARK = "#5b3f25";
@@ -110,12 +110,7 @@ export function kahvehane(b: Builder): { signAt: THREE.Matrix4[] } {
   for (const sz of [-1, 1]) box(b, hw * 2 + 0.3, 0.16, 0.16, WOOD, cx, 3.1, cz + sz * hd, 0, 0.05);
   for (const sx of [-1, 0, 1]) box(b, 0.14, 0.14, hd * 2 + 0.3, WOOD, cx + sx * hw, 3.05, cz, 0, 0.05);
   // Ampul zinciri: direkler arasında sarkan
-  const chain = (ax: number, az: number, bx: number, bz: number, n: number) => {
-    for (let i = 1; i < n; i++) {
-      const t = i / n;
-      b.prop("bulb", mat(ax + (bx - ax) * t, 2.95 - Math.sin(t * Math.PI) * 0.45, az + (bz - az) * t, 0, 0.3));
-    }
-  };
+  const chain = (ax: number, az: number, bx: number, bz: number, n: number) => bulbChain(b, ax, az, bx, bz, 2.95, 0.45, n);
   chain(cx - hw, cz - hd, cx, cz - hd, 10);
   chain(cx, cz - hd, cx + hw, cz - hd, 10);
   chain(cx - hw, cz + hd, cx, cz + hd, 10);
