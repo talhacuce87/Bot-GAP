@@ -199,6 +199,17 @@ export const sfx = {
       tone(70 + Math.random() * 30, 0.07, "square", 0.08 * gain, at, -30);
     }
   },
+  /** Otoyolda makas: yandan geçen arabanın "vuuş"u; kombo yükseldikçe onay sesi tizleşir. */
+  whoosh(gain = 1, pan = 0, combo = 1): void {
+    burst(0.32, 0.32 * gain, 2600, 0, pan);
+    burst(0.18, 0.18 * gain, 6000, 0.05, pan);
+    tone(620 + Math.min(combo, 10) * 70, 0.12, "triangle", 0.05, 0.04);
+  },
+  /** Bariyere sürtme: kısa metal cızırtısı. */
+  scrape(pan = 0): void {
+    burst(0.1, 0.16, 7000, 0, pan);
+    tone(2400 + Math.random() * 600, 0.08, "sawtooth", 0.012);
+  },
   /** Nitro ateşlendi: yükselen vınlama. */
   boost(): void {
     tone(240, 0.5, "sawtooth", 0.035, 0, 520);

@@ -132,7 +132,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
   net.onChat = (line) => chat.add(line, line.kind === "say" && line.sid === net.you);
   net.onChatLog = (lines) => chat.setLog(lines);
   if (input.touch) hud.jumpButton(() => input.triggerJump());
-  new SettingsPanel(hudRoot, () => switchMode(true));
+  new SettingsPanel(hudRoot, () => switchMode("battle"));
   const syncFps = () => (settings.showFps ? hud.enableDebug() : hud.disableDebug());
   syncFps();
   life.onStop(onSettings(syncFps));
@@ -142,7 +142,7 @@ export async function runBattle(canvas: HTMLCanvasElement, hudRoot: HTMLElement,
 
   // ---- Arayüz ----
   // Sol üstte mod düğmeleri: dünyaya dön, sezon, takım değiştir
-  modeButton(hudRoot, { icon: "house", label: "Dünyaya dön", onClick: () => switchMode(false) });
+  modeButton(hudRoot, { icon: "house", label: "Dünyaya dön", onClick: () => switchMode("world") });
   const seasonPanel = new Panel(hudRoot, "Tank sezonu", "season-panel", "trophy");
   modeButton(hudRoot, {
     icon: "trophy",
