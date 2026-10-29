@@ -63,7 +63,8 @@ import { buildWorld, SCREEN_W, SCREEN_Z, type Season } from "./world/scene";
 import { cacheShadows } from "./world/shadowCache";
 import { revealAll } from "./world/geo";
 import { runBattle } from "./battle";
-import { beginMode, listen, listenDoc, setModeStarter, stopMode, switchMode, wantsBattle } from "./mode";
+import { runHighway } from "./highway";
+import { beginMode, type GameMode, listen, listenDoc, setModeStarter, stopMode, switchMode, wantedMode } from "./mode";
 import { Features } from "./features";
 import { aimRay, ShellFx, TankView } from "./world/tank";
 
@@ -346,7 +347,7 @@ async function start(): Promise<void> {
   const syncNet = () => (settings.showNet ? hud.enableNet(net, () => updateSettings({ showNet: false })) : hud.disableNet());
   syncNet();
   life.onStop(onSettings(syncNet));
-  new SettingsPanel(hudRoot, () => switchMode(false));
+  new SettingsPanel(hudRoot, () => switchMode("world"));
 
   // Watch party: video perdede, kontroller altta. Odaya giren sinemanın koridorunda başlar.
   let watch: { sync: WatchSync; screen: ScreenVideo; panel: WatchPanel } | null = null;
@@ -450,7 +451,11 @@ async function start(): Promise<void> {
           return true;
         }
         if (/^[!/](sava[şs]|tank)(\s|$)/i.test(text)) {
-          switchMode(true);
+          switchMode("battle");
+          return true;
+        }
+        if (/^[!/](otoyol|makas)(\s|$)/i.test(text)) {
+          switchMode("highway");
           return true;
         }
         if (!/^[!/](gard[ıi]rop|kiyafet|kıyafet)\b/i.test(text)) return false;
@@ -479,7 +484,9 @@ async function start(): Promise<void> {
   /** Sinemada bir şey oynuyor mu (perdede ya da tarayıcıda). */
   let cinemaOn = false;
   // Tank savaşı: aynı odanın savaş odası (izleme odasından da); geçiş sayfa yenilenmeden
-  toolMenuItem(hudRoot, { icon: "sword", label: "Tank savaşı", order: 3, onClick: () => switchMode(true) });
+  toolMenuItem(hudRoot, { icon: "sword", label: "Tank savaşı", order: 3, onClick: () => switchMode("battle") });
+  // Otoyol: sonsuz yolda makas (ayrı mod)
+  toolMenuItem(hudRoot, { icon: "car", label: "Otoyol", order: 4, onClick: () => switchMode("highway") });
   life.onStop(installMenuItem(hudRoot));
   warnSoftwareRenderer(renderer, hudRoot);
   if (session.mode !== "watch") {
@@ -767,7 +774,7 @@ async function start(): Promise<void> {
     chibi,
     bubble: (sid, text) => bubbles.say(sid, text, performance.now()),
     say: (text) => net.send({ t: "chat", text }),
-    battle: () => switchMode(true),
+    battle: () => switchMode("battle"),
     music: () => (musicOn ? 1 : 0),
     cinemaOn: () => cinemaOn,
     inCinema: () => {
@@ -1037,18 +1044,25 @@ async function start(): Promise<void> {
   }, 5000);
 }
 
-/** Dünya ↔ savaş: çalışan mod durur, sayfa yenilenmeden diğeri başlar (Discord Activity'de yenileme güvenilir değil). */
-setModeStarter((battle) => {
+/** Modun yükleme yazısı ve başlatıcısı. */
+const MODES: Record<GameMode, { text: string; run: () => Promise<void> }> = {
+  world: { text: "GAP Dünyası yükleniyor…", run: () => start() },
+  battle: { text: "Tank savaşı yükleniyor…", run: () => runBattle(canvas, hudRoot, loading, lowPower) },
+  highway: { text: "Otoyol yükleniyor…", run: () => runHighway(canvas, hudRoot, loading, lowPower) },
+};
+
+/** Dünya ↔ savaş ↔ otoyol: çalışan mod durur, sayfa yenilenmeden diğeri başlar (Discord Activity'de yenileme güvenilir değil). */
+setModeStarter((mode) => {
   stopMode();
   const fresh = canvas.cloneNode() as HTMLCanvasElement;
   canvas.replaceWith(fresh);
   canvas = fresh;
   hudRoot.replaceChildren();
   hudRoot.className = "";
-  loading.textContent = battle ? "Tank savaşı yükleniyor…" : "GAP Dünyası yükleniyor…";
+  loading.textContent = MODES[mode].text;
   loading.classList.remove("error");
   if (!loading.isConnected) document.body.append(loading);
-  void (battle ? runBattle(canvas, hudRoot, loading, lowPower) : start());
+  void MODES[mode].run();
 });
 
-void (wantsBattle() ? runBattle(canvas, hudRoot, loading, lowPower) : start());
+void MODES[wantedMode()].run();

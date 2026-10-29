@@ -21,7 +21,7 @@ export const BOT_COMMANDS: Record<string, string> = {
 
 export const HELP_TEXT =
   "Komutlar: !izle <link> (sinemayı aç) · !kuyruk <link> (şarkı sıraya) · !kuyruk · !geç · !paylaş · !hava [yağmur…] · !saat [gece…] · !havaifişek · " +
-  "!maç [dk] · !maç bitir · !ebelemece · !saklambaç · !katıl · !savaş · !xp · !seri · !ses · !sıra · !lb · !gardırop · !yardım. Diğer her şey odaya mesaj olarak gider.";
+  "!maç [dk] · !maç bitir · !ebelemece · !saklambaç · !katıl · !savaş · !otoyol · !xp · !seri · !ses · !sıra · !lb · !gardırop · !yardım. Diğer her şey odaya mesaj olarak gider.";
 
 /** Kontrol karakterlerini atar, boşlukları sadeleştirir, uzunluğu sınırlar. Boşsa null. */
 export function cleanChat(raw: unknown): string | null {

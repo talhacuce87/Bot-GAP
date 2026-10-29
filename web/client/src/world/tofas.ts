@@ -827,9 +827,9 @@ export function buildTofas(spec: CarSpec): TofasMesh {
       varying vec2 vUv;
       void main() {
         float along = vUv.y;                       // 0 araba, 1 uç
-        float half = 0.12 + 0.36 * along;          // genişlik öne doğru açılır
+        float halfW = 0.12 + 0.36 * along;         // genişlik öne doğru açılır
         float x = abs(vUv.x - 0.5);
-        float side = 1.0 - smoothstep(half * 0.5, half, x);
+        float side = 1.0 - smoothstep(halfW * 0.5, halfW, x);
         // Yakında güçlü, uzağa doğru yavaşça söner (far uzağa vurur)
         float len = smoothstep(0.0, 0.05, along) * (1.0 - smoothstep(0.3, 1.0, along) * 0.85) * (1.0 - smoothstep(0.85, 1.0, along));
         float a = side * len * uOpacity;

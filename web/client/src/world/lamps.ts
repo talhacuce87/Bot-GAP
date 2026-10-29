@@ -192,6 +192,9 @@ const GLSL_APPLY = /* glsl */ `
   }
 `;
 
+/** Yamalı malzemenin uniform'larını veren lamba alanı (son kurulan dünya). */
+const lampOwner = new WeakMap<THREE.Material, LampField>();
+
 export class LampField {
   readonly uniforms = {
     uLampGrid: { value: null as THREE.DataTexture | null },
@@ -326,16 +329,26 @@ export class LampField {
     u.uCarCount.value = n;
   }
 
-  /** Malzemeye gece ışığını ekler (bir kez; önceki shader eklemeleri korunur). */
+  /**
+   * Malzemeye gece ışığını ekler (bir kez; önceki shader eklemeleri korunur). Modül düzeyinde paylaşılan malzemeler
+   * mod değişiminden (dünya → tank/otoyol → dünya) sağ çıkar: yeni dünyanın lambaları onları yeniden yamarsa GLSL iki
+   * kez eklenir ve shader derlenmez. Yama malzemede bir kez kalır; uniform'lar o anki sahibinden (son dünya) okunur.
+   */
   patch(m: THREE.Material): void {
     if (this.patched.has(m) || m.userData.noLamps) return;
     if (!(m instanceof THREE.MeshLambertMaterial || m instanceof THREE.MeshStandardMaterial || m instanceof THREE.MeshPhongMaterial)) return;
     this.patched.add(m);
+    const owned = lampOwner.has(m);
+    lampOwner.set(m, this);
+    if (owned) {
+      m.needsUpdate = true;
+      return;
+    }
     const prev = m.onBeforeCompile.bind(m);
     const prevKey = m.customProgramCacheKey.bind(m);
     m.onBeforeCompile = (shader, renderer) => {
       prev(shader, renderer);
-      Object.assign(shader.uniforms, this.uniforms);
+      Object.assign(shader.uniforms, lampOwner.get(m)!.uniforms);
       shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vLampW;").replace(
         "#include <project_vertex>",
         `#include <project_vertex>

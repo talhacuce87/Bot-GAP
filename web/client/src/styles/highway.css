@@ -1,0 +1,354 @@
+/* ---- Otoyol: skor üst ortada, rekor sol üstte, hız/hasar alt ortada; makas yazıları ve sonuç kartı ortada ---- */
+.hw {
+  --hw-hot: #ff7a45;
+}
+
+.hw-top {
+  order: 1;
+  text-align: center;
+}
+
+.hw-score {
+  color: var(--text);
+  font: 700 46px/1 var(--font-display);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35), 0 0 18px rgba(0, 0, 0, 0.35);
+}
+
+.hw-combo {
+  display: none;
+  margin-top: 4px;
+  color: var(--accent);
+  font: 700 16px/1 var(--font-display);
+  letter-spacing: 0.12em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.hw-combo.show {
+  display: block;
+}
+
+.hw-combo b {
+  display: block;
+  width: 120px;
+  height: 4px;
+  margin: 5px auto 0;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.hw-combo i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.hw-best {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  color: var(--text-2);
+  font: 600 14px/1 var(--font-display);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.hw-best .ic {
+  color: var(--accent);
+}
+
+/* Makas yazıları: ortanın biraz üstünde belirip yukarı süzülür */
+.hw-pops {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 2px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.hw-pop {
+  text-align: center;
+  white-space: nowrap;
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.55);
+  animation: hw-pop 1.3s var(--ease-out) forwards;
+}
+
+.hw-pop b {
+  display: block;
+  color: var(--text);
+  font: italic 700 34px/1.05 var(--font-display);
+  letter-spacing: 0.03em;
+}
+
+.hw-pop span {
+  color: var(--accent);
+  font: 700 17px/1.2 var(--font-display);
+  letter-spacing: 0.04em;
+}
+
+.hw-pop.t0 b {
+  color: var(--hw-hot);
+  font-size: 40px;
+}
+
+.hw-pop.t1 b {
+  color: var(--accent);
+}
+
+.hw-pop.bump b {
+  color: var(--bad);
+  font-size: 24px;
+}
+
+.hw-pop.bump span {
+  color: #ffd0d0;
+}
+
+.hw-pop.go b {
+  color: var(--good);
+  font-size: 44px;
+}
+
+@keyframes hw-pop {
+  0% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+  12% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-36px);
+  }
+}
+
+.hw-help {
+  max-width: 100%;
+  padding: 7px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--glass);
+  color: var(--text-2);
+  font: 500 13px/1.3 var(--font);
+  text-align: center;
+  transition: opacity var(--t-slow);
+}
+
+.hw-help.hide {
+  opacity: 0;
+}
+
+.hw-wrong {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--r);
+  background: rgba(200, 30, 30, 0.85);
+  font: 700 14px/1 var(--font-display);
+  letter-spacing: 0.06em;
+  animation: hw-blink 0.8s ease-in-out infinite;
+}
+
+.hw-wrong.show {
+  display: flex;
+}
+
+@keyframes hw-blink {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.hw-dash {
+  min-width: 200px;
+  padding: 8px 16px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  box-shadow: var(--shadow-1);
+  text-align: center;
+}
+
+.hw-speed b {
+  font: 700 40px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.hw-speed span {
+  margin-left: 4px;
+  color: var(--muted);
+  font: 600 14px var(--font-display);
+}
+
+.hw-dmg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--muted);
+  font: 600 11px var(--font);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.hw-dmg b {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line-2);
+  overflow: hidden;
+}
+
+.hw-dmg i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--t);
+}
+
+.hw-dmg.high i {
+  background: var(--bad);
+}
+
+/* Temas: kenarlar kısa süre kızarır */
+.hw-flash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  box-shadow: inset 0 0 90px 20px rgba(255, 40, 40, 0.55);
+  pointer-events: none;
+}
+
+.hw-flash.on {
+  animation: hw-flash 0.45s ease-out;
+}
+
+.hw-flash.strong {
+  animation-duration: 1.2s;
+  box-shadow: inset 0 0 160px 60px rgba(255, 30, 30, 0.7);
+}
+
+@keyframes hw-flash {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Sonuç kartı */
+.hw-result {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 20;
+  display: none;
+  width: min(360px, calc(100vw - 24px));
+  padding: 22px 22px 18px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xl);
+  background: linear-gradient(180deg, var(--ink-3), var(--ink-2));
+  box-shadow: var(--shadow-3);
+  text-align: center;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+}
+
+.hw-result.show {
+  display: block;
+  animation: ui-pop var(--t) var(--ease-out);
+}
+
+.hw-kicker {
+  display: block;
+  color: var(--accent);
+  font: 700 12px/1 var(--font-display);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.hw-result h2 {
+  margin: 6px 0 0;
+  font: 700 26px/1.1 var(--font-display);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.hw-final {
+  margin: 6px 0 2px;
+  color: var(--accent);
+  font: 700 50px/1.05 var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.hw-record {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--good);
+  font: 700 15px var(--font-display);
+  letter-spacing: 0.06em;
+}
+
+.hw-stats {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 16px;
+  margin: 14px 0 16px;
+  font: 500 14px var(--font);
+  text-align: left;
+}
+
+.hw-stats span {
+  color: var(--muted);
+}
+
+.hw-stats b {
+  font-variant-numeric: tabular-nums;
+}
+
+.hw-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.hw-buttons .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+@media (max-width: 520px) {
+  .hw-score {
+    font-size: 36px;
+  }
+
+  .hw-pop b {
+    font-size: 26px;
+  }
+
+  .hw-pop.t0 b {
+    font-size: 30px;
+  }
+
+  .hw-speed b {
+    font-size: 32px;
+  }
+}
