@@ -55,6 +55,8 @@ export class TrafficCars {
   private v = new THREE.Vector3();
   private s = new THREE.Vector3();
   private up = new THREE.Vector3(0, 1, 0);
+  private side = new THREE.Vector3(1, 0, 0);
+  private tilt = new THREE.Quaternion();
 
   constructor() {
     this.shadow = new THREE.InstancedMesh(
@@ -111,17 +113,21 @@ export class TrafficCars {
     this.shadowN = 0;
   }
 
-  /** Bir araba: görünüm, konum (yer), yön; `scale` belirip kaybolurken. */
-  push(look: number, x: number, z: number, rot: number, scale = 1): void {
+  /**
+   * Bir araba: görünüm, konum (yer), yön; `scale` belirip kaybolurken. Yokuşlu yolda (otoyol) `y` yolun yüksekliği,
+   * `pitch` burnun aşağı eğimi (rad).
+   */
+  push(look: number, x: number, z: number, rot: number, scale = 1, y = 0, pitch = 0): void {
     const b = this.batch(look);
     if (b.n >= MAX_PER_LOOK) return;
     this.q.setFromAxisAngle(this.up, rot);
-    this.m.compose(this.v.set(x, 0, z), this.q, this.s.setScalar(scale));
+    if (pitch) this.q.multiply(this.tilt.setFromAxisAngle(this.side, pitch));
+    this.m.compose(this.v.set(x, y, z), this.q, this.s.setScalar(scale));
     b.body.setMatrixAt(b.n, this.m);
     b.glass.setMatrixAt(b.n, this.m);
     b.glow.setMatrixAt(b.n, this.m);
     b.n++;
-    if (this.shadowN < 256) this.shadow.setMatrixAt(this.shadowN++, this.m.compose(this.v.set(x, 0.05, z), this.q, this.s.set(scale, 1, scale)));
+    if (this.shadowN < 256) this.shadow.setMatrixAt(this.shadowN++, this.m.compose(this.v.set(x, y + 0.05, z), this.q, this.s.set(scale, 1, scale)));
   }
 
   end(): void {
