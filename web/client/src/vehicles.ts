@@ -104,7 +104,9 @@ export class Vehicles {
     // Sunucunun yankısı (ya da kendi kaldırması: iş bitti, arabaya binildi). Göndermeyi beklerken gelen eski yankı
     // yeni çağrılanı ezmesin (sürerken işe başlayınca taksi kayboluyordu)
     c.net.onParked = (sid, parked) => {
-      if (sid === c.net.you && !this.parkTimer) this.myParked = parked;
+      if (sid !== c.net.you || this.parkTimer) return;
+      this.myParked = parked;
+      if (parked) this.syncOwned(parked.car);
     };
   }
 
@@ -132,6 +134,25 @@ export class Vehicles {
   private *allParked(): Iterable<ParkedCar> {
     if (this.myParked) yield this.myParked;
     for (const r of this.c.remotes.map.values()) if (r.info.parked && !r.leaving) yield r.info.parked;
+  }
+
+  /**
+   * Sunucu park edilen arabadan satın alınmamış parçaları söktüyse (misafirin önceki oturumundan kalan, başka
+   * cihazda takılan…) kayıttaki tuning de sökülmüş hâline döner. Yoksa yolda stok araba görünür ama garaj kayıttaki
+   * parçaları takılı gösterir: sekmeye tıklayınca "geri gelir", garajdan çıkınca yine sökülürdü.
+   */
+  private syncOwned(car: CarSpec): void {
+    if (isJobCar(car.model)) return;
+    const saved = settings.cars[car.model];
+    if (!saved) return;
+    const diff = (Object.keys(car) as (keyof CarSpec)[]).filter((k) => saved[k] !== car[k]);
+    if (!diff.length) return;
+    const cars = { ...settings.cars, [car.model]: { ...car } };
+    const same = settings.car.model === car.model;
+    if (same) settings.car = { ...car };
+    updateSettings(same ? { cars, car: { ...car } } : { cars });
+    // Plaka yalnızca biçimlenmiş olabilir (boşluk, büyük harf): onda uyarı yok
+    if (diff.some((k) => k !== "plate")) this.c.hud.toast("🔧 Satın alınmamış parçalar söküldü: GAP Garaj'dan satın alabilirsin.");
   }
 
   /** Bağlantı koptu: sunucu park yerini unuttu. */
