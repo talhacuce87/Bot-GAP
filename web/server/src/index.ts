@@ -11,7 +11,7 @@ import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import { WebSocket, WebSocketServer } from "ws";
 import { ACT_COOLDOWN_MS, type Act, ACTS, actSpot, EMOTE_COOLDOWN_MS, EMOTES, FISH_COOLDOWN_MS, FISH_SPOT, TICK_HZ } from "../../shared/constants";
 import { decodeState, type FishCatch, type Look, type PlayerState, type Profile, type QuestDone, type ServerEvent } from "../../shared/protocol";
-import { isBike, isJobCar, NO_DENTS, validCar } from "../../shared/car";
+import { type CarSpec, isBike, isJobCar, NO_DENTS, validCar } from "../../shared/car";
 import { Casino, type CasinoMsg, secureRng } from "./casino";
 import { Economy } from "./economy";
 import { LifeHost } from "./life";
@@ -1192,6 +1192,23 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
   let lastBump = 0;
   let lastBuy = 0;
   const owns = (item: string) => economy.owns(walletKey, item);
+  /**
+   * Arabanın sahip olunan hâli: satın alınmamış araba null, alınmamış modifiyeler sökülür. Paralı modifiyeye geçiş:
+   * bu arabaya önceden takılmış parçalar bir kereliğine senin sayılır (motorlar ücretli modifiyeden sonra geldi:
+   * onlara eski parça hakkı yok). Hem binerken hem çağırırken (park) bakılır: araba önce çağrılır, sonra binilir.
+   * İlk sürüm hakkı yalnızca binerken veriyordu; çağırırken sökülmüş araba binince hakkı boşa harcıyordu. Anahtar
+   * bu yüzden "legacy2": hakkı böyle kaybolanlar bir kez daha alır.
+   */
+  const ownedCar = (car: CarSpec): CarSpec | null => {
+    if (isJobCar(car.model)) return car;
+    if (!ownsCar(car.model, owns)) return null;
+    const legacy = `legacy2:${car.model}`;
+    if (!user.guest && !isBike(car.model) && !economy.owns(walletKey, legacy)) {
+      economy.grant(walletKey, [...unownedMods(car, () => false), legacy]);
+      ws.send(JSON.stringify({ t: "owned", items: economy.ownedList(walletKey) }));
+    }
+    return stripUnowned(car, owns);
+  };
   let lastInv = 0;
   if (room.life) ws.send(JSON.stringify({ t: "wallet", balance: economy.get(walletKey) }));
   let lastFall = 0;
@@ -1319,16 +1336,13 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const want = (msg.car as { model?: unknown } | null)?.model;
         if (car && isJobCar(want) && room.jobs?.modelOf(sid) === want) car.model = want;
         // Satın alınmamış araba sürülmez, alınmamış modifiyeler sökülür
-        if (car && !ownsCar(car.model, owns)) {
-          ws.send(JSON.stringify({ t: "notice", text: "🔒 Bu araba senin değil: GAP Galeri'den satın alabilirsin." }));
-          return;
-        }
-        if (car && !isJobCar(car.model)) {
-          // Paralı modifiyeye geçiş: bu arabaya önceden takılmış parçalar bir kereliğine senin sayılır
-          // (Motorlar ücretli modifiyeden sonra geldi: onlara eski parça hakkı yok)
-          const legacy = `legacy:${car.model}`;
-          if (!user.guest && !isBike(car.model) && !economy.owns(walletKey, legacy)) economy.grant(walletKey, [...unownedMods(car, () => false), legacy]);
-          car = stripUnowned(car, owns);
+        if (car) {
+          const mine = ownedCar(car);
+          if (!mine) {
+            ws.send(JSON.stringify({ t: "notice", text: "🔒 Bu araba senin değil: GAP Galeri'den satın alabilirsin." }));
+            return;
+          }
+          car = mine;
         }
         room.setCar(sid, car);
       } else if (msg?.t === "pay") {
@@ -1406,8 +1420,9 @@ function onConnection(ws: WebSocket, user: SessionUser, key: string, opts: JoinO
         const pk = msg.parked as { car?: unknown } | null;
         const pc = pk ? validCar(pk.car) : null;
         if (pk && pc && !isJobCar((pk.car as { model?: unknown } | null)?.model)) {
-          if (!ownsCar(pc.model, owns)) return;
-          pk.car = stripUnowned(pc, owns);
+          const mine = ownedCar(pc);
+          if (!mine) return;
+          pk.car = mine;
         }
         room.setParked(sid, msg.parked);
       } else if (msg?.t === "casino" || msg?.t === "bj" || msg?.t === "roulette" || msg?.t === "slot") {
