@@ -153,6 +153,23 @@
   opacity: 0;
 }
 
+/* Yaklaşan orta bariyer açıklığı: ters şeride geçilebilecek yer */
+.hw-gapnote {
+  display: none;
+  padding: 5px 12px;
+  border: 1px solid var(--info);
+  border-radius: var(--r);
+  background: var(--glass);
+  color: var(--info);
+  font: 700 14px/1 var(--font-display);
+  letter-spacing: 0.06em;
+}
+
+.hw-gapnote.show {
+  display: block;
+  animation: ui-in var(--t) var(--ease-out);
+}
+
 .hw-wrong {
   display: none;
   align-items: center;

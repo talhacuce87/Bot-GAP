@@ -1,28 +1,40 @@
-// Otoyol modu: sonsuz düz yolda kendi Tofaş'ınla trafiğin arasından makas atarsın. Dünyadan "Diğer" menüsündeki
-// Otoyol ya da "!otoyol" ile girilir (sayfa yenilenmeden, mode.ts). Kurallar shared/highway.ts'te; burada sürüş döngüsü,
-// kamera, çizim ve arayüz var. Şimdilik tek kişilik (sunucusuz): trafik bu oturumun tohumundan, rekor cihazda.
-// Tuşlar: W/S ya da oklar gaz/fren, A/D şerit değiştir, R tekrar.
+// Otoyol modu: sonsuz, virajlı ve yokuşlu yolda kendi arabanla trafiğin arasından makas atarsın. Dünyadan "Diğer"
+// menüsündeki Otoyol ya da "!otoyol" ile girilir (sayfa yenilenmeden, mode.ts). Sürüş dünyadakiyle aynı: Player'ın
+// araba fiziği (gaz, fren, drift, el freni, Shift güç; çarpışma tepkisi). Burada ona küçük bir dünya verilir:
+// otokorkuluk ve orta bariyer duvar, trafik arabaları çarpışılabilir gövde. Yol ve trafik shared/highway.ts'te.
+// Şimdilik tek kişilik (sunucusuz): yol ve trafik bu oturumun tohumundan, rekor cihazda.
 import * as THREE from "three";
-import { HW, HwRun, type HwEvent, TIERS, trafficAt, type TrafficCar, wrongWay } from "../../shared/highway";
+import { type CarSpec, isBike, isJobCar } from "../../shared/car";
+import { HW, HwRun, type HwEvent, LANES, Road, type RoadPoint, TIERS, trafficAt, type TrafficCar, TrafficYield, wrongWay } from "../../shared/highway";
 import { Input } from "./input/input";
 import { beginMode, listen, listenDoc, switchMode } from "./mode";
 import { FrameLimiter, PerfGovernor } from "./perf";
+import { CAR_DIMS, type CarBody, Player } from "./player";
 import { onSettings, settings } from "./settings";
 import { EngineSounds } from "./ui/engine";
 import { icon } from "./ui/icons";
 import { modeButton, region } from "./ui/layout";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { sfx } from "./ui/sfx";
+import type { Vec2 } from "./world/colliders";
 import { HighwayRoad } from "./world/highwayRoad";
+import { buildMotor } from "./world/motor";
+import type { World } from "./world/scene";
 import { buildTofas } from "./world/tofas";
-import { TrafficCars } from "./world/trafficCars";
+import { TRAFFIC_LOOKS, TrafficCars } from "./world/trafficCars";
 
-const STEP = 1 / 120;
-/** Trafiğin çizildiği aralık (arabanın gerisi ve önü, m). */
+/** Trafiğin çizildiği aralık (arabanın gerisi ve önü, m) ve çarpışmaya girdiği yakınlık. */
 const DRAW_BACK = 60;
 const DRAW_AHEAD = 650;
+const BODY_NEAR = 25;
+/** Trafik arabalarının kütlesi (oyuncu arabası ~1): raylarında giderler, çarpınca itilen oyuncudur. */
+const TRAFFIC_MASS = 3;
 /** Çizim kökü bu aralıkla kayar: sahne koordinatları küçük kalır (float hassasiyeti). */
 const ORIGIN_STEP = 1000;
+/** Yol başında doğulan yer (m). */
+const START_S = 150;
+/** Bariyer açıklığı bu kadar yakınsa haber verilir (m). */
+const GAP_NOTICE = 350;
 const BEST_KEY = "gap-otoyol-rekor";
 const KMH = 3.6;
 
@@ -56,7 +68,7 @@ export async function runHighway(canvas: HTMLCanvasElement, hudRoot: HTMLElement
   const life = beginMode();
   let renderer: THREE.WebGLRenderer;
   try {
-    // Logaritmik derinlik: uzun düz yolda ince çizgiler uzakta asfaltla titreşmesin
+    // Logaritmik derinlik: uzun yolda ince çizgiler uzakta asfaltla titreşmesin
     renderer = new THREE.WebGLRenderer({ canvas, antialias: settings.antialias && !lowPower, powerPreference: "high-performance", stencil: false, logarithmicDepthBuffer: true });
   } catch {
     loading.textContent = "Bu cihazda WebGL açılamadı.";
@@ -71,14 +83,21 @@ export async function runHighway(canvas: HTMLCanvasElement, hudRoot: HTMLElement
   const applySettings = () => perf.configure(Math.min(devicePixelRatio, settings.maxDpr), settings.fpsCap, settings.renderScale);
   applySettings();
   life.onStop(onSettings(applySettings));
-  const onResize = () => {
+  listen("resize", () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight, false);
-  };
-  listen("resize", onResize);
+  });
+
+  // Araba: dünyada sürdüğün (iş aracıysa kendi Şahin'in); Player fiziği settings.car'dan okur
+  const prevCar = settings.car;
+  const spec: CarSpec = isJobCar(settings.car.model) ? { ...settings.cars.sahin } : settings.car;
+  settings.car = spec;
+  life.onStop(() => (settings.car = prevCar));
 
   // ---- Sahne ----
+  const seed = (Math.random() * 2 ** 31) | 0;
+  const road = new Road(seed);
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#d6e6ee");
   scene.fog = new THREE.Fog("#d3e2ea", 160, DRAW_AHEAD);
@@ -86,22 +105,82 @@ export async function runHighway(canvas: HTMLCanvasElement, hudRoot: HTMLElement
   const sun = new THREE.DirectionalLight("#fff0d8", 1.9);
   sun.position.set(-0.6, 1, 0.35);
   scene.add(sun);
-  const road = new HighwayRoad();
-  scene.add(road.group, road.far);
+  const view = new HighwayRoad(road);
+  scene.add(view.group, view.far);
   const traffic = new TrafficCars();
   traffic.prebuild();
   scene.add(traffic.group);
-  const car = buildTofas(settings.car);
-  car.setNight(0);
-  car.setHeadlights(0);
-  scene.add(car.group);
+  const carMesh = isBike(spec.model) ? buildMotor(spec) : buildTofas(spec);
+  carMesh.setNight(0);
+  carMesh.setHeadlights(0);
+  scene.add(carMesh.group);
   life.onStop(() => {
     renderer.setAnimationLoop(null);
-    road.dispose();
-    car.dispose();
+    view.dispose();
+    carMesh.dispose();
     renderer.dispose();
     renderer.forceContextLoss();
   });
+
+  // ---- Sürüş: oyunun araba fiziği, otoyolun duvarları ve trafiği ----
+  let run = new HwRun();
+  /** Arabanın yoldaki yeri (s, d) ve en yakın örnek (izdüşüm ipucu); bariyerin hangi yanındayız. */
+  let proj = { s: START_S, d: LANES[1].d, i: -1 };
+  let side = -1;
+  const pt: RoadPoint = { x: 0, z: 0, h: 0, th: 0, g: 0, k: 0 };
+  const bodies: CarBody[] = [];
+  /**
+   * Duvarlar: dış otokorkuluklar ve orta bariyer (açıklıkta yok; uçları yuvarlak). Nokta duvarın içindeyse yolun
+   * yanına doğru dışarı itilir (Player itilme miktarından çarpışmayı hesaplar).
+   */
+  const walls = {
+    resolve(p: Vec2, r: number): void {
+      const pr = road.project(p.x, p.z, proj.i);
+      const q = road.at(pr.s, pt);
+      const lx = Math.cos(q.th), lz = -Math.sin(q.th), fx = Math.sin(q.th), fz = Math.cos(q.th);
+      const lim = HW.rail - r, m = HW.barrier + r;
+      let push = pr.d > lim ? lim - pr.d : pr.d < -lim ? -lim - pr.d : 0;
+      const gap = road.gapAt(pr.s);
+      if (!gap) {
+        if (Math.abs(pr.d) < m) push = side * m - pr.d;
+      } else {
+        // Açıklığın iki ucundaki bariyer başı: yarım daire
+        for (const [edge, dir] of [[gap[0], 1], [gap[1], -1]] as const) {
+          const ds = (pr.s - edge) * dir, len = Math.hypot(ds, pr.d);
+          if (ds >= m || len >= m || len < 1e-4) continue;
+          const k = (m - len) / len;
+          p.x += (fx * ds * dir + lx * pr.d) * k;
+          p.z += (fz * ds * dir + lz * pr.d) * k;
+          return;
+        }
+      }
+      if (push) {
+        p.x += lx * push;
+        p.z += lz * push;
+      }
+    },
+    groundAt: () => 0,
+  };
+  const world = {
+    spawn: { x: 0, z: 0, rot: 0 },
+    colliders: walls,
+    carColliders: { resolve: () => {}, groundAt: () => 0 },
+    carWater: null,
+    carBodies: () => bodies,
+    seats: [],
+  } as unknown as World;
+  const me = new Player(world, new THREE.Color("#ffffff"));
+  const placeAt = (s: number) => {
+    const w = road.world(s, LANES[1].d);
+    if (!me.car) me.enterCarAt(w.x, w.z, w.th);
+    me.placeCar(w.x, w.z, w.th);
+    const c = me.car!;
+    c.v = LANES[1].v;
+    c.drift = c.spin = 0;
+    proj = { s, d: LANES[1].d, i: -1 };
+    side = -1;
+  };
+  placeAt(START_S);
 
   const input = new Input(canvas, hudRoot);
   life.onStop(() => input.dispose());
@@ -122,8 +201,9 @@ export async function runHighway(canvas: HTMLCanvasElement, hudRoot: HTMLElement
   const pops = el("div", "hw-pops", hudRoot);
   const bc = region(hudRoot, "bc");
   const help = el("div", "hw-help", bc, input.touch
-    ? "Joystick: yukarı gaz, aşağı fren, sağa sola şerit · Arabaların yanından ne kadar yakın geçersen o kadar puan"
-    : "W/↑ gaz · S/↓ fren · A/D şerit değiştir · Arabaların yanından ne kadar yakın geçersen o kadar puan");
+    ? "Joystick: gaz, fren ve direksiyon · Arabaların yanından ne kadar yakın geçersen o kadar puan"
+    : "W/S gaz-fren · A/D direksiyon · Space el freni · Shift güç · Arabaların yanından ne kadar yakın geçersen o kadar puan");
+  const gapEl = el("div", "hw-gapnote", bc);
   const wrongEl = el("div", "hw-wrong", bc);
   icon("warning", "", wrongEl);
   el("span", "", wrongEl, "TERS ŞERİT · makas ×1,5 · yol puanı ×2");
@@ -157,36 +237,58 @@ export async function runHighway(canvas: HTMLCanvasElement, hudRoot: HTMLElement
     if (strong) flash.classList.add("strong");
   };
 
-  // ---- Sürüş ----
-  const seed = (Math.random() * 2 ** 31) | 0;
-  let run = new HwRun(seed, 0);
-  /** Trafik saati (sn): fizik adımlarıyla ilerler, sekme gizliyken durur. */
-  let simT = 0;
-  let acc = 0;
-  /** Önceki adımın arabası (çizimde iki adım arası yumuşatılır). */
-  const prev = { x: run.car.x, z: run.car.z, a: run.car.a };
   let crashAt = -1;
   /** Son kaza sert vuruştan mı (yoksa hasar mı doldu). */
   let hardCrash = true;
   let shownResult = false;
-  let lastScrape = 0;
   let drove = 0;
-  const cam = { x: run.car.x, z: run.car.z - 7, look: new THREE.Vector3() };
+  /** Trafik saati (sn): kareyle ilerler, sekme gizliyken durur. */
+  let simT = 0;
   const cars: TrafficCar[] = [];
+  const yieldTraffic = new TrafficYield();
+  /** İlk gaza basılana kadar araba trafikle aynı hızda yuvarlanır ve çarpışmasızdır (yüklenirken yavaşlayıp arkadan gelene takılmasın). */
+  let started = false;
+
+  const onEvent = (e: HwEvent, now: number) => {
+    switch (e.k) {
+      case "near": {
+        const tier = TIERS[e.tier];
+        pop(tier.name, `+${fmt(e.pts)}${e.combo > 1 ? `  ·  ×${e.combo}` : ""}${e.oncoming ? "  ·  karşıdan" : ""}`, `t${e.tier}`);
+        sfx.whoosh(1 - e.tier * 0.2, -e.side * 0.7, e.combo);
+        break;
+      }
+      case "bump":
+        sfx.bump(Math.min(1, 0.4 + e.impact / 8));
+        hurt(false);
+        pop("SÜRTME", `hasar %${Math.round(run.damage)}`, "bump");
+        break;
+      case "crash":
+        sfx.crash(1);
+        hurt(true);
+        crashAt = now;
+        hardCrash = e.impact > HW.hard;
+        break;
+    }
+  };
+  // Oyunun çarpışması: trafik ya da bariyer; şiddeti kazayı belirler
+  me.onCrash = (speed) => {
+    const e = run.hit(speed);
+    if (e) onEvent(e, performance.now());
+  };
 
   const restart = () => {
-    run = new HwRun(seed, run.car.z);
-    Object.assign(prev, { x: run.car.x, z: run.car.z, a: run.car.a });
+    placeAt(Math.max(START_S, proj.s));
+    run = new HwRun();
+    started = false;
     crashAt = -1;
     shownResult = false;
     result.classList.remove("show");
     pop("GAZLA!", "", "go");
   };
-  function onKey(e: KeyboardEvent): void {
-    if (e.code === "KeyR" && !run.car.alive && !(e.target instanceof HTMLInputElement)) restart();
-  }
-  listen("keydown", onKey);
-  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { gapHighway: { run: () => run, cars: () => cars, seed } });
+  listen("keydown", (e) => {
+    if (e.code === "KeyR" && !run.alive && !(e.target instanceof HTMLInputElement)) restart();
+  });
+  if (new URLSearchParams(location.search).has("debug")) Object.assign(window, { gapHighway: { run: () => run, me, road, cars: () => cars, proj: () => proj } });
 
   const showResult = () => {
     shownResult = true;
@@ -228,40 +330,33 @@ export async function runHighway(canvas: HTMLCanvasElement, hudRoot: HTMLElement
     result.classList.add("show");
   };
 
-  const onEvent = (e: HwEvent, now: number) => {
-    switch (e.k) {
-      case "near": {
-        const tier = TIERS[e.tier];
-        pop(tier.name, `+${fmt(e.pts)}${e.combo > 1 ? `  ·  ×${e.combo}` : ""}${e.oncoming ? "  ·  karşıdan" : ""}`, `t${e.tier}`);
-        sfx.whoosh(1 - e.tier * 0.2, -e.side * 0.7, e.combo);
-        break;
-      }
-      case "bump":
-        sfx.bump(Math.min(1, 0.4 + e.impact / 6));
-        hurt(false);
-        pop("SÜRTME", `hasar %${Math.round(run.car.damage)}`, "bump");
-        break;
-      case "rail":
-        if (now - lastScrape > 140) {
-          lastScrape = now;
-          sfx.scrape(run.car.x > 0 ? -0.6 : 0.6);
-          if (e.impact > 2) hurt(false);
-        }
-        break;
-      case "crash":
-        sfx.crash(1);
-        hurt(true);
-        crashAt = now;
-        hardCrash = e.impact > HW.hard;
-        break;
+  /** Yakındaki trafik arabaları, oyunun araba-araba çarpışmasına gövde olarak (çarpışmasız süredeyken yok). */
+  const syncBodies = () => {
+    bodies.length = 0;
+    if (run.ghost > 0) return;
+    for (const t of cars) {
+      if (Math.abs(t.s - proj.s) > BODY_NEAR) continue;
+      const w = road.world(t.s, t.d);
+      const dims = CAR_DIMS[TRAFFIC_LOOKS[t.look % TRAFFIC_LOOKS.length].model] ?? CAR_DIMS.sahin;
+      const id = t.id;
+      bodies.push({
+        x: w.x,
+        z: w.z,
+        rot: t.v > 0 ? w.th : w.th + Math.PI,
+        vx: Math.sin(w.th) * t.v,
+        vz: Math.cos(w.th) * t.v,
+        mass: TRAFFIC_MASS,
+        hl: dims.hl,
+        hw: dims.hw,
+        omega: 0,
+        hit: () => run.touch(id),
+      });
     }
   };
 
   // ---- Döngü ----
-  const up = new THREE.Vector3(0, 1, 0);
-  const lookAt = new THREE.Vector3();
   let last = performance.now();
-  let shake = 0;
+  let origin = { x: 0, z: 0 };
 
   const frame = (now: number) => {
     if (!limiter.ready(now, settings.fpsCap)) return;
@@ -269,72 +364,73 @@ export async function runHighway(canvas: HTMLCanvasElement, hudRoot: HTMLElement
     const dt = dtMs / 1000;
     last = now;
     const t0 = performance.now();
+    simT += dt;
     input.poll();
-    const c = run.car;
-    const inp = { gas: Math.max(0, input.moveY), brake: Math.max(0, -input.moveY), steer: input.moveX };
-    acc += dt;
-    while (acc >= STEP) {
-      prev.x = c.x;
-      prev.z = c.z;
-      prev.a = c.a;
-      for (const e of run.update(inp, STEP, simT)) onEvent(e, now);
-      simT += STEP;
-      acc -= STEP;
-    }
-    if (crashAt >= 0 && !shownResult && now - crashAt > 1400) showResult();
-    if (inp.gas > 0 && c.alive) drove += dt;
-    help.classList.toggle("hide", drove > 5);
+    // Kazadan sonra direksiyon ve gaz yok: araba kendi kendine yavaşlar
+    if (!run.alive) input.moveX = input.moveY = 0;
+    if (!started && Math.abs(input.moveY) > 0.1) started = true;
+    if (!started) run.ghost = HW.ghost;
+    trafficAt(seed, simT, proj.s - DRAW_BACK, proj.s + DRAW_AHEAD, cars);
+    yieldTraffic.apply(cars, proj.s, proj.d, dt);
+    syncBodies();
+    me.carWear = Math.min(3, Math.floor(run.damage / 34));
+    me.update(dt, input);
+    const c = me.car!;
+    if (!run.alive) c.v *= Math.exp(-dt * 1.4);
+    if (!started) c.v = LANES[1].v;
+    proj = road.project(me.x, me.z, proj.i);
+    if (Math.abs(proj.d) > 0.05) side = Math.sign(proj.d);
+    for (const e of run.update(proj.s, proj.d, c.v, dt, cars)) onEvent(e, now);
+    if (crashAt >= 0 && !shownResult && now - crashAt > 1600) showResult();
+    if (c.throttle > 0 && run.alive) drove += dt;
+    help.classList.toggle("hide", drove > 6);
 
-    // İki adım arası: araba ve trafik aynı ana çizilir
-    const k = acc / STEP;
-    const x = prev.x + (c.x - prev.x) * k, z = prev.z + (c.z - prev.z) * k, a = prev.a + (c.a - prev.a) * k;
-    const tr = simT - STEP * (1 - k);
-    const origin = Math.floor(z / ORIGIN_STEP) * ORIGIN_STEP;
+    // Çizim kökü: arabanın yakını (sahne koordinatları küçük)
+    if (Math.abs(me.x - origin.x) > ORIGIN_STEP || Math.abs(me.z - origin.z) > ORIGIN_STEP) origin = { x: Math.round(me.x / ORIGIN_STEP) * ORIGIN_STEP, z: Math.round(me.z / ORIGIN_STEP) * ORIGIN_STEP };
+    const q = road.at(proj.s, pt);
+    const roadY = q.h;
+    // Araba: yolun yüksekliğinde, yokuşa göre burnu kalkık/inik
+    carMesh.group.position.set(me.x - origin.x, roadY, me.z - origin.z);
+    carMesh.group.rotation.set(-Math.atan(q.g * Math.cos(me.rot - q.th)), me.rot, 0, "YXZ");
+    carMesh.roll(c.v * dt, -c.steer * 0.5);
+    carMesh.setDamage(me.carWear);
+    carMesh.group.visible = run.ghost <= 0 || Math.floor(now / 90) % 2 === 0;
+    // Kamera: oyunun araba kamerası, yolun yüksekliğine kaldırılır
+    me.updateCamera(camera, dt);
+    camera.position.x -= origin.x;
+    camera.position.z -= origin.z;
+    camera.position.y += roadY;
+    view.update(proj.s, origin.x, origin.z, camera.position, roadY);
 
-    // Kamera: arkadan takip; hız arttıkça biraz geri çekilir, görüş açısı genişler. Kazada yerinde kalır.
-    const sp = c.v / HW.vmax;
-    if (c.alive) {
-      cam.x += (x - cam.x) * (1 - Math.exp(-dt * 5));
-      cam.z = z - 6.4 - sp * 1.6;
-    }
-    shake = c.alive ? sp * sp * 0.025 : Math.max(0, shake - dt * 0.05);
-    camera.position.set(cam.x + (Math.random() - 0.5) * shake, 2.35 + sp * 0.35 + (Math.random() - 0.5) * shake, cam.z - origin);
-    const lookX = c.alive ? x * 0.65 + cam.x * 0.35 : x;
-    cam.look.lerp(lookAt.set(lookX, 1.05, (c.alive ? z + 14 : z) - origin), c.alive ? 1 : 1 - Math.exp(-dt * 4));
-    camera.lookAt(cam.look);
-    const fov = settings.fov + sp * 16;
-    if (Math.abs(camera.fov - fov) > 0.05) {
-      camera.fov += (fov - camera.fov) * Math.min(1, dt * 4);
-      camera.updateProjectionMatrix();
-    }
-
-    road.update(z, origin, camera.position);
     traffic.begin();
-    for (const t of trafficAt(seed, tr, z - DRAW_BACK, z + DRAW_AHEAD, cars)) traffic.push(t.look, t.x, t.z - origin, t.v > 0 ? 0 : Math.PI);
+    for (const t of cars) {
+      const g = road.at(t.s, pt).g;
+      const w = road.world(t.s, t.d);
+      traffic.push(t.look, w.x - origin.x, w.z - origin.z, t.v > 0 ? w.th : w.th + Math.PI, 1, w.h, -Math.atan(g) * Math.sign(t.v));
+    }
     traffic.end();
-
-    car.group.position.set(x, 0, z - origin);
-    car.group.quaternion.setFromAxisAngle(up, a);
-    car.roll(c.v * dt, c.alive ? -inp.steer * 0.35 : 0);
-    car.setDamage(Math.min(3, Math.floor(c.damage / 34)));
-    car.group.visible = c.ghost <= 0 || Math.floor(now / 90) % 2 === 0;
-    engine.update([{ speed: c.v * 0.42, throttle: c.alive ? inp.gas : 0, dist: 0, pan: 0, own: true }]);
+    engine.update([{ speed: c.v, throttle: run.alive ? Math.max(0, c.throttle) : 0, dist: 0, pan: 0, own: true }]);
 
     // Gösterge
     const s = run.stats;
     const score = fmt(s.score);
     if (scoreEl.textContent !== score) scoreEl.textContent = score;
-    const comboOn = run.combo > 1 && c.alive;
+    const comboOn = run.combo > 1 && run.alive;
     comboEl.classList.toggle("show", comboOn);
     if (comboOn) {
       comboText.textContent = `KOMBO ×${run.combo}`;
       comboBar.style.width = `${Math.max(0, 1 - run.sinceNear / HW.comboGap) * 100}%`;
     }
-    const kmh = String(Math.round(c.v * KMH));
+    const kmh = String(Math.round(Math.abs(c.v) * KMH));
     if (speedNum.textContent !== kmh) speedNum.textContent = kmh;
-    dmgFill.style.width = `${c.damage}%`;
-    dmgRow.classList.toggle("high", c.damage > 66);
-    wrongEl.classList.toggle("show", c.alive && wrongWay(c));
+    dmgFill.style.width = `${run.damage}%`;
+    dmgRow.classList.toggle("high", run.damage > 66);
+    wrongEl.classList.toggle("show", run.alive && wrongWay(proj.d));
+    // Yaklaşan bariyer açıklığı: ters şeride geçilebilecek yer
+    const gap = run.alive ? road.gapsIn(proj.s, proj.s + GAP_NOTICE)[0] : undefined;
+    const gapText = !gap ? "" : gap[0] <= proj.s ? "Bariyer açıklığı: karşı şeride geçebilirsin" : `Bariyer açıklığı ${Math.round((gap[0] - proj.s) / 10) * 10} m ileride`;
+    if (gapEl.textContent !== gapText) gapEl.textContent = gapText;
+    gapEl.classList.toggle("show", !!gapText);
 
     renderer.render(scene, camera);
     perf.frame(dtMs, performance.now() - t0);
@@ -343,15 +439,16 @@ export async function runHighway(canvas: HTMLCanvasElement, hudRoot: HTMLElement
     last = performance.now();
     renderer.setAnimationLoop(frame);
   };
-  const onVisible = () => {
+  listenDoc("visibilitychange", () => {
     if (document.hidden) renderer.setAnimationLoop(null);
     else runLoop();
-  };
-  listenDoc("visibilitychange", onVisible);
+  });
 
-  // Shader'lar yükleme ekranı açıkken derlenir (ilk karede donmasın)
+  // Yükleme ekranı açıkken: görünen yol parçaları kurulur, shader'lar derlenir (ilk karede donmasın)
+  me.updateCamera(camera, 0);
+  view.update(proj.s, origin.x, origin.z, camera.position, 0, true);
   traffic.begin();
-  for (let i = 0; i < 24; i++) traffic.push(i, (i % 4) * 3, 20 + i * 6, 0);
+  for (let i = 0; i < TRAFFIC_LOOKS.length; i++) traffic.push(i, (i % 4) * 3, 20 + i * 6, 0);
   traffic.end();
   await renderer.compileAsync(scene, camera).catch(() => undefined);
   if (!life.active) return;
