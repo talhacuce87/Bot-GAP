@@ -72,7 +72,10 @@ class StatsService:
         db_module: Any = xpdb,
         bestfriend_threshold_seconds: int = 100 * 3600,
         member_info: Callable[[int, int], list[str]] | None = None,
+        member_ids: Callable[[int], set[int] | None] | None = None,
     ) -> None:
+        # Sunucudaki mevcut üye id'leri (ayrılanlar sıralamada görünmesin); None → filtre yok.
+        self._member_ids = member_ids or (lambda _gid: None)
         self._member_info = member_info
         self._level_for = level_for
         self._name_for = name_for
@@ -95,7 +98,9 @@ class StatsService:
         return UserRow(*(int(v or 0) for v in row)) if row else None
 
     async def leaderboard_lines(self, guild_id: int, limit: int = 5) -> list[str]:
-        rows = await self._db.get_leaderboard(guild_id, limit)
+        ids = self._member_ids(guild_id)
+        rows = (await self._db.get_leaderboard(guild_id, limit, member_ids=ids) if ids is not None
+                else await self._db.get_leaderboard(guild_id, limit))
         if not rows:
             return ["Liderlik tablosu: henüz kimse XP kazanmamış."]
         lines = [f"Liderlik tablosu (ilk {len(rows)}, toplam XP'ye göre):"]
@@ -111,7 +116,9 @@ class StatsService:
             return [f"{name}: bu sunucuda kayıtlı XP verisi yok."]
         lines = []
         if xp:
-            rank = await self._db.get_user_rank(guild_id, user_id)
+            ids = self._member_ids(guild_id)
+            rank = (await self._db.get_user_rank(guild_id, user_id, member_ids=ids) if ids is not None
+                    else await self._db.get_user_rank(guild_id, user_id))
             lines.append(
                 f"{name}: Seviye {self._level_for(row.total_xp)}, toplam {row.total_xp:,} XP "
                 f"(yazı {row.text_xp:,} / ses {row.voice_xp:,}), sıralama #{rank}, "

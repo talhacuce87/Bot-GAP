@@ -235,10 +235,12 @@ class XPTrackerCog(commands.Cog):
         return await db.get_user_row(guild_id, user_id)
 
     async def get_user_rank(self, guild_id: int, user_id: int) -> int:
-        return await db.get_user_rank(guild_id, user_id)
+        guild = self.bot.get_guild(guild_id)
+        return await db.get_user_rank(guild_id, user_id, member_ids=db.guild_member_ids(guild))
 
     async def get_leaderboard(self, guild_id: int, limit: int = 10):
-        return await db.get_leaderboard(guild_id, limit)
+        guild = self.bot.get_guild(guild_id)
+        return await db.get_leaderboard(guild_id, limit, member_ids=db.guild_member_ids(guild))
 
     def get_progress_data(self, total_xp: int) -> tuple[int, int, int, int, float]:
         return self.role_manager.get_progress_data(total_xp)
@@ -609,7 +611,7 @@ class XPTrackerCog(commands.Cog):
             await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
             return
 
-        rows = await db.get_leaderboard(ctx.guild.id)
+        rows = await db.get_leaderboard(ctx.guild.id, member_ids=db.guild_member_ids(ctx.guild))
         if not rows:
             await ctx.send("Henüz XP verisi yok.")
             return

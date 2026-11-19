@@ -210,6 +210,19 @@ async def test_rank_matches_leaderboard_on_ties(db):
         assert await db.get_user_rank(1, uid) == i
 
 
+async def test_left_members_hidden_from_leaderboard_and_rank(db):
+    from types import SimpleNamespace
+    for uid, amount in ((31, 500), (32, 400), (33, 300), (34, 200)):
+        await db.add_text_xp(1, uid, amount)
+    guild = SimpleNamespace(members=[SimpleNamespace(id=32), SimpleNamespace(id=34)])
+    ids = db.guild_member_ids(guild)
+    assert [r["user_id"] for r in await db.get_leaderboard(1, 10, member_ids=ids)] == [32, 34]
+    assert [r["user_id"] for r in await db.get_leaderboard(1, 1, member_ids=ids)] == [32]
+    assert await db.get_user_rank(1, 34, member_ids=ids) == 2
+    assert await db.get_user_rank(1, 34) == 4
+    assert db.guild_member_ids(None) is None
+
+
 # ---------------------------------------------------------------------------
 # !xpçıkar
 # ---------------------------------------------------------------------------

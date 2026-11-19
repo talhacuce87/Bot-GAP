@@ -103,7 +103,8 @@ async def build_leaderboard_payload(bot: commands.Bot) -> dict:
     guilds: dict[str, list[dict]] = {}
     for guild in bot.guilds:
         entries = []
-        for row in await db.get_leaderboard(guild.id, limit=BOARD_SIZE):
+        for row in await db.get_leaderboard(guild.id, limit=BOARD_SIZE,
+                                             member_ids=db.guild_member_ids(guild)):
             uid = int(row["user_id"])
             member = guild.get_member(uid)
             total = int(row["total_xp"])
@@ -126,7 +127,8 @@ async def game_command_text(guild_id: int, user_id: int, command: str, roles: XP
                             guild: discord.Guild | None = None) -> str | None:
     """Oyun içi komutların metin cevabı; bilinmeyen komutta None."""
     if command == "top":
-        rows = await db.get_leaderboard(guild_id, 5)
+        member_ids = db.guild_member_ids(guild)
+        rows = await db.get_leaderboard(guild_id, 5, member_ids=member_ids)
         if not rows:
             return "🏆 Henüz XP verisi yok."
         medals = ["🥇", "🥈", "🥉", "4.", "5."]
@@ -140,11 +142,11 @@ async def game_command_text(guild_id: int, user_id: int, command: str, roles: XP
     total = int(row["total_xp"]) if row else 0
     level, _next, _floor, ceiling, _ratio = roles.get_progress_data(total)
     if command == "xp":
-        rank = await db.get_user_rank(guild_id, user_id)
+        rank = await db.get_user_rank(guild_id, user_id, member_ids=db.guild_member_ids(guild))
         left = f" · sonraki seviyeye {ceiling - total:,} XP" if ceiling > total else " · en üst seviye"
         return f"⭐ Seviye {level} · {total:,} XP · sıra #{rank}{left}"
     if command == "rank":
-        return f"🏆 Sıralamada #{await db.get_user_rank(guild_id, user_id)} ({total:,} XP)"
+        return f"🏆 Sıralamada #{await db.get_user_rank(guild_id, user_id, member_ids=db.guild_member_ids(guild))} ({total:,} XP)"
     if command == "streak":
         days = int(row["streak_days"]) if row else 0
         return f"🔥 {days} günlük seri · XP çarpanı x{streak_multiplier(days):.2f}"
@@ -467,7 +469,7 @@ class WorldCog(commands.Cog):
             "xp": total,
             "floor": floor,
             "ceiling": ceiling,
-            "rank": await db.get_user_rank(guild.id, user_id),
+            "rank": await db.get_user_rank(guild.id, user_id, member_ids=db.guild_member_ids(guild)),
             "streak": db.current_streak(row) if row else 0,
             "fish": {r.key: stats.get(f"fish:{r.key}", 0) for r in fishing.RARITIES},
             "stats": {k: stats.get(k, 0) for k in set(world_quests.STAT_KEYS.values())},

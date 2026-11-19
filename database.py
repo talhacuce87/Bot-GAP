@@ -1049,7 +1049,29 @@ async def end_exile(guild_id: int, user_id: int) -> aiosqlite.Row | None:
 # Sıralama & leaderboard
 # ---------------------------------------------------------------------------
 
-async def get_user_rank(guild_id: int, user_id: int) -> int:
+def guild_member_ids(guild) -> set[int] | None:
+    """Sunucudaki mevcut üyelerin id kümesi; üye listesi yoksa None (filtre uygulanmaz).
+
+    Sunucudan ayrılan kullanıcıların XP verisi silinmez (geri dönerlerse kaldıkları
+    yerden devam ederler); sıralama/kartta görünmemeleri için bu küme kullanılır.
+    """
+    if guild is None:
+        return None
+    members = getattr(guild, "members", None)
+    if not members:
+        return None
+    return {m.id for m in members}
+
+
+async def get_user_rank(guild_id: int, user_id: int, member_ids: set[int] | None = None) -> int:
+    if member_ids is not None:
+        # Yalnızca sunucuda kalan üyeler arasında sıra.
+        rows = await get_leaderboard(guild_id, limit=None, member_ids=member_ids | {user_id})
+        for i, r in enumerate(rows, 1):
+            if int(r["user_id"]) == user_id:
+                return i
+        return 0
+
     row = await get_user_row(guild_id, user_id)
     if row is None:
         return 0
@@ -1077,21 +1099,34 @@ async def get_user_rank(guild_id: int, user_id: int) -> int:
     return (result[0] if result else 0) + 1
 
 
-async def get_leaderboard(guild_id: int, limit: int = 10) -> list[aiosqlite.Row]:
+async def get_leaderboard(
+    guild_id: int,
+    limit: int | None = 10,
+    member_ids: set[int] | None = None,
+) -> list[aiosqlite.Row]:
+    """XP sıralaması. member_ids verilirse yalnızca o kullanıcılar (sunucuda kalanlar) döner."""
+    sql = """
+        SELECT user_id, text_xp, voice_xp, voice_seconds, message_count,
+               (text_xp + voice_xp) AS total_xp
+        FROM user_xp
+        WHERE guild_id = ?
+        ORDER BY total_xp DESC, voice_xp DESC, text_xp DESC, user_id ASC
+    """
+    params: tuple = (guild_id,)
+    if member_ids is None and limit is not None:
+        sql += " LIMIT ?"
+        params += (limit,)
+
     async with _db() as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """
-            SELECT user_id, text_xp, voice_xp, voice_seconds, message_count,
-                   (text_xp + voice_xp) AS total_xp
-            FROM user_xp
-            WHERE guild_id = ?
-            ORDER BY total_xp DESC, voice_xp DESC, text_xp DESC, user_id ASC
-            LIMIT ?
-            """,
-            (guild_id, limit),
-        ) as cur:
-            return await cur.fetchall()
+        async with db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+
+    if member_ids is not None:
+        rows = [r for r in rows if int(r["user_id"]) in member_ids]
+        if limit is not None:
+            rows = rows[:limit]
+    return rows
 
 
 # ---------------------------------------------------------------------------

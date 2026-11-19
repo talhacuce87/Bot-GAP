@@ -215,9 +215,12 @@ class AICog(commands.Cog, name="AICog"):
         def name_for(user_id: int) -> str:
             return self._display_name(None, user_id, None)
 
+        from database import guild_member_ids
+
         return StatsService(
             level_for=level_for, name_for=name_for, bestfriend_threshold_seconds=threshold,
             member_info=self._member_info,
+            member_ids=lambda gid: guild_member_ids(self.bot.get_guild(gid)),
         )
 
     # ------------------------------------------------------------------
