@@ -244,7 +244,7 @@ class LeaderboardCog(commands.Cog):
             await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
             return
 
-        rows = await dbmod.get_leaderboard(ctx.guild.id, limit=10)
+        rows = await dbmod.get_member_leaderboard(ctx.guild, limit=10)
         if not rows:
             await ctx.send("Henüz XP verisi yok.")
             return

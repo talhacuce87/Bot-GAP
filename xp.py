@@ -609,7 +609,7 @@ class XPTrackerCog(commands.Cog):
             await ctx.send("Bu komut sadece sunucuda kullanılabilir.")
             return
 
-        rows = await db.get_leaderboard(ctx.guild.id)
+        rows = await db.get_member_leaderboard(ctx.guild)
         if not rows:
             await ctx.send("Henüz XP verisi yok.")
             return

@@ -1094,6 +1094,33 @@ async def get_leaderboard(guild_id: int, limit: int = 10) -> list[aiosqlite.Row]
             return await cur.fetchall()
 
 
+async def get_member_leaderboard(guild, limit: int = 10) -> list[aiosqlite.Row]:
+    """Sıralamanın yalnızca hâlâ sunucuda olan üyelerden oluşan ilk `limit` satırı.
+
+    Sunucudan ayrılanların XP kaydı silinmez (geri dönerse kaldığı yerden devam eder);
+    sadece listede gösterilmezler.
+    """
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT user_id, text_xp, voice_xp, voice_seconds, message_count,
+                   (text_xp + voice_xp) AS total_xp
+            FROM user_xp
+            WHERE guild_id = ?
+            ORDER BY total_xp DESC, voice_xp DESC, text_xp DESC, user_id ASC
+            """,
+            (guild.id,),
+        ) as cur:
+            rows: list[aiosqlite.Row] = []
+            async for row in cur:
+                if guild.get_member(int(row["user_id"])) is not None:
+                    rows.append(row)
+                    if len(rows) >= limit:
+                        break
+            return rows
+
+
 # ---------------------------------------------------------------------------
 # Olay kaydı (activity_log)
 # ---------------------------------------------------------------------------
