@@ -87,16 +87,16 @@ async def test_leaderboard_payload_uses_names_avatars_and_levels(db):
     payload = await world_cog.build_leaderboard_payload(bot)
     rows = payload["guilds"]["1"]
 
-    assert [r["id"] for r in rows] == ["222222", "111111", "333333"]
+    # 333333 sunucudan ayrılmış üye: listede gösterilmez
+    assert [r["id"] for r in rows] == ["222222", "111111"]
     assert rows[0] == {"id": "222222", "name": "Ayşe", "avatar": None, "level": 9, "xp": 900}
     assert rows[1]["avatar"] == "a" * 32 and rows[1]["level"] == 5
-    assert rows[2]["name"] == "Kullanıcı 3333"  # sunucudan ayrılmış üye
 
 
 async def test_leaderboard_posted_to_world(db, monkeypatch):
     await db.add_text_xp(1, 111111, 10)
     monkeypatch.setenv("WORLD_SHARED_SECRET", "s3cret")
-    bot = SimpleNamespace(guilds=[SimpleNamespace(id=1, get_member=lambda uid: None)], get_cog=lambda name: None)
+    bot = SimpleNamespace(guilds=[SimpleNamespace(id=1, get_member=lambda uid: SimpleNamespace(id=uid, display_name="Ali", name="ali", avatar=None))], get_cog=lambda name: None)
     cog = world_cog.WorldCog(bot)
     seen = []
     cog._client = httpx.AsyncClient(

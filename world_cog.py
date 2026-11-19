@@ -103,7 +103,7 @@ async def build_leaderboard_payload(bot: commands.Bot) -> dict:
     guilds: dict[str, list[dict]] = {}
     for guild in bot.guilds:
         entries = []
-        for row in await db.get_leaderboard(guild.id, limit=BOARD_SIZE):
+        for row in await db.get_member_leaderboard(guild, limit=BOARD_SIZE):
             uid = int(row["user_id"])
             member = guild.get_member(uid)
             total = int(row["total_xp"])
@@ -126,7 +126,8 @@ async def game_command_text(guild_id: int, user_id: int, command: str, roles: XP
                             guild: discord.Guild | None = None) -> str | None:
     """Oyun içi komutların metin cevabı; bilinmeyen komutta None."""
     if command == "top":
-        rows = await db.get_leaderboard(guild_id, 5)
+        rows = (await db.get_member_leaderboard(guild, 5) if guild is not None
+                else await db.get_leaderboard(guild_id, 5))
         if not rows:
             return "🏆 Henüz XP verisi yok."
         medals = ["🥇", "🥈", "🥉", "4.", "5."]
